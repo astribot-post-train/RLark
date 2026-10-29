@@ -22,8 +22,10 @@ import (
 
 // Constants used by the package.
 const (
-	AgentVersion      = "0.1.0"
-	HeartbeatInterval = 30 * time.Second
+	AgentVersion         = "0.1.0"
+	HeartbeatInterval    = 30 * time.Second
+	storageStatsTimeout  = 5 * time.Second
+	storageStatsAttempts = 2
 
 	nodeCategoryLabel       = "rlark.io/node-category"
 	nodeCategoryLabelPrefix = "rlark.io/node-category-"
@@ -188,21 +190,44 @@ func (r *pushNodeReconciler) nodeStorageStatus(ctx context.Context, nodeName str
 	if err != nil {
 		return nil, fmt.Errorf("build stats summary URL: %w", err)
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
-	if err != nil {
-		return nil, fmt.Errorf("create stats summary request: %w", err)
-	}
-	resp, err := r.c.LocalKubeHTTP.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("request stats summary: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("request stats summary: %s", resp.Status)
-	}
 	var summary nodeStatsSummary
-	if err := json.NewDecoder(resp.Body).Decode(&summary); err != nil {
-		return nil, fmt.Errorf("decode stats summary: %w", err)
+	var lastErr error
+	for attempt := 1; attempt <= storageStatsAttempts; attempt++ {
+		requestCtx, cancel := context.WithTimeout(ctx, storageStatsTimeout)
+		req, err := http.NewRequestWithContext(requestCtx, http.MethodGet, endpoint, nil)
+		if err != nil {
+			cancel()
+			return nil, fmt.Errorf("create stats summary request: %w", err)
+		}
+		resp, err := r.c.LocalKubeHTTP.Do(req)
+		if err != nil {
+			cancel()
+			lastErr = fmt.Errorf("request stats summary (attempt %d/%d): %w", attempt, storageStatsAttempts, err)
+			if ctx.Err() != nil {
+				return nil, lastErr
+			}
+			continue
+		}
+		if resp.StatusCode != http.StatusOK {
+			_ = resp.Body.Close()
+			cancel()
+			lastErr = fmt.Errorf("request stats summary (attempt %d/%d): %s", attempt, storageStatsAttempts, resp.Status)
+			if resp.StatusCode < 500 {
+				return nil, lastErr
+			}
+			continue
+		}
+		decodeErr := json.NewDecoder(resp.Body).Decode(&summary)
+		_ = resp.Body.Close()
+		cancel()
+		if decodeErr != nil {
+			return nil, fmt.Errorf("decode stats summary: %w", decodeErr)
+		}
+		lastErr = nil
+		break
+	}
+	if lastErr != nil {
+		return nil, lastErr
 	}
 
 	filesystems := []*nodeFSStats{summary.Node.FS}

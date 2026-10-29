@@ -128,6 +128,9 @@ func New(config Config) (manager.Manager, error) {
 		}
 		logger.Info("database connected and migrated")
 		backend = archivestore.NewPostgresBackend(database.DB)
+		if err := mgr.Add(&sync.OrphanReconciler{Reader: mgr.GetAPIReader(), DB: database.DB}); err != nil {
+			return nil, fmt.Errorf("setup orphan deletion reconciliation: %w", err)
+		}
 	} else if config.EnableSecretBackend {
 		// Secret Backend：测试/CI 模式，用 K8s Secret 存归档快照。
 		backend = archivestore.NewSecretBackend(mgr.GetClient(), config.KubeClientConfig.DefaultNamespace())

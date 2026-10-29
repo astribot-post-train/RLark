@@ -288,6 +288,34 @@ func TestNodeStorageStatus(t *testing.T) {
 	}
 }
 
+func TestNodeStorageStatusRetriesTransientServerError(t *testing.T) {
+	attempts := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		attempts++
+		if attempts == 1 {
+			http.Error(w, "kubelet proxy temporarily unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		_, _ = w.Write([]byte(`{"node":{"fs":{"capacityBytes":1000,"usedBytes":700,"availableBytes":300}}}`))
+	}))
+	defer server.Close()
+
+	reconciler := &pushNodeReconciler{c: &Controller{Controller: base.Controller{
+		LocalKubeHTTP:    server.Client(),
+		LocalKubeAPIHost: server.URL,
+	}}}
+	got, err := reconciler.nodeStorageStatus(context.Background(), "gpu20")
+	if err != nil {
+		t.Fatalf("nodeStorageStatus() error = %v", err)
+	}
+	if attempts != 2 {
+		t.Fatalf("request attempts = %d, want 2", attempts)
+	}
+	if got == nil || [3]int64{got.CapacityBytes, got.UsedBytes, got.AvailableBytes} != [3]int64{1000, 700, 300} {
+		t.Fatalf("nodeStorageStatus() = %#v, want storage from retry", got)
+	}
+}
+
 func TestDiskPressure(t *testing.T) {
 	tests := []struct {
 		name       string
