@@ -270,3 +270,33 @@ func TestDanglingAllocationBlocksReusedGPUOnNewNode(t *testing.T) {
 		t.Fatalf("reused GPU ignored an unresolved old allocation: %v", err)
 	}
 }
+
+func TestReleaseWaitsForObservedDeletionDespiteOtherFinalizers(t *testing.T) {
+	ctx := context.Background()
+	m, r := fixture(t)
+	a, err := m.Acquire(ctx, r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.Finalizers = append(a.Finalizers, "example.io/other-owner")
+	if err := m.Client.Update(ctx, a); err != nil {
+		t.Fatal(err)
+	}
+	a.Status.CleanupConfirmed = true
+	a.Status.ObservedGeneration = a.Generation
+	a.Status.Conditions = []metav1.Condition{{Type: "CleanupConfirmed", Status: metav1.ConditionTrue, ObservedGeneration: a.Generation}}
+	if err := m.Client.Status().Update(ctx, a); err != nil {
+		t.Fatal(err)
+	}
+	key := client.ObjectKeyFromObject(a)
+	for range 2 {
+		if err := m.Release(ctx, key, string(a.UID)); !errors.Is(err, ErrUnavailable) {
+			t.Fatalf("accepted delete was mistaken for completed deletion: %v", err)
+		}
+	}
+	var pending ext.ContainerAllocation
+	mustGet(t, m, key, &pending)
+	if pending.DeletionTimestamp.IsZero() || len(pending.Finalizers) != 1 || pending.Finalizers[0] != "example.io/other-owner" {
+		t.Fatalf("modified another finalizer or failed to delete: %#v", pending.ObjectMeta)
+	}
+}

@@ -204,9 +204,6 @@ func (m Manager) Acquire(ctx context.Context, req Request) (*ext.ContainerAlloca
 		return nil, err
 	}
 	for _, a := range held.Items {
-		if !a.DeletionTimestamp.IsZero() && !controllerutil.ContainsFinalizer(&a, Finalizer) {
-			continue
-		}
 		if a.Spec.Node.UID == string(nativeNode.UID) || a.Spec.NetworkScope == node.Spec.NetworkScope && a.Spec.PrivateAddress == node.Spec.PrivateAddress {
 			return nil, ErrUnavailable
 		}
@@ -288,8 +285,17 @@ func (m Manager) Release(ctx context.Context, key client.ObjectKey, uid string) 
 	}
 	before := a.DeepCopy()
 	controllerutil.RemoveFinalizer(&a, Finalizer)
-	if len(before.Finalizers) == len(a.Finalizers) {
+	if len(before.Finalizers) != len(a.Finalizers) {
+		if err := m.Client.Patch(ctx, &a, client.MergeFromWithOptions(before, client.MergeFromWithOptimisticLock{})); err != nil {
+			return err
+		}
+	}
+	var observed ext.ContainerAllocation
+	if err := m.Client.Get(ctx, key, &observed); err != nil {
+		return client.IgnoreNotFound(err)
+	}
+	if string(observed.UID) != uid {
 		return nil
 	}
-	return m.Client.Patch(ctx, &a, client.MergeFromWithOptions(before, client.MergeFromWithOptimisticLock{}))
+	return fmt.Errorf("%w: allocation deletion is still pending", ErrUnavailable)
 }

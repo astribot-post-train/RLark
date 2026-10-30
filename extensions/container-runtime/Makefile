@@ -1,4 +1,6 @@
-.PHONY: test vet build
+.PHONY: test vet build generate-crds
+
+BIN_DIR ?= $(CURDIR)/bin
 
 test:
 	GOWORK=off go test ./...
@@ -7,7 +9,9 @@ vet:
 	GOWORK=off go vet ./...
 
 build:
-	GOWORK=off go build ./cmd/...
+	mkdir -p $(BIN_DIR)
+	GOWORK=off go build -o $(BIN_DIR)/container-runtime-controller ./cmd/container-runtime-controller
+	GOWORK=off go build -o $(BIN_DIR)/raw-supervisor ./cmd/raw-supervisor
 
 generate-crds:
 	GOWORK=off $(CURDIR)/../../api/bin/controller-gen-v0.18.0 object paths=./api/...
