@@ -8,6 +8,7 @@ import (
 	api "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
 	"github.com/rlinf/rlark/apps/rlark/pkg/agent/execution/fault"
 	rt "github.com/rlinf/rlark/apps/rlark/pkg/agent/execution/runtime"
+	"github.com/rlinf/rlark/apps/rlark/pkg/controllermanager/dockerallocation"
 	"github.com/rlinf/rlark/apps/rlark/pkg/tenant"
 	"github.com/rlinf/rlark/apps/rlark/pkg/utils"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -46,7 +47,7 @@ func (a NodeAdmission) Authorize(ctx context.Context, identity rt.TaskIdentity) 
 		return deny()
 	}
 	var job api.Job
-	if err := a.Client.Get(ctx, client.ObjectKey{Namespace: task.Namespace, Name: owner.Name}, &job); err != nil {
+	if err := a.Client.Get(ctx, client.ObjectKey{Name: owner.Name}, &job); err != nil {
 		return fmt.Errorf("read admitted Docker Job: %w", err)
 	}
 	if string(job.UID) != b.JobUID || tenant.IDOf(&job) != a.TenantID || job.Spec.Suspended || !job.DeletionTimestamp.IsZero() {
@@ -57,6 +58,26 @@ func (a NodeAdmission) Authorize(ctx context.Context, identity rt.TaskIdentity) 
 		return fmt.Errorf("read admitted Docker Node: %w", err)
 	}
 	if string(node.UID) != a.NodeUID || node.Spec.AgentType != api.AgentTypeDocker || node.Status.Phase != api.NodeOnline || node.Status.NodeInfo.Incarnation != a.Incarnation {
+		return deny()
+	}
+	if err := dockerallocation.ValidateBinding(&node, b, a.TenantID); err != nil {
+		return deny()
+	}
+	var clusters api.ClusterList
+	if err := a.Client.List(ctx, &clusters); err != nil {
+		return fmt.Errorf("read admitted Docker Cluster: %w", err)
+	}
+	owners := 0
+	for _, cluster := range clusters.Items {
+		if cluster.Spec.AgentNamespace != task.Namespace {
+			continue
+		}
+		owners++
+		if string(cluster.UID) != b.ClusterUID || tenant.IDOf(&cluster) != a.TenantID || !cluster.DeletionTimestamp.IsZero() {
+			return deny()
+		}
+	}
+	if owners != 1 {
 		return deny()
 	}
 	return nil

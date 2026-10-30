@@ -2,8 +2,12 @@ package agent
 
 import (
 	"context"
+	"fmt"
 	"sync"
 
+	"golang.org/x/sync/errgroup"
+
+	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 )
 
@@ -26,14 +30,25 @@ func (m *dockerManager) Add(r manager.Runnable) error {
 }
 
 func (m *dockerManager) Start(ctx context.Context) error {
+	logger := log.FromContext(ctx).WithName("docker-manager")
 	m.mu.Lock()
 	runnables := append([]manager.Runnable(nil), m.runnables...)
 	m.mu.Unlock()
+	logger.Info("starting Docker local runnables", "count", len(runnables))
+	group, runCtx := errgroup.WithContext(ctx)
 	for _, runnable := range runnables {
-		if err := runnable.Start(ctx); err != nil {
+		group.Go(func() error {
+			logger.V(1).Info("starting Docker local runnable", "type", fmt.Sprintf("%T", runnable))
+			err := runnable.Start(runCtx)
+			if err != nil {
+				logger.Error(err, "Docker local runnable stopped")
+			}
 			return err
-		}
+		})
 	}
-	<-ctx.Done()
-	return nil
+	if len(runnables) == 0 {
+		<-ctx.Done()
+		return nil
+	}
+	return group.Wait()
 }

@@ -100,6 +100,37 @@ func dockerTaskRefs(job *api.Job) []dockerTaskRef {
 	return refs
 }
 
+// buildDockerTask consumes template-level replicas and assigns each expanded
+// Task its actual head identity and stable rank.
+func buildDockerTask(job *api.Job, ref dockerTaskRef, namespace string) (*api.Task, error) {
+	task := buildTask(job, ref.template, ref.name, namespace)
+	task.Spec.Workload.Carrier.Parameters = apiextensionsv1.JSON{}
+	params, err := taskapi.DecodeParametersStrict[taskapi.RayExecutionParametersV1](task.Spec.Workload.Parameters)
+	if err != nil {
+		return nil, err
+	}
+	rank := int32(0)
+	for _, candidate := range dockerTaskRefs(job) {
+		if candidate.template.Head {
+			params.HeadTaskName = candidate.name
+		}
+		if candidate.name == ref.name {
+			params.NodeRankStart = rank
+		}
+		rank++
+	}
+	params.TotalNodes = rank
+	if ref.template.Head {
+		params.HeadTaskName = ""
+	}
+	task.Spec.Workload.Parameters.Raw, err = json.Marshal(params)
+	return task, err
+}
+
+func cDeleteDockerTask(ctx context.Context, c client.Client, task *api.Task) error {
+	return client.IgnoreNotFound(c.Delete(ctx, task, client.Preconditions{UID: &task.UID}))
+}
+
 func dockerTaskResources(task *api.Task) (int64, int64, int64, error) {
 	if task.Spec.Workload.Template == nil || len(task.Spec.Workload.Template.Spec.Containers) != 1 {
 		return 0, 0, 0, errors.New("Docker Task has no single main container")
@@ -112,7 +143,7 @@ func dockerTaskResources(task *api.Task) (int64, int64, int64, error) {
 		return c.Resources.Limits[name]
 	}
 	cpu, memory, gpu := get(corev1.ResourceCPU), get(corev1.ResourceMemory), get(corev1.ResourceName("nvidia.com/gpu"))
-	if cpu.Sign() < 0 || memory.Sign() < 0 || gpu.Sign() < 0 || gpu.Value() != gpu.MilliValue() {
+	if cpu.Sign() < 0 || memory.Sign() < 0 || gpu.Sign() < 0 || gpu.MilliValue()%1000 != 0 {
 		return 0, 0, 0, errors.New("Docker resources must be non-negative whole GPU requests")
 	}
 	return cpu.MilliValue(), memory.Value(), gpu.Value(), nil
@@ -163,7 +194,10 @@ func (r *Reconciler) reconcileDockerJob(ctx context.Context, key client.ObjectKe
 	for _, ref := range refs {
 		task := byName[ref.name]
 		if task == nil {
-			task = buildTask(&job, ref.template, ref.name, taskNamespace)
+			task, err = buildDockerTask(&job, ref, taskNamespace)
+			if err != nil {
+				return ctrl.Result{}, err
+			}
 			task.Finalizers = append(task.Finalizers, DockerAllocationFinalizer)
 			if err := ctrl.SetControllerReference(&job, task, r.Scheme); err != nil {
 				return ctrl.Result{}, err
@@ -180,7 +214,7 @@ func (r *Reconciler) reconcileDockerJob(ctx context.Context, key client.ObjectKe
 		if !task.DeletionTimestamp.IsZero() {
 			continue
 		}
-		if task.Spec.Suspended != job.Spec.Suspended && task.Spec.Placement.DockerBinding == nil {
+		if task.Spec.Suspended != job.Spec.Suspended {
 			before := task.DeepCopy()
 			task.Spec.Suspended = job.Spec.Suspended
 			if err := c.Patch(ctx, task, client.MergeFromWithOptions(before, client.MergeFromWithOptimisticLock{})); err != nil {
@@ -230,11 +264,10 @@ func (r *Reconciler) reconcileDockerJob(ctx context.Context, key client.ObjectKe
 		if !ref.template.Head && headAddress == "" {
 			continue
 		}
-		if !ref.template.Head && task.Spec.Placement.DockerBinding != nil {
+		if !ref.template.Head {
 			if err := r.ensureDockerHeadAddress(ctx, task, headAddress); err != nil {
 				return ctrl.Result{}, err
 			}
-			continue
 		}
 		if task.Spec.Placement.DockerBinding != nil {
 			continue
@@ -370,7 +403,7 @@ func (r *Reconciler) listDockerOwnedTasks(ctx context.Context, job *api.Job) ([]
 	for i := range list.Items {
 		t := &list.Items[i]
 		owner := metav1.GetControllerOf(t)
-		if owner == nil || owner.UID != job.UID || owner.Kind != "Job" || tenant.IDOf(t) != tenant.IDOf(job) {
+		if owner == nil || owner.UID != job.UID || owner.Kind != "Job" || owner.APIVersion != api.GroupVersion.String() || tenant.IDOf(t) != tenant.IDOf(job) {
 			return nil, fmt.Errorf("Docker Task %s/%s ownership conflict", t.Namespace, t.Name)
 		}
 		if t.Spec.Runtime.Kind != api.RuntimeKind("Docker") {
@@ -383,7 +416,7 @@ func (r *Reconciler) listDockerOwnedTasks(ctx context.Context, job *api.Job) ([]
 
 func ensureDockerTaskOwnership(job *api.Job, template string, task *api.Task) error {
 	owner := metav1.GetControllerOf(task)
-	if owner == nil || owner.UID != job.UID || task.Annotations[utils.ParentUIDAnnotation] != string(job.UID) || task.Annotations[utils.ChildTemplateAnnotation] != template || tenant.IDOf(task) != tenant.IDOf(job) {
+	if owner == nil || owner.UID != job.UID || owner.Kind != "Job" || owner.APIVersion != api.GroupVersion.String() || task.Annotations[utils.ParentUIDAnnotation] != string(job.UID) || task.Annotations[utils.ChildTemplateAnnotation] != template || tenant.IDOf(task) != tenant.IDOf(job) {
 		return errors.New("Docker Task ownership conflict")
 	}
 	return nil
@@ -422,6 +455,9 @@ func (r *Reconciler) cleanupDockerJob(ctx context.Context, job *api.Job, tasks [
 				if err := r.RawClient.Patch(ctx, task, client.MergeFromWithOptions(before, client.MergeFromWithOptimisticLock{})); err != nil {
 					return ctrl.Result{}, err
 				}
+			}
+			if err := cDeleteDockerTask(ctx, r.RawClient, task); err != nil {
+				return ctrl.Result{}, err
 			}
 			continue
 		}

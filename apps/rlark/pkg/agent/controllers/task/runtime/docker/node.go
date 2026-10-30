@@ -11,6 +11,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	api "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
 )
@@ -34,7 +35,10 @@ func (o *NodeObserver) Start(ctx context.Context) error {
 	if o == nil || o.Client == nil || o.Engine == nil || o.Node.Namespace == "" || o.Node.Name == "" {
 		return fmt.Errorf("Docker node observer is not configured")
 	}
+	logger := log.FromContext(ctx).WithName("docker-node-observer").WithValues("node", o.Node.String())
+	logger.Info("starting Docker node observer")
 	if err := o.observe(ctx); err != nil {
+		logger.Error(err, "initial Docker node observation failed")
 		return err
 	}
 	ticker := time.NewTicker(nodeObserveInterval)
@@ -47,8 +51,10 @@ func (o *NodeObserver) Start(ctx context.Context) error {
 			if err := o.observe(ctx); err != nil {
 				// A transient Docker outage should make the Node stale through the
 				// control-plane heartbeat rather than terminate the Agent process.
+				logger.Error(err, "Docker node observation failed")
 				continue
 			}
+			logger.V(1).Info("Docker node observation completed")
 		}
 	}
 }
@@ -78,8 +84,6 @@ func (o *NodeObserver) observe(ctx context.Context) error {
 	} else if host := info.Name; host != "" {
 		desired.Status.Addresses = []corev1.NodeAddress{{Type: corev1.NodeHostName, Address: host}}
 	}
-	desired.Status.Phase = api.NodeOnline
-	desired.Status.Reason = "DockerEngineReady"
 	capacity := corev1.ResourceList{
 		corev1.ResourceCPU:    *resource.NewQuantity(int64(info.NCPU), resource.DecimalSI),
 		corev1.ResourceMemory: *resource.NewQuantity(info.MemTotal, resource.BinarySI),
@@ -108,8 +112,6 @@ func (o *NodeObserver) observe(ctx context.Context) error {
 	before := node.DeepCopy()
 	// Preserve controller-owned reservations and any unrelated status fields.
 	merged := node.Status
-	merged.Phase = desired.Status.Phase
-	merged.Reason = desired.Status.Reason
 	merged.Addresses = desired.Status.Addresses
 	merged.Capacity = desired.Status.Capacity
 	merged.Allocatable = desired.Status.Allocatable

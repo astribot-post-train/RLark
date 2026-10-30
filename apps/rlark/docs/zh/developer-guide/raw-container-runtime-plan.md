@@ -150,3 +150,9 @@ root 进程测试覆盖脱离会话后代清理、无关进程保护、重复启
 当前只允许规范可执行路径。Python venv 的符号链接解析后可能失去 venv 的 `sys.prefix` 和包搜索路径；本次探针显式设置已准备环境的 `PYTHONPATH` 和 `PATH`，不能据此宣称直接传 venv 链接即可运行。正式环境适配还需验证 Python 前缀和依赖解析。
 
 新增故障测试覆盖运行中 socket 重连、忽略 SIGTERM 后等待 30 秒再强制停止，以及结果持久化失败。结果落盘失败返回 Unknown、`cleaned=false`，恢复磁盘后重复 Stop 也不释放节点；重启只读取原持久化意图并继续阻塞。
+
+## Docker Agent 验证
+
+Docker 预览路径已用 root Agent、宿主机 Docker socket 和 Docker Engine API 1.44+ 验证。验证覆盖 Agent 启动、Node 容量与 incarnation 观测、持久化预留校验、容器所有权及可重试清理。真实多主机 GPU Ray 训练、Gateway 日志/stats 路由、systemd 安装包生成和按设备 UUID 分配仍不属于已完成契约。
+
+单主机 Ray 冒烟 Job `docker-validation-20261030` 已成功退出（exit code 0），日志包含 `RLARK_DOCKER_SMOKE_OK`。删除 Job 后确认对应 Task、Docker 容器和 Node reservation 均已清理。当前每台 Docker 主机只接收一个 RLark Docker Task，纯 CPU Task 也遵循此约束。

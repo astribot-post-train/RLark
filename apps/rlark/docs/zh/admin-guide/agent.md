@@ -9,6 +9,8 @@ Agent 运行在每个数据面集群中。`rlarkadm` 创建的 Kubernetes 部署
 
 固定 Docker 主机使用 `--agent-type=Docker --mode=cluster` 运行一个 root Agent。Agent 直接挂载宿主机 `/var/run/docker.sock`，不使用 Docker-in-Docker；通过 `--docker-node-ip` 提供可被同一私网其他 Docker 主机访问的地址。多个 Docker Agent 可以注册到同一个逻辑 Cluster，控制面会为每个副本选择一个 Node。`rlarkadm` 当前不会为固定 Docker 主机生成 systemd 安装包，请使用宿主机 systemd 或其他进程管理器维护 Agent。
 
+内置 Docker SDK 支持 Engine API 1.44，并与 daemon 协商版本；Docker Engine 29 要求 API 1.44 或更高版本。Agent 会把 Engine 容量、私网地址和 incarnation 写入 Node status；Lease 连通性以及 Online/Offline 阶段仍由控制面观测。只有 Job、Cluster、Node UID、Engine incarnation 和持久化预留全部匹配时，Task 才会被准入。每台 Docker 主机同一时间只预留给一个 RLark Docker Task（包括纯 CPU Task）；GPU 请求按整卡分配，不支持按设备 UUID 选择或共享部分 GPU。Provider 已有容器日志和 stats 能力，但 Gateway 的 Task 日志/指标路由尚未接通。
+
 ### 前置条件
 
 - 具有 `kubectl` 访问权限的 Kubernetes 集群。
@@ -52,6 +54,8 @@ rlarkadm install -f deploy-data-plane.yaml
 多节点 Kubernetes 数据面不要在单个 Deployment 中混合 cluster 和 node 模式。`rlarkadm` 会创建正确的 Deployment、DaemonSet、证书 Secret、RBAC、Socket 挂载和容器运行时挂载。
 
 `rlarkadm` 为节点 Agent 分配独立的 `rlark-agent-node` ServiceAccount。本地集群 RBAC 仅允许读取当前 Node 以及列出和监听 Node Event，不会继承集群 Agent 的资源管理权限。
+
+Docker 和 Raw Agent 在最终准入前通过 Server 的受限 Kubernetes 代理读取所属 Cluster 和 Job。Agent ServiceAccount 不会获得集群范围的 `jobs` 或 `clusters` RBAC；代理只返回该 Agent 命名空间对应的唯一 Cluster，以及存在控制器归属且绑定匹配 Task 的 Job。这个只读校验会在产生外部工作负载副作用前重新执行。
 
 ### 验证
 

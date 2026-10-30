@@ -111,3 +111,20 @@ func TestPodOwningKind(t *testing.T) {
 	assert.Equal(t, "", podOwningKind(&corev1.Pod{}))
 	assert.Equal(t, "", podOwningKind(&corev1.Node{}))
 }
+
+type emptyRuntimeReconciler struct{}
+
+func (emptyRuntimeReconciler) KubernetesResource() KubernetesResource { return KubernetesResource{} }
+func (emptyRuntimeReconciler) AsPullReconciler() KubernetesReconciler { return nil }
+func (emptyRuntimeReconciler) AsKubePushReconcilers() map[KubernetesResource]KubernetesReconciler {
+	return nil
+}
+func (emptyRuntimeReconciler) AsDockerPushReconcilers() map[DockerResource]DockerReconciler {
+	return nil
+}
+func (emptyRuntimeReconciler) AsRawPushReconcilers() map[RawResource]RawReconciler { return nil }
+
+func TestSetupPushControllerAllowsRuntimeWithoutPushReconcilers(t *testing.T) {
+	c := Controller{C: emptyRuntimeReconciler{}, AgentType: "Docker", LocalDockerClient: struct{}{}}
+	assert.NoError(t, c.SetupPushController(struct{}{}))
+}

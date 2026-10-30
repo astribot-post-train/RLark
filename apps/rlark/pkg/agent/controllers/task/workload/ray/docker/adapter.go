@@ -49,7 +49,7 @@ func (Adapter) Inventory(ctx context.Context, request workload.InventoryRequest)
 	if request.Runtime.Kind != dockerruntime.RuntimeKind || request.Carrier.Type != dockerruntime.CarrierType || request.Carrier.Version != dockerruntime.CarrierVersion {
 		return workload.Inventory{}, fault.New(fault.InvalidArgument, "Docker Ray carrier is required")
 	}
-	return workload.Inventory{Candidates: []rt.ObjectCandidate{{Kind: dockerruntime.ContainerKind, Namespace: request.Task.Logical.Namespace, Name: dockerContainerName(request.Task), Ownership: rt.ResourceOwnership{Scope: rt.IdentityTaskIncarnation, OwnerKey: request.Task.ObjectUID}, Lifecycle: rt.LifecycleDeleteOnTaskCleanup}}}, nil
+	return workload.Inventory{Candidates: []rt.ObjectCandidate{{Kind: dockerruntime.ContainerKind, Namespace: request.Task.Logical.Namespace, Name: request.Task.Logical.Name, Ownership: rt.ResourceOwnership{Scope: rt.IdentityTaskIncarnation, OwnerKey: request.Task.ObjectUID}, Lifecycle: rt.LifecycleDeleteOnTaskCleanup}}}, nil
 }
 
 func (Adapter) Compile(ctx context.Context, request workload.CompileRequest) (executionplan.Plan, error) {
@@ -163,6 +163,9 @@ func resources(resources corev1.ResourceRequirements) (int64, int64, int64, erro
 	if !cpu.IsZero() && cpu.Sign() < 0 || !memory.IsZero() && memory.Sign() < 0 || !gpu.IsZero() && gpu.Sign() < 0 {
 		return 0, 0, 0, fault.New(fault.InvalidArgument, "Docker resources must not be negative")
 	}
+	if gpu.MilliValue()%1000 != 0 {
+		return 0, 0, 0, fault.New(fault.InvalidArgument, "Docker GPU requests must be whole cards")
+	}
 	return cpu.MilliValue(), memory.Value(), gpu.Value(), nil
 }
 
@@ -173,15 +176,26 @@ func dockerCommand(main corev1.Container, params taskapi.RayExecutionParametersV
 	}
 	start := "ray start --block --port=${RLARK_RAY_PORT}"
 	if params.Role == taskapi.RayRoleHead {
-		start = "ray start --head --port=${RLARK_RAY_PORT}"
+		// Ray 2.x rejects port 0 for the client server even when the client
+		// service is not used. Keep it on a deterministic companion port so
+		// host-networked Docker jobs do not rely on an arbitrary bind.
+		start = fmt.Sprintf("ray start --head --port=${RLARK_RAY_PORT} --include-dashboard=false --dashboard-port=0 --ray-client-server-port=%d", port+1)
 	} else {
 		start = "ray start --address=${RLARK_HEAD_ADDRESS}:${RLARK_RAY_PORT} --block"
 	}
+	cpu, _, gpu, _ := resources(main.Resources)
+	if cpu > 0 {
+		start += " --num-cpus=" + strconv.FormatFloat(float64(cpu)/1000, 'f', -1, 64)
+	}
+	start += " --num-gpus=" + strconv.FormatInt(gpu, 10)
 	if params.Prepare != nil && strings.TrimSpace(params.Prepare.Inline) != "" {
 		start = params.Prepare.Inline + "\n" + start
 	}
 	if params.Run != nil && strings.TrimSpace(params.Run.Inline) != "" {
 		start += "\n" + params.Run.Inline
+	}
+	if params.Role == taskapi.RayRoleHead && params.Run == nil && len(main.Command) == 0 {
+		start += "\ntail -f /dev/null"
 	}
 	if params.Run == nil && len(main.Command) > 0 {
 		start += "\nexec " + shellJoin(append(main.Command, main.Args...))
