@@ -62,16 +62,17 @@ Implemented boundaries:
 - `raw.NodeAdmission` re-reads the Task, owning Job and all reservations. It rejects direct Tasks, stale generations, suspension, replacement containers, wrong tenant and incomplete groups. The caller must use an uncached privileged management client; production credential/RBAC wiring remains pending.
 - `raw.Provider` implements the existing Runtime Provider and inventory contracts. It delegates starts and cleanup to an independent supervisor; unconfirmed cleanup remains in progress. Raw Host claimant identities require the exact node UID and never adopt legacy claims.
 - `raw.NewCoordinator` and `raw.NewHost` assemble explicit workload adapters, versioned process-carrier decoding, node-scoped claims, execution and status through the existing framework. Process manifests contain typed API metadata whose namespace/name/UID must match the Task; validation and lowering have no process effects. Host restart, duplicate reconciliation, sibling-node isolation and suspension cleanup are tested. No built-in Ray adapter, watch/resync loop or production entrypoint is registered. Unknown observations project to `Pending` with `ExecutionKnown=False` and the observed Task generation; this does not prove the process has stopped.
-- The Linux supervisor persists intent before starting, uses atomic cgroup placement, records results, and only accepts Task identity on a private Unix socket. Agent client reconnection is tested. A supervisor restart marks uncertain persisted work Unknown and blocks reuse; it does not adopt PIDs.
+- The Linux supervisor persists intent before starting, supports explicit cgroup and trusted-root process-tree backends, records results, and only accepts Task identity on a private Unix socket. Agent client reconnection is tested. A supervisor restart marks uncertain persisted work Unknown and blocks reuse; it does not adopt PIDs.
 
 ### Experimental supervisor prerequisites and build
 
-Build with `make -C apps/rlark raw-supervisor`. This target is opt-in and does not imply Raw Agent support. The service requires Linux with cgroup v2, `cgroup.kill` and kernel support for atomic `CLONE_INTO_CGROUP` placement. The operator must provide a writable delegated subtree and a distinct nonroot workload UID/GID. Workload processes must not be able to migrate to other cgroups, write cgroup control files, read node credentials, or write supervisor state/socket paths. An ordinary cloud container may lack these permissions; test delegation first, without giving the container a Docker socket or assuming that privileged mode is acceptable.
+Build with `make -C apps/rlark raw-supervisor`. This target is opt-in and does not imply Raw Agent support. The default `cgroup` backend requires Linux with cgroup v2, `cgroup.kill` and kernel support for atomic `CLONE_INTO_CGROUP` placement. The operator must provide a writable delegated subtree and a distinct nonroot workload UID/GID. Workload processes must not be able to migrate to other cgroups, write cgroup control files, read node credentials, or write supervisor state/socket paths. An ordinary cloud container may lack these permissions; test delegation first, without giving the container a Docker socket or assuming that privileged mode is acceptable.
 
 The strict JSON configuration passed to `bin/raw-supervisor --config /private/supervisor.json` uses these fields:
 
 ```json
 {
+  "backend": "cgroup",
   "stateDirectory": "/var/lib/rlark-supervisor",
   "executables": ["/usr/bin/python3.12"],
   "workDirectories": ["/workspace/training"],
@@ -82,7 +83,7 @@ The strict JSON configuration passed to `bin/raw-supervisor --config /private/su
 }
 ```
 
-Paths must exist and be canonical absolute paths, including resolving executable symlinks before configuration. The state directory is private (0700), outside workload paths, and retained across Agent restarts. No Agent/supervisor environment is inherited by training. Authorized executable files and their parent directories must remain protected from workload replacement; path allowlisting alone does not establish file integrity. The service accepts an explicit environment and runs the configured executable as the workload UID/GID. The Unix socket is 0600; only the trusted local Agent identity may use it. Authentication/authorization for remote logs is not supplied by this socket.
+Paths must exist and be canonical absolute paths, including resolving executable symlinks before configuration. The state directory is private (0700), outside workload paths, and retained across Agent restarts. No Agent/supervisor environment is inherited by training. Authorized executable files and their parent directories must remain protected from workload replacement; path allowlisting alone does not establish file integrity. The cgroup backend accepts an explicit environment and runs the configured executable as the workload UID/GID. The process-tree backend runs trusted workloads as root; private filesystem modes are not a security boundary against those workloads. The Unix socket is 0600; only the trusted local Agent identity may use it. Authentication/authorization for remote logs is not supplied by this socket.
 
 Current logs retain only the first `logBytes` bytes per execution and discard excess while draining process output; rotation, tail, since, follow and Gateway routing are not implemented. Records and per-execution cgroup directories are not automatically garbage-collected. Do not remove active or uncertain records to bypass ownership checks. A supervisor stop/restart while work is active can leave uncertain descendants; use container/platform lifecycle evidence and an audited recovery procedure before provisioning a fresh node incarnation. The current code deliberately has no force-release/recover endpoint. Checkpoints outside private supervisor state are not deleted by this supervisor.
 
@@ -94,7 +95,7 @@ Current logs retain only the first `logBytes` bytes per execution and discard ex
 4. Implement typed Ray configuration, preflight/ready barriers, bounded deadlines, per-network-scope port reservations, exact membership and training result reporting. No training before every assigned member is verified. Distinguish Unknown from failed, and stop all assigned members on confirmed group failure.
 5. Complete cleanup/retry ownership: retain reservations until every supervisor confirms cleanup, including Job deletion/restart and partially dispatched groups. Add auditable operator recovery for supervisor loss; absence of a heartbeat never releases capacity.
 6. Add the foreground enrollment/start package, authorized log route and bounded retention, resource observations, UI capability gates and per-replica progress. Add executable EN/ZH deployment and training examples only when this route works.
-7. Run two prepared containers with the actual delegated cgroups, authorized GPU UUIDs and supported Ray/RLinf versions. Verify busy ports, descendant cleanup, Agent restart, supervisor loss, network loss, head/worker failure and retained checkpoints. These platform tests have not been run locally.
+7. Run two prepared containers with the explicitly chosen supervision backend, authorized GPU UUIDs and supported Ray/RLinf versions. Verify busy ports, descendant cleanup, Agent restart, supervisor loss, network loss, head/worker failure and retained checkpoints. These platform tests have not been run locally.
 
 ### Local validation evidence
 
@@ -106,13 +107,46 @@ The previously identified development container was inspected over its existing 
 
 | Probe | Observed result | Consequence |
 | --- | --- | --- |
-| Kernel and cgroup | Linux 5.15; cgroup v2 mounted read-only | Creating a child cgroup fails with `EROFS`; the current supervisor cannot run on this container. Presence of `cgroup.kill` alone is insufficient. |
+| Kernel and cgroup | Linux 5.15; cgroup v2 mounted read-only | Creating a child cgroup fails with `EROFS`; the cgroup backend cannot run on this container. Presence of `cgroup.kill` alone is insufficient. |
 | CPU and memory boundary | CPU affinity: 192; `cpu.max`: `12000000 100000`; `memory.max`: `1523639648256` | Affinity alone overstates effective CPU capacity; the quota is 120 CPU equivalents. |
 | GPU visibility | `nvidia-smi` lists six H100 80GB devices | Device enumeration works, but visibility does not establish allocation authorization. No GPU execution was attempted. |
-| Default Python | `ray`, `torch` and `rlinf` distributions absent from the inspected interpreter; no `ray` on PATH | This interpreter is not a prepared training environment. Other custom environments have not been exhaustively searched. |
+| Default Python | `ray`, `torch` and `rlinf` distributions absent from the inspected interpreter; no `ray` on PATH | This interpreter is not a prepared training environment. Follow-up inspection found prepared environments; see below. |
 | CPU subprocess | A short Python child exits successfully | Ordinary process execution works. |
 | User/PID namespace | `unshare --user --map-root-user --pid --fork` succeeds | A possible alternative isolation boundary exists; it is not implemented by this supervisor. |
 | Namespace descendant cleanup | Namespace PID 1 exits; its child creates a new session; parent verifies no surviving non-zombie processes by PID/start time | The kernel cleaned up the tested CPU descendants despite `setsid`. This is a feasibility probe, not Ray/GPU acceptance or a production ownership/recovery implementation. |
 | Private proc mount | Combined user/mount/PID namespace with `--mount-proc` fails on filesystem propagation with `EPERM` | Do not assume mounting a private `/proc` is permitted. A namespace implementation needs a separate design and validation. |
 
 The available notebook-list response did not identify this SSH endpoint, so its platform GPU entitlement remains unverified. Do not infer an authorized GPU allowlist from the six visible UUIDs. The current cgroup supervisor is blocked on this target. Continue production integration only after an execution boundary compatible with the actual container is implemented and tested; do not silently fall back to process-group-only cleanup, privileged mode, or host cgroup remounting.
+
+### Trusted-root process-tree backend
+
+The approved cloud-container mode runs the Agent, service, dedicated execution worker and training as root, retaining the container's original PID namespace and `/proc`. Select it explicitly; cgroup preflight failure never activates it automatically. It requires Linux subreapers, pidfd operations, a matching `/proc`, and a trusted workload. There is no extra container, mount namespace, UID separation or task-level CPU/memory hard limit; the outer cloud container remains the resource boundary. One container is occupied by one Task until cleanup is proven. Root training can modify service files or credentials: this is not a sandbox or a mutually untrusted multi-tenant execution boundary.
+
+Build `raw-supervisor`, resolve its installed path and Python symlinks, create the working directory and pass this configuration (replace paths with actual canonical paths):
+
+```json
+{
+  "backend": "process-tree",
+  "workerExecutable": "/usr/local/bin/raw-supervisor",
+  "stateDirectory": "/var/lib/rlark-supervisor",
+  "executables": ["/usr/local/bin/python3.11"],
+  "workDirectories": ["/workspace/training"],
+  "logBytes": 10485760
+}
+```
+
+`workloadUID` and `workloadGID` must be omitted or zero; `cgroupDirectory` must be omitted. Unknown backends or mixed credentials/cgroup settings are rejected. The worker executable is the same installed `raw-supervisor` binary; its `--process-tree-worker` mode is internal and requires inherited protocol descriptors, not a user workload CLI. Restarting the Agent reconnects to the existing service socket; do not restart the service as part of an Agent restart.
+
+For each execution, the service persists intent and launches one dedicated worker. That worker enables subreaping before starting training, accepts an explicit environment and retains the original `/proc`. Only kernel-proven child relationships authorize signals. During cleanup it opens pidfds, verifies child ownership using `waitid(P_PIDFD)` before signalling and repeatedly terminates/reaps adopted descendants. It confirms completion only on `ECHILD`, not an empty process-name/PID scan. It does not kill by root UID, command name, port, process group, global `ray stop`, or `pkill`. Normal main-process exit still triggers descendant cleanup. A stop request gives the main process 30 seconds after SIGTERM, then uses SIGKILL; main termination and descendant cleanup each have a 30-second confirmation bound. Failure to confirm either blocks reuse.
+
+A successful worker outcome and normal worker exit must both be observed before the service persists `cleaned=true`. A missing/malformed outcome, worker death, interrupted intent or uncertain persistence keeps the execution occupied. Restarted services never adopt old process IDs, even if the worker might still exist. Recover uncertain executions through verified platform container replacement; there is no force-release endpoint. Host boot ID and Agent restart alone do not prove container replacement. Checkpoints outside service state remain untouched. Agent loss does not instruct the worker to kill training, but loss of the service itself is not transparently recoverable.
+
+Follow-up cloud probes located Python 3.11.16 environments: `/root/fleet/venv/bin/python` has Ray 2.59.0, PyTorch 2.10.0 and RLinf 0.4.0; `/opt/rl_dashboard_bundle/env/bin/python` has Ray 2.56.1 and PyTorch 2.7.0. User/PID namespaces can run CPU Ray tasks but yield psutil PID errors against the inherited `/proc`; even `include_dashboard=False` starts some background services. Private proc and tmpfs mounts also fail at temporary mount points. The selected process-tree backend avoids this mismatch. GPU visibility is confirmed, GPU entitlement and real GPU/multi-container training remain unverified. Resolve Python executable symlinks before authorizing any environment.
+
+The root process tests cover detached descendants, unrelated-process preservation, duplicate ensure/stop, completed-result recovery and missing-outcome recovery. These tests do not complete production Agent registration, scoped authorization, Job replica dispatch, Ray barriers, authorized logs or UI integration. Until those are wired and end-to-end tested, the delivery checklist remains incomplete.
+
+Actual cloud-container acceptance: the newly built supervisor ran the process-tree backend as root and started a Ray 2.59.0 CPU task (1 CPU, 0 GPUs) through its private socket. The task returned `{value:45, uid:0}` and finished `Succeeded` with `cleaned=true`. Duplicate Ensure reused the execution; every Observe used a new connection. Stop returned a deletion tombstone only after confirmed cleanup. No dependencies were installed and no GPU computation was run. This does not validate the complete RLark Job/Agent route.
+
+Only canonical executable paths are currently accepted. Resolving a Python venv symlink can lose the venv `sys.prefix` and package search path; the probe explicitly supplied `PYTHONPATH` and `PATH` for the prepared environment. It does not prove that passing the venv symlink directly works. Production environment adaptation must still validate the Python prefix and dependency resolution.
+
+Additional failure tests cover socket reconnection during execution, escalation after the full 30-second SIGTERM grace period, and result persistence failure. A failed result write returns Unknown with `cleaned=false`; repeated Stop after storage recovery cannot release the node. Restart reads the original durable intent and remains blocked.

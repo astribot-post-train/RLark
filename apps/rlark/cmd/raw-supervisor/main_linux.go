@@ -43,7 +43,15 @@ func run(ctx context.Context, path string) error {
 
 func main() {
 	config := flag.String("config", "", "private JSON configuration file (required)")
+	worker := flag.Bool("process-tree-worker", false, "internal dedicated execution worker (inherited protocol FDs required)")
 	flag.Parse()
+	if *worker {
+		if err := supervision.RunProcessTreeWorker(); err != nil {
+			slog.Error("Raw process-tree cleanup unconfirmed", "error", err)
+			os.Exit(1)
+		}
+		return
+	}
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer cancel()
 	if *config == "" {
