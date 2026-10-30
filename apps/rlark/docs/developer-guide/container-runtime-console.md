@@ -244,6 +244,14 @@ evidence changed. Python/PyTorch/Ray and CUDA `42.0` remained available; the old
 node was normally retired and a new exact registration/package created. This
 operator recovery is separate from Agent binary rollout and is not automatic.
 
+The replacement package was subsequently installed in separate private
+directories and its temporary reverse tunnel restored. The current Agent reports
+`preview-4b8258c`, Ready and schedulable with one authorized GPU. The real
+`TestCloudRawLifecycle` rerun passed success, GPU reuse, exit-code-7 failure and
+suspension in 165.10 seconds; its Tasks, bindings and allocations were removed
+normally. This remains single-node Raw acceptance, with no Docker socket or
+multi-node Ray/RLinf validation.
+
 
 ## Bounded Raw log preview
 
