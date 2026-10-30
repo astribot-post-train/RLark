@@ -24,6 +24,8 @@
 
 状态阶段枚举中，`Pod.status.phase` 支持 `Pending`、`Running`、`Succeeded`、`Failed`、`Unknown`；`Node.status.phase` 支持 `Online`、`Offline`；`Cluster.status.phase` 支持 `Online`、`Offline`、`Downgraded`、`Cordoned`、`Draining`；`Node.spec.agentType` 支持 `Kubernetes`、`Docker`、`Raw`。
 
+Raw 实验字段包括 Agent 观测的 `Node.status.raw`（容器实例、训练 IP、私网范围、环境及授权 GPU UUID）、控制器维护的 `Node.status.reservation`（整组独占预留）和 `Task.spec.placement.binding`（绑定 Task/Node UID、容器实例、Job、执行及预留身份）。仅有预留或绑定不能授权启动，准入还需实时验证所属 Job 和全部同组 Task。心跳失联或清理结果未知不能释放预留。这些字段尚未接入生产 Raw Agent 或 Ray/RLinf 调度，服务端字段所有权及节点凭证隔离仍待实现；不要根据 schema 推断运行时已支持。当前实现、前置条件与剩余交付项见 [固定 GPU 容器 Raw 运行时计划](../developer-guide/raw-container-runtime-plan.md)。
+
 Gateway 不会原样透传这套完整 API：它实际只开放部分资源和方法，且没有 collection delete（集合删除）或 `/status` 路由；因此不能根据本页推断 Gateway 存在同名接口。Gateway 的准确路由边界请查阅 [Gateway API 参考](../api/reference.md)，完整字段和底层操作请查阅 [英文生成参考](../../reference/crd.md)。
 
 ## 生成来源与维护方式
