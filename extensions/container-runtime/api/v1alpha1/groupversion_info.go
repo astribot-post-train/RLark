@@ -25,3 +25,6 @@ func init() {
 		&AgentUpgrade{}, &AgentUpgradeList{},
 	)
 }
+
+// AgentUpgradeCapability identifies the enabled scoped Linux updater protocol.
+const AgentUpgradeCapability = "agent-upgrade-v1"

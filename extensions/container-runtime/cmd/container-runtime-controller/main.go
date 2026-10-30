@@ -22,10 +22,14 @@ import (
 func main() {
 	enableReservations := flag.Bool("enable-job-reservations", false, "Opt in to preview Raw process Task reservation and single-process lifecycle aggregation")
 	enableUpgrades := flag.Bool("enable-agent-upgrade-reservations", false, "Opt in to explicit AgentUpgrade node-lock reservations; does not install Agent binaries")
+	enableRollouts := flag.Bool("enable-agent-rollouts", false, "Opt in to target-driven idle Agent upgrade selection; requires upgrade reservations and additive rollout RBAC")
 	leaderElect := flag.Bool("leader-elect", true, "Use a Kubernetes Lease for controller leadership")
 	leaderNamespace := flag.String("leader-election-namespace", "rlark-system", "Namespace for the controller leadership Lease")
 	artifactDirectory := flag.String("artifact-directory", "", "Read-only verified Agent artifact directory (optional)")
 	flag.Parse()
+	if *enableRollouts && !*enableUpgrades {
+		fail(fmt.Errorf("enable-agent-rollouts requires enable-agent-upgrade-reservations"))
+	}
 	if *leaderNamespace == "" {
 		fail(fmt.Errorf("leader-election-namespace is required"))
 	}
@@ -74,6 +78,15 @@ func main() {
 			fail(fmt.Errorf("create uncached Agent upgrade client: %w", err))
 		}
 		if err := (&containercontroller.AgentUpgradeReconciler{Client: direct}).SetupWithManager(mgr); err != nil {
+			fail(err)
+		}
+	}
+	if *enableRollouts {
+		direct, err := client.New(config, client.Options{Scheme: scheme})
+		if err != nil {
+			fail(fmt.Errorf("create uncached Agent rollout client: %w", err))
+		}
+		if err := (&containercontroller.AgentRolloutReconciler{Client: direct}).SetupWithManager(mgr); err != nil {
 			fail(err)
 		}
 	}

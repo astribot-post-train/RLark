@@ -54,16 +54,17 @@ type UpgradeRelease struct {
 // UpgradeResponse is a bounded assignment/operation view. It is not an
 // installation grant until claim succeeds.
 type UpgradeResponse struct {
-	Granted         bool                        `json:"granted"`
-	Operation       ext.NativeObjectReference   `json:"operation"`
-	Allocation      *ext.NativeObjectReference  `json:"allocation,omitempty"`
-	Phase           string                      `json:"phase"`
-	AttemptID       string                      `json:"attemptID,omitempty"`
-	ResourceVersion string                      `json:"resourceVersion"`
-	StartedAt       *metav1.Time                `json:"startedAt,omitempty"`
-	Release         UpgradeRelease              `json:"release"`
-	FromVersion     string                      `json:"fromVersion"`
-	Completion      *ext.AgentUpgradeCompletion `json:"completion,omitempty"`
+	Granted               bool                        `json:"granted"`
+	Operation             ext.NativeObjectReference   `json:"operation"`
+	Allocation            *ext.NativeObjectReference  `json:"allocation,omitempty"`
+	Phase                 string                      `json:"phase"`
+	AttemptID             string                      `json:"attemptID,omitempty"`
+	ResourceVersion       string                      `json:"resourceVersion"`
+	StartedAt             *metav1.Time                `json:"startedAt,omitempty"`
+	Release               UpgradeRelease              `json:"release"`
+	FromVersion           string                      `json:"fromVersion"`
+	Completion            *ext.AgentUpgradeCompletion `json:"completion,omitempty"`
+	AcknowledgedAttemptID string                      `json:"acknowledgedAttemptID,omitempty"`
 }
 
 func upgradeRef(o metav1.Object) ext.NativeObjectReference {
@@ -96,7 +97,7 @@ func (r Reporter) upgradeState(ctx context.Context, id Identity, request Upgrade
 }
 
 func (r Reporter) upgradeResponse(op *ext.AgentUpgrade, allocation *ext.ContainerAllocation) *UpgradeResponse {
-	response := &UpgradeResponse{Operation: upgradeRef(op), Phase: op.Status.Phase, AttemptID: op.Status.AttemptID, ResourceVersion: op.ResourceVersion, StartedAt: op.Status.StartedAt, Release: upgradeRelease(op.Spec.ReleaseSpec, op.Spec.Release), FromVersion: op.Spec.FromVersion, Completion: op.Status.Completion}
+	response := &UpgradeResponse{Operation: upgradeRef(op), Phase: op.Status.Phase, AttemptID: op.Status.AttemptID, ResourceVersion: op.ResourceVersion, StartedAt: op.Status.StartedAt, Release: upgradeRelease(op.Spec.ReleaseSpec, op.Spec.Release), FromVersion: op.Spec.FromVersion, Completion: op.Status.Completion, AcknowledgedAttemptID: op.Status.AcknowledgedAttemptID}
 	if allocation != nil {
 		ref := upgradeRef(allocation)
 		response.Allocation = &ref
@@ -149,6 +150,25 @@ func (r Reporter) Upgrade(ctx context.Context, id Identity, request UpgradeReque
 		return r.upgradeResponse(op, allocation), nil
 	}
 	if request.Action == "complete" && companion.ValidUpgradeCompletion(op) && request.Allocation == *op.Status.Allocation && request.AttemptID == op.Status.AttemptID && request.Result == op.Status.Completion.Result && request.Version == op.Status.Completion.Version {
+		return r.upgradeResponse(op, allocation), nil
+	}
+	if request.Action == "acknowledge" {
+		if !companion.ValidUpgradeCompletion(op) || request.Allocation != *op.Status.Allocation || request.AttemptID != op.Status.AttemptID || request.Result != op.Status.Completion.Result || request.Version != op.Status.Completion.Version {
+			return nil, ErrUpgradeConflict
+		}
+		if err := r.freshUpgradeObservation(node, request.Version, op.Status.StartedAt); err != nil {
+			return nil, err
+		}
+		if op.Status.AcknowledgedAttemptID != "" && op.Status.AcknowledgedAttemptID != request.AttemptID {
+			return nil, ErrUpgradeConflict
+		}
+		if op.Status.AcknowledgedAttemptID == "" {
+			before := op.DeepCopy()
+			op.Status.AcknowledgedAttemptID = request.AttemptID
+			if err := r.Client.Status().Patch(ctx, op, client.MergeFromWithOptions(before, client.MergeFromWithOptimisticLock{})); err != nil {
+				return nil, err
+			}
+		}
 		return r.upgradeResponse(op, allocation), nil
 	}
 	if allocation == nil || op.Status.Allocation == nil || !sameUpgradeRef(*op.Status.Allocation, upgradeRef(allocation)) || !sameUpgradeRef(request.Allocation, upgradeRef(allocation)) {
@@ -284,14 +304,14 @@ func validateUpgradeRequest(req UpgradeRequest) error {
 		if req.Allocation.Namespace == "" || req.Allocation.Name == "" || req.Allocation.UID == "" || req.AttemptID != "" || req.ResourceVersion != "" || req.Result != "" || req.Version != "" || req.Idle != nil {
 			return ErrCapability
 		}
-	case "claim", "complete":
+	case "claim", "complete", "acknowledge":
 		if !companion.ValidUpgradeAttempt(req.AttemptID) || req.Allocation.Namespace == "" || req.Allocation.Name == "" || req.Allocation.UID == "" {
 			return ErrCapability
 		}
 		if req.Action == "claim" && (req.ResourceVersion == "" || req.Result != "" || req.Version != "" || req.Idle != nil) {
 			return ErrCapability
 		}
-		if req.Action == "complete" && (req.ResourceVersion != "" || req.Idle == nil || !*req.Idle || req.Result != "Succeeded" && req.Result != "RolledBack") {
+		if (req.Action == "complete" || req.Action == "acknowledge") && (req.ResourceVersion != "" || req.Idle == nil || !*req.Idle || req.Result != "Succeeded" && req.Result != "RolledBack") {
 			return ErrCapability
 		}
 	default:

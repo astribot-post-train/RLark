@@ -143,6 +143,68 @@ spec:
                   - type
                   type: object
                 type: array
+              lastAgentUpgrade:
+                description: |-
+                  LastAgentUpgrade is the latest verified successful rollout receipt, not
+                  an unbounded operation history. Only the rollout controller writes it.
+                properties:
+                  completedAt:
+                    format: date-time
+                    type: string
+                  nodeRecord:
+                    description: |-
+                      ObservedObjectReference identifies an observed instance in replaceable Status
+                      snapshots. It intentionally has no immutable-Spec transition validation.
+                    properties:
+                      name:
+                        type: string
+                      namespace:
+                        type: string
+                      uid:
+                        type: string
+                    required:
+                    - name
+                    - uid
+                    type: object
+                  operation:
+                    description: |-
+                      ObservedObjectReference identifies an observed instance in replaceable Status
+                      snapshots. It intentionally has no immutable-Spec transition validation.
+                    properties:
+                      name:
+                        type: string
+                      namespace:
+                        type: string
+                      uid:
+                        type: string
+                    required:
+                    - name
+                    - uid
+                    type: object
+                  release:
+                    description: |-
+                      ObservedObjectReference identifies an observed instance in replaceable Status
+                      snapshots. It intentionally has no immutable-Spec transition validation.
+                    properties:
+                      name:
+                        type: string
+                      namespace:
+                        type: string
+                      uid:
+                        type: string
+                    required:
+                    - name
+                    - uid
+                    type: object
+                  sha256:
+                    type: string
+                required:
+                - completedAt
+                - nodeRecord
+                - operation
+                - release
+                - sha256
+                type: object
               observedGeneration:
                 format: int64
                 type: integer

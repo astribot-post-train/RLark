@@ -61,6 +61,10 @@ type Observation struct {
 	Busy            bool              `json:"busy"`
 }
 
+// UpgradeCapability is advertised only by agents built with the scoped,
+// authenticated updater. The scheduler never infers it from a Raw runtime.
+const UpgradeCapability = ext.AgentUpgradeCapability
+
 // Reporter writes Agent-owned status using an uncached client. It never edits
 // Spec, native Nodes, allocations, or another Agent's identity.
 type Reporter struct {

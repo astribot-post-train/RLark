@@ -94,6 +94,16 @@ func (r AgentUpgradeReconciler) complete(ctx context.Context, op *ext.AgentUpgra
 	if !companion.ValidUpgradeCompletion(op) || !controllerutil.ContainsFinalizer(op, companion.UpgradeFinalizer) || op.Status.Phase != "Applying" && op.Status.Phase != op.Status.Completion.Result {
 		return ctrl.Result{}, companion.ErrIdentity
 	}
+	// The current-generation terminal proof was written only after observing
+	// this operation's allocation disappear. A later workload may now hold the
+	// same node key. Never inspect or mutate that replacement while finalizing
+	// this already-completed operation.
+	if op.Status.Phase == op.Status.Completion.Result && currentCondition(op.Status.Conditions, op.Generation, "AllocationReleased") {
+		if !op.DeletionTimestamp.IsZero() {
+			return r.removeFinalizer(ctx, op)
+		}
+		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+	}
 	// ObserveUpgrade deliberately returns a nil allocation for a replacement at
 	// the deterministic name. That is safe for Agent reads, but a controller
 	// must never treat a replacement as deletion of its witnessed lock.

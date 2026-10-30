@@ -118,7 +118,7 @@ func run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 		defer updater.Close()
 		cfg.Version = updater.Version()
 	}
-	observer := agent.LocalObserver{Version: cfg.Version, PrivateAddress: cfg.PrivateAddress, NvidiaSMI: cfg.NvidiaSMI, CgroupMount: cfg.CgroupMount, SupervisorSocket: cfg.SupervisorSocket}
+	observer := agent.LocalObserver{Version: cfg.Version, PrivateAddress: cfg.PrivateAddress, NvidiaSMI: cfg.NvidiaSMI, CgroupMount: cfg.CgroupMount, SupervisorSocket: cfg.SupervisorSocket, EnableUpgrades: cfg.EnableUpgrades}
 	defer client.HTTPClient.CloseIdleConnections()
 	if cfg.EnableExecution {
 		supervisor, err := supervision.NewClient(cfg.SupervisorSocket)

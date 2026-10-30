@@ -7,6 +7,8 @@ import (
 	"github.com/astribot-post-train/rlark/extensions/container-runtime/pkg/runtime/raw/supervision"
 	"os"
 	"path/filepath"
+	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -142,6 +144,17 @@ func TestCloudRawObservation(t *testing.T) {
 	}
 	if observation.Busy || len(observation.VisibleGPUUUIDs) == 0 || observation.Capacity["cpu"] == "" {
 		t.Fatalf("incomplete real observation: %+v", observation)
+	}
+	if len(observation.Capabilities) != 0 {
+		t.Fatal("disabled updater advertised an upgrade capability")
+	}
+	observer.EnableUpgrades = true
+	upgradeObservation, err := observer.Observe(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(upgradeObservation.Capabilities, UpgradeCapability) || !slices.Contains(upgradeObservation.Capabilities, "agent-platform/"+runtime.GOOS+"/"+runtime.GOARCH) {
+		t.Fatal("enabled updater did not report its supported protocol and executable platform")
 	}
 	t.Logf("observed current resource boundary: cpu=%s memory=%s visibleGPUs=%d idle=%v", observation.Capacity["cpu"], observation.Capacity["memory"], len(observation.VisibleGPUUUIDs), !observation.Busy)
 	if err := service.Close(); err != nil {

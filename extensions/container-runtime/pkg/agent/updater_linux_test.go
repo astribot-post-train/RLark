@@ -68,6 +68,11 @@ func (f *fakeUpgradeTransport) upgrade(_ context.Context, req UpgradeRequest) (*
 		r := response()
 		r.Completion = &ext.AgentUpgradeCompletion{AttemptID: req.AttemptID, Result: req.Result, Version: req.Version}
 		return r, nil
+	case "acknowledge":
+		r := response()
+		r.Completion = &ext.AgentUpgradeCompletion{AttemptID: req.AttemptID, Result: req.Result, Version: req.Version}
+		r.AcknowledgedAttemptID = req.AttemptID
+		return r, nil
 	default:
 		return nil, errors.New("unexpected action")
 	}
@@ -473,5 +478,42 @@ func TestUpdaterExecHelper(t *testing.T) {
 	mustAgent(t, u.Step(context.Background(), Observation{Version: u.Version()}))
 	if u.Version() != "next" {
 		t.Fatal("source survived successful exec")
+	}
+}
+
+func TestUpdaterAcknowledgesOnlyAfterDurableJournalAndRetries(t *testing.T) {
+	f := setupUpdater(t)
+	lost := false
+	acknowledged := false
+	f.transport.hook = func(req UpgradeRequest, response *UpgradeResponse) (*UpgradeResponse, error) {
+		if req.Action == "acknowledge" {
+			data, err := os.ReadFile(filepath.Join(f.config.Paths.StateDirectory, "upgrade.json"))
+			mustAgent(t, err)
+			var journal upgradeJournal
+			mustAgent(t, json.Unmarshal(data, &journal))
+			if journal.Phase != "RolledBack" || journal.AttemptID != req.AttemptID {
+				t.Fatal("acknowledgement preceded durable exact terminal journal")
+			}
+			if !lost {
+				lost = true
+				return nil, errors.New("acknowledgement response lost")
+			}
+			acknowledged = true
+		}
+		return response, nil
+	}
+	restart := func(context.Context, string) error { return errors.New("exec failed") }
+	u := f.open(t, restart, "")
+	if err := u.Step(context.Background(), Observation{Version: "old"}); err == nil {
+		t.Fatal("exec failure missing")
+	}
+	if err := u.Step(context.Background(), Observation{Version: "old"}); err == nil || !lost {
+		t.Fatal("lost acknowledgement missing")
+	}
+	u.Close()
+	u = f.open(t, restart, "")
+	mustAgent(t, u.Step(context.Background(), Observation{Version: "old"}))
+	if !acknowledged {
+		t.Fatal("persisted journal did not retry acknowledgement")
 	}
 }

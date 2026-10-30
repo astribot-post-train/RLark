@@ -361,3 +361,57 @@ type failingUpgradeStore struct{}
 func (failingUpgradeStore) Load(context.Context, ext.AgentReleaseSpec) ([]byte, error) {
 	return nil, artifact.ErrDigest
 }
+
+func TestUpgradeJournalAcknowledgementIsScopedAndRecoversLostResponse(t *testing.T) {
+	f := newUpgradeTransportFixture(t)
+	ctx := context.Background()
+	op := readUpgradeOperation(t, f.base, client.ObjectKeyFromObject(f.op))
+	claim := UpgradeRequest{Action: "claim", Operation: upgradeObjectRef(&op), Allocation: upgradeObjectRef(f.alloc), AttemptID: "11111111-1111-1111-1111-111111111111", ResourceVersion: op.ResourceVersion}
+	_, err := f.reporter.Upgrade(ctx, f.identity, claim)
+	mustAgent(t, err)
+	idle := true
+	ack := UpgradeRequest{Action: "acknowledge", Operation: claim.Operation, Allocation: claim.Allocation, AttemptID: claim.AttemptID, Result: "Succeeded", Version: "next", Idle: &idle}
+	if _, err := f.reporter.Upgrade(ctx, f.identity, ack); !errors.Is(err, ErrUpgradeConflict) {
+		t.Fatalf("acknowledged incomplete operation: %v", err)
+	}
+	f.reporter.Now = func() time.Time { return time.Unix(101, 0) }
+	var node ext.ContainerNode
+	mustAgent(t, f.base.Get(ctx, client.ObjectKey{Namespace: f.identity.Namespace, Name: f.identity.Name}, &node))
+	mustAgent(t, f.reporter.Report(ctx, f.identity, Observation{Version: "next", PrivateAddress: node.Spec.PrivateAddress, VisibleGPUUUIDs: node.Spec.AuthorizedGPUUUIDs}))
+	complete := ack
+	complete.Action = "complete"
+	_, err = f.reporter.Upgrade(ctx, f.identity, complete)
+	mustAgent(t, err)
+	for _, change := range []func(*UpgradeRequest){func(r *UpgradeRequest) { r.AttemptID = "22222222-2222-2222-2222-222222222222" }, func(r *UpgradeRequest) { r.Allocation.UID = "replacement" }, func(r *UpgradeRequest) { r.Operation.UID = "replacement" }, func(r *UpgradeRequest) { r.Version = "other" }, func(r *UpgradeRequest) { r.Result = "RolledBack" }} {
+		wrong := ack
+		change(&wrong)
+		if _, err := f.reporter.Upgrade(ctx, f.identity, wrong); err == nil {
+			t.Fatal("foreign/mismatched acknowledgement accepted")
+		}
+	}
+	foreign := f.identity
+	foreign.CredentialID = "revoked"
+	if _, err := f.reporter.Upgrade(ctx, foreign, ack); err == nil {
+		t.Fatal("revoked credential acknowledged")
+	}
+	lost := false
+	f.reporter.Client = interceptor.NewClient(f.base.(client.WithWatch), interceptor.Funcs{SubResourcePatch: func(ctx context.Context, c client.Client, name string, o client.Object, p client.Patch, opts ...client.SubResourcePatchOption) error {
+		if err := c.SubResource(name).Patch(ctx, o, p, opts...); err != nil {
+			return err
+		}
+		if !lost {
+			lost = true
+			return errors.New("committed acknowledgement response lost")
+		}
+		return nil
+	}})
+	if _, err := f.reporter.Upgrade(ctx, f.identity, ack); err == nil || !lost {
+		t.Fatal("lost acknowledgement not injected")
+	}
+	f.reporter.Client = f.base
+	result, err := f.reporter.Upgrade(ctx, f.identity, ack)
+	mustAgent(t, err)
+	if result.AcknowledgedAttemptID != claim.AttemptID {
+		t.Fatal("same attempt did not recover acknowledgement")
+	}
+}

@@ -9,6 +9,7 @@ import (
 	"io"
 	"os/exec"
 	"regexp"
+	"runtime"
 	"strings"
 	"time"
 
@@ -23,6 +24,7 @@ type LocalObserver struct {
 	NvidiaSMI        string
 	CgroupMount      string
 	SupervisorSocket string
+	EnableUpgrades   bool
 }
 
 // Observe reads current occupancy before sending an observation. The server's
@@ -50,7 +52,11 @@ func (o LocalObserver) Observe(ctx context.Context) (Observation, error) {
 	if err != nil {
 		return Observation{}, err
 	}
-	return Observation{Version: o.Version, PrivateAddress: o.PrivateAddress, Capacity: capacity, VisibleGPUUUIDs: gpus, Busy: status.Busy}, nil
+	obs := Observation{Version: o.Version, PrivateAddress: o.PrivateAddress, Capacity: capacity, VisibleGPUUUIDs: gpus, Busy: status.Busy}
+	if o.EnableUpgrades {
+		obs.Capabilities = []string{UpgradeCapability, "agent-platform/" + runtime.GOOS + "/" + runtime.GOARCH}
+	}
+	return obs, nil
 }
 
 var gpuUUID = regexp.MustCompile(`^GPU-[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
