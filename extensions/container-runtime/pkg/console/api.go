@@ -58,6 +58,7 @@ type API struct {
 	Auth    Authenticator
 	UI      http.Handler
 	Logs    http.Handler
+	Stats   http.Handler
 	// Jobs is nil by default; workload submission requires explicit opt-in.
 	Jobs JobSubmission
 	// Registrar is nil by default; registration requires additive create RBAC.
@@ -115,6 +116,12 @@ func (a *API) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	parts := strings.Split(strings.TrimPrefix(r.URL.Path, prefix), "/")
 	switch {
+	case r.URL.Path == StatsPath && r.Method == http.MethodGet:
+		if a.Stats == nil {
+			writeError(w, 503, "unavailable", "resource snapshots disabled")
+			return
+		}
+		a.Stats.ServeHTTP(w, r)
 	case r.URL.Path == LogPath && r.Method == http.MethodGet:
 		if a.Logs == nil {
 			writeError(w, 503, "unavailable", "remote log reads are disabled")

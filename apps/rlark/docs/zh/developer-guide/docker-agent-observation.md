@@ -106,12 +106,59 @@ info/version/inventory/NVIDIA 观测失败不发送心跳，以有界退避重�
 证明。Engine 替换需先退役旧节点，再新注册/签发凭据。不要强删不确定的 allocation，
 也不要复用旧凭据。
 
+## 有界日志与资源快照
+
+诊断默认关闭。制包时同时设置 `enableDockerDiagnostics: true` 和
+`enableExecution: true`，或在上面的执行 Agent 命令中增加
+`--enable-docker-diagnostics=true`。保持 `enableLogReads: false`，该开关只用于
+Raw supervisor。Docker Agent 只有显式启用后才声明 `docker-diagnostics-v1`。
+
+为处理 Agent 轮询的同一个 API 进程配置 `--enable-task-execution=true`、
+`--log-read-addr=127.0.0.1:9446` 和
+`--gateway-jwt-key-file=/private/gateway-jwt.key`；控制台配置
+`--log-api-origin=http://127.0.0.1:9446`。回环监听器只提供管理员 GET 路由
+`/api/v1/container-runtime/logs` 与 `/api/v1/container-runtime/stats`，均严格要求
+`namespace`、`allocation`、`allocationUID`、`taskUID` 四个参数。等待前和返回前
+都校验浏览器的 Gateway 管理员 JWT。Agent 通过独立私有 mTLS
+`/v1/docker-diagnostics` poll/complete 接口读取，不接收此 JWT。Raw 保留原有
+`/v1/logs` 接口及 supervisor 语义。
+
+每 Docker 节点最多一个在途诊断请求，每 API 进程最多 32 个 Docker 请求，等待
+不超过 20 秒。API 重启会丢弃请求，需手动重试。Agent 轮询和回环读取监听器必须
+指向同一个 API 实例，不支持跨实例 broker 路由。独立 Agent worker 每个
+poll/read/complete 步骤最多十秒；读取响应正文不持有执行锁，卡住的读取不会阻碍
+清理。
+
+每个边界重新校验确切 allocation/Task/Job/绑定/Cluster/Node、租户及凭据。
+Task generation 变化、清理确认、分配释放、能力撤销及身份替换都会拒绝读取，
+包括已经进入缓冲区的结果。仅 cordon 或心跳过期不撤销保留所有权。本地读取前后
+均校验 Engine ID、journal 创建记录、Task generation、容器 ID 和所有权标签。
+本地取消后停止读取；与清理并发的结果被丢弃。所有权不明、TTY 容器、记录缺失
+或响应格式错误返回不可用，不暴露本地错误路径。工作负载输出本身可能包含秘密，
+应仅由授权管理员启用并使用此预览。
+
+日志按 Engine 顺序合并 stdout/stderr，不添加流标签、不 follow，返回当前可用
+输出的开头，解码后最多 64 KiB，并带截断标记。帧处理限制为 1 MiB 和 4096 帧。
+这不是历史归档或 tail API。资源快照是一次 Linux Engine 采样，包含 `sampledAt`
+及可选规范无符号 64 位十进制字符串：`cpuUsageNS`、`memoryUsageBytes`、
+`memoryLimitBytes`、`pids`、`blockReadBytes`、`blockWriteBytes`。缺失计数保持
+缺失，只有实际观测到零才报告零。CPU 为累计纳秒，内存和块 I/O 为字节，PID 为
+数量。stats 响应正文最多 1 MiB。单次快照不提供 CPU 百分比；GPU 利用率和
+host network 流量归属仍不可用。日志与快照均不写资源 Status 或指标数据库。
+
+独立控制台在 allocation 行提供手动读取。Docker 读取要求声明诊断和执行能力，
+且 allocation 尚未清理。未知计数显示不可用，输出作为转义文本显示。切换选择、
+退出登录、allocation 替换/清理及能力撤销会清除显示并取消旧请求。API 重启、
+daemon 不可用或已退出容器的 stats 不可用时需重新读取，不合成零值或自动重试。
+
 ## 验证与剩余范围
 
 测试覆盖 fake Engine 的响应丢失、不可变配置、所有权、整卡 UUID、取消、进程锁、
 重启、故障/恢复，以及真实 mTLS 和官方 SDK Unix socket 传输下的 Running、成功、
-失败、暂停与清理。传输测试中的 daemon 是模拟服务，不代表真实 Docker GPU 已运行。
+失败、暂停与清理。诊断测试还覆盖有界 multiplex 解码、计数缺失/零/溢出、精确 ID
+SDK 读取、凭据和能力撤销、临时 broker 重启/重试，以及正文卡住时并发清理。
+传输测试中的 daemon 是模拟服务，不代表真实 Docker GPU 已运行。
 
-限定 Docker 日志/stats、利用率、端口预留、Ray/RLinf 集群屏障、Docker 滚动升级和
+GPU 利用率、端口预留、Ray/RLinf 集群屏障、Docker 滚动升级和
 真实 GPU 主机生命周期验收仍需单独推进。host network 本身不构成多主机 Ray 契约。
 有序门槛见 [Docker 执行计划](docker-runtime-execution-plan.md)。

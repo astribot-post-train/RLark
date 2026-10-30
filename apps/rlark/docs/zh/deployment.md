@@ -557,3 +557,12 @@ kubectl get pods -n rlark-system
 ## 14. 真机设备纳管
 
 有关 GPU 节点、机器人、摄像头及其他物理设备的完整纳管流程、Embodied Runtime 配置和设备任务提交方式，请参阅[具身设备纳管指南](admin-guide/embodied-runtime.md)。
+
+## 独立容器诊断预览
+
+扩展 Docker Agent 可按需读取绑定 allocation 的日志和 Linux 资源快照。在导出
+安装包中配置 `enableExecution` 与 `enableDockerDiagnostics`。管理员读取监听器
+必须使用显式回环 IP，控制台代理与 Agent 轮询必须指向同一个 API 进程。
+此功能不新增原生 Agent 部署字段，也不表示已通过 Docker GPU 验收。完整配置和
+限制见 [Docker Agent 诊断](developer-guide/docker-agent-observation.md)
+及 [配置参考](reference/configuration.md)。

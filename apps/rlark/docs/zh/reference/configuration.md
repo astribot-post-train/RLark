@@ -345,8 +345,21 @@ Gateway 使用的对象存储后端配置。
 
 独立构建的伴生 Agent 使用单独参数：`--runtime=docker`、`--docker-host`、
 `--enable-task-execution`（默认 false）和执行时必需的 `--state-directory`。
-它通过扩展 API 支持单个不可变容器 Task，尚不支持 Ray 组。见
+它通过扩展 API 支持单个不可变容器 Task 及有界按需日志/stats，尚不支持 Ray 组。见
 [Docker Agent](../developer-guide/docker-agent-observation.md)。
+
+
+容器诊断使用以下独立扩展配置，默认均关闭：
+
+| 组件 | 配置 | 契约 |
+| --- | --- | --- |
+| Docker Agent | `--enable-docker-diagnostics=true` | 要求 Task 执行和私有持久 journal；声明 `docker-diagnostics-v1` |
+| 离线安装包 | `enableDockerDiagnostics: true` | 仅 Docker；同时设置 `enableExecution: true`；`enableLogReads` 仍只用于 Raw |
+| API | `--log-read-addr=127.0.0.1:9446` | 管理员日志/stats 的显式回环 IP HTTP 监听器；要求 `--enable-task-execution` 与 `--gateway-jwt-key-file` |
+| 控制台 | `--log-api-origin=http://127.0.0.1:9446` | 固定日志/stats 代理，必须指向 Agent 轮询所用同一 API 实例 |
+
+这些是预览配置，不是原生 Agent/rlarkadm 字段。诊断为临时读取，不提供历史归档或
+指标数据库。
 
 ### DockerEnv
 

@@ -114,17 +114,36 @@ func (a LogReadAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // NewLogProxy accepts only a configured loopback HTTP origin. The API read
 // listener is private to the control plane and revalidates the browser JWT.
 func NewLogProxy(origin string) (http.Handler, error) {
+	return newReadProxy(origin, LogPath, func(data []byte) (any, error) {
+		var snapshot raw.LogSnapshot
+		if err := json.Unmarshal(data, &snapshot); err != nil || len(snapshot.Data) > raw.MaxLogBytes {
+			return nil, errors.New("invalid log snapshot")
+		}
+		if snapshot.Data == nil {
+			snapshot.Data = []byte{}
+		}
+		return snapshot, nil
+	})
+}
+
+func newReadProxy(origin, path string, decode func([]byte) (any, error)) (http.Handler, error) {
 	u, err := url.Parse(origin)
 	if err != nil || u.Scheme != "http" || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.Path != "" && u.Path != "/" {
-		return nil, errors.New("loopback log API HTTP origin required")
+		return nil, errors.New("loopback diagnostic API HTTP origin required")
 	}
 	ip := net.ParseIP(u.Hostname())
 	if ip == nil || !ip.IsLoopback() {
-		return nil, errors.New("log API must use an explicit loopback IP")
+		return nil, errors.New("diagnostic API must use an explicit loopback IP")
 	}
-	u.Path = LogPath
+	u.Path = path
 	c := &http.Client{Timeout: 25 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		if r.URL.Path != path {
+			writeError(w, 404, "not_found", "route not found")
+			return
+		}
 		if r.Method != http.MethodGet {
 			writeError(w, 405, "method_not_allowed", "GET required")
 			return
@@ -137,30 +156,26 @@ func NewLogProxy(origin string) (http.Handler, error) {
 		u.RawQuery = r.URL.RawQuery
 		req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, u.String(), nil)
 		if err != nil {
-			writeError(w, 503, "unavailable", "log API unavailable")
+			writeError(w, 503, "unavailable", "diagnostic API unavailable")
 			return
 		}
 		req.Header.Set("Authorization", r.Header.Get("Authorization"))
 		res, err := c.Do(req)
 		if err != nil {
-			writeError(w, 503, "unavailable", "log API unavailable")
+			writeError(w, 503, "unavailable", "diagnostic API unavailable")
 			return
 		}
 		defer func() { _ = res.Body.Close() }()
 		data, err := io.ReadAll(io.LimitReader(res.Body, 128<<10))
 		if err != nil || len(data) >= 128<<10 {
-			writeError(w, 502, "invalid_response", "invalid log API response")
+			writeError(w, 502, "invalid_response", "invalid diagnostic API response")
 			return
 		}
 		if res.StatusCode == 200 {
-			var snapshot raw.LogSnapshot
-			d := json.Unmarshal(data, &snapshot)
-			if d != nil || len(snapshot.Data) > raw.MaxLogBytes {
-				writeError(w, 502, "invalid_response", "invalid log API response")
+			snapshot, err := decode(data)
+			if err != nil {
+				writeError(w, 502, "invalid_response", "invalid diagnostic API response")
 				return
-			}
-			if snapshot.Data == nil {
-				snapshot.Data = []byte{}
 			}
 			writeJSON(w, 200, snapshot)
 			return

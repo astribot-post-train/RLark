@@ -346,7 +346,20 @@ These names are the exact YAML keys accepted by `rlarkadm`.
 The independently built companion Agent has separate flags: `--runtime=docker`,
 `--docker-host`, `--enable-task-execution` (default false), and `--state-directory`
 (required for execution). It uses the extension API and supports one immutable
-container Task, not Ray groups. See [Docker Agent](../developer-guide/docker-agent-observation.md).
+container Task with bounded on-demand logs/stats, not Ray groups. See [Docker Agent](../developer-guide/docker-agent-observation.md).
+
+
+Container diagnostics use these independent-extension settings (defaults are disabled):
+
+| Component | Setting | Contract |
+| --- | --- | --- |
+| Docker Agent | `--enable-docker-diagnostics=true` | Requires task execution and private persistent journal; advertises `docker-diagnostics-v1` |
+| Offline package | `enableDockerDiagnostics: true` | Docker-only; also set `enableExecution: true`; `enableLogReads` remains Raw-only |
+| API | `--log-read-addr=127.0.0.1:9446` | Literal loopback HTTP listener for administrator logs and stats; requires `--enable-task-execution` and `--gateway-jwt-key-file` |
+| Console | `--log-api-origin=http://127.0.0.1:9446` | Fixed logs/stats proxy to the same API instance used by Agent polling |
+
+These are preview settings, not native Agent/rlarkadm fields. Diagnostics are
+transient reads; they do not add historical logs or a metrics database.
 
 ### DockerEnv
 

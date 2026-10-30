@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	ext "github.com/astribot-post-train/rlark/extensions/container-runtime/api/v1alpha1"
 	"github.com/astribot-post-train/rlark/extensions/container-runtime/pkg/controller"
@@ -23,6 +24,7 @@ import (
 	"github.com/docker/docker/api/types/system"
 	native "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
 	"github.com/rlinf/rlark/apps/rlark/pkg/agent/execution/host"
+	rt "github.com/rlinf/rlark/apps/rlark/pkg/agent/execution/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -120,6 +122,17 @@ func TestDockerScopedExecutionUnixSDKAndMTLS(t *testing.T) {
 					} else {
 						_ = json.NewEncoder(w).Encode(current)
 					}
+				case path == "/containers/container-id/logs":
+					if r.URL.Query().Get("stdout") != "1" || r.URL.Query().Get("stderr") != "1" || r.URL.Query().Get("follow") == "1" {
+						t.Error("invalid log query")
+					}
+					w.Header().Set("Content-Type", "application/vnd.docker.raw-stream")
+					_, _ = w.Write(append([]byte{1, 0, 0, 0, 0, 0, 0, 3}, []byte("ok\n")...))
+				case path == "/containers/container-id/stats":
+					if r.URL.Query().Get("stream") != "0" || r.URL.Query().Get("one-shot") != "1" {
+						t.Error("stats must be one-shot")
+					}
+					_, _ = fmt.Fprintf(w, `{"id":"container-id","read":%q,"memory_stats":{"usage":0}}`, time.Now().UTC().Format(time.RFC3339Nano))
 				case path == "/containers/container-id/start":
 					starts++
 					current.State.Status = "running"
@@ -173,6 +186,18 @@ func TestDockerScopedExecutionUnixSDKAndMTLS(t *testing.T) {
 			must(t, s.Reporter.Client.Get(ctx, client.ObjectKeyFromObject(&a.Task), &task))
 			if task.Status.Phase != native.TaskPhaseRunning || !strings.Contains(task.Annotations[host.TaskClaimantAnnotation], "/Docker/") {
 				t.Fatalf("wrong status/claim: %+v", task)
+			}
+			diagnosticProvider := &dockerruntime.ScopedProvider{Provider: &dockerruntime.Provider{Client: engine}, Journal: journal, EngineID: id.InstanceID}
+			diagnosticTask := rt.TaskIdentity{Logical: rt.LogicalTaskID{Namespace: task.Namespace, Name: task.Name}, ObjectUID: string(task.UID), Generation: task.Generation}
+			logSnapshot, err := diagnosticProvider.Logs(ctx, diagnosticTask, 64)
+			must(t, err)
+			if string(logSnapshot.Data) != "ok\n" {
+				t.Fatalf("unexpected SDK log snapshot: %+v", logSnapshot)
+			}
+			statsSnapshot, err := diagnosticProvider.Stats(ctx, diagnosticTask)
+			must(t, err)
+			if statsSnapshot.MemoryUsageBytes != "0" || statsSnapshot.PIDs != "" {
+				t.Fatalf("unexpected SDK stats: %+v", statsSnapshot)
 			}
 			// Restart the Agent owner without losing the local cancellation state.
 			must(t, journal.Close())

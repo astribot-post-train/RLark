@@ -128,3 +128,37 @@ func RunLogReads(ctx context.Context, c *Client, reader raw.LogReader) {
 		}
 	}
 }
+
+func (h Handler) serveDockerDiagnostics(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", http.MethodPost)
+		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+		return
+	}
+	id, err := requestIdentity(r, h.Reporter.now())
+	if err != nil {
+		http.Error(w, "authenticated container Agent required", http.StatusForbidden)
+		return
+	}
+	var req DockerDiagnosticRequest
+	d := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
+	d.DisallowUnknownFields()
+	if err := d.Decode(&req); err != nil || d.Decode(new(any)) != io.EOF {
+		http.Error(w, "invalid scoped Docker diagnostic request", http.StatusBadRequest)
+		return
+	}
+	work, err := (DockerDiagnosticsService{Tasks: TaskService{Reporter: h.Reporter}, Broker: h.DockerDiagnostics}).Handle(r.Context(), id, req)
+	if err != nil {
+		status := http.StatusServiceUnavailable
+		if errors.Is(err, ErrIdentity) || apierrors.IsNotFound(err) {
+			status = http.StatusForbidden
+		} else if errors.Is(err, ErrCapability) {
+			status = http.StatusBadRequest
+		}
+		http.Error(w, "scoped Docker diagnostic unavailable", status)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(work)
+}

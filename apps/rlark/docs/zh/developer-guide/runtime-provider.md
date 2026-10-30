@@ -315,7 +315,7 @@ Binding revision 是标准化的 `sha256:` digest，输入包括 binding kind/na
 
 ## 当前能力矩阵
 
-Docker 预览契约要求 root Agent 直接访问宿主机 socket，并使用 Docker Engine API 1.44+。控制面先预留 CPU、内存和整卡 GPU，Agent 才能创建容器。Job 的每个展开副本都是独立 Task，并使用 UID fence 的绑定；只有 Agent 证明容器已经删除后，清理流程才会释放预留。Docker daemon 中断、Agent 重启或 watch 丢失会通过重新观测和 Task resync 恢复。预留已落盘而 Task binding 尚未保存时，会先找回原预留；原节点离线或身份冲突会阻止再次分配其他主机。预留写入发生并发冲突时，必须重新读取状态后重试。Gateway 日志/stats、exec、systemd 安装包和按设备 UUID 的 GPU 分配仍不属于当前契约。
+Docker 预览契约要求 root Agent 直接访问宿主机 socket，并使用 Docker Engine API 1.44+。控制面先预留 CPU、内存和整卡 GPU，Agent 才能创建容器。Job 的每个展开副本都是独立 Task，并使用 UID fence 的绑定；只有 Agent 证明容器已经删除后，清理流程才会释放预留。Docker daemon 中断、Agent 重启或 watch 丢失会通过重新观测和 Task resync 恢复。预留已落盘而 Task binding 尚未保存时，会先找回原预留；原节点离线或身份冲突会阻止再次分配其他主机。预留写入发生并发冲突时，必须重新读取状态后重试。Gateway 历史日志归档、exec、systemd 安装包和按设备 UUID 的 GPU 分配仍不属于当前契约；有界诊断路由属于显式启用的独立扩展预览。
 
 Docker Ray Task 使用 host network，并根据 Task identity 生成稳定端口。Head 使用相邻的 companion port 运行 Ray client service；当前 Ray 版本拒绝端口 0，因此不会配置为 0。一个 Docker 主机同一时间只预留给一个 Docker Task，端口分配仍受该主机的 RLark reservation 约束。
 

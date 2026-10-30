@@ -32,27 +32,28 @@ import (
 // PackageRequest contains local issuer inputs and explicit target paths. CAKey
 // and kubeconfig are provisioning-machine inputs and never enter the package.
 type PackageRequest struct {
-	Node             NodeIdentity `json:"node"`
-	Endpoint         string       `json:"endpoint"`
-	AgentCA          string       `json:"agentCA"`
-	AgentCAKey       string       `json:"agentCAKey"`
-	ServerCA         string       `json:"serverCA"`
-	AgentBinary      string       `json:"agentBinary"`
-	SupervisorBinary string       `json:"supervisorBinary"`
-	Runtime          ext.Runtime  `json:"runtime,omitempty"`
-	DockerHost       string       `json:"dockerHost,omitempty"`
-	Version          string       `json:"version"`
-	Architecture     string       `json:"architecture"`
-	ValidityHours    int          `json:"validityHours"`
-	OutputDirectory  string       `json:"outputDirectory"`
-	InstallDirectory string       `json:"installDirectory"`
-	StateDirectory   string       `json:"stateDirectory"`
-	Executables      []string     `json:"executables"`
-	WorkDirectories  []string     `json:"workDirectories"`
-	LogBytes         int64        `json:"logBytes"`
-	EnableExecution  bool         `json:"enableExecution"`
-	EnableLogReads   bool         `json:"enableLogReads"`
-	EnableUpgrades   bool         `json:"enableUpgrades"`
+	Node                    NodeIdentity `json:"node"`
+	Endpoint                string       `json:"endpoint"`
+	AgentCA                 string       `json:"agentCA"`
+	AgentCAKey              string       `json:"agentCAKey"`
+	ServerCA                string       `json:"serverCA"`
+	AgentBinary             string       `json:"agentBinary"`
+	SupervisorBinary        string       `json:"supervisorBinary"`
+	Runtime                 ext.Runtime  `json:"runtime,omitempty"`
+	DockerHost              string       `json:"dockerHost,omitempty"`
+	Version                 string       `json:"version"`
+	Architecture            string       `json:"architecture"`
+	ValidityHours           int          `json:"validityHours"`
+	OutputDirectory         string       `json:"outputDirectory"`
+	InstallDirectory        string       `json:"installDirectory"`
+	StateDirectory          string       `json:"stateDirectory"`
+	Executables             []string     `json:"executables"`
+	WorkDirectories         []string     `json:"workDirectories"`
+	LogBytes                int64        `json:"logBytes"`
+	EnableExecution         bool         `json:"enableExecution"`
+	EnableLogReads          bool         `json:"enableLogReads"`
+	EnableDockerDiagnostics bool         `json:"enableDockerDiagnostics"`
+	EnableUpgrades          bool         `json:"enableUpgrades"`
 }
 
 // PackageManifest records public identity, validity and artifact integrity.
@@ -188,6 +189,9 @@ func (s Service) ExportPackage(ctx context.Context, req PackageRequest) (*Packag
 	}
 	switch req.Runtime {
 	case "Raw":
+		if req.EnableDockerDiagnostics {
+			return nil, errors.New("docker diagnostics require Docker runtime")
+		}
 		if req.DockerHost != "" {
 			return nil, errors.New("raw package does not accept dockerHost")
 		}
@@ -197,6 +201,9 @@ func (s Service) ExportPackage(ctx context.Context, req PackageRequest) (*Packag
 	case "Docker":
 		if req.EnableLogReads || req.EnableUpgrades || req.SupervisorBinary != "" || len(req.Executables) != 0 || len(req.WorkDirectories) != 0 || req.LogBytes != 0 {
 			return nil, errors.New("docker package cannot include Raw supervisor, log or upgrade options")
+		}
+		if req.EnableDockerDiagnostics && !req.EnableExecution {
+			return nil, errors.New("docker diagnostics require task execution")
 		}
 		if req.EnableExecution && (!targetPath(req.StateDirectory) || within(req.InstallDirectory, req.StateDirectory) || within(req.StateDirectory, req.InstallDirectory)) {
 			return nil, errors.New("docker execution requires a private state directory")
@@ -307,6 +314,9 @@ func (s Service) ExportPackage(ctx context.Context, req PackageRequest) (*Packag
 	}
 	if req.EnableLogReads {
 		argv = append(argv, "--enable-log-reads=true")
+	}
+	if req.EnableDockerDiagnostics {
+		argv = append(argv, "--enable-docker-diagnostics=true")
 	}
 	if req.EnableUpgrades {
 		argv = append(argv, "--enable-agent-upgrades=true", "--agent-install-path="+base+"/container-runtime-agent", "--upgrade-state-directory="+req.StateDirectory+"-agent-upgrades")

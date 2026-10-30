@@ -28,7 +28,7 @@ type Config struct {
 	Runtime, DockerHost                                                                                                    string
 	Endpoint, TLSCert, TLSKey, ServerCA, Version, PrivateAddress, NvidiaSMI, CgroupMount, SupervisorSocket, StateDirectory string
 	Interval, RetryMax                                                                                                     time.Duration
-	EnableExecution, EnableUpgrades, EnableLogReads                                                                        bool
+	EnableExecution, EnableUpgrades, EnableLogReads, EnableDockerDiagnostics                                               bool
 	InstallPath, UpgradeStateDirectory                                                                                     string
 }
 
@@ -38,15 +38,18 @@ func DefaultConfig() Config {
 func (c Config) Validate() error {
 	switch c.Runtime {
 	case "raw":
-		if c.SupervisorSocket == "" || c.DockerHost != "" || c.StateDirectory != "" {
+		if c.SupervisorSocket == "" || c.DockerHost != "" || c.StateDirectory != "" || c.EnableDockerDiagnostics {
 			return errors.New("raw mode requires a supervisor socket and does not accept docker-host")
 		}
 	case "docker":
 		if c.SupervisorSocket != "" || c.EnableLogReads || c.EnableUpgrades || c.InstallPath != "" || c.UpgradeStateDirectory != "" {
-			return errors.New("docker mode does not support Raw supervisor, logs or upgrades")
+			return errors.New("docker mode does not support Raw supervisor, Raw log flag or upgrades")
 		}
 		if c.EnableExecution && (!filepath.IsAbs(c.StateDirectory) || filepath.Clean(c.StateDirectory) != c.StateDirectory || c.StateDirectory == "/") {
 			return errors.New("docker execution requires a private state directory")
+		}
+		if c.EnableDockerDiagnostics && !c.EnableExecution {
+			return errors.New("docker diagnostics require scoped task execution")
 		}
 		if !c.EnableExecution && c.StateDirectory != "" {
 			return errors.New("docker state directory requires execution")
@@ -90,6 +93,7 @@ func (c *Config) SetupFlags(fs *flag.FlagSet) {
 	fs.StringVar(&c.UpgradeStateDirectory, "upgrade-state-directory", c.UpgradeStateDirectory, "private existing upgrade journal directory")
 	fs.BoolVar(&c.EnableExecution, "enable-task-execution", c.EnableExecution, "enable preview scoped runtime execution")
 	fs.BoolVar(&c.EnableLogReads, "enable-log-reads", c.EnableLogReads, "enable on-demand scoped Raw log snapshots")
+	fs.BoolVar(&c.EnableDockerDiagnostics, "enable-docker-diagnostics", c.EnableDockerDiagnostics, "enable on-demand Docker logs and resource snapshots")
 	fs.StringVar(&c.Endpoint, "endpoint", c.Endpoint, "extension API HTTPS origin")
 	fs.StringVar(&c.TLSCert, "tls-cert", c.TLSCert, "node Agent client certificate")
 	fs.StringVar(&c.TLSKey, "tls-key", c.TLSKey, "node Agent client private key")
@@ -184,7 +188,7 @@ func run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 			if err != nil {
 				return fmt.Errorf("read Docker GPU identity: %w", err)
 			}
-			execution := agent.DockerExecutionObserver{Observer: observer, Client: client, Engine: engine, Journal: journal, EngineID: info.ID, GPUUUIDs: gpus}
+			execution := agent.DockerExecutionObserver{Observer: observer, Client: client, Engine: engine, Journal: journal, EngineID: info.ID, GPUUUIDs: gpus, EnableDiagnostics: cfg.EnableDockerDiagnostics}
 			return agent.RunDockerExecution(ctx, execution, cfg.Interval, cfg.RetryMax, logger)
 		}
 		return agent.Run(ctx, observer, client, cfg.Interval, cfg.RetryMax, logger)

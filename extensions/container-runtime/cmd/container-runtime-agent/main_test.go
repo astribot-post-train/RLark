@@ -137,3 +137,28 @@ func TestDockerExecutionRequiresSeparateCanonicalState(t *testing.T) {
 		t.Fatal("Raw accepted Docker state")
 	}
 }
+
+func TestDockerDiagnosticsRequireExplicitDockerExecution(t *testing.T) {
+	cfg := configured()
+	cfg.Runtime = "docker"
+	cfg.SupervisorSocket = ""
+	fs := flag.NewFlagSet("diagnostics", flag.ContinueOnError)
+	cfg.SetupFlags(fs)
+	if err := fs.Parse([]string{"--enable-docker-diagnostics=true"}); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Validate() == nil {
+		t.Fatal("accepted diagnostics without execution")
+	}
+	cfg.EnableExecution = true
+	cfg.StateDirectory = "/var/lib/rlark-docker"
+	if err := cfg.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	cfg.Runtime = "raw"
+	cfg.StateDirectory = ""
+	cfg.SupervisorSocket = "/private/supervisor.sock"
+	if cfg.Validate() == nil {
+		t.Fatal("Raw accepted Docker diagnostics")
+	}
+}

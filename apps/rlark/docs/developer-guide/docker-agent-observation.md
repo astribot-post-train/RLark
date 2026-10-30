@@ -127,15 +127,76 @@ cancellation write but cannot produce cleanup proof. A replaced Engine requires
 new registration/credentials after exact old-node retirement. Never force-delete
 uncertain allocations or reuse an old credential.
 
+## Bounded logs and resource snapshots
+
+Diagnostics are disabled by default. Set package `enableDockerDiagnostics: true`
+together with `enableExecution: true`, or add
+`--enable-docker-diagnostics=true` to the execution Agent above. Keep
+`enableLogReads: false`: that switch is for the Raw supervisor only. The Docker
+Agent advertises `docker-diagnostics-v1` only after explicit enablement.
+
+Configure the same API process that handles Agent polling with
+`--enable-task-execution=true`, `--log-read-addr=127.0.0.1:9446` and
+`--gateway-jwt-key-file=/private/gateway-jwt.key`. Configure the console with
+`--log-api-origin=http://127.0.0.1:9446`. The loopback listener serves only the
+administrator GET routes `/api/v1/container-runtime/logs` and
+`/api/v1/container-runtime/stats`; both require exactly `namespace`, `allocation`,
+`allocationUID` and `taskUID`. The browser's Gateway administrator JWT is checked
+before waiting and before returning. The Agent uses a separate private mTLS
+`/v1/docker-diagnostics` poll/complete endpoint; it never receives that JWT.
+Raw retains its existing `/v1/logs` endpoint and supervisor semantics.
+
+Each Docker node permits one pending diagnostic read, with at most 32 Docker
+reads per API process and a 20-second wait. Pending reads disappear on API
+restart; retry manually. Poll and read listeners must use the same API instance:
+there is no cross-instance broker routing. The independent Agent worker bounds
+each poll/read/complete step to ten seconds. Response-body reads do not hold the
+execution gate, so a stalled read cannot prevent cleanup.
+
+Every boundary revalidates the exact allocation/Task/Job/binding/Cluster/Node,
+tenant and credential. Task generation changes, cleanup confirmation, release,
+revoked capability and replacement identities reject reads, including results
+already buffered. Cordon or stale heartbeat alone does not revoke retained
+ownership. The local reader checks Engine ID, retained journal creation record,
+Task generation, container ID and ownership labels both before and after reading.
+Local cancellation blocks further reads; cleanup racing a read discards its data.
+Unknown ownership, TTY containers, missing records or malformed responses return
+unavailable without exposing local error paths. Workload output itself may contain
+secrets: only authorized administrators should enable and use this preview.
+
+Logs combine stdout/stderr in Engine order, without stream labels or follow.
+They return the beginning of currently available Engine output, at most 64 KiB
+of decoded bytes, with truncation metadata. Framing is bounded to 1 MiB and 4096
+frames. This is neither a historical archive nor a tail API. Resource snapshots
+are one Linux Engine sample with `sampledAt` and optional canonical unsigned
+64-bit decimal strings: `cpuUsageNS`, `memoryUsageBytes`, `memoryLimitBytes`,
+`pids`, `blockReadBytes` and `blockWriteBytes`. Missing counters remain absent;
+zero is reported only when observed. CPU time is cumulative nanoseconds, memory
+and block I/O use bytes, and PIDs is a count. The stats response body is bounded
+to 1 MiB. One sample does not provide CPU percentage; GPU utilization and
+host-network traffic attribution remain unavailable. Neither logs nor snapshots
+are persisted in resource Status or a metrics database.
+
+The independent console provides manual reads on allocation rows. Docker reads
+require the advertised diagnostics and execution capabilities and an allocation
+that has not been cleaned. Unknown counters show as unavailable; output renders
+as escaped text. Selection changes, logout, allocation replacement/cleanup and
+capability revocation clear displayed data and cancel stale requests. An API
+restart, daemon outage or unavailable exited-container stats requires a new read;
+no zero sample or automatic retry is synthesized.
+
 ## Validation and remaining scope
 
 Tests exercise fake Engine response loss, immutable configuration, ownership,
 whole-GPU IDs, cancellation, process locking, restart, outage/recovery, and real
 mTLS plus official SDK Unix-socket transport through Running, success, failure,
 suspension and cleanup. The daemon in these transport tests is simulated; no
-real Docker GPU run is claimed.
+real Docker GPU run is claimed. Diagnostics tests additionally cover bounded
+multiplex decoding, absent/zero/overflow counters, exact-ID SDK reads, credential
+and capability revocation, transient broker restart/retry, and cleanup while a
+response body is stalled.
 
-Scoped Docker logs/stats, utilization, port reservations, Ray/RLinf group barriers,
+GPU utilization, port reservations, Ray/RLinf group barriers,
 Docker rolling upgrades, and real GPU-host lifecycle acceptance remain separate
 work. Host networking alone does not establish a multi-host Ray contract. See
 [Docker execution plan](docker-runtime-execution-plan.md) for the ordered gates.
