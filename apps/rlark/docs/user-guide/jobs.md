@@ -107,6 +107,8 @@ Use **Refresh** in the list header to update Task, Pod, placement, IP, and statu
 
 On both the Jobs page and the Worker list, **Refresh** updates only the corresponding data region. While the request is in progress, existing rows stay in place under a dimmed loading mask with a centered spinner, and actions in that region are temporarily disabled. The rest of the page remains available.
 
+If a Job returned by the API has incomplete or unreadable task data, the Jobs page hides that record and identifies it in a warning; other jobs remain available. Check the Job API response and contact an administrator to resolve the data or version mismatch. Refresh the list after the underlying issue is corrected.
+
 Click any worker to see its runtime details, including container status, resource usage, and events.
 
 ### Per-Role Configuration

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"os"
 	"time"
 
 	"golang.org/x/sync/errgroup"
@@ -22,7 +23,15 @@ import (
 	"github.com/rlinf/rlark/apps/rlark/pkg/agent/controllers/node"
 	"github.com/rlinf/rlark/apps/rlark/pkg/agent/controllers/pod"
 	"github.com/rlinf/rlark/apps/rlark/pkg/agent/controllers/task"
+	rawruntime "github.com/rlinf/rlark/apps/rlark/pkg/agent/controllers/task/runtime/raw"
+	"github.com/rlinf/rlark/apps/rlark/pkg/agent/controllers/task/runtime/raw/supervision"
+	"github.com/rlinf/rlark/apps/rlark/pkg/agent/execution/coordination/coordinator"
+	"github.com/rlinf/rlark/apps/rlark/pkg/agent/execution/host"
+	"github.com/rlinf/rlark/apps/rlark/pkg/agent/execution/workload"
+	"github.com/rlinf/rlark/apps/rlark/pkg/auth/cert"
 	"github.com/rlinf/rlark/apps/rlark/pkg/log"
+	"github.com/rlinf/rlark/apps/rlark/pkg/rawnode"
+	"github.com/rlinf/rlark/apps/rlark/pkg/server"
 )
 
 // clusterAgent manages cluster-level operations (controller manager).
@@ -71,6 +80,8 @@ func (c *clusterAgent) Run(ctx context.Context) error {
 		Add(manager.Runnable) error
 	}
 	var localManager ctrl.Manager
+	var rawRuntimeHost *host.Host
+	var rawRuntimeExecution *coordinator.Coordinator
 
 	switch rlarkv1alpha1.AgentType(agentType) {
 	case rlarkv1alpha1.AgentTypeKubernetes:
@@ -108,8 +119,32 @@ func (c *clusterAgent) Run(ctx context.Context) error {
 		return fmt.Errorf("docker agent is not implemented yet")
 
 	case rlarkv1alpha1.AgentTypeRaw:
-		// TODO: initialize Raw controller manager
-		return fmt.Errorf("raw agent is not implemented yet")
+		// Raw execution has no local Kubernetes manager. It watches the
+		// management API and delegates process effects to the independently
+		// supervised, private Unix socket.
+		localManager = mm
+		lm = mm
+		bc.LocalRawClient = mclient
+		identity, err := rawIdentityFromClientCertificate(c.a.config.ClientConfig)
+		if err != nil {
+			return fmt.Errorf("load Raw node identity: %w", err)
+		}
+		supervisor, err := supervision.NewClient(c.a.config.RawSupervisorSocket)
+		if err != nil {
+			return fmt.Errorf("create Raw supervisor client: %w", err)
+		}
+		admission := rawruntime.NodeAdmission{Client: mclient, Node: client.ObjectKey{Namespace: identity.Namespace, Name: identity.Node}, NodeUID: identity.NodeUID, Incarnation: identity.Incarnation, TenantID: identity.TenantID}
+		provider := &rawruntime.Provider{ID: "raw-node", Supervisor: supervisor}
+		adapters := []workload.Adapter{rawruntime.ProcessAdapter{}}
+		rawExecution, err := rawruntime.NewCoordinator(ctx, provider, adapters)
+		if err != nil {
+			return fmt.Errorf("initialize Raw execution coordinator: %w", err)
+		}
+		rawHost, err := rawruntime.NewHost(ctx, mclient, admission, provider, adapters)
+		if err != nil {
+			return fmt.Errorf("initialize Raw Task Host: %w", err)
+		}
+		rawRuntimeExecution, rawRuntimeHost = rawExecution, rawHost
 
 	default:
 		return fmt.Errorf("unknown AgentType: %s", agentType)
@@ -124,6 +159,14 @@ func (c *clusterAgent) Run(ctx context.Context) error {
 		"task-statefulset": c.a.config.ControllerConcurrency.TaskStatefulSet,
 	}
 	tc := task.NewTaskController(taskController)
+	if rawRuntimeHost != nil {
+		tc.WithExecutionCoordinator(rawRuntimeExecution).WithHost(rawRuntimeHost)
+		if err := tc.SetupPullController(mm); err != nil {
+			return fmt.Errorf("setup Raw Task pull controller: %w", err)
+		}
+		go runRawHeartbeat(ctx, c.a.serverClient)
+		return mm.Start(ctx)
+	}
 	execution, err := task.NewKubernetesExecutionCoordinator(taskController.LocalKubeClient, taskController.Image)
 	if err != nil {
 		return fmt.Errorf("initialize task execution coordinator: %w", err)
@@ -202,4 +245,52 @@ func (c *clusterAgent) Run(ctx context.Context) error {
 	eg.Go(func() error { return mm.Start(ctx) })
 	eg.Go(func() error { return lm.Start(ctx) })
 	return eg.Wait()
+}
+
+func rawIdentityFromClientCertificate(config server.ClientConfig) (rawnode.Identity, error) {
+	certPEM, err := os.ReadFile(config.ClientCertPath)
+	if err != nil {
+		return rawnode.Identity{}, fmt.Errorf("read client certificate: %w", err)
+	}
+	keyPEM, err := os.ReadFile(config.ClientKeyPath)
+	if err != nil {
+		return rawnode.Identity{}, fmt.Errorf("read client key: %w", err)
+	}
+	data, err := cert.LoadData(certPEM, keyPEM)
+	if err != nil {
+		return rawnode.Identity{}, err
+	}
+	metadata, ok := cert.GetX509CertMeta(data.Cert)
+	if !ok {
+		return rawnode.Identity{}, fmt.Errorf("parse client certificate metadata")
+	}
+	return rawnode.FromMetadata(metadata)
+}
+
+func runRawHeartbeat(ctx context.Context, client *server.Client) {
+	if client == nil {
+		return
+	}
+	beat := func() {
+		requestCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		defer cancel()
+		response, err := client.DoRequest(requestCtx, http.MethodPost, client.BuildURL("api", "raw", "heartbeat"), nil)
+		if response != nil {
+			_ = response.Body.Close()
+		}
+		if err != nil || response == nil || response.StatusCode < 200 || response.StatusCode >= 300 {
+			return
+		}
+	}
+	beat()
+	ticker := time.NewTicker(15 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			beat()
+		}
+	}
 }

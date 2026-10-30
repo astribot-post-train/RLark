@@ -20,6 +20,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	rlarkv1alpha1 "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
+	"github.com/rlinf/rlark/apps/rlark/pkg/rawnode"
 )
 
 const (
@@ -65,7 +66,11 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	var phase rlarkv1alpha1.NodePhase
 	var reason string
 	leaseTimeout := r.leaseTimeout(lease)
-	if lease != nil {
+	if node.Spec.AgentType == rlarkv1alpha1.AgentTypeRaw && lease != nil && !rawnode.HeartbeatMatches(&node, lease) {
+		phase = rlarkv1alpha1.NodeOffline
+		reason = "RawNodeLeaseIdentityMismatch"
+		lastHeartbeat = nil
+	} else if lease != nil {
 		if lease.Spec.RenewTime != nil {
 			renewTime := metav1.NewTime(lease.Spec.RenewTime.Time)
 			lastHeartbeat = &renewTime

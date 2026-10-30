@@ -214,6 +214,40 @@ export function crdToJob(crd: CRDJob): Job {
   };
 }
 
+// Isolate incomplete or malformed API records so one Job cannot hide the list.
+export function convertJobList(items: CRDJob[]): {
+  jobs: Job[];
+  invalidJobs: string[];
+} {
+  const jobs: Job[] = [];
+  const invalidJobs: string[] = [];
+  items.forEach((item, index) => {
+    try {
+      const tasks = item.spec?.tasks ?? [];
+      if (
+        !Array.isArray(tasks) ||
+        tasks.some(
+          (task) =>
+            !task ||
+            typeof task.role !== "string" ||
+            !task.role ||
+            !task.placement ||
+            typeof task.placement !== "object" ||
+            !task.workload ||
+            typeof task.workload !== "object" ||
+            !task.workload.carrier ||
+            typeof task.workload.carrier !== "object",
+        )
+      )
+        throw new Error("Incomplete task specification");
+      jobs.push(crdToJob(item));
+    } catch {
+      invalidJobs.push(item?.metadata?.name || `#${index + 1}`);
+    }
+  });
+  return { jobs, invalidJobs };
+}
+
 export function mapRoleToJobType(tasks: CRDJobTask[]): JobType {
   const roles = new Set(tasks.map((t) => t.role.toLowerCase()));
   const hasEnv = roles.has("env");

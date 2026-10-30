@@ -4,7 +4,7 @@
 
 ## 兼容范围
 
-Kubernetes 是唯一受支持的 workload 运行时。Docker 执行尚未实现。Raw 已有实验性的预留、Provider/Host 和独立 Linux 进程监管组件，包括为现有云容器显式选择的可信 root 进程树后端。生产 Raw Agent 和 Job 分发尚未接通，因此这些组件不代表 Raw Job 已可运行。配置、恢复契约、验证证据及剩余接线见 [Raw 容器运行时计划](raw-container-runtime-plan.md)。该执行边界属于内部实现，不定义 CRD、生成客户端、REST 接口、CLI 参数、配置、Status Schema、Finalizer、Annotation key 或生成的 Kubernetes 对象结构。
+Kubernetes 是唯一受支持的 workload 运行时。Docker 执行尚未实现。Raw 已有实验性的预留、Provider/Host 和独立 Linux 进程监管组件，包括为现有云容器显式选择的可信 root 进程树后端。实验性 Raw Agent 的 watch、受限心跳和 Task 分发路径已经接通；Job 副本和 Ray group 调度仍待完成，因此这些组件不代表 Raw Job 已可生产运行。配置、恢复契约、验证证据及剩余接线见 [Raw 容器运行时计划](raw-container-runtime-plan.md)。该执行边界属于内部实现，不定义 CRD、生成客户端、REST 接口、CLI 参数、配置、Status Schema、Finalizer、Annotation key 或生成的 Kubernetes 对象结构。
 
 Kubernetes 兼容契约包括固定 workload namespace、legacy workload 收养、claimant identity 格式、原地模板修改、SSH key 注入、跨 Domain 网络 sidecar 注入和清理顺序。Task 被 claim 时会冻结 workload 与 carrier selector；已 claim Task 修改任一 selector 都会在不产生 Runtime effect 的情况下被拒绝，调用方必须删除并以新 UID 重建 Task。存储采用原生 PodTemplate 语义：`persistentVolumeClaim.claimName` 引用已有外部 PVC，而 `ephemeral.volumeClaimTemplate` 创建的 PVC 由 Kubernetes 随 Pod 管理。
 

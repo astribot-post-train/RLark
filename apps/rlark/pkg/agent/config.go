@@ -101,6 +101,10 @@ type Config struct {
 	ContainerdSocket    string
 	ContainerdNamespace string
 	NodeName            string
+	// RawSupervisorSocket is the private Unix socket exposed by raw-supervisor.
+	// It is required for AgentType=Raw; the Agent never starts or replaces the
+	// supervisor and never accepts a workload PID from the management API.
+	RawSupervisorSocket string
 }
 
 // DefaultConfig returns the default config.
@@ -166,4 +170,5 @@ func (c *Config) SetupFlags(fs *pflag.FlagSet) {
 	fs.StringVar(&c.ContainerdSocket, "containerd-socket", c.ContainerdSocket, "containerd socket address used by ctr for image pulling (Kubernetes agent type)")
 	fs.StringVar(&c.ContainerdNamespace, "containerd-namespace", c.ContainerdNamespace, "containerd namespace used by ctr for image pulling (Kubernetes agent type, default k8s.io)")
 	fs.StringVar(&c.NodeName, "node-name", c.NodeName, "Name of the local node, used for Kubernetes node-selector matching (defaults to $NODE_NAME)")
+	fs.StringVar(&c.RawSupervisorSocket, "raw-supervisor-socket", c.RawSupervisorSocket, "Private raw-supervisor Unix socket (required for Raw agents)")
 }

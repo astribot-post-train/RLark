@@ -140,7 +140,7 @@ func (c *Controller) validateExecutionDependencies() error {
 		return fmt.Errorf("task Status writer is not configured")
 	case c.ManagementClient == nil:
 		return fmt.Errorf("task management client is not configured")
-	case c.LocalKubeClient == nil:
+	case c.LocalKubeClient == nil && c.AgentType != string(rlarkv1alpha1.AgentTypeRaw):
 		return fmt.Errorf("task local Kubernetes client is not configured")
 	default:
 		return nil

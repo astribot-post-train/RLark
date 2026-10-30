@@ -53,7 +53,7 @@ Cover competing reservations, partial rollback, controller restart, crash after 
 
 ## Current implementation evidence and remaining integration
 
-This branch currently provides internal building blocks, not an operational Raw Agent. `agent --agent-type=Raw` does not yet wire these components. Do not register production GPU nodes or submit training Jobs on the basis of the new schema alone. The generated `status.raw`, `status.reservation` and `spec.placement.binding` fields are experimental contracts; credentials and server-side status-field ownership must be implemented before exposing them to node identities.
+This branch wires an experimental Raw Agent Task watch, scoped heartbeat and Host/Coordinator path. It is not production Ray/RLinf Job support. Do not register production GPU nodes or submit training Jobs until reservation dispatch, GPU authorization and group barriers are verified. The generated `status.raw`, `status.reservation` and `spec.placement.binding` fields are experimental contracts; credentials and server-side status-field ownership must be implemented before exposing them to node identities.
 
 Implemented boundaries:
 

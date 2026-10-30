@@ -110,3 +110,15 @@ Create a small Job from the platform console, choose the onboarded cluster for i
 - Sign a separate Agent certificate for each data-plane cluster.
 - Treat copied deploy YAML as a secret because it contains `agent-key`.
 - Rotate certificates with `rlarkctl sign` and redeploy the affected Agent.
+
+## Experimental Raw container Agent
+
+An existing trusted GPU container may run `--agent-type=Raw` with
+`--raw-supervisor-socket=/var/lib/rlark-supervisor/supervisor.sock`. The
+administrator-issued `raw-node` certificate is bound to the pre-created Node
+UID, container incarnation, Cluster UID and tenant. The Agent sends a scoped
+Lease heartbeat and only handles Tasks assigned to that exact Node. Keep
+`raw-supervisor` running independently across Agent restarts. This path does not
+create Docker containers or use a Docker socket and remains experimental: Job
+replica expansion, Ray/RLinf group barriers, GPU entitlement discovery and
+remote logs are not yet production-ready.
