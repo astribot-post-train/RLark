@@ -1,6 +1,63 @@
-# Raw runtime for fixed GPU containers
+# Container cluster extension: design and delivery plan
 
-Status: implementation in progress; this is a delivery plan, not a statement of supported capabilities.
+Status: preview migration in progress. This page specifies the approved target; historical evidence below does not imply the independent extension is deployed.
+
+## Approved architecture and delivery order
+
+Write and validate this English plan and its Chinese counterpart first, then implement in the existing feature branch and PR without rewriting published history. New code belongs in `extensions/container-runtime/`, with an independent Go module, API group, UI package, binaries, tests and build entry point. Reuse native Cluster/Node/Job/Task as the inventory and workload model. Do not add container-specific fields to their target schemas. Existing preview fields remain compatibility data until a safe migration proves cleanup and ownership.
+
+Native RLark integration is generic only: controller ownership dispatch, dependency injection, service/UI routing and build wiring. Container scheduling, registration, resource observation, authorization policy, release distribution and runtime behavior belong in the extension. Reuse the exported Host/Coordinator/Provider/Adapter contracts rather than duplicating the execution engine. Keep generic changes independent from Docker/Raw implementation and maintain an integration inventory for upstream upgrades.
+
+### Typed companion resources and ownership
+
+The extension owns the `containers.rlark.io/v1alpha1` API group. `ContainerCluster` references one native Cluster by stable identity and UID and records runtime and rollout policy. `ContainerNode` references native Node and Cluster UIDs and records container/Engine incarnation, private address, capabilities, environment, authorized GPU UUIDs and Agent versions. `ContainerAllocation` records Job/Task UIDs, generation, tenant, node incarnation, execution identity, reserved devices and cleanup progress. `ContainerJob` is a typed controller binding to one native Job, not a second workload API. `AgentRelease` identifies an immutable artifact, SHA-256 digest and protocol compatibility.
+
+`Cluster.spec.agentNamespace` remains authoritative membership. Tenant identity is validated independently of namespace and inherited by companion resources. Labels and annotations are lookup hints only. Dispatch verifies the typed binding, exact Job UID and tenant before selecting the extension owner. Active Job ownership is fixed while Tasks or cleanup remain. Direct Kubernetes API writes and extension REST requests have equivalent admission checks. Mixed Kubernetes/container Jobs are rejected in preview; native Kubernetes Jobs retain their behavior.
+
+The controller owns allocation intent and dispatch; Agents own observed runtime state and cleanup evidence. Persist reservations before dispatch with optimistic concurrency, recover from current state after restart, and never release on heartbeat loss. Each Raw container or Docker host accepts one Task at a time, including CPU-only Tasks. GPU allocation uses authorized whole-device UUIDs; visibility is not entitlement. Unknown cleanup blocks reuse. Logs, telemetry and audit records stay outside resource Status.
+
+### Independent services and operator interface
+
+Build independent extension controller/API, node Agent, supervisor and administration binaries. Nodes explicitly join a selected container Cluster using bounded bootstrap credentials and then use node-scoped authenticated outbound connections; no public IP or control-plane inbound connection is needed. Raw runs trusted root processes in the existing container. Engine mode uses a host Docker socket and never Docker-in-Docker. Advertise those capabilities separately.
+
+Provide a dedicated Container Clusters page with independent UI/build packaging and a minimal RLark navigation entry. Show cluster identity/runtime/connection state, node Ready/schedulable/busy state, capacity/allocation/utilization separately, authorized GPUs, prepared environments, Jobs, Agent versions and rollout failures. Administrators can create/join clusters, generate onboarding packages, cordon/drain nodes and publish target releases. Job submission explicitly selects a Cluster and is checked server-side.
+
+Control plane hosts immutable Agent artifacts. Nodes authenticate downloads, verify digest and platform/protocol compatibility, stage atomically and retain the previous version. A target release is durable; at most one idle node per Cluster upgrades at a time. Fence new allocations, health-check, and roll back on failure. Agent updates do not restart the workload supervisor. Support systemd hosts and a foreground root launcher/updater for notebooks without systemd.
+
+### Migration and acceptance gates
+
+The first independent control-plane slice uses a declared generic Job controller owner (`rlark.io/controller-owner`), verified against a typed ContainerJob binding. Native controllers fail closed for a declared external owner even when the extension is absent. The validation controller checks UID and authoritative namespace references; it does not authorize workload effects or mark a registered node schedulable. AgentRelease metadata validation never proves artifact availability. Extension CRD writes remain restricted to trusted administrators until equivalent admission is installed. Do not redirect live workloads to the companion API until allocation, scoped Agent transport and cleanup reconciliation are complete.
+
+First copy and test existing Docker/Raw providers, allocation logic, supervision and tests in the independent module. Then replace preview bindings/reservations with companion resources, update decoder/admission and establish generic Job dispatch. Do not run old and new allocation writers simultaneously. Migration cordons legacy nodes, waits for verified cleanup, creates UID-checked companions and enables the new owner only after validation; ambiguous active data remains blocked and visible.
+
+First cloud acceptance is one prepared Raw node and one GPU process Job: explicit Cluster selection, registration, scheduling, GPU use, bounded authorized logs, success/failure/stop, confirmed descendant cleanup, retained checkpoints and Agent upgrade/rollback. Multinode Raw Ray/RLinf, cross-runtime Jobs, terminal/exec, dynamic storage and cloud auto-provisioning remain later work. Preserve tested Docker lifecycle behavior, but do not advertise multinode GPU training, logs/stats or GPU UUID assignment before dedicated acceptance tests.
+
+### Kingsoft Cloud test machine
+
+The user selected queue `regular-training` in resource pool `GPU-Pool-Regular-Training`, not `regular-dev`. Company guidance normally places 0/1-GPU notebooks in Dev queues, so record this explicit user-selected exception rather than silently changing queues. Recheck permissions, capacity, image access and storage before creation. Use region `cn-northwest-3`, one GM402 GPU, 20 CPU, 236 GiB, queue-visible access and autosave. No public SSH/EIP or public dashboards.
+
+Reference notebook `rl_dashboard` (`kaic-08ab1432-4d49-4a97-b0d5-f30b00b24113`, SSH `root@36.103.180.181:22`). Reuse its authorized saved image and `/ks3-regular`, `/kpfs-regular` mounts. Saved images do not copy unsaved runtime changes or guarantee `/root/fleet/venv`. Do not save or modify the source implicitly, copy personal files/keys, or overwrite its autosave tag. Install only the user's authorized public key and read the new private address and entitlement live.
+
+Before enrollment, verify cgroup quota, platform GPU entitlement and UUID, prepared Python prefix/packages, writable state/log paths, storage access and outbound control-plane reachability. The source has no Docker socket and no functioning systemd, so begin with the explicit trusted-root process-tree backend. Missing environment or network blocks GPU acceptance; do not silently install dependencies, allocate an EIP, or treat enumeration as a GPU pass.
+
+On 2026-10-30, the created test notebook `kaic-6e552a55-4108-4d14-b719-e8a392e193d9` remained in `deploying`. AICP events show the requested saved-image tag returned registry `NotFound` (`ImagePullBackOff`); the `DescribeImages` result does not contain that tag. The endpoint has a private IP but no running container. The original source notebook remains reachable, but the platform notebook query did not return its ID, so no replacement image was selected. Do not treat the failed notebook's reported GPU count or node address as allocated/authorized capacity. Resolve the image reference through the platform's saved-image inventory, then update or recreate only after verifying the exact source image and preserving the selected `regular-training` queue and 1-GPU/20-CPU/236-GiB limits.
+
+### Delivery gates
+
+- [x] Paired design documents record the independent extension, selected queue and acceptance scope.
+- [x] Independent module/build and extraction of providers/supervision/tests; opt-in native integration seam and ownership validation.
+- [ ] Typed companion schemas, authorization/admission and migration. Generic Job fail-closed declaration is implemented, but no production scheduler claims the Job yet.
+- [ ] Explicit container Cluster onboarding, scoped Agent identity, whole-GPU allocation and authorized logs.
+- [ ] Authenticated release hosting, idle rolling Agent upgrade and rollback without supervisor restart.
+- [ ] Container Clusters UI, capability-gated Job submission and bilingual API/operations examples.
+- [ ] Authorized private 1-GPU notebook and complete Raw GPU Job/upgrade evidence.
+- [ ] Recovery/race tests, repository Go/Web checks, generated verification and strict bilingual docs build.
+
+Test competing allocations, stale UID/generation/incarnation, cross-tenant access, duplicate enrollment, partial effects, restarts, supervisor loss, failed cleanup, heartbeat loss, digest mismatch, upgrade/allocation races, rollback failure, migration conflicts, checkpoint retention and unchanged Kubernetes behavior. Do not mark a gate from scaffolding or mocks.
+
+## Historical preview evidence
+
+The remaining sections of this document retain the prior in-tree Raw/Docker experiments as migration evidence. They are not the target extension API, and their historical multi-node scope does not replace the single-node acceptance gate above.
 
 ## Agreed scope
 

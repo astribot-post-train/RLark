@@ -1,6 +1,63 @@
-# 固定 GPU 容器的 Raw 运行时
+# 容器集群扩展：设计与交付计划
 
-状态：实现中。本文是交付计划，不代表其中所有能力已经可用。
+状态：预览能力迁移中。本文定义目标架构；后续历史证据不代表独立扩展已经部署。
+
+## 已确认架构与执行顺序
+
+先编写并验证本中英文计划，再在现有功能分支和 PR 上实施，不重写已发布历史。新代码放入 `extensions/container-runtime/`，具有独立 Go 模块、API group、UI 包、二进制、测试和构建入口。复用原生 Cluster/Node/Job/Task 作为资源和工作负载模型，不向其目标 schema 添加容器专属字段。已有预览字段在安全迁移证明清理和所有权前仅作兼容数据。
+
+原生 RLark 集成仅限通用的控制器所有权分派、依赖注入、服务/UI 路由和构建接线。容器调度、注册、资源观测、鉴权、版本分发和运行时行为归扩展所有。复用已导出的 Host/Coordinator/Provider/Adapter，不复制执行引擎。通用改动与 Docker/Raw 实现分离，并维护原生接入清单以便跟随上游升级。
+
+### 类型化附属资源与所有权
+
+扩展拥有 `containers.rlark.io/v1alpha1` API group。`ContainerCluster` 按稳定身份和 UID 关联一个原生 Cluster，记录运行时和升级策略。`ContainerNode` 关联原生 Node/Cluster UID，记录容器/Engine 实例、私网地址、能力、环境、授权 GPU UUID 和 Agent 版本。`ContainerAllocation` 保存 Job/Task UID、generation、租户、节点实例、执行标识、设备预留和清理进度。`ContainerJob` 是原生 Job 的类型化控制器绑定，不是第二套工作负载 API。`AgentRelease` 标识不可变产物、SHA-256 摘要和协议兼容范围。
+
+`Cluster.spec.agentNamespace` 仍是成员关系权威来源。租户独立于 namespace 验证，并继承到附属资源。标签/注解只能检索，不能证明所有权。派发前验证类型化绑定、精确 Job UID 和租户；活动 Job 在 Task 或清理完成前不得换控制器。直接 Kubernetes API 和扩展 REST 使用同等准入校验。预览版拒绝 Kubernetes/容器混合 Job，原生 Kubernetes Job 行为保持不变。
+
+控制器拥有分配意图和派发，Agent 拥有运行时观测与清理证据。派发前用乐观并发持久化预留，重启从当前状态恢复，心跳丢失不释放。每个 Raw 容器或 Docker 主机一次只接收一个 Task，纯 CPU 也独占。GPU 只使用已授权整卡 UUID，可见性不等于授权。清理未知阻止复用，日志/遥测/审计不写入资源 Status。
+
+### 独立服务与运维界面
+
+构建独立扩展控制器/API、节点 Agent、supervisor 和管理工具。节点显式加入指定容器 Cluster，使用有限 bootstrap 凭证注册，再用节点级认证主动出站；不需要公网 IP 或控制面入站。Raw 在已有容器内执行可信 root 进程，Engine 使用宿主机 Docker socket，绝不 Docker-in-Docker；两类能力分别展示。
+
+提供独立构建的“容器集群”页面，并只向 RLark 接入最小导航入口。展示集群身份/运行时/连接、节点 Ready/可调度/占用、容量/分配/利用率、授权 GPU、预装环境、Job、Agent 版本和升级失败。管理员可创建/加入、生成接入包、禁止调度/排空和发布目标版本；Job 显式选择 Cluster，服务端校验能力。
+
+控制面托管不可变 Agent 产物。节点认证下载，校验摘要、平台和协议，原子切换并保留旧版本。目标版本是持续期望状态，每个 Cluster 同时最多升级一个空闲节点；切换前阻止新分配，健康检查失败回滚。Agent 升级不重启 workload supervisor。固定主机支持 systemd，无 systemd 开发机使用前台 root launcher/updater。
+
+### 迁移与验收门槛
+
+首个独立控制面阶段使用通用 Job 控制器声明（`rlark.io/controller-owner`），并以类型化 ContainerJob 绑定校验。即使扩展不在线，原生控制器也会对声明外部主人的 Job 拒绝派发。校验控制器检查 UID 与权威 namespace 引用；它不授权工作负载副作用，也不把已登记节点标为可调度。AgentRelease 元数据通过校验不代表产物可用。等价准入安装前，扩展 CRD 仅允许可信管理员写入。在分配器、节点限定 Agent 通道和清理调谐完成前，不把活动工作负载切换到附属 API。
+
+先复制并测试现有 Docker/Raw Provider、分配、supervision 和测试到独立模块，再以附属资源替换预览绑定/预留，更新 decoder/准入并建立通用 Job 分派。新旧分配写入者不能同时运行。迁移时禁止旧节点调度，等待确认清理，按 UID 建立附属资源，验证后启用新主人；含糊活动数据保持阻塞并展示。
+
+首轮云端验收是一个预置 Raw 节点和一个 GPU 进程 Job：显式选 Cluster、注册、调度、GPU 计算、有界授权日志、成功/失败/停止、后代确认清理、checkpoint 保留及 Agent 升级/回滚。多节点 Raw Ray/RLinf、跨运行时 Job、终端/exec、动态存储和云自动扩容留待后续。Docker 生命周期保持已有验证，但多节点 GPU、logs/stats、GPU UUID 分配必须单独验收后才能宣传。
+
+### 金山云测试开发机
+
+用户指定资源池 `GPU-Pool-Regular-Training` 的 `regular-training` 队列，没有选择 `regular-dev`。公司指南通常要求 0/1 GPU 开发机走 Dev 队列，因此记录为用户明确指定的例外，不静默换队列。创建前重新核对权限、容量、镜像和存储。区域 `cn-northwest-3`，1 张 GM402 GPU、20 CPU、236 GiB，队列可见并自动保存；不分配公网 SSH/EIP 或公网 dashboard。
+
+参考开发机 `rl_dashboard`（`kaic-08ab1432-4d49-4a97-b0d5-f30b00b24113`，SSH `root@36.103.180.181:22`）。复用已授权保存镜像和 `/ks3-regular`、`/kpfs-regular` 挂载。保存镜像不复制未保存改动，也不保证有 `/root/fleet/venv`。不隐式保存/修改源机器，不复制个人文件/密钥，不覆盖 autosave 标签。只安装用户授权公钥，并实时读取新机私网地址和 GPU 授权。
+
+注册前验证 cgroup 配额、平台 GPU 授权和 UUID、Python prefix/依赖、状态/日志目录、存储权限及出站控制面连接。源机器没有 Docker socket 和可用 systemd，首测使用明确的可信 root 进程树后端。缺环境或网络则阻塞 GPU 验收，不静默装依赖、申请 EIP，也不以枚举 GPU 代替计算验收。
+
+2026-10-30 创建的测试开发机 `kaic-6e552a55-4108-4d14-b719-e8a392e193d9` 仍处于 `deploying`。AICP 事件显示所请求的保存镜像 tag 在镜像仓库返回 `NotFound`（`ImagePullBackOff`）；`DescribeImages` 结果中没有该 tag。实例虽有私网 IP，但容器未运行。原源 Notebook 仍可连接，但平台 Notebook 查询未返回其 ID，因此还未选择替代镜像。不能把失败实例返回的 GPU 数量或节点地址当作已分配/授权容量。先从平台保存镜像清单确认精确镜像，再更新或重建；保留用户指定的 `regular-training` 队列和 1 GPU/20 CPU/236 GiB 限制。
+
+### 交付门槛
+
+- [x] 中英文文档记录独立扩展、指定队列和验收范围。
+- [x] 独立模块/构建，迁移 Provider/supervision/测试；加入原生可选集成接口和所有权校验。
+- [ ] 类型化附属 schema、授权/准入和迁移。通用 Job fail-closed 声明已实现，但还没有生产调度器接管 Job。
+- [ ] 显式容器集群接入、节点限定身份、整卡分配和授权日志。
+- [ ] 认证版本托管、空闲节点滚动升级及不重启 supervisor 的回滚。
+- [ ] 容器集群 UI、能力门控 Job 提交及中英文 API/运维示例。
+- [ ] 已授权私网 1 GPU 开发机和完整 Raw GPU Job/升级证据。
+- [ ] 恢复/竞态测试、仓库 Go/Web 检查、生成验证和严格双语文档构建。
+
+测试并发预留、旧 UID/generation/实例、跨租户访问、重复注册、部分外部动作、重启、supervisor 丢失、清理失败、心跳丢失、摘要错误、升级竞争、回滚失败、迁移冲突、checkpoint 保留及 Kubernetes 行为不变。不能凭骨架或 mock 勾选门槛。
+
+## 历史预览证据
+
+本文后续内容保留原生 Raw/Docker 实验作为迁移证据，不是目标扩展 API，历史多节点范围也不替代上面的单节点验收门槛。
 
 ## 已确认范围
 

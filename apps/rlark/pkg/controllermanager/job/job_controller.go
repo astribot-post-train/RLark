@@ -26,8 +26,20 @@ const (
 	cleanupRequeue   = time.Second
 )
 
+// OwnerResolver determines whether an independently assembled controller owns a Job.
+// Implementations must prove ownership from authoritative state, not labels.
+type OwnerResolver interface {
+	Owns(context.Context, *rlarkv1alpha1.Job) (bool, error)
+}
+
+// ControllerOwnerAnnotation declares an external controller boundary. A native
+// controller without the matching resolver must never dispatch such a Job.
+const ControllerOwnerAnnotation = "rlark.io/controller-owner"
+
 // Reconciler reconciles Job resources.
 type Reconciler struct {
+	// ExternalOwner is optional; nil preserves the native controller behavior.
+	ExternalOwner OwnerResolver
 	client.Client
 	// RawClient is uncached; allocation and cleanup must never use informer state.
 	RawClient               client.Client
@@ -46,6 +58,18 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	job := &rlarkv1alpha1.Job{}
 	if err := r.Get(ctx, req.NamespacedName, job); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
+	}
+	if job.Annotations[ControllerOwnerAnnotation] != "" {
+		if r.ExternalOwner != nil {
+			owned, err := r.ExternalOwner.Owns(ctx, job)
+			if err != nil {
+				return ctrl.Result{}, fmt.Errorf("resolve external Job ownership: %w", err)
+			}
+			if owned {
+				return ctrl.Result{}, nil
+			}
+		}
+		return ctrl.Result{}, fmt.Errorf("external Job controller %q is not available", job.Annotations[ControllerOwnerAnnotation])
 	}
 	if hasRawTemplates(job) {
 		return r.reconcileRawJob(ctx, req.NamespacedName)
