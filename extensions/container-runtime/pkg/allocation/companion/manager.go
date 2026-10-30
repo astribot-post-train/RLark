@@ -154,7 +154,7 @@ func (m Manager) Acquire(ctx context.Context, req Request) (*ext.ContainerAlloca
 	if !apierrors.IsNotFound(err) {
 		return nil, err
 	}
-	if cluster.Spec.Cordoned || cluster.Spec.Draining || nativeNode.Spec.Unschedulable || !node.Status.Schedulable || node.Status.ObservedGeneration != node.Generation || !meta.IsStatusConditionPresentAndEqual(node.Status.Conditions, "Ready", metav1.ConditionTrue) || node.Status.LastHeartbeatTime == nil || node.Status.LastHeartbeatTime.After(m.now()) || m.now().Sub(node.Status.LastHeartbeatTime.Time) > m.timeout() {
+	if cluster.Spec.Cordoned || cluster.Spec.Draining || nativeNode.Spec.Unschedulable || !node.Status.Schedulable || node.Status.Busy || node.Status.AgentCredentialID == "" || node.Status.AgentCredentialID != node.Annotations[ext.AgentCredentialAnnotation] || node.Status.ObservedGeneration != node.Generation || !meta.IsStatusConditionPresentAndEqual(node.Status.Conditions, "Ready", metav1.ConditionTrue) || node.Status.LastHeartbeatTime == nil || node.Status.LastHeartbeatTime.After(m.now()) || m.now().Sub(node.Status.LastHeartbeatTime.Time) > m.timeout() {
 		return nil, ErrUnavailable
 	}
 	if meta.FindStatusCondition(node.Status.Conditions, "Ready").ObservedGeneration != node.Generation {

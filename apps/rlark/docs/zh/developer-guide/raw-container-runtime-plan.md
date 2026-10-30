@@ -28,7 +28,7 @@
 
 首个独立控制面阶段使用通用 Job 控制器声明（`rlark.io/controller-owner`），并以类型化 ContainerJob 绑定校验。即使扩展不在线，原生控制器也会对声明外部主人的 Job 拒绝派发。校验控制器检查 UID 与权威 namespace 引用；它不授权工作负载副作用，也不把已登记节点标为可调度。AgentRelease 元数据通过校验不代表产物可用。等价准入安装前，扩展 CRD 仅允许可信管理员写入。在分配器、节点限定 Agent 通道和清理调谐完成前，不把活动工作负载切换到附属 API。
 
-扩展新增了基于 API 的 Node 独占分配原语。它用原生 Node UID 派生的确定性 ContainerAllocation 名称创建锁，并校验权威成员关系、租户、Node/Job/Task UID、Agent generation/就绪、心跳时效、GPU 白名单、私网地址、重复 GPU/地址范围以及原生旧 reservation 是否存在。重复 Acquire 只恢复完全相同 Task 的分配；并发竞争者在 API 创建冲突时失败。Release 必须有针对精确 allocation UID 的 Status 清理证明，并在观察到删除前保留 finalizer。该原语尚未接入 Job 副本展开、Agent 执行和清理报告，因此还不能通过它派发生产 Job。
+扩展新增了基于 API 的 Node 独占分配原语。它用原生 Node UID 派生的确定性 ContainerAllocation 名称创建锁，并校验权威成员关系、租户、Node/Job/Task UID、Agent generation/就绪、心跳时效、GPU 白名单、私网地址、重复 GPU/地址范围以及原生旧 reservation 是否存在。重复 Acquire 只恢复完全相同 Task 的分配；并发竞争者在 API 创建冲突时失败。Release 必须有针对精确 allocation UID 的 Status 清理证明，并在观察到删除前保留 finalizer。独立 mTLS 服务的 `POST /v1/heartbeat` 仅接受已验证且携带容器 Agent 角色的证书；它会校验签名的 companion UID、租户、凭据、原生绑定、私网地址和授权 GPU 可见性，然后更新有界 ContainerNode 状态。Linux 前台 Agent 二进制现在观测当前 cgroup v2 边界、可见 GPU UUID 和私有 Raw supervisor 占用，并发送显式 `busy` 字段；观测或 API 暂时不可用时使用有界退避重试，supervisor 或 GPU 观测失败时拒绝上报，因此最终表现为心跳过期和调度屏蔽。周期修复保留新鲜 Agent 观测并屏蔽过期心跳；分配检查当前凭据身份和节点忙碌状态。API 二进制和最小权限 `config/rbac/container-runtime-api.yaml` 已提供。注册、证书签发、版本分发和 Job 调度尚未接通，因此生产 Job 仍不可使用。TLS 部署、CA 分发和证书签发/轮换仍由运维方管理。
 
 先复制并测试现有 Docker/Raw Provider、分配、supervision 和测试到独立模块，再以附属资源替换预览绑定/预留，更新 decoder/准入并建立通用 Job 分派。新旧分配写入者不能同时运行。迁移时禁止旧节点调度，等待确认清理，按 UID 建立附属资源，验证后启用新主人；含糊活动数据保持阻塞并展示。
 
@@ -42,7 +42,46 @@
 
 注册前验证 cgroup 配额、平台 GPU 授权和 UUID、Python prefix/依赖、状态/日志目录、存储权限及出站控制面连接。源机器没有 Docker socket 和可用 systemd，首测使用明确的可信 root 进程树后端。缺环境或网络则阻塞 GPU 验收，不静默装依赖、申请 EIP，也不以枚举 GPU 代替计算验收。
 
-2026-10-30 创建的测试开发机 `kaic-6e552a55-4108-4d14-b719-e8a392e193d9` 仍处于 `deploying`。AICP 事件显示所请求的保存镜像 tag 在镜像仓库返回 `NotFound`（`ImagePullBackOff`）；`DescribeImages` 结果中没有该 tag。实例虽有私网 IP，但容器未运行。原源 Notebook 仍可连接，但平台 Notebook 查询未返回其 ID，因此还未选择替代镜像。不能把失败实例返回的 GPU 数量或节点地址当作已分配/授权容量。先从平台保存镜像清单确认精确镜像，再更新或重建；保留用户指定的 `regular-training` 队列和 1 GPU/20 CPU/236 GiB 限制。
+2026-10-30 创建的测试开发机 `kaic-6e552a55-4108-4d14-b719-e8a392e193d9` 最初因源机 autosave tag 返回仓库 `NotFound` 而拉镜像失败。经用户同意，停止原机、换为可用的个人镜像 `rlinf-dashboard:1.1`（`0f71ac0b-6dfe-43ce-9e6f-f2fb94b26874`）后重启。当前运行于私网 Pod IP `10.0.3.85`，位于 `regular-training` 队列，配置 1 GPU、20 CPU、236 GiB，无公网 SSH/EIP。参考开发机仅作为 SSH 跳板，没有复制其文件或环境。
+
+默认 Python 是 3.11.11，含 PyTorch 2.6.0+cu124，不含 Ray/RLinf；继续检查发现以下可用的预装环境，本轮没有安装依赖：
+
+| Python 入口 | 观测到的依赖与验证 |
+| --- | --- |
+| `/root/RLinf/.venv-pi05/bin/python` | Ray 2.56.1、PyTorch 2.11.0+cu126；实际从 `/root/RLinf/rlinf` 导入源码，其 `pyproject.toml` 声明版本 0.4.0（没有已安装分发元数据）。CUDA 张量运算返回 `42.0`。实际 Ray 任务使用 1 CPU、0 GPU，返回 `{"value": 42}`；shutdown 成功，后续未发现 Ray raylet/GCS 进程。 |
+| `/root/RLinf/.venv-lumo2/bin/python` | Ray 2.58.0、PyTorch 2.10.0，可发现 RLinf 源码；没有已安装 RLinf 分发元数据。CUDA 张量运算返回 `42.0`。未在该环境运行 Ray 任务。 |
+| `/opt/rl_dashboard_bundle/env/bin/python` | Ray 2.56.1、PyTorch 2.7.0+cu128，不含 RLinf 模块。CUDA 张量运算返回 `42.0`。 |
+
+`/root/RLinf` 下两个 venv 的 Python 入口均解析到 `/opt/conda/bin/python3.11`，接入时需保留并验证 venv prefix；supervisor 的规范可执行路径策略本身不能保留该 prefix。上述检查只证明导入和小规模计算，不代表 RLinf 训练或具体工作负载依赖兼容性通过。`/root/fleet/venv` 仍不存在，替代镜像也无法证明包含源机后续环境改动。
+
+实际 cgroup 配额为 20 CPU（`cpu.max = 2000000 100000`）和 236 GiB（`memory.max = 253403070464`）。虽然存在 `cgroup.kill`，cgroup v2 文件系统为只读，不能使用 cgroup supervisor 后端。没有 Docker socket 或可用 systemd。状态/工作目录尚未安装，父目录可写。可信 root 进程树后端必须通过自身预检与生命周期测试后再使用，它不提供任务隔离。`/ks3-regular` 在平台本地目录上覆盖了实际读写 `fuse.ks3fs` 挂载，`/kpfs-regular` 为读写 `kingstorage` NAS 挂载；尚未测试跨重启 checkpoint 保留。
+
+资源池清单显示分配一张 GM402，但容器内 `nvidia-smi` 显示一张 H100 80GB；在把 GPU UUID 作为授权容量前需确认平台型号映射。已通过私有跳转路径在该开发机上以 root 运行可选 Agent 观测测试：process-tree supervisor socket、cgroup v2 限制（`20000m`、`253403070464` 字节）和一个 GPU UUID 均成功读到；关闭 supervisor 后观测会 fail closed。这只验证本地观测边界。该开发机尚未登记为扩展 Agent。证书/接入、Job 派发、授权日志和 Agent 升级/回滚仍需实现并完成端到端测试。本轮未启动 RLinf 训练。
+
+### 前台 Raw 观测 Agent（preview）
+
+`make -C extensions/container-runtime build` 在 API/controller 和 `raw-supervisor` 之外构建仅支持 Linux 的 `container-runtime-agent`。该命令只上报观测，不注册节点、不签发证书、不接收 Task、不启动工作负载、不传输日志，也不安装升级。先创建并验证原生/companion 绑定，独立安装可信 root supervisor，并由运维配置专用 Agent 证书：签名元数据必须包含精确 ContainerNode namespace/name/UID、原生 Cluster UID、容器实例、租户及当前 `containers.rlark.io/agent-credential` 注解。禁止向 Agent 签发原生管理员证书。专用 CA 私钥保留在 API/Agent 之外，API listener 仅配置 CA 证书。这些接入步骤仍由运维管理，尚无一键接入。
+
+运维配置好文件并运行 supervisor 后，支持的观测命令为：
+
+```bash
+./extensions/container-runtime/bin/container-runtime-agent \
+  --endpoint=https://container-api.example.internal:9444 \
+  --tls-cert=/private/rlark/agent.crt \
+  --tls-key=/private/rlark/agent.key \
+  --server-ca=/private/rlark/server-ca.crt \
+  --version=preview-v1 \
+  --private-address=10.0.3.85 \
+  --supervisor-socket=/var/lib/rlark-supervisor/supervisor.sock
+```
+
+端点、身份、版本和路径需替换为真实配置。端点必须是 HTTPS origin，禁止重定向；要求 TLS 1.3 和服务端 CA 校验。独立 API 使用 `--tls-cert`、`--tls-key`、`--agent-ca`、`--kubeconfig` 和 `--addr`（默认 `:9444`），最小权限位于 `extensions/container-runtime/config/rbac/container-runtime-api.yaml`。API 对每次报告执行认证和授权，拒绝未知 JSON 字段或缺失 `busy` 的观测，心跳时间使用服务端时间。证书/凭据轮换后需以新文件重启 Agent；尚未实现自动重载/续签。撤销凭据注解会阻止新报告和分配，但不释放已有 allocation。
+
+默认成功报告间隔为 15 秒（`--interval`，最大 15 秒），故障时指数退避并增加抖动，默认上限两分钟（`--retry-max`，最大五分钟），本地观测期限为十秒。每次重试都重新读取状态。私有 supervisor Unix socket 的 `POST /v1/status` 不接受请求体，仅返回占用；活动或持久化状态不确定的执行均为忙碌，supervisor 已关闭、缺失或协议不兼容时禁止上报。GPU 查询失败同样禁止上报，不会默认空闲或空 GPU。心跳丢失、探测失败均不证明工作负载清理完成。allocator 独立拒绝超过 45 秒的报告；状态每 30 秒修复一次，因此界面 Ready 条件可能比截止时间晚一个修复周期。
+
+CPU 观测取进程 affinity 与当前 cgroup 到 cgroup-v2 挂载点之间所有可读祖先 `cpu.max` 的最小限制；内存取可见层级中最小有限 `memory.max`，全为无限时不报告内存。`--cgroup-mount` 默认 `/sys/fs/cgroup`，经 `/proc/self/cgroup` 解析当前成员路径，拒绝非 v2、缺失或格式错误的边界。它们是可见上限，不代表利用率、空闲量、隐藏祖先限制的保证或任务级限额。可见 GPU 不改变运维授权的 UUID 白名单。该前台命令当前仅观测 Raw；复制出的 Docker Engine observer 尚未接入该命令。
+
+本地测试覆盖观测失败、API 故障恢复且不重放旧观测、取消、严格占用响应、祖先配额、无限/无效限制、重复 GPU 输出、mTLS 授权及重定向拒绝。在准备好的可信 root GPU 容器上，可选 `RLARK_TEST_LOCAL_OBSERVATION=1` 测试会运行真实 supervisor socket、cgroup 和 GPU 探测，不启动工作负载。这些检查不代表生产调度门槛完成。
 
 ### 交付门槛
 

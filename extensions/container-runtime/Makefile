@@ -11,7 +11,9 @@ vet:
 build:
 	mkdir -p $(BIN_DIR)
 	GOWORK=off go build -o $(BIN_DIR)/container-runtime-controller ./cmd/container-runtime-controller
+	GOWORK=off go build -o $(BIN_DIR)/container-runtime-api ./cmd/container-runtime-api
 	GOWORK=off go build -o $(BIN_DIR)/raw-supervisor ./cmd/raw-supervisor
+	GOWORK=off go build -o $(BIN_DIR)/container-runtime-agent ./cmd/container-runtime-agent
 
 generate-crds:
 	GOWORK=off $(CURDIR)/../../api/bin/controller-gen-v0.18.0 object paths=./api/...

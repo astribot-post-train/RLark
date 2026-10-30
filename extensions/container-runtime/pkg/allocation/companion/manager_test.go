@@ -37,7 +37,7 @@ func fixture(t *testing.T) (Manager, Request) {
 	cc := &ext.ContainerCluster{ObjectMeta: metav1.ObjectMeta{Name: "gpu", Namespace: "agents", UID: "cc-uid"}, Spec: ext.ContainerClusterSpec{Cluster: reference(cluster), Runtime: "Raw", AgentNamespace: "agents"}}
 	binding := &ext.ContainerJob{ObjectMeta: metav1.ObjectMeta{Name: "training", Namespace: "agents", UID: "binding-uid"}, Spec: ext.ContainerJobSpec{Cluster: reference(cluster), Job: reference(job), TenantID: tenant.DefaultID, Runtime: "Raw"}}
 	now := time.Date(2026, 10, 30, 9, 0, 0, 0, time.UTC)
-	node := &ext.ContainerNode{ObjectMeta: metav1.ObjectMeta{Name: "worker", Namespace: "agents", UID: "companion-node-uid", Generation: 1}, Spec: ext.ContainerNodeSpec{Cluster: reference(cluster), Node: reference(nativeNode), Runtime: "Raw", InstanceID: "container-1", PrivateAddress: "10.0.3.85", Environment: "fleet", NetworkScope: "ksyun-vpc", AuthorizedGPUUUIDs: []string{"GPU-a"}}, Status: ext.ContainerNodeStatus{ObservedGeneration: 1, Schedulable: true, LastHeartbeatTime: &metav1.Time{Time: now}, Conditions: []metav1.Condition{{Type: "Ready", Status: metav1.ConditionTrue, ObservedGeneration: 1}}}}
+	node := &ext.ContainerNode{ObjectMeta: metav1.ObjectMeta{Name: "worker", Namespace: "agents", UID: "companion-node-uid", Generation: 1, Annotations: map[string]string{ext.AgentCredentialAnnotation: "credential"}}, Spec: ext.ContainerNodeSpec{Cluster: reference(cluster), Node: reference(nativeNode), Runtime: "Raw", InstanceID: "container-1", PrivateAddress: "10.0.3.85", Environment: "fleet", NetworkScope: "ksyun-vpc", AuthorizedGPUUUIDs: []string{"GPU-a"}}, Status: ext.ContainerNodeStatus{ObservedGeneration: 1, AgentCredentialID: "credential", Schedulable: true, LastHeartbeatTime: &metav1.Time{Time: now}, Conditions: []metav1.Condition{{Type: "Ready", Status: metav1.ConditionTrue, ObservedGeneration: 1}}}}
 	c := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(&ext.ContainerAllocation{}, node, nativeNode, task, job).WithObjects(cluster, nativeNode, job, task, cc, binding, node).WithInterceptorFuncs(interceptor.Funcs{Create: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.CreateOption) error {
 		if _, ok := obj.(*ext.ContainerAllocation); ok {
 			obj.SetUID(types.UID("allocation-" + obj.GetName()))
@@ -242,7 +242,7 @@ func TestLostCreateResponseRecoversOneDurableLock(t *testing.T) {
 		t.Fatal(err)
 	}
 	var locks ext.ContainerAllocationList
-	if err := c.Client.List(ctx, &locks); err != nil {
+	if err := c.List(ctx, &locks); err != nil {
 		t.Fatal(err)
 	}
 	if len(locks.Items) != 1 || locks.Items[0].UID != recovered.UID {

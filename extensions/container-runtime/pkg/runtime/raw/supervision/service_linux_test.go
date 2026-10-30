@@ -152,6 +152,10 @@ func TestIndependentClientReconnectAndCancellation(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		status, err := client.Status(context.Background())
+		if err != nil || !status.Busy {
+			t.Fatalf("status reconnect: %+v %v", status, err)
+		}
 		r, err := client.Observe(context.Background(), task)
 		if err != nil || r.Task.ObjectUID != task.ObjectUID {
 			t.Fatalf("reattach %d: %+v %v", i, r, err)
@@ -307,5 +311,43 @@ func TestFailedAtomicPlacementPersistsFailureBeforeReleasingContainer(t *testing
 	}
 	if stored.Phase != "Failed" || !stored.Cleaned {
 		t.Fatalf("missing durable failure: %+v", stored)
+	}
+}
+
+func TestStatusFailsClosedForUnknownAndClosedService(t *testing.T) {
+	s, task := serviceFixture(t)
+	status, err := s.Status(context.Background())
+	if err != nil || status.Busy {
+		t.Fatalf("idle: %+v %v", status, err)
+	}
+	s.records[key(task)] = raw.Record{Task: task, Phase: "Unknown"}
+	status, err = s.Status(context.Background())
+	if err != nil || !status.Busy {
+		t.Fatalf("unknown record reported idle: %+v %v", status, err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Status(context.Background()); !fault.Is(err, fault.Unavailable) {
+		t.Fatalf("closed status: %v", err)
+	}
+}
+
+func TestStatusTransportRequiresEmptyBodyAndPost(t *testing.T) {
+	s, _ := serviceFixture(t)
+	for _, tc := range []struct {
+		method, body string
+		want         int
+	}{{http.MethodPost, "", 200}, {http.MethodGet, "", 405}, {http.MethodPost, "{}", 400}, {http.MethodPost, "null", 400}} {
+		w := httptest.NewRecorder()
+		s.handle(w, httptest.NewRequest(tc.method, "/v1/status", strings.NewReader(tc.body)))
+		if w.Code != tc.want {
+			t.Fatalf("%s %q: status=%d want=%d", tc.method, tc.body, w.Code, tc.want)
+		}
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := s.Status(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancellation: %v", err)
 	}
 }
