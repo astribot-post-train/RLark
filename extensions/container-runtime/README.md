@@ -66,3 +66,11 @@ Automatic enrollment/startup recovery and durable replacement of the test SSH
 reverse tunnel remain incomplete; see the bilingual console recovery section.
 
 On 2026-10-31 the optional log acceptance reran all four GPU lifecycle cases (170 seconds) against the direct log API, then the stop/log/cleanup case through the console proxy (28 seconds). Both verified bounded output, access rejection and denial after allocation release. See the paired plan for private token-file inputs and safe failure recovery.
+
+The console optionally submits, lists and suspends single-process Raw Jobs with
+`--enable-job-submission` and the additive console Job RBAC. It first creates a
+suspended native Job, pins an exact-UID ContainerJob, then activates with a CAS
+patch and retained receipt. Identical operation retries preserve later suspension
+and completion. The typed UI keeps uncertain process input only in memory and
+never accepts GPU visibility overrides. This remains an opt-in preview; see the
+paired console documents for API contracts, recovery and cloud acceptance limits.

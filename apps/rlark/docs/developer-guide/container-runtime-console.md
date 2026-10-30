@@ -152,8 +152,9 @@ separate `container-runtime-api` service. The UI build requires Node.js
 The preview UI creates Raw clusters. API/CLI provisioning can also create
 Docker inventory records, but that does not enable Docker Engine registration
 or execution. Join/package export, artifact publication and node drain
-remain CLI/operator workflows. Job names in the console come from allocation
-references; the console is not a Job submission or history interface.
+remain CLI/operator workflows. Allocation rows retain their Job references; the
+optional Raw Job panel separately lists verified bound Jobs, submits one process
+and records suspension intent. It is not a historical archive.
 
 The page refreshes observations every 15 seconds. Heartbeats older than 45
 seconds, future heartbeats, stale generations, credential mismatches, replaced
@@ -264,3 +265,110 @@ the CUDA marker and truncation metadata. After normal stop and allocation
 release, the old allocation identity was rejected. The runner used the
 management kubeconfig only; restricted controller credentials cannot create
 native Jobs.
+
+## Raw Job submission increment (preview implementation)
+
+Add an explicitly enabled administrator-only submission surface at
+`POST /api/v1/container-runtime/clusters/{namespace}/{cluster}/jobs`.
+The strict request carries a canonical operation UUID, the exact companion
+Cluster UID, prepared environment, executable argv, and working directory.
+The server derives tenant, native Cluster and namespace from current bindings;
+clients cannot select another tenant, inject a Pod template, set GPU visibility,
+or request Docker/Ray/group dispatch. This creates a single Raw process Job;
+whole-node/authorized-GPU reservation remains the existing controller's job.
+Submission accepts queued work; it does not promise capacity or verify local
+executable/dependency availability. The supervisor still enforces its path policy.
+
+The operation UUID determines one native Job and companion binding name. Create
+the Job suspended, create its exact-UID ContainerJob, then activate by one atomic
+UID/resourceVersion-tested patch that also records activation. Retry identical
+input after response loss; compare the request fingerprint, full workload and
+ownership before every write. A retry must never resume a Job suspended after
+activation or rerun a completed Job. Existing bindings whose Job is missing or
+replaced fence recreation. Before a binding exists a suspended Job has no
+execution authority. Partial failures retain objects for the identical request
+to resume; do not delete/recreate or submit a fresh UUID to repair uncertainty.
+Idempotence lasts while either record is retained; administrator deletion of
+both records explicitly ends it. No background submission worker is added.
+
+Provide a typed list of this cluster's bound Jobs, and a separate durable
+suspension request with exact Job UID/resourceVersion. Suspension is not immediate
+cleanup: display Job phase and condition freshness separately and wait for the
+existing allocation cleanup workflow. No force unlock, restart, automatic retry
+or deletion action is added. The console needs additive Job/ContainerJob RBAC
+and an explicit `--enable-job-submission` flag; the default remains disabled. Apply
+`extensions/container-runtime/config/rbac/container-runtime-console-jobs.yaml`
+alongside the base console role, then add the flag to the existing console
+command. This role grants native Job get/create/patch and companion Job
+get/list/create; it grants no deletion, Task dispatch or status writes. Kubernetes
+RBAC cannot limit Job patches to suspension, so this is a trusted administrator
+service. The detail response advertises `jobSubmissionEnabled`; disabled or
+unsupported clusters do not offer submission or poll the absent Job endpoint.
+
+The form takes argv and environment as JSON string arrays, preserving spaces
+and empty arguments without shell parsing. The executable and working directory
+must be canonical absolute paths. GPU visibility overrides are rejected. The
+form retains an uncertain request's operation ID and exact cluster UID, disables
+cluster switching and retries the same payload. Job phase is shown separately
+from suspension intent and current-generation observation. Invalid bindings and
+terminal Jobs disable the suspend action.
+
+The list uses `GET` on the same `/jobs` route. Suspend uses
+`PATCH .../jobs/{job-name}/suspend` with `uid` and `resourceVersion`. Conflicts
+return 409 and require re-reading; invalid submissions return 400; management
+outages return a sanitized 503. No endpoint resumes an already suspended Job.
+
+Example POST body (replace identities, profile and paths using current inventory):
+
+```json
+{
+  "operationID": "d07faab0-5896-4b9a-af29-887ba579c69f",
+  "clusterUID": "REPLACE_COMPANION_CLUSTER_UID",
+  "environment": "REPLACE_REGISTERED_PROFILE",
+  "process": {
+    "argv": ["/usr/bin/python3", "train.py"],
+    "env": [],
+    "directory": "/work"
+  }
+}
+```
+
+Browser submission intents stay in memory because argv may contain secrets.
+After an uncertain response preserve the form/UUID and retry unchanged; after a
+page reload use the retained operation ID and administrator inspection. Log only
+operation/resource identity, never argv/environment or upstream errors.
+
+Validation must cover unauthenticated/non-admin access, wrong/replaced/ambiguous
+Cluster bindings, unsupported runtime, invalid paths and GPU overrides, partial
+create and activation response loss, concurrent retries, stopped/completed Job
+replay, conflicting ownership/spec, list isolation, stale suspension, UI request
+validation/cancellation, and real private-node dispatch/cleanup before advertising
+cloud submission acceptance.
+
+
+### Submission acceptance on 2026-10-31
+
+The dedicated `regular-training` notebook was restarted after platform stop,
+without changing its 1 GPU / 20 CPU / 236 GiB or public-network settings. Current
+container evidence was rechecked, the stopped old exact Nodes were retired only
+after Task/allocation/upgrade absence, and a new registration/package was issued.
+PyTorch 2.11.0+cu126, Ray 2.56.1 and CUDA remained present; no dependency install
+was needed. Temporary SSH multiplexing/reverse forwarding restored test access.
+This remains an operator recovery, not automatic restart enrollment.
+
+Against real Gateway/KCP with the restricted console ServiceAccount, a browser
+submitted a Raw process, deliberately dropped a committed POST response, retried
+the exact in-memory intent, and recovered the same Job UID. It observed Running,
+suspended through the page with exact UID/resourceVersion, waited for Stopped and
+allocation deletion, and proved identical submission replay preserves the stop.
+Retained supervisor logs contained `RLARK_CONSOLE_GPU_OK` only after one-GPU CUDA
+computation returned `42.0`. EN/CN labels passed with no JavaScript exceptions.
+Dedicated acceptance Jobs/bindings/Tasks were normally cleaned with exact
+preconditions. The node returned Ready, idle and schedulable, with no allocation.
+This establishes only the single-process Raw submission preview; distributed
+Ray/RLinf and Docker Engine Job submission remain outside its scope.
+
+The extension test/vet/build, submission/console race tests, eleven UI transport/
+model tests, production UI build and strict bilingual documentation build pass.
+Repository `make test-go` passes. Incremental lint reports zero issues; full
+repository lint remains blocked by thirty existing findings in native RLark.

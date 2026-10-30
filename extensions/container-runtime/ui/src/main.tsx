@@ -14,6 +14,8 @@ import {
   type Cluster,
   type ClusterIntent,
   type Detail,
+  type JobSummary,
+  type RawJobRequest,
   type Node,
 } from "./api";
 import {
@@ -22,7 +24,9 @@ import {
   LoadGate,
   nodeState,
   logText as decodeLogText,
+  rawJobIntent,
 } from "./models";
+import { JobsPanel } from "./JobsPanel";
 import "./style.css";
 const labels = {
   zh: {
@@ -80,6 +84,8 @@ const labels = {
     logUnavailable: "日志不可用",
     logClose: "关闭日志",
     logBounded: "输出已达到读取或保留上限",
+    invalidJob:
+      "请填写有效的环境、绝对路径和 JSON 字符串数组；不能覆盖 GPU 可见性。",
     createHint:
       "创建时自动生成操作 UUID。提交后保留相同请求，响应丢失可安全重试。",
     remembered:
@@ -87,6 +93,21 @@ const labels = {
     failedLogin: "登录失败或账号不是管理员",
     rollout: "最近成功升级",
     session: "会话已过期，请重新登录",
+    jobsTitle: "Raw 作业",
+    submitJob: "提交作业",
+    environment: "环境",
+    argv: "命令参数（JSON 字符串数组）",
+    directory: "工作目录",
+    env: "环境变量（KEY=VALUE 的 JSON 数组）",
+    suspend: "暂停",
+    suspended: "已暂停",
+    active: "未暂停",
+    unobserved: "观测待更新",
+    retainedJob:
+      "提交结果待确认，请保存操作 ID 和原始输入并重试相同请求。切换集群已禁用；刷新或退出会丢失内存中的请求，需先核对资源。",
+    jobHint: "首版只提交单进程 Raw 作业；GPU 由节点授权和调度器分配。",
+    noJobs: "暂无 Raw 作业",
+    retryJob: "重试同一作业",
   },
   en: {
     title: "Container clusters",
@@ -144,6 +165,8 @@ const labels = {
     logUnavailable: "Logs unavailable",
     logClose: "Close logs",
     logBounded: "Output reached the read or retention limit",
+    invalidJob:
+      "Provide a valid environment, absolute paths and JSON string arrays. GPU visibility overrides are forbidden.",
     createHint:
       "An operation UUID is generated at submission. Retain the identical request to recover a lost response.",
     remembered:
@@ -151,6 +174,22 @@ const labels = {
     failedLogin: "Login failed or administrator access is missing",
     rollout: "Last successful upgrade",
     session: "Session expired. Sign in again",
+    jobsTitle: "Raw jobs",
+    submitJob: "Submit job",
+    environment: "Environment",
+    argv: "Arguments (JSON string array)",
+    directory: "Working directory",
+    env: "Environment (JSON array of KEY=VALUE)",
+    suspend: "Suspend",
+    suspended: "Suspended",
+    active: "Not suspended",
+    unobserved: "Observation pending",
+    retainedJob:
+      "Submission is unconfirmed. Retain the operation ID and exact input and retry the same request. Cluster switching is disabled. Refresh or sign out loses the in-memory request; inspect resources first.",
+    jobHint:
+      "The preview submits one Raw process; GPU placement remains controlled by node authorization and the scheduler.",
+    noJobs: "No Raw jobs",
+    retryJob: "Retry same job",
   },
 };
 type Lang = keyof typeof labels;
@@ -186,6 +225,8 @@ function App() {
     name: string;
   }>();
   const [detail, setDetail] = useState<Detail>();
+  const [jobs, setJobs] = useState<JobSummary[]>();
+  const [jobsLoading, setJobsLoading] = useState(false);
   const [revision, setRevision] = useState(0);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -203,6 +244,8 @@ function App() {
     note: string;
   }>();
   const [logLoading, setLogLoading] = useState(false);
+  const [showJob, setShowJob] = useState(false);
+  const [jobIntent, setJobIntent] = useState<RawJobRequest>();
   const logRequest = useRef<AbortController | undefined>(undefined);
   const pending = useRef(new Set<AbortController>());
   const listGate = useRef(new LoadGate());
@@ -232,6 +275,9 @@ function App() {
     setToken("");
     setClusters(undefined);
     setDetail(undefined);
+    setJobs(undefined);
+    setShowJob(false);
+    setJobIntent(undefined);
     setSelection(undefined);
     logRequest.current?.abort();
     setLogText(undefined);
@@ -271,6 +317,10 @@ function App() {
   }, [client, revision]);
   useEffect(() => {
     setDetail(undefined);
+    setJobs(undefined);
+    setShowJob(false);
+  }, [client, selection]);
+  useEffect(() => {
     if (!client || !selection) return;
     const controller = new AbortController();
     const valid = detailGate.current.begin();
@@ -289,13 +339,40 @@ function App() {
         }
       })
       .catch((e) => {
-        if (valid() && !controller.signal.aborted) report(e);
+        if (valid() && !controller.signal.aborted) {
+          setDetail(undefined);
+          report(e);
+        }
       });
     return () => {
       controller.abort();
       detailGate.current.cancel();
     };
   }, [client, selection, revision]);
+  useEffect(() => {
+    if (!client || !selection || !detail?.jobSubmissionEnabled) {
+      setJobs(undefined);
+      setJobsLoading(false);
+      return;
+    }
+    const controller = new AbortController();
+    setJobsLoading(true);
+    void client
+      .jobs(selection.namespace, selection.name, controller.signal)
+      .then((value) => {
+        if (!controller.signal.aborted) setJobs(value);
+      })
+      .catch((e) => {
+        if (!controller.signal.aborted) {
+          setJobs(undefined);
+          report(e);
+        }
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setJobsLoading(false);
+      });
+    return () => controller.abort();
+  }, [client, selection, detail?.jobSubmissionEnabled, revision]);
   async function mutate(action: (signal: AbortSignal) => Promise<void>) {
     const controller = new AbortController();
     pending.current.add(controller);
@@ -365,7 +442,7 @@ function App() {
   };
   const create = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!client) return;
+    if (!client || jobIntent) return;
     const data = new FormData(event.currentTarget);
     const retained: ClusterIntent = intent ?? {
       operationID: crypto.randomUUID(),
@@ -390,7 +467,54 @@ function App() {
         /* No credentials were persisted. */
       }
       setShowCreate(false);
-      setSelection(created);
+      if (!jobIntent) setSelection(created);
+    });
+  };
+  const submitJob = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!client || !selection || !detail) return;
+    const data = new FormData(event.currentTarget);
+    let request: RawJobRequest;
+    try {
+      request =
+        jobIntent ??
+        rawJobIntent(
+          crypto.randomUUID(),
+          detail.cluster.uid,
+          String(data.get("environment") || ""),
+          String(data.get("argv") || ""),
+          String(data.get("env") || "[]"),
+          String(data.get("directory") || ""),
+        );
+      if (
+        request.clusterUID !== detail.cluster.uid ||
+        !detail.jobSubmissionEnabled
+      )
+        throw new Error();
+    } catch {
+      setError(t.invalidJob);
+      return;
+    }
+    setJobIntent(request);
+    void mutate(async (signal) => {
+      try {
+        await client.submitJob(
+          selection.namespace,
+          selection.name,
+          request,
+          signal,
+        );
+      } catch (e) {
+        // Validation failures precede effects. Other failures retain the exact
+        // request because the server may already have committed it.
+        if (!signal.aborted && e instanceof APIError && e.status === 400) {
+          setJobIntent(undefined);
+        }
+        throw e;
+      }
+      if (signal.aborted) return;
+      setJobIntent(undefined);
+      setShowJob(false);
     });
   };
   return (
@@ -441,7 +565,7 @@ function App() {
               <div className="actions">
                 <h2>{t.title}</h2>
                 <button
-                  disabled={writing}
+                  disabled={writing || !!jobIntent}
                   onClick={() => setShowCreate((v) => !v)}
                 >
                   ＋
@@ -456,7 +580,7 @@ function App() {
               ) : (
                 clusters.map((c) => (
                   <button
-                    disabled={writing}
+                    disabled={writing || !!jobIntent}
                     className={`cluster ${selection?.name === c.name && selection.namespace === c.namespace ? "selected" : ""}`}
                     key={c.uid}
                     onClick={() => {
@@ -620,6 +744,28 @@ function App() {
                     )}
                     <Conditions items={detail.cluster.conditions} />
                   </section>
+                  <JobsPanel
+                    detail={detail}
+                    t={t}
+                    writing={writing}
+                    showJob={showJob}
+                    jobIntent={jobIntent}
+                    jobsLoading={jobsLoading}
+                    jobs={jobs}
+                    onToggle={() => setShowJob((v) => !v)}
+                    onSubmit={submitJob}
+                    onSuspend={(job) => {
+                      if (client && selection)
+                        void mutate(async (signal) => {
+                          await client.suspendJob(
+                            selection.namespace,
+                            selection.name,
+                            job,
+                            signal,
+                          );
+                        });
+                    }}
+                  />
                   <section className="panel">
                     <h3>{t.nodes}</h3>
                     {!detail.nodes.length ? (

@@ -17,6 +17,7 @@ import (
 	ext "github.com/astribot-post-train/rlark/extensions/container-runtime/api/v1alpha1"
 	"github.com/astribot-post-train/rlark/extensions/container-runtime/pkg/console"
 	"github.com/astribot-post-train/rlark/extensions/container-runtime/pkg/provision"
+	"github.com/astribot-post-train/rlark/extensions/container-runtime/pkg/submission"
 	native "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
 	"github.com/rlinf/rlark/apps/rlark/pkg/log"
 	corev1 "k8s.io/api/core/v1"
@@ -35,12 +36,14 @@ func main() {
 }
 func run(ctx context.Context, args []string) error {
 	var addr, kubeconfig, keyFile, certFile, tlsKey, uiDirectory, gateway, logOrigin string
+	var enableJobs bool
 	fs := flag.NewFlagSet("container-runtime-console", flag.ContinueOnError)
 	fs.StringVar(&addr, "addr", "127.0.0.1:9445", "listen address; HTTP is loopback only")
 	fs.StringVar(&kubeconfig, "kubeconfig", "", "restricted management kubeconfig; empty uses in-cluster config")
 	fs.StringVar(&keyFile, "gateway-jwt-key-file", "", "read-only Gateway signing key file (at least 32 bytes)")
 	fs.StringVar(&gateway, "gateway-origin", "", "trusted Gateway HTTPS origin; loopback HTTP allowed for development")
 	fs.StringVar(&logOrigin, "log-api-origin", "", "optional loopback HTTP administrator log API origin")
+	fs.BoolVar(&enableJobs, "enable-job-submission", false, "enable preview single-process Raw Job submit/list/suspend; requires additive Job RBAC")
 	fs.StringVar(&certFile, "tls-cert", "", "optional HTTPS certificate; required off loopback")
 	fs.StringVar(&tlsKey, "tls-key", "", "HTTPS private key")
 	fs.StringVar(&uiDirectory, "ui-directory", "", "built independent UI directory (optional)")
@@ -84,6 +87,9 @@ func run(ctx context.Context, args []string) error {
 		return fmt.Errorf("create management client: %w", err)
 	}
 	api := &console.API{Client: management, Creator: provision.Service{Client: management}, Auth: auth}
+	if enableJobs {
+		api.Jobs = submission.Service{Client: management}
+	}
 	if logOrigin != "" {
 		api.Logs, err = console.NewLogProxy(logOrigin)
 		if err != nil {

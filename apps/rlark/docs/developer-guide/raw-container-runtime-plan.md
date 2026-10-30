@@ -225,7 +225,7 @@ The opt-in package launcher verifies every immutable exported file and accepts t
 - [ ] General admission/migration and automatic enrollment/renewal.
 - [x] Authenticated release hosting and target-driven idle rollout selection are implemented as preview infrastructure; private-cloud single-node rollout and launcher-restart acceptance passed.
 - [ ] External-supervisor power-loss recovery and failed-exec rollback acceptance.
-- [ ] Container Clusters UI, capability-gated Job submission and bilingual API/operations examples.
+- [x] Independent Container Clusters UI, opt-in single-process Raw Job submission and bilingual API/operations examples; cloud browser submission/retry/suspend acceptance passed. Multi-node submissions remain incomplete.
 - [x] Authorized private 1-GPU notebook and single-process Raw GPU Job success/reuse/failure/stop acceptance.
 - [x] Private-cloud Agent upgrade and post-upgrade GPU lifecycle evidence.
 - [ ] Failed-exec rollback, power-loss recovery and checkpoint-retention evidence.

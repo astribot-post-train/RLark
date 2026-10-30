@@ -1,4 +1,63 @@
-import type { Cluster, Node } from "./api";
+import type { Cluster, Node, RawJobRequest } from "./api";
+
+// Explicit arrays preserve whitespace and empty arguments without shell parsing
+// or inheriting the browser/Agent environment. Server validation is authoritative.
+export function rawJobIntent(
+  operationID: string,
+  clusterUID: string,
+  environment: string,
+  argvText: string,
+  envText: string,
+  directory: string,
+): RawJobRequest {
+  const argv: unknown = JSON.parse(argvText);
+  const env: unknown = JSON.parse(envText);
+  const canonical = (s: string) =>
+    s.startsWith("/") &&
+    !s.includes("\0") &&
+    (s === "/" ||
+      (!s.endsWith("/") &&
+        s
+          .split("/")
+          .slice(1)
+          .every((p) => p !== "" && p !== "." && p !== "..")));
+  if (
+    !environment ||
+    environment.trim() !== environment ||
+    environment.length > 128 ||
+    !Array.isArray(argv) ||
+    !argv.length ||
+    !argv.every((v) => typeof v === "string" && !v.includes("\0")) ||
+    !canonical(argv[0]) ||
+    !canonical(directory) ||
+    !Array.isArray(env) ||
+    !env.every((v) => typeof v === "string" && !v.includes("\0"))
+  ) {
+    throw new Error("Invalid Raw process");
+  }
+  const keys = new Set<string>();
+  for (const entry of env) {
+    const key = entry.slice(0, entry.indexOf("="));
+    if (
+      !/^[A-Za-z_][A-Za-z0-9_]*=/.test(entry) ||
+      keys.has(key) ||
+      key === "CUDA_VISIBLE_DEVICES" ||
+      key === "NVIDIA_VISIBLE_DEVICES"
+    ) {
+      throw new Error("Invalid Raw environment");
+    }
+    keys.add(key);
+  }
+  const value = {
+    operationID,
+    clusterUID,
+    environment,
+    process: { argv, env, directory },
+  };
+  if (new TextEncoder().encode(JSON.stringify(value)).length > 65536)
+    throw new Error("Raw process exceeds request limit");
+  return value;
+}
 // Logs are opaque bytes on the wire. Decode only bounded snapshots and replace
 // terminal/bidirectional controls before React renders the result as text.
 export function logText(data: string): string {

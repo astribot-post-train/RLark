@@ -211,7 +211,8 @@ aside,
   display: grid;
   gap: 8px;
 }
-input {
+input,
+textarea {
   border: 1px solid #d5dbea;
   border-radius: 8px;
   padding: 10px;

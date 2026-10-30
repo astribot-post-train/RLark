@@ -1,0 +1,26 @@
+# Optional workload permissions for --enable-job-submission.
+# Apply alongside the base console RBAC only to trusted administrator services.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: container-runtime-console-jobs
+rules:
+  - apiGroups: ["rlinf.io"]
+    resources: ["jobs"]
+    verbs: ["get", "create", "patch"]
+  - apiGroups: ["containers.rlark.io"]
+    resources: ["containerjobs"]
+    verbs: ["get", "list", "create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: container-runtime-console-jobs
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: container-runtime-console-jobs
+subjects:
+  - kind: ServiceAccount
+    name: container-runtime-console
+    namespace: rlark-system

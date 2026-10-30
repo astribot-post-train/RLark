@@ -12,7 +12,8 @@ Cluster、Node、Job、Task API 增加容器专属字段。
 - 节点的权威身份、私网地址、运行时、能力、授权 GPU UUID、心跳新鲜度、
   Ready、可调度和忙闲状态；
 - 可用 Agent 版本及当前目标版本；
-- 可恢复的集群创建、目标版本选择和节点 cordon/uncordon。
+- 可恢复的集群创建、目标版本选择和节点 cordon/uncordon；
+- 显式启用的单进程 Raw Job 提交、绑定 Job 列表及持续暂停。
 
 Allocation、其中的 Job 引用和 Agent 升级作为独立维度展示。控制台不会在缺少观测时
 伪造利用率，也不会把过期心跳当作 Ready 或可调度。Ray/RLinf 组提交、
@@ -125,7 +126,8 @@ Node.js 24。
 
 预览 UI 创建 Raw 集群。API/CLI 也能创建 Docker 资源记录，但不代表 Docker
 Engine 注册/执行已支持。节点加入、安装包导出、产物发布、drain 仍通过
-CLI 或运维流程完成。页面 Job 名来自 allocation 引用，不是任务提交或历史接口。
+CLI 或运维流程完成。allocation 行保留其 Job 引用；可选 Raw Job 面板单独列出经过
+验证的绑定 Job、提交单进程和记录暂停意图，不提供历史归档。
 
 页面每 15 秒刷新观测。心跳超过 45 秒、未来心跳、过期 generation、凭据不匹配、
 原生节点被替换、cordon/drain、旧版预留、已有锁和目标版本不一致都会阻止页面
@@ -206,3 +208,89 @@ stdout/stderr 的开头 64 KiB，并附带截断信息。请求最长等待 20 �
 Task UID 请求，然后读取到 65,536 字节的 CUDA 标记及截断元数据。任务正常停止
 并释放 allocation 后，旧 allocation 身份再次访问也被拒绝。验收运行器只使用
 管理 kubeconfig；受限 controller 凭据按设计不能创建原生 Job。
+
+## Raw Job 提交增量（预览实现）
+
+新增须显式启用的管理员提交入口：
+`POST /api/v1/container-runtime/clusters/{namespace}/{cluster}/jobs`。
+严格请求包含规范 operation UUID、精确的附属 Cluster UID、预置环境、可执行
+argv 和工作目录。服务端从当前绑定取得租户、原生 Cluster 和 namespace；客户端
+不能选择另一租户、注入 Pod 模板、指定 GPU 可见性或请求 Docker/Ray/整组派发。
+仅创建单个 Raw 进程 Job，整节点/授权 GPU 预留仍由现有控制器负责。提交可以排队，
+不保证容量，也不证明节点已安装可执行文件或依赖；supervisor 继续执行路径白名单。
+
+operation UUID 确定唯一原生 Job 和附属 binding 名称。先创建暂停的 Job，再创建
+绑定精确 Job UID 的 ContainerJob，最后以原子 UID/resourceVersion 前置校验的
+patch 激活，同时记录激活证明。响应丢失后使用相同输入重试；每次写入前比较请求
+指纹、完整工作负载及所有权。重试不能恢复激活后被暂停的 Job，也不能重跑已完成
+Job。binding 已存在但 Job 丢失或替换时禁止重建；binding 创建前暂停的 Job 没有
+执行授权。部分失败保留对象，等待相同请求恢复，不能通过删建或新 UUID 修复不确定
+状态。只要两种记录之一保留就维持幂等；管理员显式删除两者才结束该保证。不新增
+后台提交 worker。
+
+提供按集群绑定隔离的类型化 Job 列表，以及携带精确 Job UID/resourceVersion 的
+持续暂停请求。暂停不等于立即完成清理：分别显示 Job phase 与条件新鲜度，等待
+现有 allocation 清理流程。不提供强制解锁、重启、自动重试或删除动作。控制台需要
+附加 Job/ContainerJob RBAC 和显式 `--enable-job-submission` 开关，默认关闭。
+在基础 console role 外安装
+`extensions/container-runtime/config/rbac/container-runtime-console-jobs.yaml`，
+再给既有 console 启动命令增加该开关。附加权限仅授予原生 Job get/create/patch
+与附属 Job get/list/create，不授予删除、Task 派发或 status 写入。Kubernetes RBAC
+不能把 Job patch 限定为暂停字段，因此控制台仍是受信任管理员服务。详情响应提供
+`jobSubmissionEnabled`；未启用或不支持的集群不显示提交入口，也不轮询缺失接口。
+
+表单使用 JSON 字符串数组输入 argv 与环境变量，保留空格和空参数，不进行 shell
+解析。可执行文件与工作目录必须是规范绝对路径，禁止覆盖 GPU 可见性。未确认
+请求保留 operation ID 和精确 Cluster UID，禁止切换集群，只能原样重试。Job phase、
+暂停意图和当前 generation 的观测分别显示；绑定无效或已终态的 Job 禁用暂停。
+
+列表使用相同 `/jobs` 路由的 `GET`；暂停使用
+`PATCH .../jobs/{job-name}/suspend`，包含 `uid` 与 `resourceVersion`。冲突返回
+409 并要求重新读取；非法请求返回 400，管理面故障返回脱敏 503。接口不提供恢复
+已经暂停的 Job。
+
+POST 请求示例（身份、环境及路径需按当前 inventory 替换）：
+
+```json
+{
+  "operationID": "d07faab0-5896-4b9a-af29-887ba579c69f",
+  "clusterUID": "REPLACE_COMPANION_CLUSTER_UID",
+  "environment": "REPLACE_REGISTERED_PROFILE",
+  "process": {
+    "argv": ["/usr/bin/python3", "train.py"],
+    "env": [],
+    "directory": "/work"
+  }
+}
+```
+
+argv 可能含敏感信息，浏览器提交意图只保留在内存。响应不确定时保留表单/UUID 并
+原样重试；刷新页面后使用保留的 operation ID 和管理员检查恢复。日志只记录操作/
+资源身份，不记录 argv/environment 或上游错误。
+
+验收需覆盖未认证/非管理员、错误/替换/含糊的 Cluster 绑定、运行时不支持、非法
+路径及 GPU 覆盖、部分创建与激活响应丢失、并发重试、已停止/完成 Job 重放、所有权/
+Spec 冲突、列表隔离、过期暂停、UI 请求校验/取消，以及真实私网节点派发与清理。
+通过后才记录云端提交验收。
+
+
+### 2026-10-31 提交验收
+
+专用 `regular-training` 开发机在平台停止后重新启动，1 GPU / 20 CPU / 236 GiB
+及公网配置未变。重新核对当前容器证据，只有在确认 Task、allocation、upgrade 均
+不存在后才退役停止的精确旧 Node，随后重新注册并导出安装包。PyTorch
+2.11.0+cu126、Ray 2.56.1 和 CUDA 均保留，无需安装依赖。通过临时 SSH 连接复用与
+反向转发恢复测试连通；这是运维恢复，不是自动重启注册。
+
+真实 Gateway/KCP 与受限 console ServiceAccount 上的浏览器提交了 Raw 进程，
+故意丢弃已提交 POST 的响应，原样重试内存中的请求并恢复同一 Job UID。页面观测
+Running，以精确 UID/resourceVersion 暂停，等待 Stopped 和 allocation 删除，
+再验证重复提交不会恢复已暂停任务。保留的 supervisor 日志包含
+`RLARK_CONSOLE_GPU_OK`，该标记只在单 GPU CUDA 计算得到 `42.0` 后输出。中英文
+切换通过，无 JavaScript 异常。专用验收 Job、binding、Task 均以精确前置条件正常
+清理，节点恢复 Ready、空闲、可调度且无 allocation。这仅证明单进程 Raw 提交预览；
+分布式 Ray/RLinf 和 Docker Engine Job 提交仍不在范围内。
+
+扩展测试/vet/build、submission/console race 测试、11 项 UI 传输/模型测试、
+UI 生产构建与严格双语文档构建通过。仓库 `make test-go` 通过；增量 lint 零问题，
+全仓库 lint 仍被原生 RLark 中的 30 项既有发现阻塞。
