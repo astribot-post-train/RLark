@@ -228,7 +228,7 @@ The opt-in package launcher verifies every immutable exported file and accepts t
 - [x] Independent Container Clusters UI, opt-in single-process Raw Job submission and bilingual API/operations examples; cloud browser submission/retry/suspend acceptance passed. Multi-node submissions remain incomplete.
 - [x] Authorized private 1-GPU notebook and single-process Raw GPU Job success/reuse/failure/stop acceptance.
 - [x] Private-cloud Agent upgrade and post-upgrade GPU lifecycle evidence.
-- [ ] Failed-exec rollback, power-loss recovery and checkpoint-retention evidence.
+- [x] Checkpoint retention through Job success/failure/stop and resource deletion in the same running container; cross-replacement storage persistence remains unverified.
 - [x] Recovery/race tests, extension Go tests/vet/build and strict bilingual docs build.
 - [ ] Full repository Go/Web checks and generated verification.
 
@@ -248,7 +248,7 @@ On 2026-10-31 the existing private notebook was restarted from its current autos
 
 ### Real single-node Raw acceptance (opt-in)
 
-On 2026-10-31, the private H100 notebook was explicitly registered in the separate `ksyun-containers` Cluster (`ksyun-container-agents` namespace, tenant `team-a`) and started the exported root supervisor/Agent package. Fresh mTLS heartbeats reported Ready and schedulable, 20 CPUs, 236 GiB and one authorized GPU. Against the real KCP management API, `TestCloudRawLifecycle` passed all four cases in 170 seconds: CUDA success (`42.0`), a second Job reusing the same GPU, exit-code-7 failure, and stopping a running process. Each case observed allocation absence, then deleted its own Job/binding and verified Task absence. The node returned idle/schedulable and no allocations remained. Deployment acceptance also exposed and fixed an API `--kubeconfig` registration panic, missing leader-election Event RBAC, and missing controller logger initialization. Test-only API reachability uses an SSH reverse tunnel and short-lived credentials. This establishes single-node, single-process preview acceptance; Ray/RLinf groups, historical logs/stats, native UI integration, checkpoint retention and real failed-exec rollback remain incomplete. Bounded remote logs and idle Agent rollout have separate acceptance evidence below. Native Cluster/Node aggregate UI still uses its own Lease-based status; the companion Ready observation is not a native Node Lease and must not be presented as completion of that UI integration.
+On 2026-10-31, the private H100 notebook was explicitly registered in the separate `ksyun-containers` Cluster (`ksyun-container-agents` namespace, tenant `team-a`) and started the exported root supervisor/Agent package. Fresh mTLS heartbeats reported Ready and schedulable, 20 CPUs, 236 GiB and one authorized GPU. Against the real KCP management API, `TestCloudRawLifecycle` passed all four cases in 170 seconds: CUDA success (`42.0`), a second Job reusing the same GPU, exit-code-7 failure, and stopping a running process. Each case observed allocation absence, then deleted its own Job/binding and verified Task absence. The node returned idle/schedulable and no allocations remained. Deployment acceptance also exposed and fixed an API `--kubeconfig` registration panic, missing leader-election Event RBAC, and missing controller logger initialization. Test-only API reachability uses an SSH reverse tunnel and short-lived credentials. This establishes single-node, single-process preview acceptance; Ray/RLinf groups, historical logs/stats, native UI integration and real failed-exec rollback remain incomplete. Checkpoint retention through task cleanup, bounded remote logs and idle Agent rollout have separate acceptance evidence below. Native Cluster/Node aggregate UI still uses its own Lease-based status; the companion Ready observation is not a native Node Lease and must not be presented as completion of that UI integration.
 
 Update the deployed native Job/Task/Node CRDs **and** native controller-manager to the current repository version before enabling the independent extension controller. Old Job schemas reject `placement.environment`; an old native controller can continue applying its legacy Raw policy to extension-owned Jobs and write conflicting conditions. The current generic `rlark.io/controller-owner` boundary is required. Do not remove ownership annotations or disable validation to work around a version mismatch. The extension controller initializes RLark's structured logger so reconciliation and dependency errors remain visible.
 
@@ -286,6 +286,24 @@ export RLARK_TEST_RAW_LOG_TOKEN_FILE=/private/gateway-admin-token
 The origin must be an explicit loopback HTTP address: use the API read listener or the console configured with `--log-api-origin`. The token file must be a private regular file containing a short-lived Gateway-issued administrator token, never the issuer key. Keep it off the node and do not record it in command arguments or logs. Invalid inputs fail before work is created. The stop case waits up to one minute for actual CUDA/output readiness after observing Running, checks unauthenticated 401, unknown `path` 400 and wrong Task UID 409, then verifies exactly 65,536 bytes with the GPU marker and truncation. Stop uses normal suspension; release must finish before the old identity returns 409. An empty snapshot is valid before output arrives (`data: ""`, the canonical base64 string).
 
 On 2026-10-31 all four lifecycle cases and direct log checks passed in 170 seconds; the console-proxy stop/log/cleanup case passed separately in 28 seconds. The dedicated node returned idle/schedulable, with no acceptance Jobs/Tasks, bindings or allocations. The first proxy run exposed an acceptance race (Running precedes Python/CUDA stdout); the exact retained Job was normally suspended and cleaned before retry. These checks establish bounded on-demand logs only, not historical archives, follow/tail, stats, terminal/exec or production ingress.
+
+### Checkpoint-retention acceptance (validated)
+
+Set `RLARK_TEST_RAW_CHECKPOINTS=true` alongside the lifecycle and remote-log
+inputs to test retained workload files. This mode requires authenticated logs:
+the stop case must prove it wrote its checkpoint before suspension, rather than
+mistaking process creation for application readiness. Each case exclusively
+creates a uniquely named JSON checkpoint in the configured work directory and
+fsyncs it. A subsequent Job verifies the exact content of every earlier file
+after the earlier Job, Task, binding and allocation have disappeared. A final
+verification Job checks all four checkpoints, including the stopped process's
+file. Missing or altered files fail the run; verification never recreates them.
+Only the final successful verifier explicitly removes these test-owned files.
+Failure retains files and resources for inspection. This verifies lifecycle
+cleanup inside the running container, not storage survival across platform
+replacement, checkpoints on arbitrary mounts, or framework checkpoint integrity.
+
+On 2026-10-31 the five cases passed on the private H100 notebook in 216 seconds: success, GPU reuse, exit-code-7 failure, normal suspension, and final checkpoint verification. All acceptance Jobs/Tasks, bindings, allocations and test files were absent afterward; the node was idle and schedulable. An earlier run timed out because the Agent polled one API process while log reads reached another; its exact Job was normally suspended and deleted after confirmed allocation/Task cleanup, and its four test files were verified before explicit removal. The successful run used one API process for both Agent polling and the log listener. The cloud platform subsequently reported the notebook stopped at 04:20 with image autosave successful. A repeat after adding an explicit checkpoint-ready log-marker assertion was rejected by the stale-heartbeat preflight before creating any work; that additional assertion has not been rerun on this notebook. Re-read instance identity and explicitly retire/re-enroll if platform startup replaces the container; old Ready evidence does not authorize dispatch.
 
 ### Cloud idle-rollout acceptance procedure (validated)
 

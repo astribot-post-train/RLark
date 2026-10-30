@@ -48,6 +48,10 @@ func TestCloudRawLifecycle(t *testing.T) {
 	executable := required("RLARK_TEST_RAW_EXECUTABLE")
 	directory := required("RLARK_TEST_RAW_DIRECTORY")
 	logs := cloudLogAcceptance(t)
+	checkpoints := os.Getenv("RLARK_TEST_RAW_CHECKPOINTS") == "true"
+	if checkpoints && logs == nil {
+		t.Fatal("RLARK_TEST_RAW_CHECKPOINTS=true requires the authenticated log acceptance inputs")
+	}
 	cfg, err := clientcmd.BuildConfigFromFlags("", kubeconfig)
 	if err != nil {
 		t.Fatal(err)
@@ -96,13 +100,42 @@ func TestCloudRawLifecycle(t *testing.T) {
 	}{
 		{"success", gpu, native.JobPhaseSucceeded, false},
 		{"reuse", gpu, native.JobPhaseSucceeded, false},
-		{"failure", gpu + `; sys.exit(7)`, native.JobPhaseFailed, false},
-		{"stop", gpu + `; import time; time.sleep(600)`, native.JobPhaseStopped, true},
+		{"failure", gpu, native.JobPhaseFailed, false},
+		{"stop", gpu, native.JobPhaseStopped, true},
+	}
+	checkpointFiles := map[string]string{}
+	retained := map[string]string{}
+	if checkpoints {
+		for _, name := range []string{"success", "reuse", "failure", "stop"} {
+			checkpointFiles[name] = directory + "/.rlark-checkpoint-" + uuid.NewString() + "-" + name + ".json"
+		}
+		// The verifier is a fifth, ordinary Job. It runs only after all four
+		// lifecycle cases have cleaned their allocations, and is the sole process
+		// allowed to remove these test-owned files.
+		verify := checkpointVerifyCode(checkpointFiles, true)
+		cases = append(cases, struct {
+			name, code string
+			want       native.JobPhase
+			stop       bool
+		}{"checkpoint-verify", verify, native.JobPhaseSucceeded, false})
 	}
 	for _, test := range cases {
 		if !t.Run(test.name, func(t *testing.T) {
-			if test.stop && logs != nil {
-				test.code = gpu + `; print("X"*70000,flush=True); import time; time.sleep(600)`
+			if checkpoints && test.name != "checkpoint-verify" {
+				path, ok := checkpointFiles[test.name]
+				if !ok {
+					t.Fatalf("missing checkpoint path for %s", test.name)
+				}
+				test.code = checkpointVerifyCode(retained, false) + "\n" + test.code + "\n" + checkpointWriteCode(path, test.name)
+			}
+			if test.name == "failure" {
+				test.code += `; sys.exit(7)`
+			}
+			if test.stop {
+				if logs != nil {
+					test.code += `; print("X"*70000,flush=True)`
+				}
+				test.code += `; import time; time.sleep(600)`
 			}
 			name := "raw-accept-" + test.name + "-" + uuid.NewString()[:8]
 			params, err := json.Marshal(map[string]any{"argv": []string{executable, "-u", "-c", test.code}, "directory": directory, "env": []string{"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", "HOME=/root"}})
@@ -148,7 +181,7 @@ func TestCloudRawLifecycle(t *testing.T) {
 					if a.Spec.Job.UID != string(job.UID) || a.Spec.Task.UID == "" {
 						t.Fatal("log acceptance requires the exact current Job/Task allocation")
 					}
-					logTarget = logs.checkRunning(t, namespace, &a)
+					logTarget = logs.checkRunning(t, namespace, &a, checkpoints)
 				}
 				before := job.DeepCopy()
 				job.Spec.Suspended = true
@@ -199,6 +232,9 @@ func TestCloudRawLifecycle(t *testing.T) {
 				}
 				return false, client.IgnoreNotFound(err) // Observe absence next time.
 			})
+			if checkpoints && test.name != "checkpoint-verify" {
+				retained[test.name] = checkpointFiles[test.name]
+			}
 		}) {
 			return // Never dispatch another Job after uncertain cleanup.
 		}

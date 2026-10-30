@@ -251,6 +251,11 @@ Task log. `--log-read-addr` accepts an explicit loopback address only. The
 console uses `--log-api-origin=http://127.0.0.1:9446` to proxy the fixed
 `/api/v1/container-runtime/logs` route.
 
+The Agent poll endpoint and log listener must belong to the same API process:
+pending reads are held in memory there. Pointing log reads at another instance
+times out even when both instances share the management API. This preview has
+no cross-instance request routing.
+
 A read requires the allocation UID and Task UID from the current inventory. It
 returns at most 64 KiB of combined stdout/stderr, from the beginning of the
 retained file, with truncation metadata. Requests time out after 20 seconds,
