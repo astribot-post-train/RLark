@@ -220,7 +220,6 @@ Linux Agent 设置 `--enable-agent-upgrades=true` 后，会在串行心跳循环
 - [x] 中英文文档记录独立扩展、指定队列和验收范围。
 - [x] 独立模块/构建，迁移 Provider/supervision/测试；加入原生可选集成接口和所有权校验。
 - [x] 类型化附属 schema、单节点预览的 mTLS 授权和管理员接入；直接附属资源写入仍仅限管理员。通用 Job 所有权分派已实现。
-- [ ] 通用准入/迁移和自动注册/续签。
 - [x] 显式容器集群接入、节点限定身份和整卡分配，已在私网开发机验收。
 - [x] 有界授权 Raw 远程日志，已通过真实私有云 GPU Job 验收。
 - [ ] 通用准入/迁移和自动注册/续签。
@@ -229,7 +228,7 @@ Linux Agent 设置 `--enable-agent-upgrades=true` 后，会在串行心跳循环
 - [x] 独立容器集群 UI、显式启用的单进程 Raw Job 提交及中英文 API/运维示例；云端浏览器提交/重试/暂停验收通过。多节点提交仍未完成。
 - [x] 已授权私网 1 GPU 开发机和单进程 Raw GPU Job 成功/复用/失败/停止验收。
 - [x] 私有云 Agent 升级和升级后 GPU 生命周期证据。
-- [ ] exec 失败回滚、断电恢复和 checkpoint 保留证据。
+- [x] 同一运行中容器内，Job 成功/失败/停止和资源删除后的 checkpoint 保留；跨替换存储持久性仍未验证。
 - [x] 恢复/竞态测试、扩展 Go 测试/vet/build 和严格双语文档构建。
 - [ ] 完整仓库 Go/Web 检查和生成验证。
 
@@ -249,7 +248,7 @@ Linux Agent 设置 `--enable-agent-upgrades=true` 后，会在串行心跳循环
 
 ### 真实单节点 Raw 验收（显式启用）
 
-2026-10-31，私网 H100 开发机已显式登记到独立 `ksyun-containers` Cluster（`ksyun-container-agents` namespace、`team-a` 租户），并启动导出的 root supervisor/Agent 包。新鲜 mTLS 心跳显示 Ready、可调度、20 CPU、236 GiB 和一张授权 GPU。对真实 KCP 管理 API 运行 `TestCloudRawLifecycle`，四个用例全部通过，总耗时 170 秒：CUDA 成功（`42.0`）、第二个 Job 复用同一 GPU、退出码 7 失败、停止运行中的进程。各用例确认 allocation 不存在，删除自身 Job/binding 并验证 Task 消失；最终节点恢复空闲可调度，allocation 无残留。真实部署还暴露并修复 API 重复注册 `--kubeconfig` 的 panic、选主 Event RBAC 缺失和控制器 logger 未初始化。测试入口依赖 SSH 反向隧道和短期凭据。这证明单节点单进程预览验收，不代表 Ray/RLinf 整组、历史 logs/stats、原生 UI 集成、checkpoint 保留或真实 exec 失败回滚已完成；后文分别记录有界远程日志和空闲 Agent 滚动升级验收。原生 Cluster/Node 汇总 UI 仍使用自身基于 Lease 的状态；companion Ready 观测不等同于原生 Node Lease，不得据此宣称 UI 集成完成。
+2026-10-31，私网 H100 开发机已显式登记到独立 `ksyun-containers` Cluster（`ksyun-container-agents` namespace、`team-a` 租户），并启动导出的 root supervisor/Agent 包。新鲜 mTLS 心跳显示 Ready、可调度、20 CPU、236 GiB 和一张授权 GPU。对真实 KCP 管理 API 运行 `TestCloudRawLifecycle`，四个用例全部通过，总耗时 170 秒：CUDA 成功（`42.0`）、第二个 Job 复用同一 GPU、退出码 7 失败、停止运行中的进程。各用例确认 allocation 不存在，删除自身 Job/binding 并验证 Task 消失；最终节点恢复空闲可调度，allocation 无残留。真实部署还暴露并修复 API 重复注册 `--kubeconfig` 的 panic、选主 Event RBAC 缺失和控制器 logger 未初始化。测试入口依赖 SSH 反向隧道和短期凭据。这证明单节点单进程预览验收，不代表 Ray/RLinf 整组、历史 logs/stats、原生 UI 集成或真实 exec 失败回滚已完成；后文分别记录任务清理后的 checkpoint 保留、有界远程日志和空闲 Agent 滚动升级验收。原生 Cluster/Node 汇总 UI 仍使用自身基于 Lease 的状态；companion Ready 观测不等同于原生 Node Lease，不得据此宣称 UI 集成完成。
 
 启用独立扩展控制器前，必须将部署中的原生 Job/Task/Node CRD **以及**原生 controller-manager 更新到仓库当前版本。旧 Job schema 会拒绝 `placement.environment`；旧原生控制器仍可能用旧 Raw 策略处理扩展 Job，写入冲突的 condition。当前通用 `rlark.io/controller-owner` 所有权边界是必要前提。不要通过删除所有权注解或关闭校验绕过版本不匹配。扩展控制器会初始化 RLark 结构化 logger，以保留调谐和依赖错误。
 
@@ -287,6 +286,20 @@ export RLARK_TEST_RAW_LOG_TOKEN_FILE=/private/gateway-admin-token
 origin 必须是显式回环 HTTP 地址，可以指向 API 读取监听器，或配置了 `--log-api-origin` 的控制台。token 文件必须是私有普通文件，包含 Gateway 签发的短期管理员 token，不能是签发密钥。文件不得发送到节点，也不把内容放进命令行或日志。输入非法时在创建工作前失败。stop 用例在观测 Running 后限时一分钟等待真实 CUDA/输出就绪，验证未认证返回 401、未知 `path` 返回 400、错误 Task UID 返回 409，再验证恰好 65,536 字节、GPU 标记和截断信息。停止通过正常暂停进行；必须完成释放后，旧身份才返回 409。输出尚未到达时空快照有效（`data: ""`，规范 base64 字符串）。
 
 2026-10-31，四个生命周期用例及直连日志检查在 170 秒内通过；控制台代理的 stop/日志/清理用例另在 28 秒内通过。专用节点恢复空闲可调度，无验收 Job/Task、binding 或 allocation 残留。首次代理测试暴露验收时序竞争（Running 早于 Python/CUDA 输出），精确的保留 Job 已正常暂停并清理后才重试。这只证明有界按需日志，不代表历史归档、follow/tail、统计、terminal/exec 或生产入口完成。
+
+### Checkpoint 保留验收（已验证）
+
+在生命周期与远程日志参数之外设置 `RLARK_TEST_RAW_CHECKPOINTS=true`，即可
+验证工作负载文件保留。该模式要求认证日志：stop 用例必须证明 checkpoint
+已经写入后才暂停，不能把进程创建视为应用就绪。各用例在配置的工作目录中
+以排他创建方式写入唯一命名的 JSON checkpoint 并 fsync。后续 Job 在先前
+Job、Task、binding 和 allocation 均消失后，核对所有先前文件的精确内容。
+最终验证 Job 检查全部四个 checkpoint，包括被停止进程的文件。文件缺失或
+被更改均失败，验证不会重新创建。只有最终成功的验证程序显式删除这些测试
+自身的文件；失败保留文件和资源供检查。该验收只证明运行中容器内的生命周期
+清理，不证明平台替换后的存储持久性、任意挂载或训练框架 checkpoint 完整性。
+
+2026-10-31，私网 H100 开发机上五个用例在 216 秒内通过：成功、GPU 复用、退出码 7 失败、正常暂停及最终 checkpoint 校验。结束后验收 Job/Task、binding、allocation 和测试文件均不存在，节点空闲且可调度。此前一轮因 Agent 轮询和日志读取分别到达不同 API 进程而超时；确认 allocation/Task 清理后，正常暂停并删除其精确 Job，核对四份测试文件后显式移除。成功的一轮由同一 API 进程处理 Agent 轮询与日志监听。随后平台查询显示开发机于 04:20 停止，镜像自动保存成功。增加显式 checkpoint-ready 日志标记断言后的复测，在创建任务前被过期心跳预检拒绝；该额外断言尚未在此开发机复测。再次启动应重新核对实例身份；如果平台替换了容器，必须显式退役并重新注册，旧 Ready 证据不授权派发。
 
 ### 云端空闲滚动升级验收流程（已验证）
 

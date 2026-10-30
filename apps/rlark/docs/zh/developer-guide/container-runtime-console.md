@@ -200,6 +200,10 @@ PID 1 启动证据发生变化；Python/PyTorch/Ray 和 CUDA `42.0` 仍可用。
 `--log-api-origin=http://127.0.0.1:9446` 代理固定的
 `/api/v1/container-runtime/logs` 路由。
 
+Agent 轮询端点和日志监听器必须属于同一 API 进程，因为待处理的读取请求保存在
+该进程内存中。即使两个实例共用管理 API，把日志读取指向另一个实例仍会超时。
+此预览尚无跨实例请求路由。
+
 读取必须携带当前 inventory 中的 allocation UID 和 Task UID。最多返回合并
 stdout/stderr 的开头 64 KiB，并附带截断信息。请求最长等待 20 秒，每节点一个、
 全局 32 个；API 重启后请求丢弃。禁止调度、暂停和就绪过期不会撤销精确诊断访问，

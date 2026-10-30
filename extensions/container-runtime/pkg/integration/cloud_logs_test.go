@@ -77,7 +77,7 @@ func (l *cloudLogs) request(t *testing.T, query, token string, want int) []byte 
 	return data
 }
 
-func (l *cloudLogs) checkRunning(t *testing.T, namespace string, a *ext.ContainerAllocation) string {
+func (l *cloudLogs) checkRunning(t *testing.T, namespace string, a *ext.ContainerAllocation, checkpointReady bool) string {
 	t.Helper()
 	q := url.Values{"namespace": {namespace}, "allocation": {a.Name}, "allocationUID": {string(a.UID)}, "taskUID": {a.Spec.Task.UID}}
 	query := "?" + q.Encode()
@@ -97,7 +97,7 @@ func (l *cloudLogs) checkRunning(t *testing.T, namespace string, a *ext.Containe
 	}); err != nil {
 		t.Fatal("workload log output did not become ready within the bounded acceptance window")
 	}
-	if len(snapshot.Data) != raw.MaxLogBytes || !snapshot.Truncated || !bytes.Contains(snapshot.Data, []byte("RLARK_GPU_SMOKE_OK")) || snapshot.RetentionLimitReached {
+	if len(snapshot.Data) != raw.MaxLogBytes || !snapshot.Truncated || !bytes.Contains(snapshot.Data, []byte("RLARK_GPU_SMOKE_OK")) || (checkpointReady && !bytes.Contains(snapshot.Data, []byte("RLARK_CHECKPOINT_READY"))) || snapshot.RetentionLimitReached {
 		t.Fatalf("unexpected cloud log snapshot: bytes=%d truncated=%t retentionLimitReached=%t", len(snapshot.Data), snapshot.Truncated, snapshot.RetentionLimitReached)
 	}
 	t.Logf("cloud log snapshot verified: %d bytes, GPU marker, truncation and access rejection", len(snapshot.Data))
