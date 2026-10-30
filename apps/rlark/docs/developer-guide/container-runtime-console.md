@@ -160,8 +160,8 @@ separate `container-runtime-api` service. The UI build requires Node.js
 20.19+ or 22.12+; Node.js 24 was used for acceptance.
 
 The preview UI creates Raw clusters. API/CLI provisioning can also create
-Docker inventory records, but that does not enable Docker Engine registration
-or execution. Package export, artifact publication and node drain remain CLI/operator workflows;
+Docker host records and accept [read-only host observations](docker-agent-observation.md).
+Docker execution and browser-based Docker registration remain unsupported. Package export, artifact publication and node drain remain CLI/operator workflows;
 registration is available only through the explicitly enabled administrator route. Allocation rows retain their Job references; the
 optional Raw Job panel separately lists verified bound Jobs, submits one process
 and records suspension intent. It is not a historical archive.

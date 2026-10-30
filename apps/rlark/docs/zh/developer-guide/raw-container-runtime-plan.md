@@ -109,7 +109,7 @@ Raw supervisor 即使尚未启动该 Task，也会在停止时持久化一个仅
 
 默认成功报告间隔为 15 秒（`--interval`，最大 15 秒），故障时指数退避并增加抖动，默认上限两分钟（`--retry-max`，最大五分钟），本地观测期限为十秒。每次重试都重新读取状态。私有 supervisor Unix socket 的 `POST /v1/status` 不接受请求体，仅返回占用；活动或持久化状态不确定的执行均为忙碌，supervisor 已关闭、缺失或协议不兼容时禁止上报。GPU 查询失败同样禁止上报，不会默认空闲或空 GPU。心跳丢失、探测失败均不证明工作负载清理完成。allocator 独立拒绝超过 45 秒的报告；状态每 30 秒修复一次，因此界面 Ready 条件可能比截止时间晚一个修复周期。
 
-CPU 观测取进程 affinity 与当前 cgroup 到 cgroup-v2 挂载点之间所有可读祖先 `cpu.max` 的最小限制；内存取可见层级中最小有限 `memory.max`，全为无限时不报告内存。`--cgroup-mount` 默认 `/sys/fs/cgroup`，经 `/proc/self/cgroup` 解析当前成员路径，拒绝非 v2、缺失或格式错误的边界。它们是可见上限，不代表利用率、空闲量、隐藏祖先限制的保证或任务级限额。可见 GPU 不改变运维授权的 UUID 白名单。该前台命令当前仅观测 Raw；复制出的 Docker Engine observer 尚未接入该命令。
+CPU 观测取进程 affinity 与当前 cgroup 到 cgroup-v2 挂载点之间所有可读祖先 `cpu.max` 的最小限制；内存取可见层级中最小有限 `memory.max`，全为无限时不报告内存。`--cgroup-mount` 默认 `/sys/fs/cgroup`，经 `/proc/self/cgroup` 解析当前成员路径，拒绝非 v2、缺失或格式错误的边界。它们是可见上限，不代表利用率、空闲量、隐藏祖先限制的保证或任务级限额。可见 GPU 不改变运维授权的 UUID 白名单。前台默认模式仍是 Raw；`--runtime=docker` 现支持无需 supervisor 的 [Docker 主机观测](docker-agent-observation.md)。限定执行尚未实现前，Docker 节点保持不可调度。
 
 本地测试覆盖观测失败、API 故障恢复且不重放旧观测、取消、严格占用响应、祖先配额、无限/无效限制、重复 GPU 输出、mTLS 授权及重定向拒绝。在准备好的可信 root GPU 容器上，可选 `RLARK_TEST_LOCAL_OBSERVATION=1` 测试会运行真实 supervisor socket、cgroup 和 GPU 探测，不启动工作负载。这些检查不代表生产调度门槛完成。
 
@@ -139,7 +139,7 @@ CPU 观测取进程 affinity 与当前 cgroup 到 cgroup-v2 挂载点之间所�
 
 导出包要求精确 ContainerNode UID，重新校验原生及附属 Cluster/Node 实例和租户，并由管理员独立 Agent CA 签发有期限、仅 client-auth 的证书。不修改或轮换当前凭据。仅写入全新的私有目录，包含节点证书/私钥、API 服务端 CA、不可变身份清单、Agent 启动器、独立 supervisor 启动器及可选 systemd 单元，不含 CA 签名私钥、管理 kubeconfig 或复制的用户环境。导出重试可为同一当前凭据签发另一张证书；旧/替换凭据必须拒绝。管理员私下传输并分别启动 supervisor；停止或更新 Agent 不得停止 supervisor。自动注册/续签仍属后续工作；空闲节点滚动选择为下文单独启用的预览功能。
 
-首个安装包支持已选定的 Linux 可信 root process-tree Raw 模式，要求明确的规范可执行/工作/状态/安装路径、Linux Agent/supervisor 文件及 SHA-256 验证，不从可见性推断 GPU 授权，也不安装 Python 依赖。故障测试覆盖外来资源、跨租户/namespace、替换 UID、部分创建/响应丢失、无效 CA/期限、输出私有权限和启动参数转义。真实 mTLS 测试验证签发证书可认证登记节点、凭据轮换后被拒绝。此管理员路径不代表云端已部署接入。Docker 安装包、自动续签和 systemd 安装编排仍属后续工作。
+首个安装包支持已选定的 Linux 可信 root process-tree Raw 模式，要求明确的规范可执行/工作/状态/安装路径、Linux Agent/supervisor 文件及 SHA-256 验证，不从可见性推断 GPU 授权，也不安装 Python 依赖。故障测试覆盖外来资源、跨租户/namespace、替换 UID、部分创建/响应丢失、无效 CA/期限、输出私有权限和启动参数转义。真实 mTLS 测试验证签发证书可认证登记节点、凭据轮换后被拒绝。此管理员路径不代表云端已部署接入。Docker 安装包模式现支持连接本地 Unix socket 的只读主机观测；Docker 执行、自动续签和安装编排仍属后续工作。
 
 执行前先安装扩展 CRD、启动独立校验控制器/API，并准备专用 Agent 签名 CA，以及 SAN 匹配私网 API origin 的 HTTPS 服务端证书。接入身份需要原生 Cluster/Node 和附属资源的 list/get/create 权限及 namespace 的 get/create 权限。这是可信管理员路径，不是租户自助 API。签名私钥必须是无 group/other 权限的普通文件。证书期限为 1–720 小时，不能超过签发 CA 的有效期。开发机必须能访问该私网 API，Agent 无需公网地址。
 
@@ -498,7 +498,7 @@ root 进程测试覆盖脱离会话后代清理、无关进程保护、重复启
 
 ## Docker Agent 验证
 
-Docker 预览路径已用 root Agent、宿主机 Docker socket 和 Docker Engine API 1.44+ 验证。验证覆盖 Agent 启动、Node 容量与 incarnation 观测、持久化预留校验、容器所有权及可重试清理。真实多主机 GPU Ray 训练、Gateway 日志/stats 路由、systemd 安装包生成和按设备 UUID 分配仍不属于已完成契约。
+Docker 预览路径已用 root Agent、宿主机 Docker socket 和 Docker Engine API 1.44+ 验证。验证覆盖 Agent 启动、Node 容量与 incarnation 观测、持久化预留校验、容器所有权及可重试清理。真实多主机 GPU Ray 训练、Gateway 日志/stats 路由、按设备 UUID 分配及限定作用域端到端执行仍不属于独立扩展的已完成契约。本段是原生代码中早期实验记录，不代表新 Docker Agent 路径已接通；只读观测 systemd 安装包生成现见 [Docker 主机观测](docker-agent-observation.md)。
 
 单主机 Ray 冒烟 Job `docker-validation-20261030` 已成功退出（exit code 0），日志包含 `RLARK_DOCKER_SMOKE_OK`。删除 Job 后确认对应 Task、Docker 容器和 Node reservation 均已清理。当前每台 Docker 主机只接收一个 RLark Docker Task，纯 CPU Task 也遵循此约束。
 

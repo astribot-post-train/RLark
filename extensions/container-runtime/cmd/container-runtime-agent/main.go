@@ -20,10 +20,12 @@ import (
 	"time"
 
 	"github.com/astribot-post-train/rlark/extensions/container-runtime/pkg/agent"
+	dockerruntime "github.com/astribot-post-train/rlark/extensions/container-runtime/pkg/runtime/docker"
 	"github.com/astribot-post-train/rlark/extensions/container-runtime/pkg/runtime/raw/supervision"
 )
 
 type Config struct {
+	Runtime, DockerHost                                                                                    string
 	Endpoint, TLSCert, TLSKey, ServerCA, Version, PrivateAddress, NvidiaSMI, CgroupMount, SupervisorSocket string
 	Interval, RetryMax                                                                                     time.Duration
 	EnableExecution, EnableUpgrades, EnableLogReads                                                        bool
@@ -31,14 +33,29 @@ type Config struct {
 }
 
 func DefaultConfig() Config {
-	return Config{NvidiaSMI: "nvidia-smi", CgroupMount: "/sys/fs/cgroup", Interval: 15 * time.Second, RetryMax: 2 * time.Minute}
+	return Config{Runtime: "raw", NvidiaSMI: "nvidia-smi", CgroupMount: "/sys/fs/cgroup", Interval: 15 * time.Second, RetryMax: 2 * time.Minute}
 }
 func (c Config) Validate() error {
+	switch c.Runtime {
+	case "raw":
+		if c.SupervisorSocket == "" || c.DockerHost != "" {
+			return errors.New("raw mode requires a supervisor socket and does not accept docker-host")
+		}
+	case "docker":
+		if c.SupervisorSocket != "" || c.EnableExecution || c.EnableLogReads || c.EnableUpgrades || c.InstallPath != "" || c.UpgradeStateDirectory != "" {
+			return errors.New("docker mode supports observation only; Raw supervisor, execution, logs and upgrades are unsupported")
+		}
+		if err := dockerruntime.ValidateLocalHost(c.dockerHost()); err != nil {
+			return err
+		}
+	default:
+		return errors.New("runtime must be raw or docker")
+	}
 	if c.EnableLogReads && !c.EnableExecution {
 		return errors.New("log reads require scoped task execution")
 	}
-	if c.Endpoint == "" || c.TLSCert == "" || c.TLSKey == "" || c.ServerCA == "" || c.Version == "" || c.PrivateAddress == "" || c.SupervisorSocket == "" {
-		return errors.New("endpoint, TLS files, version, private address and supervisor socket are required")
+	if c.Endpoint == "" || c.TLSCert == "" || c.TLSKey == "" || c.ServerCA == "" || c.Version == "" || c.PrivateAddress == "" {
+		return errors.New("endpoint, TLS files, version and private address are required")
 	}
 	if c.Interval <= 0 || c.RetryMax <= 0 || c.RetryMax < c.Interval || c.RetryMax > 5*time.Minute || c.Interval > 15*time.Second {
 		return errors.New("positive retry interval and retry max are required")
@@ -53,7 +70,15 @@ func (c Config) Validate() error {
 	}
 	return nil
 }
+func (c Config) dockerHost() string {
+	if c.DockerHost == "" {
+		return dockerruntime.DefaultLocalHost
+	}
+	return c.DockerHost
+}
 func (c *Config) SetupFlags(fs *flag.FlagSet) {
+	fs.StringVar(&c.Runtime, "runtime", c.Runtime, "runtime: raw (default) or docker (observation only)")
+	fs.StringVar(&c.DockerHost, "docker-host", c.DockerHost, "Docker mode local Unix socket (default unix:///var/run/docker.sock)")
 	fs.BoolVar(&c.EnableUpgrades, "enable-agent-upgrades", c.EnableUpgrades, "enable preview idle Agent binary updates")
 	fs.StringVar(&c.InstallPath, "agent-install-path", c.InstallPath, "absolute installed Agent executable path")
 	fs.StringVar(&c.UpgradeStateDirectory, "upgrade-state-directory", c.UpgradeStateDirectory, "private existing upgrade journal directory")
@@ -122,8 +147,21 @@ func run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 		defer updater.Close()
 		cfg.Version = updater.Version()
 	}
-	observer := agent.LocalObserver{Version: cfg.Version, PrivateAddress: cfg.PrivateAddress, NvidiaSMI: cfg.NvidiaSMI, CgroupMount: cfg.CgroupMount, SupervisorSocket: cfg.SupervisorSocket, EnableUpgrades: cfg.EnableUpgrades}
 	defer client.HTTPClient.CloseIdleConnections()
+	if cfg.Runtime == "docker" {
+		engine, err := dockerruntime.NewSDKClient(cfg.dockerHost())
+		if err != nil {
+			return fmt.Errorf("configure local Docker Engine: %w", err)
+		}
+		defer func() {
+			if err := engine.Close(); err != nil {
+				logger.Warn("close Docker Engine client", "error", err)
+			}
+		}()
+		observer := agent.DockerObserver{Version: cfg.Version, PrivateAddress: cfg.PrivateAddress, NvidiaSMI: cfg.NvidiaSMI, Engine: engine}
+		return agent.Run(ctx, observer, client, cfg.Interval, cfg.RetryMax, logger)
+	}
+	observer := agent.LocalObserver{Version: cfg.Version, PrivateAddress: cfg.PrivateAddress, NvidiaSMI: cfg.NvidiaSMI, CgroupMount: cfg.CgroupMount, SupervisorSocket: cfg.SupervisorSocket, EnableUpgrades: cfg.EnableUpgrades}
 	if cfg.EnableExecution {
 		supervisor, err := supervision.NewClient(cfg.SupervisorSocket)
 		if err != nil {

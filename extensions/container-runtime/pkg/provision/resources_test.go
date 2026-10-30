@@ -49,7 +49,12 @@ func must(t *testing.T, err error) {
 }
 func registered(t *testing.T) (Service, *ext.ContainerNode) {
 	t.Helper()
+	return registeredRuntime(t, "Raw")
+}
+func registeredRuntime(t *testing.T, runtime ext.Runtime) (Service, *ext.ContainerNode) {
+	t.Helper()
 	s, req := fixture(t)
+	req.Runtime = runtime
 	cc, err := s.CreateCluster(context.Background(), req)
 	must(t, err)
 	cn, err := s.RegisterNode(context.Background(), NodeRequest{OperationID: uuid.NewString(), Cluster: cc.Spec.Cluster.Name, ClusterUID: cc.Spec.Cluster.UID, TenantID: req.TenantID, Name: "worker", InstanceID: "container-1", PrivateAddress: "10.0.3.85", Environment: "pi05", NetworkScope: "ksyun", AuthorizedGPUUUIDs: []string{"GPU-a"}})
@@ -404,5 +409,54 @@ func TestReadNodeRejectsConflictingTenantAndNamespaceBindings(t *testing.T) {
 				t.Fatal("conflicting binding accepted")
 			}
 		})
+	}
+}
+
+func TestDockerRegistrationRecoversLostResponseAndRejectsChangedIdentity(t *testing.T) {
+	s, req := fixture(t)
+	req.Runtime = "Docker"
+	ctx := context.Background()
+	cc, err := s.CreateCluster(ctx, req)
+	must(t, err)
+	nr := NodeRequest{OperationID: uuid.NewString(), Cluster: cc.Spec.Cluster.Name, ClusterUID: cc.Spec.Cluster.UID, TenantID: req.TenantID, Name: "docker-worker", InstanceID: "engine-1", PrivateAddress: "10.0.3.85", Environment: "docker-gpu", NetworkScope: "cloud", AuthorizedGPUUUIDs: []string{"GPU-a"}}
+	lost := false
+	s.Client = interceptor.NewClient(s.Client.(client.WithWatch), interceptor.Funcs{Create: func(ctx context.Context, c client.WithWatch, o client.Object, opts ...client.CreateOption) error {
+		if err := c.Create(ctx, o, opts...); err != nil {
+			return err
+		}
+		if _, ok := o.(*ext.ContainerNode); ok && !lost {
+			lost = true
+			return errors.New("response lost")
+		}
+		return nil
+	}})
+	node, err := s.RegisterNode(ctx, nr)
+	must(t, err)
+	retry, err := s.RegisterNode(ctx, nr)
+	must(t, err)
+	if !lost || node.UID != retry.UID || retry.Spec.Runtime != "Docker" {
+		t.Fatal("Docker registration changed identity on retry")
+	}
+	_, err = s.ReadNode(ctx, nodeID(node))
+	must(t, err)
+	changed := nr
+	changed.InstanceID = "replacement-engine"
+	if _, err := s.RegisterNode(ctx, changed); !errors.Is(err, ErrConflict) {
+		t.Fatalf("Engine identity replaced: %v", err)
+	}
+	wrong := nodeID(node)
+	wrong.TenantID = "another-team"
+	if _, err := s.ReadNode(ctx, wrong); !errors.Is(err, ErrConflict) {
+		t.Fatalf("tenant boundary bypassed: %v", err)
+	}
+	var nn native.Node
+	must(t, s.Client.Get(ctx, client.ObjectKey{Namespace: node.Namespace, Name: node.Name}, &nn))
+	if nn.Spec.AgentType != native.AgentTypeDocker {
+		t.Fatal("native Node runtime is not Docker")
+	}
+	nn.Spec.AgentType = native.AgentTypeRaw
+	must(t, s.Client.Update(ctx, &nn))
+	if _, err := s.ReadNode(ctx, nodeID(node)); !errors.Is(err, ErrConflict) {
+		t.Fatalf("mismatched native runtime accepted: %v", err)
 	}
 }

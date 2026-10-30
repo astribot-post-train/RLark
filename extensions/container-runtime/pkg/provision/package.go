@@ -23,7 +23,9 @@ import (
 	"strings"
 	"time"
 
+	ext "github.com/astribot-post-train/rlark/extensions/container-runtime/api/v1alpha1"
 	"github.com/astribot-post-train/rlark/extensions/container-runtime/pkg/agent"
+	dockerruntime "github.com/astribot-post-train/rlark/extensions/container-runtime/pkg/runtime/docker"
 	"github.com/rlinf/rlark/apps/rlark/pkg/auth/cert"
 )
 
@@ -37,6 +39,8 @@ type PackageRequest struct {
 	ServerCA         string       `json:"serverCA"`
 	AgentBinary      string       `json:"agentBinary"`
 	SupervisorBinary string       `json:"supervisorBinary"`
+	Runtime          ext.Runtime  `json:"runtime,omitempty"`
+	DockerHost       string       `json:"dockerHost,omitempty"`
 	Version          string       `json:"version"`
 	Architecture     string       `json:"architecture"`
 	ValidityHours    int          `json:"validityHours"`
@@ -167,6 +171,9 @@ func readArtifact(path, architecture string) ([]byte, error) {
 // leaves an INCOMPLETE marker; it never overwrites or deletes an existing path.
 // This is an offline administrator export, not automatic enrollment/renewal.
 func (s Service) ExportPackage(ctx context.Context, req PackageRequest) (*PackageManifest, error) {
+	if req.Runtime == "" {
+		req.Runtime = "Raw"
+	}
 	if req.EnableLogReads && !req.EnableExecution {
 		return nil, errors.New("log reads require scoped task execution")
 	}
@@ -176,8 +183,29 @@ func (s Service) ExportPackage(ctx context.Context, req PackageRequest) (*Packag
 	if strings.TrimSpace(req.Version) == "" || len(req.Version) > 128 || strings.ContainsAny(req.Version, "\x00\r\n") {
 		return nil, errors.New("explicit bounded Agent version required")
 	}
-	if !targetPath(req.InstallDirectory) || !targetPath(req.StateDirectory) || within(req.InstallDirectory, req.StateDirectory) || within(req.StateDirectory, req.InstallDirectory) || req.LogBytes <= 0 || len(req.Executables) == 0 || len(req.WorkDirectories) == 0 {
+	if !targetPath(req.InstallDirectory) {
 		return nil, errors.New("separate canonical install/state paths, workload paths and positive log bound required")
+	}
+	switch req.Runtime {
+	case "Raw":
+		if req.DockerHost != "" {
+			return nil, errors.New("raw package does not accept dockerHost")
+		}
+		if !targetPath(req.StateDirectory) || within(req.InstallDirectory, req.StateDirectory) || within(req.StateDirectory, req.InstallDirectory) || req.LogBytes <= 0 || len(req.Executables) == 0 || len(req.WorkDirectories) == 0 || req.SupervisorBinary == "" {
+			return nil, errors.New("raw package requires supervisor, state, workload paths and log bound")
+		}
+	case "Docker":
+		if req.EnableExecution || req.EnableLogReads || req.EnableUpgrades || req.SupervisorBinary != "" || req.StateDirectory != "" || len(req.Executables) != 0 || len(req.WorkDirectories) != 0 || req.LogBytes != 0 {
+			return nil, errors.New("docker package supports observation only and cannot include Raw supervisor options")
+		}
+		if req.DockerHost == "" {
+			req.DockerHost = dockerruntime.DefaultLocalHost
+		}
+		if err := dockerruntime.ValidateLocalHost(req.DockerHost); err != nil {
+			return nil, err
+		}
+	default:
+		return nil, errors.New("runtime must be Raw or Docker")
 	}
 	if req.EnableUpgrades && (within(req.StateDirectory+"-agent-upgrades", req.InstallDirectory) || within(req.InstallDirectory, req.StateDirectory+"-agent-upgrades")) {
 		return nil, errors.New("updater state must be separate from install")
@@ -186,7 +214,7 @@ func (s Service) ExportPackage(ctx context.Context, req PackageRequest) (*Packag
 		if req.EnableUpgrades && (within(req.StateDirectory+"-agent-upgrades", path) || within(path, req.StateDirectory+"-agent-upgrades")) {
 			return nil, errors.New("workload paths must exclude updater state")
 		}
-		if !targetPath(path) || within(req.StateDirectory, path) || within(path, req.StateDirectory) || within(req.InstallDirectory, path) || within(path, req.InstallDirectory) {
+		if !targetPath(path) || req.Runtime == "Raw" && (within(req.StateDirectory, path) || within(path, req.StateDirectory)) || within(req.InstallDirectory, path) || within(path, req.InstallDirectory) {
 			return nil, errors.New("canonical workload paths must exclude private install/state paths")
 		}
 	}
@@ -196,6 +224,9 @@ func (s Service) ExportPackage(ctx context.Context, req PackageRequest) (*Packag
 	node, err := s.ReadNode(ctx, req.Node)
 	if err != nil {
 		return nil, err
+	}
+	if node.Spec.Runtime != req.Runtime {
+		return nil, ErrConflict
 	}
 	id := agent.Identity{Namespace: node.Namespace, Name: node.Name, UID: string(node.UID), ClusterUID: node.Spec.Cluster.UID, InstanceID: node.Spec.InstanceID, TenantID: req.Node.TenantID, CredentialID: req.Node.CredentialID}
 	certificate, key, expires, err := issue(req, id, time.Now().UTC().Truncate(time.Second))
@@ -246,13 +277,22 @@ func (s Service) ExportPackage(ctx context.Context, req PackageRequest) (*Packag
 	if err != nil {
 		return nil, err
 	}
-	supervisorBinary, err := readArtifact(req.SupervisorBinary, req.Architecture)
-	if err != nil {
-		return nil, err
+	var supervisorBinary []byte
+	if req.Runtime == "Raw" {
+		supervisorBinary, err = readArtifact(req.SupervisorBinary, req.Architecture)
+		if err != nil {
+			return nil, err
+		}
 	}
 	base := req.InstallDirectory
-	files := map[string][]byte{"agent.crt": certificate, "agent.key": key, "server-ca.crt": ca, "container-runtime-agent": agentBinary, "raw-supervisor": supervisorBinary}
-	argv := []string{base + "/container-runtime-agent", "--endpoint=" + req.Endpoint, "--tls-cert=" + base + "/agent.crt", "--tls-key=" + base + "/agent.key", "--server-ca=" + base + "/server-ca.crt", "--version=" + req.Version, "--private-address=" + node.Spec.PrivateAddress, "--supervisor-socket=" + req.StateDirectory + "/supervisor.sock"}
+	files := map[string][]byte{"agent.crt": certificate, "agent.key": key, "server-ca.crt": ca, "container-runtime-agent": agentBinary}
+	argv := []string{base + "/container-runtime-agent", "--runtime=" + strings.ToLower(string(req.Runtime)), "--endpoint=" + req.Endpoint, "--tls-cert=" + base + "/agent.crt", "--tls-key=" + base + "/agent.key", "--server-ca=" + base + "/server-ca.crt", "--version=" + req.Version, "--private-address=" + node.Spec.PrivateAddress}
+	if req.Runtime == "Raw" {
+		files["raw-supervisor"] = supervisorBinary
+		argv = append(argv, "--supervisor-socket="+req.StateDirectory+"/supervisor.sock")
+	} else {
+		argv = append(argv, "--docker-host="+req.DockerHost)
+	}
 	if req.EnableExecution {
 		argv = append(argv, "--enable-task-execution=true")
 	}
@@ -278,16 +318,22 @@ func (s Service) ExportPackage(ctx context.Context, req PackageRequest) (*Packag
 		WorkDirectories  []string `json:"workDirectories"`
 		LogBytes         int64    `json:"logBytes"`
 	}{"process-tree", base + "/raw-supervisor", req.StateDirectory, req.Executables, req.WorkDirectories, req.LogBytes}
-	files["supervisor.json"], err = json.MarshalIndent(config, "", "  ")
-	if err != nil {
-		return nil, err
+	if req.Runtime == "Raw" {
+		files["supervisor.json"], err = json.MarshalIndent(config, "", "  ")
+		if err != nil {
+			return nil, err
+		}
+		files["start-supervisor"] = []byte(preflight + command(base+"/raw-supervisor", "--config", base+"/supervisor.json"))
 	}
-	files["start-supervisor"] = []byte(preflight + command(base+"/raw-supervisor", "--config", base+"/supervisor.json"))
 	unit := func(desc, script, extra string) []byte {
 		return []byte("[Unit]\nDescription=" + desc + "\nAfter=network-online.target\n" + extra + "\n[Service]\nType=simple\nUser=root\nExecStart=" + fmt.Sprintf("%q", strings.ReplaceAll(base+"/"+script, "$", "$$")) + "\nRestart=on-failure\nRestartSec=5\nKillMode=process\n\n[Install]\nWantedBy=multi-user.target\n")
 	}
-	files["rlark-container-agent.service"] = unit("RLark container Agent", "start-agent", "After=rlark-raw-supervisor.service\n")
-	files["rlark-raw-supervisor.service"] = unit("RLark trusted root Raw supervisor", "start-supervisor", "")
+	if req.Runtime == "Raw" {
+		files["rlark-container-agent.service"] = unit("RLark container Agent", "start-agent", "After=rlark-raw-supervisor.service\n")
+		files["rlark-raw-supervisor.service"] = unit("RLark trusted root Raw supervisor", "start-supervisor", "")
+	} else {
+		files["rlark-container-agent.service"] = unit("RLark Docker observation Agent", "start-agent", "After=docker.service\n")
+	}
 	manifest := &PackageManifest{Node: req.Node, ClusterUID: id.ClusterUID, InstanceID: id.InstanceID, Endpoint: req.Endpoint, Version: req.Version, Architecture: req.Architecture, NotAfter: expires, SHA256: map[string]string{}}
 	var checks []string
 	names := make([]string, 0, len(files))

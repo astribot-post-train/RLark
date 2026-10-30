@@ -135,8 +135,8 @@ bin/container-runtime-console \
 `container-runtime-api` 服务。UI 构建要求 Node.js 20.19+ 或 22.12+，验收使用
 Node.js 24。
 
-预览 UI 创建 Raw 集群。API/CLI 也能创建 Docker 资源记录，但不代表 Docker
-Engine 注册/执行已支持。节点登记仅在显式启用的管理员入口提供；安装包导出、产物发布、drain 仍通过
+预览 UI 创建 Raw 集群。API/CLI 可以注册 Docker 主机并接收[只读观测](docker-agent-observation.md)，但尚未
+启用 Docker 执行或浏览器 Docker 节点登记。节点登记仅在显式启用的管理员入口提供；安装包导出、产物发布、drain 仍通过
 CLI 或运维流程完成。allocation 行保留其 Job 引用；可选 Raw Job 面板单独列出经过
 验证的绑定 Job、提交单进程和记录暂停意图，不提供历史归档。
 

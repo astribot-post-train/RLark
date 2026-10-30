@@ -52,11 +52,26 @@ func packageRequest(t *testing.T, id NodeIdentity) PackageRequest {
 }
 
 func TestIssuedCertificateUsesRealMTLSAndIsRevokedByCredentialChange(t *testing.T) {
+	for _, runtime := range []ext.Runtime{"Raw", "Docker"} {
+		t.Run(string(runtime), func(t *testing.T) { testIssuedCertificate(t, runtime) })
+	}
+}
+
+func testIssuedCertificate(t *testing.T, nodeRuntime ext.Runtime) {
+	t.Helper()
 	if runtime.GOOS != "linux" {
 		t.Skip("Linux ELF packaging")
 	}
-	s, cn := registered(t)
+	s, cn := registeredRuntime(t, nodeRuntime)
 	req := packageRequest(t, nodeID(cn))
+	if nodeRuntime == "Docker" {
+		req.Runtime = "Docker"
+		req.SupervisorBinary = ""
+		req.StateDirectory = ""
+		req.Executables = nil
+		req.WorkDirectories = nil
+		req.LogBytes = 0
+	}
 	ctx := context.Background()
 	_, err := (controller.ContainerClusterReconciler{Client: s.Client}).Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKey{Namespace: cn.Namespace, Name: cn.Spec.Cluster.Name}})
 	must(t, err)
@@ -80,6 +95,9 @@ func TestIssuedCertificateUsesRealMTLSAndIsRevokedByCredentialChange(t *testing.
 	report := func(want int) {
 		t.Helper()
 		body := `{"version":"preview-v1","privateAddress":"10.0.3.85","visibleGPUUUIDs":["GPU-a"],"busy":false}`
+		if nodeRuntime == "Docker" {
+			body = `{"runtime":"Docker","instanceID":"container-1","version":"preview-v1","privateAddress":"10.0.3.85","capacity":{"cpu":"20","memory":"236Gi"},"capabilities":["docker-observation-v1"],"visibleGPUUUIDs":["GPU-a"],"busy":false}`
+		}
 		response, err := server.Client().Post(server.URL+"/v1/heartbeat", "application/json", strings.NewReader(body))
 		must(t, err)
 		must(t, response.Body.Close())
@@ -357,5 +375,98 @@ func TestUpgradablePackageLauncherVerifiesNewDigest(t *testing.T) {
 	must(t, os.WriteFile(filepath.Join(req.OutputDirectory, "raw-supervisor"), []byte("corrupt"), 0700))
 	if out, err := run(); err == nil || strings.Contains(string(out), "VERIFIED_UPGRADE_STARTED") {
 		t.Fatalf("other package corruption bypassed: %s %v", out, err)
+	}
+}
+
+func TestDockerObservationPackageOmitsRawSupervisor(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("Linux ELF packaging")
+	}
+	s, cn := registeredRuntime(t, "Docker")
+	ctx := context.Background()
+	req := packageRequest(t, nodeID(cn))
+	req.Runtime = "Docker"
+	req.SupervisorBinary = ""
+	req.StateDirectory = ""
+	req.Executables = nil
+	req.WorkDirectories = nil
+	req.LogBytes = 0
+	manifest, err := s.ExportPackage(ctx, req)
+	must(t, err)
+	if manifest.InstanceID != cn.Spec.InstanceID {
+		t.Fatal("manifest lost Docker identity")
+	}
+	for _, name := range []string{"raw-supervisor", "supervisor.json", "start-supervisor", "rlark-raw-supervisor.service"} {
+		if _, err := os.Stat(filepath.Join(req.OutputDirectory, name)); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("Raw artifact %s present: %v", name, err)
+		}
+	}
+	data, err := os.ReadFile(filepath.Join(req.OutputDirectory, "start-agent"))
+	must(t, err)
+	text := string(data)
+	if !strings.Contains(text, "--runtime=docker") || !strings.Contains(text, "--docker-host=unix:///var/run/docker.sock") {
+		t.Fatalf("Docker launcher missing flags: %s", text)
+	}
+	unit, err := os.ReadFile(filepath.Join(req.OutputDirectory, "rlark-container-agent.service"))
+	must(t, err)
+	if !strings.Contains(string(unit), "After=docker.service") {
+		t.Fatal("Docker unit does not order after docker.service")
+	}
+}
+
+func TestDockerPackageRejectsUnsupportedOptionsBeforeWriting(t *testing.T) {
+	s, cn := registeredRuntime(t, "Docker")
+	for _, mode := range []string{"raw-default", "execution", "logs", "upgrades", "supervisor", "state", "executable", "work", "log-bound", "remote-host", "bad-path"} {
+		t.Run(mode, func(t *testing.T) {
+			req := packageRequest(t, nodeID(cn))
+			req.Runtime = "Docker"
+			req.SupervisorBinary = ""
+			req.StateDirectory = ""
+			req.Executables = nil
+			req.WorkDirectories = nil
+			req.LogBytes = 0
+			switch mode {
+			case "raw-default":
+				req.Runtime = ""
+			case "execution":
+				req.EnableExecution = true
+			case "logs":
+				req.EnableLogReads = true
+			case "upgrades":
+				req.EnableUpgrades = true
+			case "supervisor":
+				req.SupervisorBinary = "/opt/raw-supervisor"
+			case "state":
+				req.StateDirectory = "/var/lib/supervisor"
+			case "executable":
+				req.Executables = []string{"/bin/sh"}
+			case "work":
+				req.WorkDirectories = []string{"/work"}
+			case "log-bound":
+				req.LogBytes = 1000
+			case "remote-host":
+				req.DockerHost = "tcp://localhost:2375"
+			case "bad-path":
+				req.DockerHost = "unix:///var/../docker.sock"
+			}
+			if _, err := s.ExportPackage(context.Background(), req); err == nil {
+				t.Fatal("unsupported package exported")
+			}
+			if _, err := os.Stat(req.OutputDirectory); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("rejected request wrote output: %v", err)
+			}
+		})
+	}
+}
+
+func TestRawPackageRejectsDockerHost(t *testing.T) {
+	s, cn := registered(t)
+	req := packageRequest(t, nodeID(cn))
+	req.DockerHost = "unix:///var/run/docker.sock"
+	if _, err := s.ExportPackage(context.Background(), req); err == nil {
+		t.Fatal("Raw package silently accepted Docker transport")
+	}
+	if _, err := os.Stat(req.OutputDirectory); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("invalid Raw request wrote output: %v", err)
 	}
 }

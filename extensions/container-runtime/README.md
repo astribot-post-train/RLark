@@ -18,7 +18,7 @@ listener is loopback-only and administrator-authenticated; it returns at most
 64 KiB for the exact current allocation and Task. It is independent of the
 supervisor's cleanup path and is not a historical archive.
 
-The independent `container-runtime-admin` command provides explicit administrator creation of a separate Cluster, registration of one authorized Raw node, and offline node certificate/package export. Every create uses a caller-retained operation UUID; foreign objects, replacement UIDs, conflicting tenants or credentials are never adopted. Packages contain only node credentials, public server CA, checked Linux artifacts and separate Agent/supervisor launchers. No management kubeconfig or issuer key is exported. Automatic enrollment, renewal and Docker packaging remain incomplete. The opt-in `--enable-agent-rollouts=true` controller can select one fresh idle Raw node at a time after `spec.targetAgentRelease` is set; install the additive rollout RBAC and enable upgrade reservations first. It will not adopt foreign/manual operations, preempt workloads, or reap a completed operation until the updater acknowledges its persisted terminal journal and exact allocation deletion is observed. A deletion-time generation increment is handled only for an already-proven terminal receipt; invalid or unexpected proofs retain the finalizer. See the paired plan documents for strict JSON requests, prerequisites, command examples and limits.
+The independent `container-runtime-admin` command provides explicit administrator creation of a separate Cluster, registration of an authorized Raw or Docker node, and offline node certificate/package export. Every create uses a caller-retained operation UUID; foreign objects, replacement UIDs, conflicting tenants or credentials are never adopted. Packages contain only node credentials, public server CA, checked Linux artifacts and separate Agent/supervisor launchers. No management kubeconfig or issuer key is exported. Docker packages support observation only; automatic enrollment and renewal remain incomplete. The opt-in `--enable-agent-rollouts=true` controller can select one fresh idle Raw node at a time after `spec.targetAgentRelease` is set; install the additive rollout RBAC and enable upgrade reservations first. It will not adopt foreign/manual operations, preempt workloads, or reap a completed operation until the updater acknowledges its persisted terminal journal and exact allocation deletion is observed. A deletion-time generation increment is handled only for an already-proven terminal receipt; invalid or unexpected proofs retain the finalizer. See the paired plan documents for strict JSON requests, prerequisites, command examples and limits.
 
 Copy the templates in `config/examples/`, replace their `REPLACE_...` values from authoritative reads, and run `cluster-create`, `node-register`, then `node-package` with the administrator kubeconfig. Keep each operation UUID unchanged when retrying a lost response. Transfer the resulting package privately, verify `SHA256SUMS`, start `start-supervisor`, and then start `start-agent`; the command does not mark a node Ready or dispatch a Job.
 
@@ -85,3 +85,12 @@ are available. Each member starts with its own exact allocation; sibling allocat
 absence or prior release is not a start barrier. Whole-set retirement still fences
 new starts. Ray/RLinf requires a separate whole-group readiness/port contract and
 remains unsupported by this independent-process path.
+
+Docker host observation is available with `--runtime=docker` and a canonical local
+Unix socket. Use `config/examples/provision-docker-package.json` with explicit
+`runtime: Docker`; it omits the Raw supervisor and rejects execution/log/upgrade
+options. Server-side Engine ID checks prevent replacement adoption, authorized
+GPU capacity is never expanded from visibility, and Docker nodes remain
+unschedulable. Docker Job execution is not wired. See the paired operator guide:
+[English](../../apps/rlark/docs/developer-guide/docker-agent-observation.md) /
+[中文](../../apps/rlark/docs/zh/developer-guide/docker-agent-observation.md).

@@ -1,0 +1,24 @@
+{
+  "node": {
+    "namespace": "docker-agents",
+    "name": "gpu-host-1",
+    "uid": "REPLACE_WITH_CONTAINER_NODE_UID",
+    "tenantID": "team-a",
+    "credentialID": "REPLACE_WITH_ACTIVE_CREDENTIAL_ID"
+  },
+  "endpoint": "https://container-api.example.internal:9444",
+  "agentCA": "/private/issuer/agent-ca.crt",
+  "agentCAKey": "/private/issuer/agent-ca.key",
+  "serverCA": "/private/issuer/api-server-ca.crt",
+  "agentBinary": "/workspace/RLark/extensions/container-runtime/bin/container-runtime-agent",
+  "runtime": "Docker",
+  "dockerHost": "unix:///var/run/docker.sock",
+  "version": "preview-v1",
+  "architecture": "amd64",
+  "validityHours": 24,
+  "outputDirectory": "/private/export/gpu-host-1",
+  "installDirectory": "/opt/rlark-docker",
+  "enableExecution": false,
+  "enableLogReads": false,
+  "enableUpgrades": false
+}
