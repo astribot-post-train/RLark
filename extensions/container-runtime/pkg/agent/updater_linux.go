@@ -143,7 +143,7 @@ func (u *Updater) Step(ctx context.Context, obs Observation) error {
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	if u.files == nil {
-		return errors.New("Agent updater closed")
+		return errors.New("agent updater closed")
 	}
 	if err := ctx.Err(); err != nil {
 		return err
@@ -171,6 +171,9 @@ func (u *Updater) Step(ctx context.Context, obs Observation) error {
 		if r != nil && a.Operation == r.Operation {
 			if !r.matches(a) {
 				return ErrUpgradeIdentity
+			}
+			if r.Phase != "Abandoned" && a.AcknowledgedAttemptID != r.AttemptID {
+				return u.acknowledge(ctx, r, r.Phase, u.version)
 			}
 			return nil
 		}
@@ -302,7 +305,7 @@ func (u *Updater) Step(ctx context.Context, obs Observation) error {
 	} // Durable Switching is resumed on restart.
 	err = u.restart(ctx, u.config.Paths.InstallPath)
 	if err == nil {
-		return errors.New("Agent process replacement unexpectedly returned")
+		return errors.New("agent process replacement unexpectedly returned")
 	}
 	// Record rollback intent before touching the target. Restart of the old binary
 	// can reconstruct this transition even if restoring the backup is interrupted.
@@ -334,7 +337,27 @@ func (u *Updater) complete(ctx context.Context, r *upgradeJournal, result, versi
 	}
 	r.Phase = result
 	// Retain verified running digest/version across service restarts with bootstrap arguments.
-	return u.files.save(r)
+	if err := u.files.save(r); err != nil {
+		return err
+	}
+	return u.acknowledge(ctx, r, result, version)
+}
+
+func (u *Updater) acknowledge(ctx context.Context, r *upgradeJournal, result, version string) error {
+	idle := true
+	req := r.request("acknowledge")
+	req.AttemptID, req.Result, req.Version, req.Idle = r.AttemptID, result, version, &idle
+	response, err := u.transport.Upgrade(ctx, req)
+	if err != nil {
+		return err
+	}
+	if err := validateUpgradeResponse(req, response); err != nil {
+		return err
+	}
+	if !r.matches(response) || response.AttemptID != r.AttemptID {
+		return ErrUpgradeIdentity
+	}
+	return nil
 }
 
 // UpgradingHeartbeater serializes upgrade reconciliation after a successful

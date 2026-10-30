@@ -121,7 +121,7 @@ CPU 观测取进程 affinity 与当前 cgroup 到 cgroup-v2 挂载点之间所�
 
 已实现独立 `container-runtime-admin` 命令，使用严格 JSON 配置执行 `cluster-create`、`node-register`、`node-package` 三个显式操作。管理 kubeconfig 仅由接入机器上的管理员使用，不下发给 Agent。创建集群会新建原生 Cluster、专用 namespace 及按 UID 固定的 ContainerCluster。登记节点会在选定集群中创建原生 Raw Node 和 ContainerNode，显式配置容器实例、私网地址、预装环境、网络范围及平台授权 GPU UUID。每次创建都带调用者保留的 UUID 和规范请求摘要，创建响应丢失后通过实时读取恢复，并拒绝修改部分创建的意图；既有资源若操作身份、租户或期望内容不符则报冲突，绝不接管。部分创建保留可见供重试。登记不设置 Ready，也不解除禁止调度。
 
-导出包要求精确 ContainerNode UID，重新校验原生及附属 Cluster/Node 实例和租户，并由管理员独立 Agent CA 签发有期限、仅 client-auth 的证书。不修改或轮换当前凭据。仅写入全新的私有目录，包含节点证书/私钥、API 服务端 CA、不可变身份清单、Agent 启动器、独立 supervisor 启动器及可选 systemd 单元，不含 CA 签名私钥、管理 kubeconfig 或复制的用户环境。导出重试可为同一当前凭据签发另一张证书；旧/替换凭据必须拒绝。管理员私下传输并分别启动 supervisor；停止或更新 Agent 不得停止 supervisor。自动注册/续签和滚动升级仍属后续工作。
+导出包要求精确 ContainerNode UID，重新校验原生及附属 Cluster/Node 实例和租户，并由管理员独立 Agent CA 签发有期限、仅 client-auth 的证书。不修改或轮换当前凭据。仅写入全新的私有目录，包含节点证书/私钥、API 服务端 CA、不可变身份清单、Agent 启动器、独立 supervisor 启动器及可选 systemd 单元，不含 CA 签名私钥、管理 kubeconfig 或复制的用户环境。导出重试可为同一当前凭据签发另一张证书；旧/替换凭据必须拒绝。管理员私下传输并分别启动 supervisor；停止或更新 Agent 不得停止 supervisor。自动注册/续签仍属后续工作；空闲节点滚动选择为下文单独启用的预览功能。
 
 首个安装包支持已选定的 Linux 可信 root process-tree Raw 模式，要求明确的规范可执行/工作/状态/安装路径、Linux Agent/supervisor 文件及 SHA-256 验证，不从可见性推断 GPU 授权，也不安装 Python 依赖。故障测试覆盖外来资源、跨租户/namespace、替换 UID、部分创建/响应丢失、无效 CA/期限、输出私有权限和启动参数转义。真实 mTLS 测试验证签发证书可认证登记节点、凭据轮换后被拒绝。此管理员路径不代表云端已部署接入。Docker 安装包、自动续签和 systemd 安装编排仍属后续工作。
 
@@ -153,11 +153,11 @@ CPU 观测取进程 affinity 与当前 cgroup 到 cgroup-v2 挂载点之间所�
 
 预览 `POST /v1/release` 仅在配置制品目录时提供。经过验证的节点证书从权威 ContainerCluster 选择当前目标，body 不能指定其他 namespace、租户、版本记录或文件路径。严格 JSON 接受携带 Agent OS/architecture 的 `action: manifest`，或额外携带此前返回的 release UID 与 SHA-256 的 `action: download`。清单仅返回版本身份、版本号、平台、协议、摘要和字节数，不泄漏服务端文件路径。没有目标时返回 HTTP 204；下载只返回经过核验的精确字节。制品 I/O 后重新读取节点凭据、原生/附属绑定及目标身份；凭据轮换、删除、目标替换、租户不符或平台不兼容均拒绝。心跳过期或工作负载占用不阻止下载，但不能授权安装或释放预留。
 
-Agent client 复用 TLS 1.3 通道，拒绝重定向并限制下载大小；返回给后续 updater 前再次验证清单、字节数、SHA-256 和可执行平台。该客户端边界不选择升级节点、不续签凭据，也不重启 supervisor；下文按需启用的节点更新器已可校验并安装精确二进制。自动滚动选择和外部 supervisor 恢复仍是独立门槛。制品和 AgentRelease 由可信管理员发布，不新增无认证静态文件服务或上传端点。测试覆盖真实 mTLS、跨租户/凭据拒绝、目标/UID 替换、摘要损坏、文件丢失和恢复、路径逃逸、取消及下载边界。
+Agent client 复用 TLS 1.3 通道，拒绝重定向并限制下载大小；返回给后续 updater 前再次验证清单、字节数、SHA-256 和可执行平台。该客户端边界不选择升级节点、不续签凭据，也不重启 supervisor；下文按需启用的节点更新器已可校验并安装精确二进制。独立开关启用后可逐个选择心跳新鲜的空闲节点；外部 supervisor 恢复仍是独立门槛。制品和 AgentRelease 由可信管理员发布，不新增无认证静态文件服务或上传端点。测试覆盖真实 mTLS、跨租户/凭据拒绝、目标/UID 替换、摘要损坏、文件丢失和恢复、路径逃逸、取消及下载边界。
 
 发布由管理员操作。两个组件均使用 `--artifact-directory=/private/agent-artifacts`，并只读挂载同一份目录树。复制 `extensions/container-runtime/config/examples/agent-release.yaml`，将占位符替换为 ContainerCluster 的 namespace、租户、实际版本和小写 SHA-256，并选择匹配的 `amd64` 或 `arm64` 架构。创建 AgentRelease 前，将构建出的 Linux `container-runtime-agent` 二进制放到该目录下的 `releases/agent-v1`。现有 API RBAC 已允许读取版本；控制器 RBAC 允许读取及修补版本 status。Agent 不获得 Kubernetes 权限；不要通过公共静态服务暴露目录。
 
-等待 `status.available: true` 且 `status.observedGeneration == metadata.generation`，再由管理员将目标 ContainerCluster 的 `spec.targetAgentRelease` 设为 `agent-v1`。新版本使用新的记录和路径，不覆盖不可变字节。未提供 CLI/UI 发布器；按需启用的 Linux Agent updater 使用 `TargetRelease` 和 `DownloadRelease`，滚动目标选择仍由管理员管理。改变目标后，在该版本完成安装并由新观测确认就绪前，调度可能被阻止；目标配置自身不授权安装二进制、不停止运行中的 Task，也不释放容量。安装必须有节点限定升级操作及 allocation。文件缺失/损坏会产生 `Available=False` 和有界 API 错误；恢复精确字节或发布新版本，由周期检查恢复。不要修改 status 绕过验证。重新指向目标属于期望配置，不等于自动回滚。运维手动更新 Agent 时也应保持独立 supervisor 持续运行。
+等待 `status.available: true` 且 `status.observedGeneration == metadata.generation`，再由管理员将目标 ContainerCluster 的 `spec.targetAgentRelease` 设为 `agent-v1`。新版本使用新的记录和路径，不覆盖不可变字节。未提供 CLI/UI 发布器；按需启用的 Linux Agent updater 使用 `TargetRelease` 和 `DownloadRelease`，目标版本由管理员选择，空闲节点由独立启用的滚动控制器选择。改变目标后，在该版本完成安装并由新观测确认就绪前，调度可能被阻止；目标配置自身不授权安装二进制、不停止运行中的 Task，也不释放容量。安装必须有节点限定升级操作及 allocation。文件缺失/损坏会产生 `Available=False` 和有界 API 错误；恢复精确字节或发布新版本，由周期检查恢复。不要修改 status 绕过验证。重新指向目标属于期望配置，不等于自动回滚。运维手动更新 Agent 时也应保持独立 supervisor 持续运行。
 
 
 ### 升级预留（preview）
@@ -166,7 +166,7 @@ Agent client 复用 TLS 1.3 通道，拒绝重定向并限制下载大小；返�
 
 升级预留与 Task 使用完全相同的确定性 `ContainerAllocation` 名称。类型化 `upgrade` 字段区分升级所有权，工作负载 Job/Task 字段缺省。Task 分配和升级预留竞争同一次 API Create，因此最多一方成功。Task 通道对升级占有的锁返回无工作负载；任务清理路径和心跳丢失都不能释放升级锁。节点必须具有当前已验证的原生/附属成员身份、最新认证空闲心跳、显式 GPU 白名单、无旧版预留，以及可用兼容目标。创建预留后再次验证授权，部分写入或响应丢失通过精确读取恢复。
 
-Agent 领取 Applying 前，操作必须记录已观察到的 allocation UID。节点限定升级协议必须携带精确的操作和 allocation UID。成功或已验证回滚需要结果版本的新心跳以及显式空闲完成报告；安装状态不确定的失败保留两个锁。目标变更、删除或撤销证书会拒绝新的应用授权，但不能释放进行中的操作。Pending/Reserved 操作可在任何应用授权之前通过乐观并发状态变更取消；Applying 操作只能由持有它的 updater 完成或回滚。完成操作在其精确 allocation 获得终态证明且确认删除前保持可见。管理员显式移除完成操作后才能创建下一个；自动滚动选择/回收仍是独立实现门槛；下文节点本地安装器为预览功能。
+Agent 领取 Applying 前，操作必须记录已观察到的 allocation UID。节点限定升级协议必须携带精确的操作和 allocation UID。成功或已验证回滚需要结果版本的新心跳以及显式空闲完成报告；安装状态不确定的失败保留两个锁。目标变更、删除或撤销证书会拒绝新的应用授权，但不能释放进行中的操作。Pending/Reserved 操作可在任何应用授权之前通过乐观并发状态变更取消；Applying 操作只能由持有它的 updater 完成或回滚。完成操作在其精确 allocation 获得终态证明且确认删除前保持可见。手动操作由管理员保留。独立启用的滚动控制器仅在 updater 确认终态 journal 已持久化且精确 allocation 已确认删除后，才能回收它创建的成功操作；下文节点本地安装器为预览功能。
 
 节点 updater 只替换 Agent 进程，保留并验证上一版二进制，持久化暂存/切换/回滚意图，并保持独立工作负载 supervisor 运行。仅本地 `Busy=false` 永远不足以授权切换；节点限定授权和精确持久尝试均为必需条件。成功 exec 后的健康超时自动回滚尚未实现。
 
@@ -194,7 +194,7 @@ claim 通过乐观并发将 Reserved 转为 Applying，记录尝试 UUID 和服�
 
 完成只接受固定目标版本的 Succeeded 或记录原版本的 RolledBack，并要求可信本地 updater 显式证明空闲。必须有授权开始时间之后、经过当前认证、空闲且版本匹配的心跳。API 在操作 status 保存有界完成凭据，不能移除 allocation finalizer。完成以保留身份单独验证所有权，不依赖目标就绪，因此删除或目标变化不会阻止仍获授权的精确持有者报告恢复；撤销凭据仍会拒绝报告。冲突结果和尝试被拒绝，失败、超时、未知状态及心跳丢失都不代表回滚或清理完成。
 
-控制器消费该精确完成凭据，写 allocation 清理证明并确认删除后，才将操作设为终态。完成、状态、删除或 finalizer 响应丢失后会收敛，不能再次安装。完成操作在管理员显式删除前保留；没有完成凭据的 Applying 操作继续受保护。预览 API 使用 `--enable-agent-upgrades` 开关和 `config/rbac/container-runtime-api-upgrades.yaml`，与 Task 执行独立。当前仍不包含二进制安装/切换、自动滚动选择或 UI。测试覆盖真实 mTLS、错误节点/租户/UID/尝试、claim/取消竞争、已提交响应丢失、过期/忙碌/版本不匹配心跳、目标/凭据变化、精确成功/回滚凭据、延迟删除和控制器重建。
+控制器消费该精确完成凭据，写 allocation 清理证明并确认删除后，才将操作设为终态。完成、状态、删除或 finalizer 响应丢失后会收敛，不能再次安装。完成操作在管理员显式删除前保留；没有完成凭据的 Applying 操作继续受保护。预览 API 使用 `--enable-agent-upgrades` 开关和 `config/rbac/container-runtime-api-upgrades.yaml`，与 Task 执行独立。二进制安装/切换须单独启用节点 updater，自动节点选择须单独启用滚动控制器；UI 尚未实现。测试覆盖真实 mTLS、错误节点/租户/UID/尝试、claim/取消竞争、已提交响应丢失、过期/忙碌/版本不匹配心跳、目标/凭据变化、精确成功/回滚凭据、延迟删除和控制器重建。
 
 API 使用 `--enable-agent-upgrades=true` 启用，并在基础 API 角色之外应用额外升级 RBAC。启用组件前先安装重新生成的 AgentUpgrade CRD。Linux Agent 仅在自身另行设置 `--enable-agent-upgrades=true` 时轮询此端点。`Client.Upgrade` 接受严格的、最多 16 KiB 的请求并校验有界响应。`assignment` 不接受身份字段；`get` 要求两个精确引用；`claim` 还要求发现结果的 resourceVersion 和规范的非零尝试 UUID，调用方应在发送前持久化。完成响应在锁删除前仍为 Applying；`get` 响应可省略已删除的 allocation，但请求必须保留原记录引用。HTTP 400 表示无效输入，403 表示身份拒绝，409 表示竞争或过期操作，503 表示前提暂不可用。请求不能覆盖证书身份。
 
@@ -213,12 +213,24 @@ Linux Agent 设置 `--enable-agent-upgrades=true` 后，会在串行心跳循环
 - [x] 独立模块/构建，迁移 Provider/supervision/测试；加入原生可选集成接口和所有权校验。
 - [ ] 类型化附属 schema、授权/准入和迁移。通用 Job fail-closed 声明已实现，但还没有生产调度器接管 Job。
 - [ ] 显式容器集群接入、节点限定身份、整卡分配和授权日志。
-- [ ] 认证版本托管和滚动目标选择；节点本地二进制更新、原子替换和重启回执已作为预览基础设施实现，外部 supervisor 断电回滚仍未验证。
+- [ ] 认证版本托管和目标驱动的空闲节点滚动选择已作为预览基础设施实现；云端滚动及外部 supervisor 断电恢复验收仍未完成。
 - [ ] 容器集群 UI、能力门控 Job 提交及中英文 API/运维示例。
 - [ ] 已授权私网 1 GPU 开发机和完整 Raw GPU Job/升级证据。
 - [ ] 恢复/竞态测试、仓库 Go/Web 检查、生成验证和严格双语文档构建。
 
 测试并发预留、旧 UID/generation/实例、跨租户访问、重复注册、部分外部动作、重启、supervisor 丢失、清理失败、心跳丢失、摘要错误、升级竞争、回滚失败、迁移冲突、checkpoint 保留及 Kubernetes 行为不变。不能凭骨架或 mock 勾选门槛。
+
+### 空闲节点自动滚动选择（预览）
+
+扩展实现独立且默认关闭的 `--enable-agent-rollouts=true` 控制器，要求同时启用 `--enable-agent-upgrade-reservations=true`。启用前安装重新生成的 ContainerCluster、AgentUpgrade CRD 及附加的 `config/rbac/container-runtime-controller-rollouts.yaml`。滚动控制器使用不经过缓存的管理客户端，仅拥有 `AgentRolloutReady` condition 和 `status.lastAgentUpgrade`；原集群校验器继续拥有绑定校验及 phase。`spec.targetAgentRelease` 是管理员管理的期望配置。清空它只暂停新节点选择，不撤销 Applying 操作或释放锁。
+
+预览版本串行执行；省略或设为 0 的 `maxUnavailable` 表示最多同时升级一个节点，仅支持 0 和 1。它限制升级并发，不保证其余所有节点可调度：已有目标版本门禁可能阻止仍运行旧版本的节点接新任务。不会抢占运行中的 Job。按稳定名称和 UID 选择节点，要求精确租户及原生/附属绑定、授权 GPU、当前代 Ready/Validated 条件、新鲜的认证空闲心跳，以及显式启用的 `agent-upgrade-v1` 和匹配的 `agent-platform/<os>/<architecture>` 能力。升级选择不使用 `status.schedulable`，因为目标版本门禁本来就会令旧版本不可调度。工作负载或升级 allocation 会排除其节点、地址和 GPU；最终预留仍通过共享节点锁的原子创建与任务竞争。忙碌、离线、心跳过期或未启用更新的节点继续等待。版本相同遵循现有观测契约，不代表远程二进制认证；不同字节必须使用不同版本。
+
+在现有每 Cluster 独占槽中创建不可变、精确 UID 绑定的 AgentUpgrade，初次 Create 同时写入确定性请求 UUID 及显式滚动所有者注解。重复调谐和创建响应丢失可恢复已有操作。不能接管、取消或回收手动/外来操作。目标变更只对本控制器创建、尚无 allocation 观测且没有 attempt 的未分配操作发起携带 UID/resourceVersion 前提的删除。一旦已暴露预留，保留操作并要求 updater/管理员显式取消和恢复，因为可能已有领取前 journal 或响应丢失。Applying 操作绝不自动取消。Applying、失败、已回滚或结果不确定的操作阻止继续选择并保留锁/证明；管理员调查并显式移除已经恢复的失败/回滚操作后才能重试。
+
+认证成功完成后，等待升级控制器写入当前代 `AllocationReleased` 证明，以及持有该操作的 updater 发送 `acknowledge`。updater 先 fsync 终态 journal，再确认精确的操作/allocation/attempt/结果/版本；API 写入 `status.acknowledgedAttemptID`。完成响应丢失时保留操作供恢复；acknowledge 响应丢失可从已保存终态 journal 重试，即使 allocation 已消失。确认仍要求当前认证凭据和新鲜的结果版本空闲心跳。缺少此握手的旧 Agent 不会被自动回收操作。先升级 API，再启用新版 updater 和滚动控制器。先持久保存一个有界的 `status.lastAgentUpgrade` 凭据，绑定操作、节点、版本、摘要和完成时间，再携带 UID/resourceVersion 前提请求删除；确认删除后才能选择下一节点。升级控制器可完成已有终态证明的操作删除，不触碰同一节点键上后来的工作负载 allocation。finalizer 延迟、状态冲突、响应丢失或控制器重启不能跳过顺序。只保存最近一次成功凭据；需要完整历史时向外部归档。所有当前成员均有新鲜目标版本观测时才能设置 `AgentRolloutReady=True`；空集群是等待，不算完成。此预览仍需云端滚动及外部 supervisor 验收，不包含成功 exec 后的健康超时自动回滚或 UI。
+
+2026-10-31，从当前自动保存镜像重启现有私网开发机，未改变 `regular-training`、1 GPU、20 CPU、236 GiB 或公网设置。私网 SSH 再次确认一张 H100、PyTorch 2.11.0+cu126、Ray 2.56.1 及 CUDA 张量结果 `42.0`。`TestCloudRawObservation` 在真实 cgroup/GPU/Unix-supervisor 边界通过：`cpu=20000m`、`memory=253403070464`、一张可见 GPU、空闲状态。测试还验证默认不声明升级能力，仅启用 updater 时声明协议及平台。仍没有 Docker socket 或 systemd。这仅是环境/观测证据，尚未验收已接入的云端 GPU Job 或真实 Agent 滚动升级。
 
 ## 历史预览证据
 

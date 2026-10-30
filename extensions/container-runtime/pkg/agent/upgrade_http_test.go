@@ -54,6 +54,11 @@ func TestUpgradeMTLSClientAndStrictRequestBoundary(t *testing.T) {
 	if completed.Phase != "Applying" || completed.Completion == nil || completed.Granted {
 		t.Fatal("authenticated completion bypassed controller cleanup")
 	}
+	acknowledged, err := c.Upgrade(context.Background(), UpgradeRequest{Action: "acknowledge", Operation: claim.Operation, Allocation: claim.Allocation, AttemptID: claim.AttemptID, Result: "Succeeded", Version: "next", Idle: &idle})
+	mustAgent(t, err)
+	if acknowledged.AcknowledgedAttemptID != claim.AttemptID || acknowledged.Granted {
+		t.Fatal("authenticated terminal journal acknowledgement lost identity or granted installation")
+	}
 	for _, body := range []string{`{"action":"assignment","tenant":"foreign"}`, `{} {}`, strings.Repeat(" ", 17<<10)} {
 		response, err := c.HTTPClient.Post(server.URL+"/v1/upgrade", "application/json", strings.NewReader(body))
 		mustAgent(t, err)

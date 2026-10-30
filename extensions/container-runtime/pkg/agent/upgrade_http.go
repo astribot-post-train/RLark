@@ -150,7 +150,10 @@ func validateUpgradeResponse(req UpgradeRequest, result *UpgradeResponse) error 
 	if req.Action == "claim" && !result.Granted {
 		return ErrUpgradeUnavailable
 	}
-	if req.Action == "complete" && (result.Completion == nil || result.Completion.AttemptID != req.AttemptID || result.Completion.Result != req.Result || result.Completion.Version != req.Version) {
+	if (req.Action == "complete" || req.Action == "acknowledge") && (result.Completion == nil || result.Completion.AttemptID != req.AttemptID || result.Completion.Result != req.Result || result.Completion.Version != req.Version) {
+		return ErrUpgradeIdentity
+	}
+	if req.Action == "acknowledge" && result.AcknowledgedAttemptID != req.AttemptID {
 		return ErrUpgradeIdentity
 	}
 	return nil

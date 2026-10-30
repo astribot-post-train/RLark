@@ -163,6 +163,11 @@ spec:
             description: AgentUpgradeStatus separates reservation, application and
               terminal proof.
             properties:
+              acknowledgedAttemptID:
+                description: |-
+                  AcknowledgedAttemptID is set only after the owning updater has persisted
+                  its terminal journal. Automatic successful-operation reaping requires it.
+                type: string
               allocation:
                 description: NativeObjectReference pins an extension record to one
                   exact RLark object incarnation.

@@ -28,6 +28,27 @@ type ContainerClusterStatus struct {
 	ObservedGeneration int64              `json:"observedGeneration,omitempty"`
 	Phase              string             `json:"phase,omitempty"`
 	Conditions         []metav1.Condition `json:"conditions,omitempty"`
+	// LastAgentUpgrade is the latest verified successful rollout receipt, not
+	// an unbounded operation history. Only the rollout controller writes it.
+	LastAgentUpgrade *AgentRolloutReceipt `json:"lastAgentUpgrade,omitempty"`
+}
+
+// AgentRolloutReceipt preserves exact completion identity before the automatic
+// rollout controller deletes its successful operation to free the Cluster slot.
+type AgentRolloutReceipt struct {
+	Operation   ObservedObjectReference `json:"operation"`
+	NodeRecord  ObservedObjectReference `json:"nodeRecord"`
+	Release     ObservedObjectReference `json:"release"`
+	SHA256      string                  `json:"sha256"`
+	CompletedAt metav1.Time             `json:"completedAt"`
+}
+
+// ObservedObjectReference identifies an observed instance in replaceable Status
+// snapshots. It intentionally has no immutable-Spec transition validation.
+type ObservedObjectReference struct {
+	Namespace string `json:"namespace,omitempty"`
+	Name      string `json:"name"`
+	UID       string `json:"uid"`
 }
 
 // +kubebuilder:object:root=true
@@ -245,7 +266,10 @@ type AgentUpgradeStatus struct {
 	StartedAt  *metav1.Time            `json:"startedAt,omitempty"`
 	AttemptID  string                  `json:"attemptID,omitempty"`
 	Completion *AgentUpgradeCompletion `json:"completion,omitempty"`
-	Conditions []metav1.Condition      `json:"conditions,omitempty"`
+	// AcknowledgedAttemptID is set only after the owning updater has persisted
+	// its terminal journal. Automatic successful-operation reaping requires it.
+	AcknowledgedAttemptID string             `json:"acknowledgedAttemptID,omitempty"`
+	Conditions            []metav1.Condition `json:"conditions,omitempty"`
 }
 
 // AgentUpgradeCompletion is a bounded receipt from the node-scoped updater.
