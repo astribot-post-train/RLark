@@ -48,10 +48,14 @@ const labels = {
     privateAddress: "私网 IPv4 地址",
     networkScope: "网络范围",
     gpuInput: "平台授权 GPU UUID（JSON 字符串数组）",
-    registrationHint: "登记硬件授权后，在管理员机器使用 container-runtime-admin node-package 制包。安装并收到新鲜心跳后才会就绪；请先核验实例与 GPU 授权。",
-    registrationPending: "登记结果待确认。保存 UUID 和原始输入，重试相同请求。切换集群已禁用；刷新或退出会丢失内存请求。",
-    registrationDone: "节点登记已确认；请单独核对安装和心跳。以下为 node-package 的 node 身份字段：",
-    invalidNode: "请填写有效节点名、实例身份、私网 IPv4、环境、网络范围及不重复的授权 GPU JSON 数组。",
+    registrationHint:
+      "登记硬件授权后，在管理员机器使用 container-runtime-admin node-package 制包。安装并收到新鲜心跳后才会就绪；请先核验实例与 GPU 授权。",
+    registrationPending:
+      "登记结果待确认。保存 UUID 和原始输入，重试相同请求。切换集群已禁用；刷新或退出会丢失内存请求。",
+    registrationDone:
+      "节点登记已确认；请单独核对安装和心跳。以下为 node-package 的 node 身份字段：",
+    invalidNode:
+      "请填写有效节点名、实例身份、私网 IPv4、环境、网络范围及不重复的授权 GPU JSON 数组。",
     releases: "Agent 版本",
     allocations: "资源预留",
     upgrades: "升级操作",
@@ -138,10 +142,14 @@ const labels = {
     privateAddress: "Private IPv4 address",
     networkScope: "Network scope",
     gpuInput: "Platform-authorized GPU UUIDs (JSON string array)",
-    registrationHint: "After authorizing inventory, use container-runtime-admin node-package on the administrator machine. Installation and a fresh heartbeat are required for readiness. Verify incarnation and GPU entitlement first.",
-    registrationPending: "Registration is unconfirmed. Retain the UUID and exact input and retry. Cluster switching is disabled; refresh or sign out loses the in-memory request.",
-    registrationDone: "Node registration confirmed; verify installation and heartbeat separately. Use these node identity fields in node-package:",
-    invalidNode: "Provide a valid node name, incarnation, private IPv4, environment, network scope and unique authorized GPU JSON array.",
+    registrationHint:
+      "After authorizing inventory, use container-runtime-admin node-package on the administrator machine. Installation and a fresh heartbeat are required for readiness. Verify incarnation and GPU entitlement first.",
+    registrationPending:
+      "Registration is unconfirmed. Retain the UUID and exact input and retry. Cluster switching is disabled; refresh or sign out loses the in-memory request.",
+    registrationDone:
+      "Node registration confirmed; verify installation and heartbeat separately. Use these node identity fields in node-package:",
+    invalidNode:
+      "Provide a valid node name, incarnation, private IPv4, environment, network scope and unique authorized GPU JSON array.",
     releases: "Agent releases",
     allocations: "Allocations",
     upgrades: "Upgrade operations",
@@ -555,12 +563,21 @@ function App() {
     const data = new FormData(event.currentTarget);
     let request: NodeRegistration;
     try {
-      request = nodeIntent ?? nodeRegistrationIntent(crypto.randomUUID(), detail.cluster.uid, {
-        name: String(data.get("name") || ""), instanceID: String(data.get("instanceID") || ""),
-        privateAddress: String(data.get("privateAddress") || ""), environment: String(data.get("environment") || ""),
-        networkScope: String(data.get("networkScope") || ""), gpuText: String(data.get("gpus") || "[]"),
-      });
-      if (request.clusterUID !== detail.cluster.uid || !detail.nodeRegistrationEnabled) throw new Error();
+      request =
+        nodeIntent ??
+        nodeRegistrationIntent(crypto.randomUUID(), detail.cluster.uid, {
+          name: String(data.get("name") || ""),
+          instanceID: String(data.get("instanceID") || ""),
+          privateAddress: String(data.get("privateAddress") || ""),
+          environment: String(data.get("environment") || ""),
+          networkScope: String(data.get("networkScope") || ""),
+          gpuText: String(data.get("gpus") || "[]"),
+        });
+      if (
+        request.clusterUID !== detail.cluster.uid ||
+        !detail.nodeRegistrationEnabled
+      )
+        throw new Error();
     } catch {
       setError(t.invalidNode);
       return;
@@ -569,14 +586,20 @@ function App() {
     setRegisteredNode(undefined);
     void mutate(async (signal) => {
       try {
-        const result = await client.registerNode(selection.namespace, selection.name, request, signal);
+        const result = await client.registerNode(
+          selection.namespace,
+          selection.name,
+          request,
+          signal,
+        );
         if (signal.aborted) return;
         setRegisteredNode(result);
         setNodeIntent(undefined);
         setShowNodeRegistration(false);
       } catch (e) {
         // Only API validation before provisioning has no possible effects.
-        if (!signal.aborted && e instanceof APIError && e.status === 400) setNodeIntent(undefined);
+        if (!signal.aborted && e instanceof APIError && e.status === 400)
+          setNodeIntent(undefined);
         throw e;
       }
     });
@@ -831,9 +854,15 @@ function App() {
                     }}
                   />
                   <NodeRegistrationPanel
-                    detail={detail} t={t} writing={writing} blocked={!!jobIntent || !!intent}
-                    open={showNodeRegistration} intent={nodeIntent} result={registeredNode}
-                    onToggle={() => setShowNodeRegistration((v) => !v)} onSubmit={registerNode}
+                    detail={detail}
+                    t={t}
+                    writing={writing}
+                    blocked={!!jobIntent || !!intent}
+                    open={showNodeRegistration}
+                    intent={nodeIntent}
+                    result={registeredNode}
+                    onToggle={() => setShowNodeRegistration((v) => !v)}
+                    onSubmit={registerNode}
                   />
                   <section className="panel">
                     <h3>{t.nodes}</h3>

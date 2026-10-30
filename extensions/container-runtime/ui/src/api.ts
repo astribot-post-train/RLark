@@ -403,8 +403,14 @@ export class Client {
     const normalized = record(body)
       ? {
           ...body,
-          jobSubmissionEnabled: body.jobSubmissionEnabled === undefined ? false : body.jobSubmissionEnabled,
-          nodeRegistrationEnabled: body.nodeRegistrationEnabled === undefined ? false : body.nodeRegistrationEnabled,
+          jobSubmissionEnabled:
+            body.jobSubmissionEnabled === undefined
+              ? false
+              : body.jobSubmissionEnabled,
+          nodeRegistrationEnabled:
+            body.nodeRegistrationEnabled === undefined
+              ? false
+              : body.nodeRegistrationEnabled,
         }
       : body;
     if (!detail(normalized)) throw malformed();
@@ -424,11 +430,22 @@ export class Client {
     );
     if (
       !record(body) ||
-      !strings(body, ["namespace", "name", "uid", "nativeUID", "clusterUID", "operationID"]) ||
-      !body.uid || !body.nativeUID ||
-      body.namespace !== namespace || body.name !== value.name ||
-      body.clusterUID !== value.clusterUID || body.operationID !== value.operationID
-    ) throw malformed();
+      !strings(body, [
+        "namespace",
+        "name",
+        "uid",
+        "nativeUID",
+        "clusterUID",
+        "operationID",
+      ]) ||
+      !body.uid ||
+      !body.nativeUID ||
+      body.namespace !== namespace ||
+      body.name !== value.name ||
+      body.clusterUID !== value.clusterUID ||
+      body.operationID !== value.operationID
+    )
+      throw malformed();
     return body as RegisteredNode;
   }
   async target(
