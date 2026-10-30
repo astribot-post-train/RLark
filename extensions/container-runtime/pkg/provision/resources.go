@@ -46,6 +46,20 @@ type ClusterRequest struct {
 	Runtime        ext.Runtime `json:"runtime"`
 }
 
+// Validate checks cluster creation input without reading or mutating resources.
+func (req ClusterRequest) Validate() error {
+	if err := validateOperation(req.OperationID, req.TenantID, req.Name); err != nil {
+		return err
+	}
+	if len(validation.IsDNS1123Label(req.AgentNamespace)) != 0 || req.AgentNamespace == "default" || strings.HasPrefix(req.AgentNamespace, "kube-") || req.AgentNamespace == "rlark-system" {
+		return errors.New("a dedicated container agent namespace is required")
+	}
+	if req.Runtime != "Raw" && req.Runtime != "Docker" {
+		return errors.New("runtime must be Raw or Docker")
+	}
+	return nil
+}
+
 // NodeRequest registers an explicitly authorized existing container.
 type NodeRequest struct {
 	OperationID        string   `json:"operationID"`
@@ -120,14 +134,8 @@ func (s Service) CreateCluster(ctx context.Context, req ClusterRequest) (*ext.Co
 	if s.Client == nil {
 		return nil, errors.New("management client required")
 	}
-	if err := validateOperation(req.OperationID, req.TenantID, req.Name); err != nil {
+	if err := req.Validate(); err != nil {
 		return nil, err
-	}
-	if len(validation.IsDNS1123Label(req.AgentNamespace)) != 0 || req.AgentNamespace == "default" || strings.HasPrefix(req.AgentNamespace, "kube-") || req.AgentNamespace == "rlark-system" {
-		return nil, errors.New("a dedicated container agent namespace is required")
-	}
-	if req.Runtime != "Raw" && req.Runtime != "Docker" {
-		return nil, errors.New("runtime must be Raw or Docker")
 	}
 	intent, err := fingerprint(req)
 	if err != nil {

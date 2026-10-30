@@ -1,6 +1,6 @@
 # Container cluster extension: design and delivery plan
 
-Status: single-node Raw preview deployed, GPU lifecycle accepted, and private-cloud idle rollout accepted on 2026-10-31. Multi-node Ray/RLinf, remote logs, UI, failed-exec rollback and power-loss recovery remain incomplete. Historical evidence below is separate from the current extension acceptance.
+Status: single-node Raw preview deployed, GPU lifecycle accepted, and private-cloud idle rollout accepted on 2026-10-31. The independent administrator console now has a preview; see [Container runtime management console](container-runtime-console.md). Multi-node Ray/RLinf, remote logs, native UI integration, failed-exec rollback and power-loss recovery remain incomplete. Historical evidence below is separate from the current extension acceptance.
 
 ## Approved architecture and delivery order
 
