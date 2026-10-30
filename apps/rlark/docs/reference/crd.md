@@ -1228,7 +1228,25 @@ Responses:
       - `speed`: `number`, required
       - `status`: `string`, required
       - `total`: `integer`, required
+  - `raw`: `object`, optional - Raw is Agent-owned capability observation. Reservation is controller-owned.
+    - `authorizedGPUUUIDs`: `array`, required
+    - `environment`: `string`, required
+    - `incarnation`: `string`, required
+    - `networkScope`: `string`, required
+    - `trainingIP`: `string`, required
   - `reason`: `string`, optional - Reason 是 Phase 的机器可读原因（CamelCase），与 Conditions 中 ConditionTypeReady 的 Reason 同源，供列表视图直接展示。 该字段与 Conditions 均由数据面 node...
+  - `reservation`: `object`, optional - RawNodeReservation is controller-owned durable exclusive allocation state. It is never released on a timeout or heart...
+    - `allocationID`: `string`, required
+    - `clusterUID`: `string`, required
+    - `committed`: `boolean`, required
+    - `environment`: `string`, required
+    - `executionID`: `string`, required
+    - `groupDigest`: `string`, required
+    - `incarnation`: `string`, required
+    - `jobUID`: `string`, required
+    - `nodeUID`: `string`, required
+    - `taskUID`: `string`, optional - TaskUID is set by the allocator after creating the assigned Task. An unbound reservation never authorizes a process, ...
+    - `tenantID`: `string`, required
   - `storage`: `object`, optional - NodeStorageStatus reports kubelet filesystem usage in bytes.
     - `availableBytes`: `integer`, optional
     - `capacityBytes`: `integer`, optional
@@ -1621,6 +1639,16 @@ Responses:
       - `type`: `string`, required
       - `version`: `string`, required
   - `placement`: `object`, required - TaskPlacementSpec describes scheduling constraints for the workload.
+    - `binding`: `object`, optional - Binding is a controller-owned, UID-fenced Raw execution assignment. It does not authorize execution without a matchin...
+      - `allocationID`: `string`, required
+      - `clusterUID`: `string`, required
+      - `executionID`: `string`, required
+      - `groupDigest`: `string`, required
+      - `incarnation`: `string`, required
+      - `jobUID`: `string`, required
+      - `nodeName`: `string`, required
+      - `nodeUID`: `string`, required
+      - `taskUID`: `string`, optional
     - `nodeSelector`: `object`, optional
   - `role`: `string`, required - TaskRole 描述 Task 在业务编排中的角色，用于前端分组与展示。 该字段当前不在 CRD 层做枚举校验：它可能承载上层编排框架的自定义角色名， 收窄取值会阻止合法的既有数据写入。请勿据此推断取值的封闭集合。
   - `runtime`: `object`, required - TaskRuntimeSpec selects the runtime implementation and instance that lowers the common Pod template. Name is a stable...

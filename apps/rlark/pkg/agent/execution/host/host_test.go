@@ -1406,3 +1406,49 @@ func (c *conflictOncePatchClient) Patch(ctx context.Context, object client.Objec
 	}
 	return c.Client.Patch(ctx, object, patch, options...)
 }
+
+func TestRawClaimantsAreNodeScopedAndDoNotAdoptLegacy(t *testing.T) {
+	task := hostTask()
+	h, executor, _ := newTestHost(t, task)
+	h.Claimant = "cluster/Raw/node-uid"
+	if err := h.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	for _, claimant := range []string{"cluster/Raw", "cluster/Raw/other-node", "cluster/Fake/node-uid"} {
+		task.Annotations = map[string]string{TaskClaimantAnnotation: claimant}
+		if h.isClaimant(task) {
+			t.Fatalf("accepted foreign claimant %q", claimant)
+		}
+	}
+	task.Annotations[TaskClaimantAnnotation] = h.Claimant
+	if !h.isClaimant(task) {
+		t.Fatal("cannot recover own node claim")
+	}
+	h.Claimant = "cluster/Raw"
+	if err := h.Validate(); err == nil {
+		t.Fatal("Raw claimant missing node UID")
+	}
+	h.Claimant = "cluster/Raw/node-uid"
+	task.Finalizers = []string{TaskFinalizer}
+	task.Annotations = nil
+	legacyHost, _, kube := newTestHost(t, task)
+	legacyHost.Claimant = h.Claimant
+	legacyHost.Bundle.Executor = executor
+	if legacyHost.ShouldReconcile(task) {
+		t.Fatal("ambiguous Raw finalizer scheduled")
+	}
+	result, err := legacyHost.Reconcile(context.Background(), client.ObjectKeyFromObject(task))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if executor.reconciles != 0 || executor.cleanups != 0 {
+		t.Fatalf("ambiguous Raw finalizer adopted: %#v", result)
+	}
+	var current rlarkv1alpha1.Task
+	if err := kube.Get(context.Background(), client.ObjectKeyFromObject(task), &current); err != nil {
+		t.Fatal(err)
+	}
+	if current.Annotations[TaskClaimantAnnotation] != "" {
+		t.Fatal("ambiguous Raw claim persisted")
+	}
+}

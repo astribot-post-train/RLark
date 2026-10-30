@@ -108,6 +108,39 @@ spec:
                       description: TaskPlacementSpec describes scheduling constraints
                         for the workload.
                       properties:
+                        binding:
+                          description: |-
+                            Binding is a controller-owned, UID-fenced Raw execution assignment.
+                            It does not authorize execution without a matching Node reservation.
+                          properties:
+                            allocationID:
+                              type: string
+                            clusterUID:
+                              type: string
+                            executionID:
+                              type: string
+                            groupDigest:
+                              type: string
+                            incarnation:
+                              type: string
+                            jobUID:
+                              type: string
+                            nodeName:
+                              type: string
+                            nodeUID:
+                              type: string
+                            taskUID:
+                              type: string
+                          required:
+                          - allocationID
+                          - clusterUID
+                          - executionID
+                          - groupDigest
+                          - incarnation
+                          - jobUID
+                          - nodeName
+                          - nodeUID
+                          type: object
                         nodeSelector:
                           additionalProperties:
                             type: string

@@ -89,6 +89,12 @@ func ForKind(kind schema.GroupVersionKind) interface{} {
 		return &rlarkiov1alpha1.PodStatusApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("PullProgress"):
 		return &rlarkiov1alpha1.PullProgressApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("RawNodeReservation"):
+		return &rlarkiov1alpha1.RawNodeReservationApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("RawNodeStatus"):
+		return &rlarkiov1alpha1.RawNodeStatusApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("RawTaskBinding"):
+		return &rlarkiov1alpha1.RawTaskBindingApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("Task"):
 		return &rlarkiov1alpha1.TaskApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("TaskEnvironment"):

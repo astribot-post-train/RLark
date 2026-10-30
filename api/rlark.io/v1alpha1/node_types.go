@@ -52,7 +52,39 @@ type NodeStorageStatus struct {
 	AvailableBytes int64 `json:"availableBytes,omitempty"`
 }
 
+// RawNodeStatus describes an existing container's observed execution boundary.
+// AuthorizedGPUUUIDs must come from explicit operator/platform authorization,
+// never merely from device visibility. Incarnation changes on container replacement.
+type RawNodeStatus struct {
+	Incarnation        string   `json:"incarnation"`
+	TrainingIP         string   `json:"trainingIP"`
+	NetworkScope       string   `json:"networkScope"`
+	Environment        string   `json:"environment"`
+	AuthorizedGPUUUIDs []string `json:"authorizedGPUUUIDs"`
+}
+
+// RawNodeReservation is controller-owned durable exclusive allocation state.
+// It is never released on a timeout or heartbeat loss. Cleanup must be proven.
+type RawNodeReservation struct {
+	// TaskUID is set by the allocator after creating the assigned Task. An
+	// unbound reservation never authorizes a process, even after group commit.
+	TaskUID      string `json:"taskUID,omitempty"`
+	Environment  string `json:"environment"`
+	JobUID       string `json:"jobUID"`
+	TenantID     string `json:"tenantID"`
+	ExecutionID  string `json:"executionID"`
+	AllocationID string `json:"allocationID"`
+	NodeUID      string `json:"nodeUID"`
+	Incarnation  string `json:"incarnation"`
+	ClusterUID   string `json:"clusterUID"`
+	GroupDigest  string `json:"groupDigest"`
+	Committed    bool   `json:"committed"`
+}
+
 type NodeStatus struct {
+	// Raw is Agent-owned capability observation. Reservation is controller-owned.
+	Raw         *RawNodeStatus      `json:"raw,omitempty"`
+	Reservation *RawNodeReservation `json:"reservation,omitempty"`
 	// Phase 是节点连通性聚合阶段，由数据面 node-agent 上报。
 	// +kubebuilder:validation:Enum=Online;Offline
 	Phase NodePhase `json:"phase,omitempty"`

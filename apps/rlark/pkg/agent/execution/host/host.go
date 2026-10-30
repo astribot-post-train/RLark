@@ -153,8 +153,19 @@ func (h *Host) Validate() error {
 		return errors.New("task claimant identity is required")
 	}
 	parts := strings.Split(h.Claimant, "/")
-	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
-		return errors.New("task claimant identity must be namespace/runtime-kind")
+	if len(parts) != 2 && len(parts) != 3 {
+		return errors.New("task claimant identity must be namespace/runtime-kind[/node-uid]")
+	}
+	for _, part := range parts {
+		if part == "" {
+			return errors.New("task claimant identity contains an empty component")
+		}
+	}
+	if parts[1] == "Raw" && len(parts) != 3 {
+		return errors.New("raw task claimant requires a node UID")
+	}
+	if len(parts) == 3 && parts[1] != "Raw" {
+		return errors.New("node-scoped task claimants are supported only for Raw")
 	}
 	return nil
 }
@@ -181,6 +192,9 @@ func (h *Host) ShouldReconcile(task *rlarkv1alpha1.Task) bool {
 	}
 	// A claimant-less legacy finalizer can be adopted only when deletion
 	// requires cleanup or this Host can safely realize the current Task.
+	if strings.Contains(h.Claimant, "/Raw/") {
+		return false
+	}
 	return task.DeletionTimestamp != nil ||
 		(h.Eligibility.Matches(task) && h.Eligibility.ValidationMessage(task) == "")
 }
@@ -218,7 +232,7 @@ func (h *Host) Reconcile(ctx context.Context, key types.NamespacedName) (result 
 
 	// Adopt an unambiguous legacy finalizer only for deletion or when this Host
 	// can realize the Task. Other claimant-less Tasks remain untouched.
-	if claimantMissing && (task.DeletionTimestamp != nil || canRealize) {
+	if claimantMissing && !strings.Contains(h.Claimant, "/Raw/") && (task.DeletionTimestamp != nil || canRealize) {
 		var selector coordination.WorkloadSelector
 		var carrier coordination.CarrierSelector
 		if snapshot, err := h.decodeRegisteredTask(&task); err == nil {
@@ -734,7 +748,7 @@ func (h *Host) isClaimant(task *rlarkv1alpha1.Task) bool {
 	}
 	parts := strings.Split(claimant, "/")
 	want := strings.Split(h.Claimant, "/")
-	return len(parts) == 3 && len(want) == 2 && parts[0] == want[0] && parts[1] == want[1]
+	return len(parts) == 3 && len(want) == 2 && want[1] != "Raw" && parts[0] == want[0] && parts[1] == want[1]
 }
 
 func claimedWorkloadSelector(task *rlarkv1alpha1.Task) coordination.WorkloadSelector {
