@@ -12,7 +12,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 )
 
-// CertificateRole grants only the extension's node-scoped observation API. The
+// CertificateRole grants only the extension's node-scoped Agent API. The
 // listener must trust a dedicated extension Agent CA, not native admin certs.
 const CertificateRole = "containers.rlark.io/node-agent"
 
@@ -52,11 +52,18 @@ func requestIdentity(r *http.Request, now time.Time) (Identity, error) {
 	return i, nil
 }
 
-// Handler exposes only POST /v1/heartbeat. The identity comes from a verified
+// Handler exposes heartbeat and opt-in node-scoped Task transport. Identity comes from a verified
 // mTLS peer, not headers or JSON. Construction performs no external effects.
-type Handler struct{ Reporter Reporter }
+type Handler struct {
+	Reporter    Reporter
+	EnableTasks bool
+}
 
 func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path == "/v1/task" && h.EnableTasks {
+		h.serveTask(w, r)
+		return
+	}
 	if r.URL.Path != "/v1/heartbeat" {
 		http.NotFound(w, r)
 		return

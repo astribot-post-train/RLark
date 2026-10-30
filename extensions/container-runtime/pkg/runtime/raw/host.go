@@ -29,7 +29,17 @@ func NewHost(ctx context.Context, management client.Client, admission NodeAdmiss
 	// supplied Provider admission. The constructor does not mutate its argument.
 	local := *provider
 	local.Admission = admission
-	execution, err := NewCoordinator(ctx, &local, adapters)
+	return NewScopedHost(ctx, management, host.KubernetesStatusWriter{Client: management}, admission.Node.Namespace+"/Raw/"+admission.NodeUID, nodeEligibility{admission: admission, runtimeID: local.ID}, host.TaskDecoderFunc(decodeTask), &local, adapters)
+}
+
+// NewScopedHost assembles the same Raw Host/Coordinator with a restricted
+// management transport and explicit eligibility/decoder. It has no effects.
+// The provider's Admission must independently authorize each process start.
+func NewScopedHost(ctx context.Context, tasks host.TaskClient, status host.StatusWriter, claimant string, eligibility host.Eligibility, decoder host.TaskDecoder, provider *Provider, adapters []workload.Adapter) (*host.Host, error) {
+	if provider == nil {
+		return nil, errors.New("raw provider required")
+	}
+	execution, err := NewCoordinator(ctx, provider, adapters)
 	if err != nil {
 		return nil, err
 	}
@@ -41,13 +51,16 @@ func NewHost(ctx context.Context, management client.Client, admission NodeAdmiss
 	if err != nil {
 		return nil, err
 	}
-	selector := coordination.RuntimeSelector{ID: local.ID, Kind: "Raw"}
-	result := &host.Host{Tasks: management, Status: host.KubernetesStatusWriter{Client: management}, Claimant: admission.Node.Namespace + "/Raw/" + admission.NodeUID, Eligibility: nodeEligibility{admission: admission, runtimeID: local.ID}, Bundle: host.Bundle{RuntimeSelector: selector, Decoder: host.TaskDecoderFunc(decodeTask), Executor: host.CoordinatorExecutor{Coordinator: execution, Selector: selector}, Implementations: implementations, Lifecycle: processLifecycle{}, StatusFromReconcile: processStatus}}
+	selector := coordination.RuntimeSelector{ID: provider.ID, Kind: "Raw"}
+	result := &host.Host{Tasks: tasks, Status: status, Claimant: claimant, Eligibility: eligibility, Bundle: host.Bundle{RuntimeSelector: selector, Decoder: decoder, Executor: host.CoordinatorExecutor{Coordinator: execution, Selector: selector}, Implementations: implementations, Lifecycle: processLifecycle{}, StatusFromReconcile: processStatus}}
 	if err := result.Validate(); err != nil {
 		return nil, err
 	}
 	return result, nil
 }
+
+// DecodeTask returns an immutable process snapshot without performing effects.
+func DecodeTask(task *api.Task) (coordination.TaskSnapshot, error) { return decodeTask(task) }
 
 type nodeEligibility struct {
 	admission NodeAdmission

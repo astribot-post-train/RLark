@@ -47,6 +47,44 @@ func fixture(t *testing.T) (Manager, Request) {
 	}}).Build()
 	return Manager{Client: c, Now: func() time.Time { return now }}, Request{Binding: client.ObjectKeyFromObject(binding), Node: client.ObjectKeyFromObject(node), Task: client.ObjectKeyFromObject(task)}
 }
+
+func TestValidateExistingNeverCreatesOrRepairs(t *testing.T) {
+	ctx := context.Background()
+	m, req := fixture(t)
+	if _, err := m.ValidateExisting(ctx, req); !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("missing reservation accepted: %v", err)
+	}
+	var allocations ext.ContainerAllocationList
+	if err := m.Client.List(ctx, &allocations); err != nil || len(allocations.Items) != 0 {
+		t.Fatalf("validation allocated capacity: %v", err)
+	}
+	a, err := m.Acquire(ctx, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recovered, err := m.ValidateExisting(ctx, req)
+	if err != nil || recovered.UID != a.UID {
+		t.Fatalf("existing allocation did not validate: %v", err)
+	}
+	var task native.Task
+	if err := m.Client.Get(ctx, req.Task, &task); err != nil {
+		t.Fatal(err)
+	}
+	delete(task.Annotations, TargetAnnotation)
+	if err := m.Client.Update(ctx, &task); err != nil {
+		t.Fatal(err)
+	}
+	before := task.ResourceVersion
+	if _, err := m.ValidateExisting(ctx, req); !errors.Is(err, ErrIdentity) {
+		t.Fatalf("lost target accepted: %v", err)
+	}
+	if err := m.Client.Get(ctx, req.Task, &task); err != nil {
+		t.Fatal(err)
+	}
+	if task.ResourceVersion != before || task.Annotations[TargetAnnotation] != "" {
+		t.Fatal("validation repaired controller-owned target")
+	}
+}
 func TestExclusiveAcquireRecoveryAndConfirmedRelease(t *testing.T) {
 	ctx := context.Background()
 	m, req := fixture(t)

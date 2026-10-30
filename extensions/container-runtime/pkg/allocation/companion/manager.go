@@ -76,6 +76,16 @@ func (m Manager) timeout() time.Duration {
 // before dispatch. Repeating an uncertain successful Create recovers exactly the
 // same reservation; a different Task or object incarnation cannot adopt it.
 func (m Manager) Acquire(ctx context.Context, req Request) (*ext.ContainerAllocation, error) {
+	return m.acquire(ctx, req, false)
+}
+
+// ValidateExisting revalidates an exact lock without creating an allocation or
+// repairing Task metadata. The dispatch API must never become an allocator.
+func (m Manager) ValidateExisting(ctx context.Context, req Request) (*ext.ContainerAllocation, error) {
+	return m.acquire(ctx, req, true)
+}
+
+func (m Manager) acquire(ctx context.Context, req Request, existingOnly bool) (*ext.ContainerAllocation, error) {
 	if m.Client == nil || m.timeout() <= 0 {
 		return nil, errors.New("uncached client and positive heartbeat timeout required")
 	}
@@ -161,6 +171,13 @@ func (m Manager) Acquire(ctx context.Context, req Request) (*ext.ContainerAlloca
 		if err != nil {
 			return nil, err
 		}
+		if existingOnly {
+			target, err := Target(&task)
+			if err != nil || target == nil || !reflect.DeepEqual(*target, wanted.Spec) || !controllerutil.ContainsFinalizer(&task, TaskFinalizer) {
+				return nil, ErrIdentity
+			}
+			return matched, nil
+		}
 		if err := m.pinTarget(ctx, &task, wanted.Spec); err != nil {
 			return nil, err
 		}
@@ -168,6 +185,9 @@ func (m Manager) Acquire(ctx context.Context, req Request) (*ext.ContainerAlloca
 	}
 	if !apierrors.IsNotFound(err) {
 		return nil, err
+	}
+	if existingOnly {
+		return nil, ErrUnavailable
 	}
 	if cluster.Spec.Cordoned || cluster.Spec.Draining || nativeNode.Spec.Unschedulable || !node.Status.Schedulable || node.Status.Busy || node.Status.AgentCredentialID == "" || node.Status.AgentCredentialID != node.Annotations[ext.AgentCredentialAnnotation] || node.Status.ObservedGeneration != node.Generation || !meta.IsStatusConditionPresentAndEqual(node.Status.Conditions, "Ready", metav1.ConditionTrue) || node.Status.LastHeartbeatTime == nil || node.Status.LastHeartbeatTime.After(m.now()) || m.now().Sub(node.Status.LastHeartbeatTime.Time) > m.timeout() {
 		return nil, ErrUnavailable

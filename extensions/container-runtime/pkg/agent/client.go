@@ -28,7 +28,7 @@ type Client struct {
 func NewClient(endpoint string, certificate tls.Certificate, roots *x509.CertPool) (*Client, error) {
 	u, err := url.Parse(endpoint)
 	if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || u.Path != "" && u.Path != "/" || u.RawQuery != "" || u.Fragment != "" {
-		return nil, errors.New("Agent endpoint must be an HTTPS origin")
+		return nil, errors.New("agent endpoint must be an HTTPS origin")
 	}
 	if len(certificate.Certificate) == 0 || certificate.PrivateKey == nil || roots == nil {
 		return nil, errors.New("mTLS certificate and server CA are required")
@@ -53,7 +53,7 @@ func (c *Client) Heartbeat(ctx context.Context, observation Observation) error {
 		return fmt.Errorf("encode Agent observation: %w", err)
 	}
 	if len(body) > 64<<10 {
-		return errors.New("Agent observation exceeds request limit")
+		return errors.New("agent observation exceeds request limit")
 	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, c.Endpoint+"/v1/heartbeat", bytes.NewReader(body))
 	if err != nil {
@@ -68,7 +68,7 @@ func (c *Client) Heartbeat(ctx context.Context, observation Observation) error {
 	// Discard bounded diagnostics: arbitrary upstream bodies must not enter logs.
 	_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 4096))
 	if response.StatusCode != http.StatusNoContent {
-		return fmt.Errorf("Agent heartbeat returned HTTP %d", response.StatusCode)
+		return fmt.Errorf("agent heartbeat returned HTTP %d", response.StatusCode)
 	}
 	return nil
 }

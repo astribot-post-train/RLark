@@ -33,6 +33,8 @@ func main() {
 
 func run(ctx context.Context) error {
 	var addr, kubeconfig, certificate, key, agentCA string
+	var enableTasks bool
+	flag.BoolVar(&enableTasks, "enable-task-execution", false, "enable preview node-scoped Raw Task transport")
 	flag.StringVar(&addr, "addr", ":9444", "HTTPS listen address")
 	flag.StringVar(&kubeconfig, "kubeconfig", "", "Management API kubeconfig (empty uses in-cluster config)")
 	flag.StringVar(&certificate, "tls-cert", "", "HTTPS server certificate path")
@@ -70,7 +72,7 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("create uncached management client: %w", err)
 	}
-	server := &http.Server{Addr: addr, Handler: agent.Handler{Reporter: agent.Reporter{Client: management}},
+	server := &http.Server{Addr: addr, Handler: agent.Handler{Reporter: agent.Reporter{Client: management}, EnableTasks: enableTasks},
 		ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 30 * time.Second,
 		TLSConfig: &tls.Config{MinVersion: tls.VersionTLS13, ClientAuth: tls.RequireAndVerifyClientCert, ClientCAs: pool, Certificates: []tls.Certificate{tlsCert}}}
 	stopped := make(chan struct{})
