@@ -28,6 +28,8 @@
 
 首个独立控制面阶段使用通用 Job 控制器声明（`rlark.io/controller-owner`），并以类型化 ContainerJob 绑定校验。即使扩展不在线，原生控制器也会对声明外部主人的 Job 拒绝派发。校验控制器检查 UID 与权威 namespace 引用；它不授权工作负载副作用，也不把已登记节点标为可调度。AgentRelease 元数据通过校验不代表产物可用。等价准入安装前，扩展 CRD 仅允许可信管理员写入。在分配器、节点限定 Agent 通道和清理调谐完成前，不把活动工作负载切换到附属 API。
 
+扩展新增了基于 API 的 Node 独占分配原语。它用原生 Node UID 派生的确定性 ContainerAllocation 名称创建锁，并校验权威成员关系、租户、Node/Job/Task UID、Agent generation/就绪、心跳时效、GPU 白名单、私网地址、重复 GPU/地址范围以及原生旧 reservation 是否存在。重复 Acquire 只恢复完全相同 Task 的分配；并发竞争者在 API 创建冲突时失败。Release 必须有针对精确 allocation UID 的 Status 清理证明，并在观察到删除前保留 finalizer。该原语尚未接入 Job 副本展开、Agent 执行和清理报告，因此还不能通过它派发生产 Job。
+
 先复制并测试现有 Docker/Raw Provider、分配、supervision 和测试到独立模块，再以附属资源替换预览绑定/预留，更新 decoder/准入并建立通用 Job 分派。新旧分配写入者不能同时运行。迁移时禁止旧节点调度，等待确认清理，按 UID 建立附属资源，验证后启用新主人；含糊活动数据保持阻塞并展示。
 
 首轮云端验收是一个预置 Raw 节点和一个 GPU 进程 Job：显式选 Cluster、注册、调度、GPU 计算、有界授权日志、成功/失败/停止、后代确认清理、checkpoint 保留及 Agent 升级/回滚。多节点 Raw Ray/RLinf、跨运行时 Job、终端/exec、动态存储和云自动扩容留待后续。Docker 生命周期保持已有验证，但多节点 GPU、logs/stats、GPU UUID 分配必须单独验收后才能宣传。

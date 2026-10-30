@@ -64,6 +64,10 @@ func TestContainerNodeRegistrationNeverGrantsScheduling(t *testing.T) {
 	node := &native.Node{ObjectMeta: metav1.ObjectMeta{Name: "worker", Namespace: "agents", UID: "node-uid"}, Spec: native.NodeSpec{AgentType: native.AgentTypeRaw}}
 	clusterView := &containerapi.ContainerCluster{ObjectMeta: metav1.ObjectMeta{Name: "raw-view", Namespace: "agents", UID: "view-uid"}, Spec: containerapi.ContainerClusterSpec{Cluster: containerapi.NativeObjectReference{Name: "gpu", UID: "cluster-uid"}, Runtime: "Raw", AgentNamespace: "agents"}}
 	nodeView := &containerapi.ContainerNode{ObjectMeta: metav1.ObjectMeta{Name: "raw-worker", Namespace: "agents"}, Spec: containerapi.ContainerNodeSpec{Cluster: containerapi.NativeObjectReference{Name: "gpu", UID: "cluster-uid"}, Node: containerapi.NativeObjectReference{Namespace: "agents", Name: "worker", UID: "node-uid"}, Runtime: "Raw", InstanceID: "container-1"}}
+	nodeView.Spec.PrivateAddress = "10.0.3.85"
+	nodeView.Spec.NetworkScope = "ksyun-vpc"
+	nodeView.Spec.Environment = "fleet"
+	nodeView.Spec.AuthorizedGPUUUIDs = []string{"GPU-a"}
 	c := fake.NewClientBuilder().WithScheme(testScheme(t)).WithStatusSubresource(nodeView).WithObjects(cluster, node, clusterView, nodeView).Build()
 	r := ContainerNodeReconciler{Client: c}
 	_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Name: "raw-worker", Namespace: "agents"}})
@@ -75,6 +79,9 @@ func TestContainerNodeRegistrationNeverGrantsScheduling(t *testing.T) {
 		t.Fatal(err)
 	}
 	ready := meta.FindStatusCondition(got.Status.Conditions, "Ready")
+	if !meta.IsStatusConditionTrue(got.Status.Conditions, "Validated") {
+		t.Fatalf("configured node rejected: %#v", got.Status)
+	}
 	if got.Status.Schedulable || ready == nil || ready.Reason != "AgentNotObserved" {
 		t.Fatalf("registration was incorrectly treated as schedulable: %#v", got.Status)
 	}

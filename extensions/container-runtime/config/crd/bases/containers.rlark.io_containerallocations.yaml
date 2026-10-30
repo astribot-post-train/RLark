@@ -53,6 +53,9 @@ spec:
                 - name
                 - uid
                 type: object
+                x-kubernetes-validations:
+                - message: referenced object instance is immutable
+                  rule: self == oldSelf
               executionID:
                 type: string
               generation:
@@ -76,6 +79,16 @@ spec:
                 - name
                 - uid
                 type: object
+                x-kubernetes-validations:
+                - message: referenced object instance is immutable
+                  rule: self == oldSelf
+              jobBindingUID:
+                type: string
+              jobGeneration:
+                format: int64
+                type: integer
+              networkScope:
+                type: string
               node:
                 description: NativeObjectReference pins an extension record to one
                   exact RLark object incarnation.
@@ -90,7 +103,14 @@ spec:
                 - name
                 - uid
                 type: object
+                x-kubernetes-validations:
+                - message: referenced object instance is immutable
+                  rule: self == oldSelf
               nodeInstanceID:
+                type: string
+              nodeRecordUID:
+                type: string
+              privateAddress:
                 type: string
               task:
                 description: NativeObjectReference pins an extension record to one
@@ -106,6 +126,9 @@ spec:
                 - name
                 - uid
                 type: object
+                x-kubernetes-validations:
+                - message: referenced object instance is immutable
+                  rule: self == oldSelf
               tenantID:
                 type: string
             required:
@@ -113,8 +136,13 @@ spec:
             - executionID
             - generation
             - job
+            - jobBindingUID
+            - jobGeneration
+            - networkScope
             - node
             - nodeInstanceID
+            - nodeRecordUID
+            - privateAddress
             - task
             - tenantID
             type: object
