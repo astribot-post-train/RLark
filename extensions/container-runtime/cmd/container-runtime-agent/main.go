@@ -16,11 +16,13 @@ import (
 	"time"
 
 	"github.com/astribot-post-train/rlark/extensions/container-runtime/pkg/agent"
+	"github.com/astribot-post-train/rlark/extensions/container-runtime/pkg/runtime/raw/supervision"
 )
 
 type Config struct {
 	Endpoint, TLSCert, TLSKey, ServerCA, Version, PrivateAddress, NvidiaSMI, CgroupMount, SupervisorSocket string
 	Interval, RetryMax                                                                                     time.Duration
+	EnableExecution                                                                                        bool
 }
 
 func DefaultConfig() Config {
@@ -36,6 +38,7 @@ func (c Config) Validate() error {
 	return nil
 }
 func (c *Config) SetupFlags(fs *flag.FlagSet) {
+	fs.BoolVar(&c.EnableExecution, "enable-task-execution", c.EnableExecution, "enable preview scoped Raw process execution")
 	fs.StringVar(&c.Endpoint, "endpoint", c.Endpoint, "extension API HTTPS origin")
 	fs.StringVar(&c.TLSCert, "tls-cert", c.TLSCert, "node Agent client certificate")
 	fs.StringVar(&c.TLSKey, "tls-key", c.TLSKey, "node Agent client private key")
@@ -84,5 +87,14 @@ func run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 	}
 	observer := agent.LocalObserver{Version: cfg.Version, PrivateAddress: cfg.PrivateAddress, NvidiaSMI: cfg.NvidiaSMI, CgroupMount: cfg.CgroupMount, SupervisorSocket: cfg.SupervisorSocket}
 	defer client.HTTPClient.CloseIdleConnections()
+	if cfg.EnableExecution {
+		supervisor, err := supervision.NewClient(cfg.SupervisorSocket)
+		if err != nil {
+			return err
+		}
+		defer supervisor.CloseIdleConnections()
+		execution := agent.ExecutionObserver{Observer: observer, Client: client, Supervisor: supervisor}
+		return agent.RunExecution(ctx, execution, cfg.Interval, cfg.RetryMax, logger)
+	}
 	return agent.Run(ctx, observer, client, cfg.Interval, cfg.RetryMax, logger)
 }

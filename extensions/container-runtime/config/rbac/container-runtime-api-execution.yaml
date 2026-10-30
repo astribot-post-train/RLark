@@ -1,0 +1,35 @@
+# Optional additive permissions for --enable-task-execution=true.
+# Apply alongside container-runtime-api.yaml only for isolated preview use.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: container-runtime-api-execution
+rules:
+  - apiGroups: ["rlinf.io"]
+    resources: ["jobs"]
+    verbs: ["get"]
+  - apiGroups: ["rlinf.io"]
+    resources: ["tasks"]
+    verbs: ["get", "patch"]
+  - apiGroups: ["rlinf.io"]
+    resources: ["tasks/status"]
+    verbs: ["get", "patch"]
+  - apiGroups: ["containers.rlark.io"]
+    resources: ["containerjobs", "containerallocations"]
+    verbs: ["get", "list"]
+  - apiGroups: ["containers.rlark.io"]
+    resources: ["containerallocations/status"]
+    verbs: ["get", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: container-runtime-api-execution
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: container-runtime-api-execution
+subjects:
+  - kind: ServiceAccount
+    name: container-runtime-api
+    namespace: rlark-system

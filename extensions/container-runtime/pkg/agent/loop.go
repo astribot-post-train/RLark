@@ -21,6 +21,10 @@ type Heartbeater interface {
 // Run observes before every send, retries outages with bounded exponential
 // backoff and jitter, and never resends a stale successful observation.
 func Run(ctx context.Context, observer Observer, client Heartbeater, interval, retryMax time.Duration, logger *slog.Logger) error {
+	return run(ctx, observer, client, interval, retryMax, logger, nil)
+}
+
+func run(ctx context.Context, observer Observer, client Heartbeater, interval, retryMax time.Duration, logger *slog.Logger, observationFailed func(context.Context) error) error {
 	if observer == nil || client == nil || logger == nil || interval <= 0 || retryMax < interval || retryMax > 5*time.Minute {
 		return errors.New("observer, client, logger and valid heartbeat/retry intervals required")
 	}
@@ -36,6 +40,8 @@ func Run(ctx context.Context, observer Observer, client Heartbeater, interval, r
 		observation, err := observer.Observe(ctx)
 		if err == nil {
 			err = client.Heartbeat(ctx, observation)
+		} else if observationFailed != nil {
+			err = errors.Join(err, observationFailed(ctx))
 		}
 		if ctx.Err() != nil {
 			return nil

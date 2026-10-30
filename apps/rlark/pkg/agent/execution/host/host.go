@@ -66,6 +66,13 @@ type StatusWriter interface {
 	WriteStatus(context.Context, *rlarkv1alpha1.Task, StatusIntent) error
 }
 
+// TaskClient is the metadata boundary used by Host. A node-scoped transport
+// need not implement discovery, lists, arbitrary resources or status access.
+type TaskClient interface {
+	Get(context.Context, client.ObjectKey, client.Object, ...client.GetOption) error
+	Patch(context.Context, client.Object, client.Patch, ...client.PatchOption) error
+}
+
 // KubernetesStatusWriter patches only the compatibility status fields owned by
 // the Task Host and fences stale Task incarnations and generations.
 type KubernetesStatusWriter struct {
@@ -128,7 +135,7 @@ func (w KubernetesStatusWriter) WriteStatus(ctx context.Context, task *rlarkv1al
 // Host owns Task claim, finalizer, lifecycle dispatch, and Status. Runtime
 // objects are mutated only through Executor.
 type Host struct {
-	Tasks       client.Client
+	Tasks       TaskClient
 	Bundle      Bundle
 	Eligibility Eligibility
 	Status      StatusWriter

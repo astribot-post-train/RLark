@@ -29,7 +29,7 @@ type LocalObserver struct {
 // exclusive allocation is still required: an idle observation is not a lock.
 func (o LocalObserver) Observe(ctx context.Context) (Observation, error) {
 	if strings.TrimSpace(o.Version) == "" || strings.TrimSpace(o.PrivateAddress) == "" || o.SupervisorSocket == "" {
-		return Observation{}, errors.New("Agent version, private address and Raw supervisor socket are required")
+		return Observation{}, errors.New("agent version, private address and Raw supervisor socket are required")
 	}
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()

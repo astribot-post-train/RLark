@@ -13,6 +13,7 @@ import (
 	"github.com/astribot-post-train/rlark/extensions/container-runtime/pkg/allocation/companion"
 	rawruntime "github.com/astribot-post-train/rlark/extensions/container-runtime/pkg/runtime/raw"
 	"github.com/astribot-post-train/rlark/extensions/container-runtime/pkg/scheduler"
+	"github.com/astribot-post-train/rlark/extensions/container-runtime/pkg/taskcontract"
 	native "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
 	nativejob "github.com/rlinf/rlark/apps/rlark/pkg/controllermanager/job"
 	"github.com/rlinf/rlark/apps/rlark/pkg/tenant"
@@ -304,7 +305,7 @@ func (r JobReservationReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	}
 	for i := range children {
 		task := &children[i]
-		matches := desired != nil && task.Name == desired.Name && task.Namespace == desired.Namespace && reflect.DeepEqual(task.Spec, desired.Spec) && task.Annotations[utils.ChildTemplateAnnotation] == desired.Annotations[utils.ChildTemplateAnnotation] && task.Annotations[nativejob.RestartedAtAnnotation] == desired.Annotations[nativejob.RestartedAtAnnotation] && task.DeletionTimestamp.IsZero()
+		matches := desired != nil && task.Name == desired.Name && task.Namespace == desired.Namespace && taskcontract.EqualSpec(task.Spec, desired.Spec) && task.Annotations[utils.ChildTemplateAnnotation] == desired.Annotations[utils.ChildTemplateAnnotation] && task.Annotations[nativejob.RestartedAtAnnotation] == desired.Annotations[nativejob.RestartedAtAnnotation] && task.DeletionTimestamp.IsZero()
 		if matches {
 			continue
 		}
