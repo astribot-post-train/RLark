@@ -15,6 +15,7 @@ import (
 	"github.com/astribot-post-train/rlark/extensions/container-runtime/pkg/scheduler"
 	"github.com/astribot-post-train/rlark/extensions/container-runtime/pkg/taskcontract"
 	native "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
+	"github.com/rlinf/rlark/apps/rlark/pkg/agent/execution/host"
 	nativejob "github.com/rlinf/rlark/apps/rlark/pkg/controllermanager/job"
 	"github.com/rlinf/rlark/apps/rlark/pkg/tenant"
 	"github.com/rlinf/rlark/apps/rlark/pkg/utils"
@@ -34,9 +35,16 @@ const JobFinalizer = "containers.rlark.io/task-protection"
 
 const scheduleInterval = 5 * time.Second
 
-// JobReservationReconciler materializes one Raw process Task and reserves its
-// node. It is opt-in and does not send assignments or start workloads. Client
-// must be uncached; current API state and CAS are the concurrency authority.
+const (
+	jobExecutionObservedCondition  = "ExecutionObserved"
+	jobAllocationReleasedCondition = "AllocationReleased"
+)
+
+// JobReservationReconciler materializes one Raw process Task, reserves its
+// node, and aggregates the supported single-process execution lifecycle. It is
+// opt-in; runtime effects remain behind the separately scoped Agent API.
+// Client must be uncached; current API state and CAS are the concurrency
+// authority.
 type JobReservationReconciler struct {
 	Client client.Client
 	Now    func() time.Time
@@ -166,6 +174,35 @@ func (r JobReservationReconciler) retire(ctx context.Context, task *native.Task)
 		}
 		return false, nil
 	}
+	done, err := r.releaseAllocations(ctx, task)
+	if err != nil || !done {
+		return false, err
+	}
+	if controllerutil.ContainsFinalizer(task, companion.TaskFinalizer) {
+		before := task.DeepCopy()
+		controllerutil.RemoveFinalizer(task, companion.TaskFinalizer)
+		if err := r.Client.Patch(ctx, task, client.MergeFromWithOptions(before, client.MergeFromWithOptimisticLock{})); err != nil {
+			return false, err
+		}
+	}
+	if task.DeletionTimestamp.IsZero() {
+		if err := r.Client.Delete(ctx, task, client.Preconditions{UID: &task.UID, ResourceVersion: &task.ResourceVersion}); err != nil {
+			return false, client.IgnoreNotFound(err)
+		}
+	}
+	var current native.Task
+	if err := r.Client.Get(ctx, client.ObjectKeyFromObject(task), &current); err != nil {
+		return apierrors.IsNotFound(err), client.IgnoreNotFound(err)
+	}
+	return current.UID != task.UID, nil
+}
+
+// releaseAllocations retains the Task and its allocation finalizer. Natural
+// completion keeps that identity so a restart cannot materialize a second run.
+func (r JobReservationReconciler) releaseAllocations(ctx context.Context, task *native.Task) (bool, error) {
+	if controllerutil.ContainsFinalizer(task, host.TaskFinalizer) {
+		return false, nil
+	}
 	target, err := companion.Target(task)
 	if err != nil {
 		return false, err
@@ -211,40 +248,50 @@ func (r JobReservationReconciler) retire(ctx context.Context, task *native.Task)
 	if target != nil && !found && receipt == nil {
 		return false, nil
 	}
-	if controllerutil.ContainsFinalizer(task, companion.TaskFinalizer) {
-		before := task.DeepCopy()
-		controllerutil.RemoveFinalizer(task, companion.TaskFinalizer)
-		if err := r.Client.Patch(ctx, task, client.MergeFromWithOptions(before, client.MergeFromWithOptimisticLock{})); err != nil {
-			return false, err
-		}
-	}
-	if task.DeletionTimestamp.IsZero() {
-		if err := r.Client.Delete(ctx, task, client.Preconditions{UID: &task.UID, ResourceVersion: &task.ResourceVersion}); err != nil {
-			return false, client.IgnoreNotFound(err)
-		}
-	}
-	var current native.Task
-	if err := r.Client.Get(ctx, client.ObjectKeyFromObject(task), &current); err != nil {
-		return apierrors.IsNotFound(err), client.IgnoreNotFound(err)
-	}
-	return current.UID != task.UID, nil
+	return true, nil
 }
 
-func (r JobReservationReconciler) report(ctx context.Context, job *native.Job, reason, message string, scheduled bool) (ctrl.Result, error) {
+func (r JobReservationReconciler) reportState(ctx context.Context, job *native.Job, phase native.JobPhase, tasks []native.JobTaskStatus, reason, message string, scheduled, observed, released bool) (ctrl.Result, error) {
 	before := job.DeepCopy()
-	job.Status.Phase = native.JobPhasePending
-	job.Status.Tasks = nil
-	if reason == "Stopped" {
-		job.Status.Phase = native.JobPhaseStopped
-	}
+	job.Status.Phase = phase
+	job.Status.Tasks = tasks
 	job.Status.ObservedGeneration = job.Generation
 	condition(&job.Status.Conditions, job.Generation, "Scheduled", scheduled, reason, message)
+	condition(&job.Status.Conditions, job.Generation, jobExecutionObservedCondition, observed, reason, message)
+	condition(&job.Status.Conditions, job.Generation, jobAllocationReleasedCondition, released, reason, message)
+	now := time.Now()
+	if r.Now != nil {
+		now = r.Now()
+	}
+	if phase == native.JobPhaseRunning && job.Status.StartTime == nil {
+		stamp := metav1.NewTime(now)
+		job.Status.StartTime = &stamp
+	}
+	if phase == native.JobPhaseSucceeded || phase == native.JobPhaseFailed || phase == native.JobPhaseStopped {
+		if job.Status.EndTime == nil {
+			stamp := metav1.NewTime(now)
+			job.Status.EndTime = &stamp
+		}
+	} else {
+		job.Status.EndTime = nil
+	}
+	if len(tasks) == 0 && phase != native.JobPhaseStopped {
+		job.Status.StartTime = nil
+	}
 	if !reflect.DeepEqual(before.Status, job.Status) {
 		if err := r.Client.Status().Patch(ctx, job, client.MergeFromWithOptions(before, client.MergeFromWithOptimisticLock{})); err != nil {
 			return ctrl.Result{}, err
 		}
 	}
 	return ctrl.Result{RequeueAfter: scheduleInterval}, nil
+}
+
+func (r JobReservationReconciler) report(ctx context.Context, job *native.Job, reason, message string, scheduled bool) (ctrl.Result, error) {
+	phase := native.JobPhasePending
+	if reason == "Stopped" {
+		phase = native.JobPhaseStopped
+	}
+	return r.reportState(ctx, job, phase, nil, reason, message, scheduled, false, reason == "Stopped")
 }
 
 // Reconcile reserves the exact current Job execution without creating runtime
@@ -305,7 +352,7 @@ func (r JobReservationReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	}
 	for i := range children {
 		task := &children[i]
-		matches := desired != nil && task.Name == desired.Name && task.Namespace == desired.Namespace && taskcontract.EqualSpec(task.Spec, desired.Spec) && task.Annotations[utils.ChildTemplateAnnotation] == desired.Annotations[utils.ChildTemplateAnnotation] && task.Annotations[nativejob.RestartedAtAnnotation] == desired.Annotations[nativejob.RestartedAtAnnotation] && task.DeletionTimestamp.IsZero()
+		matches := desired != nil && task.Name == desired.Name && task.Namespace == desired.Namespace && taskcontract.EqualSpec(task.Spec, desired.Spec) && task.Annotations[utils.ChildTemplateAnnotation] == desired.Annotations[utils.ChildTemplateAnnotation] && task.Annotations[nativejob.RestartedAtAnnotation] == desired.Annotations[nativejob.RestartedAtAnnotation] && (task.DeletionTimestamp.IsZero() || taskcontract.Completed(task))
 		if matches {
 			continue
 		}
@@ -355,6 +402,28 @@ func (r JobReservationReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	if len(children) != 1 {
 		return ctrl.Result{}, invalidBinding("ambiguous owned Tasks")
 	}
+	task := &children[0]
+	if taskcontract.HasResult(task) {
+		if !taskcontract.Completed(task) {
+			return r.report(ctx, &job, "ExecutionObservationPending", "Terminal Task observation is stale or lacks current known/cleaned conditions; no new execution is allowed", false)
+		}
+		target, err := companion.Target(task)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+		if target == nil || target.Task.UID != string(task.UID) || target.Generation != task.Generation || target.Job != (ext.NativeObjectReference{Namespace: job.Namespace, Name: job.Name, UID: string(job.UID)}) || target.TenantID != tenant.IDOf(&job) {
+			return ctrl.Result{}, invalidBinding("terminal Task has no exact allocation target")
+		}
+		done, err := r.releaseAllocations(ctx, task)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+		phase, reason, message := native.JobPhasePending, "TerminalCleanupPending", "Process result is observed; durable cancellation and allocation deletion are still pending"
+		if done {
+			phase, reason, message = native.JobPhase(task.Status.Phase), "ExecutionCompleted", "Process result and exact allocation cleanup/deletion are confirmed; Task identity is retained"
+		}
+		return r.reportState(ctx, &job, phase, []native.JobTaskStatus{{Name: job.Spec.Tasks[0].Name, Phase: task.Status.Phase, Message: task.Status.Message}}, reason, message, !done, true, done)
+	}
 	planner := scheduler.Planner{Allocator: companion.Manager{Client: r.Client, Now: r.Now}}
 	_, err = planner.Acquire(ctx, scheduler.Request{Binding: client.ObjectKeyFromObject(binding), Task: client.ObjectKeyFromObject(&children[0])})
 	if err != nil {
@@ -363,5 +432,12 @@ func (r JobReservationReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		}
 		return ctrl.Result{}, err
 	}
-	return r.report(ctx, &job, "ReservedAwaitingDispatch", "Task and exclusive node allocation are persisted; Agent workload dispatch is not implemented", true)
+	if taskcontract.Observed(task) {
+		phase := native.JobPhasePending
+		if task.Status.Phase == native.TaskPhaseRunning {
+			phase = native.JobPhaseRunning
+		}
+		return r.reportState(ctx, &job, phase, []native.JobTaskStatus{{Name: job.Spec.Tasks[0].Name, Phase: task.Status.Phase, Message: task.Status.Message}}, "ExecutionObserved", "Current Agent execution observation is available; allocation remains protected", true, true, false)
+	}
+	return r.report(ctx, &job, "ReservedAwaitingDispatch", "Task and exclusive node allocation are persisted; awaiting a current Agent execution observation", true)
 }

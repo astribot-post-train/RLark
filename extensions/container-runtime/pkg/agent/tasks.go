@@ -135,7 +135,7 @@ func (s TaskService) authorize(ctx context.Context, id Identity, a *Assignment) 
 		return err
 	}
 	t := &a.Task
-	if !a.Allocation.DeletionTimestamp.IsZero() || a.Allocation.Status.CleanupConfirmed || !t.DeletionTimestamp.IsZero() || t.Spec.Suspended || t.Generation != a.Allocation.Spec.Generation {
+	if !a.Allocation.DeletionTimestamp.IsZero() || a.Allocation.Status.CleanupConfirmed || !t.DeletionTimestamp.IsZero() || t.Spec.Suspended || t.Generation != a.Allocation.Spec.Generation || taskcontract.HasResult(t) {
 		return ErrUnavailable
 	}
 	if _, err := (allocatedEligibility{assignment: a}).decode(t); err != nil {
@@ -250,11 +250,16 @@ func (s TaskService) Handle(ctx context.Context, id Identity, req TaskRequest) (
 		if !validStatus(t, req.Status) {
 			return nil, ErrCapability
 		}
+		if taskcontract.Completed(t) {
+			// Freeze the observed result until the controller replaces this Task.
+			// A late running/pending observation cannot erase a cleanup trigger.
+			return nil, ErrUnavailable
+		}
 		if err := (host.KubernetesStatusWriter{Client: s.Reporter.Client}).WriteStatus(ctx, t, *req.Status); err != nil {
 			return nil, err
 		}
 	case "cleanup":
-		if !t.Spec.Suspended && t.DeletionTimestamp.IsZero() {
+		if !t.Spec.Suspended && t.DeletionTimestamp.IsZero() && (!taskcontract.Completed(t) || t.Generation != a.Allocation.Spec.Generation) {
 			return nil, ErrUnavailable
 		}
 		if err := s.cleanup(ctx, a); err != nil {
@@ -331,6 +336,19 @@ func validStatus(t *native.Task, intent *host.StatusIntent) bool {
 			return false
 		}
 		seen[c.Type] = true
+	}
+	if intent.Phase == string(native.TaskPhaseSucceeded) || intent.Phase == string(native.TaskPhaseFailed) {
+		candidate := t.DeepCopy()
+		candidate.Status.ObservedGeneration = t.Generation
+		candidate.Status.Phase = native.TaskPhase(intent.Phase)
+		for _, m := range intent.Conditions {
+			if m.Remove {
+				meta.RemoveStatusCondition(&candidate.Status.Conditions, m.Condition.Type)
+			} else {
+				meta.SetStatusCondition(&candidate.Status.Conditions, m.Condition)
+			}
+		}
+		return taskcontract.Completed(candidate)
 	}
 	return true
 }

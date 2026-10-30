@@ -10,6 +10,7 @@ import (
 
 	"github.com/astribot-post-train/rlark/extensions/container-runtime/pkg/allocation/companion"
 	rawruntime "github.com/astribot-post-train/rlark/extensions/container-runtime/pkg/runtime/raw"
+	"github.com/astribot-post-train/rlark/extensions/container-runtime/pkg/taskcontract"
 	native "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
 	"github.com/rlinf/rlark/apps/rlark/pkg/agent/execution/coordination"
 	"github.com/rlinf/rlark/apps/rlark/pkg/agent/execution/host"
@@ -67,7 +68,7 @@ func (o ExecutionObserver) reconcile(ctx context.Context, allowStart bool) error
 	}
 	scoped := ScopedTasks{Client: o.Client, Allocation: objectRef(&a.Allocation), Task: objectRef(&a.Task)}
 	task := &a.Task
-	if task.Spec.Suspended || !task.DeletionTimestamp.IsZero() {
+	if task.Spec.Suspended || !task.DeletionTimestamp.IsZero() || taskcontract.Completed(task) {
 		identity := rt.TaskIdentity{Logical: rt.LogicalTaskID{Namespace: task.Namespace, Name: task.Name}, ObjectUID: string(task.UID), Generation: task.Generation}
 		record, err := o.Supervisor.Stop(ctx, identity)
 		if err != nil {

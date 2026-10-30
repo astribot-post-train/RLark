@@ -18,7 +18,7 @@
 
 Raw supervisor 即使尚未启动该 Task，也会在停止时持久化一个仅含身份的取消墓碑。同一 Task UID 的延迟启动必须被拒绝，包括 supervisor 重启后。已有但不确定的进程不能走“未启动”路径，必须在确认清理前保留分配。取消记录持久化失败会返回错误，不能上报清理完成。此预览版保留墓碑，不自动回收。
 
-需显式启用的预览 Job 预留控制器为每个 Job 创建并预留一个 `raw.rlark.io/process` v1 模板。在各自派发契约实现前，拒绝 Ray、多模板、旧版绑定、显式运行时实例名称、SSH 注入、用户指定的 GPU 可见性环境变量、环境处理器和 Pod 模板。原生 Task 名称确定，严格校验 owner reference、父 UID、模板身份和租户，不接管旧格式数据。节点选择器先校验，再匹配原生 Node 标签。工作负载或重启变更在确认清理后以新 UID 替换 Task，不就地修改运行中的执行。暂停/删除保留 Job 和 Task finalizer，直到每个精确 allocation 清理完成且观察到删除。目标已固定但 allocation 不存在时，除非控制器已保存精确清理回执，否则继续阻塞：仅凭不存在不能排除仍在进行的创建或启动。释放前，控制器在 Task 的 `containers.rlark.io/allocation-cleanup-receipt` 中持久化 allocation UID 和完整目标身份，以便从删除响应丢失中恢复。孤儿 allocation 阻止 Job 删除；含糊数据需要运维显式恢复。调度决策使用非缓存 API client 和乐观并发。Job phase 保持 Pending，`Scheduled` 原因为 `ReservedAwaitingDispatch`；停止的 Job 只在清理后变为 Stopped。控制器负责预留，API 和 Agent 上还需分别显式开启执行。当前可上报 Task 状态，但 Job 运行/结果聚合及终态 allocation 自动释放尚未实现。进程结束后仍保留预留，直到 Job 暂停/删除；不能把 Pending Job phase 当作实时执行结果。
+需显式启用的预览 Job 预留控制器为每个 Job 创建并预留一个 `raw.rlark.io/process` v1 模板。在各自派发契约实现前，拒绝 Ray、多模板、旧版绑定、显式运行时实例名称、SSH 注入、用户指定的 GPU 可见性环境变量、环境处理器和 Pod 模板。原生 Task 名称确定，严格校验 owner reference、父 UID、模板身份和租户，不接管旧格式数据。节点选择器先校验，再匹配原生 Node 标签。工作负载或重启变更在确认清理后以新 UID 替换 Task，不就地修改运行中的执行。暂停/删除保留 Job 和 Task finalizer，直到每个精确 allocation 清理完成且观察到删除。目标已固定但 allocation 不存在时，除非控制器已保存精确清理回执，否则继续阻塞：仅凭不存在不能排除仍在进行的创建或启动。释放前，控制器在 Task 的 `containers.rlark.io/allocation-cleanup-receipt` 中持久化 allocation UID 和完整目标身份，以便从删除响应丢失中恢复。孤儿 allocation 阻止 Job 删除；含糊数据需要运维显式恢复。调度决策使用非缓存 API client 和乐观并发。控制器现在聚合受支持的单进程 Task：当前 `ExecutionKnown=True` 观测显示 Pending/Running，只有当前 Succeeded/Failed 且 `ExecutionCleaned=True`、精确清理证明和 allocation 删除均已观察到后，才发布 Job 终态。`ExecutionObserved` 和 `AllocationReleased` 条件分别展示观测和清理等待。完成的 Task 身份持续受保护，控制器或 Agent 重启不会重复运行；Job 暂停/删除、模板变更和显式重启才会通过既有清理流程退役它。Ray/RLinf 组、多副本派发、日志、接入、升级和 UI 仍未实现。
 
 独立控制器默认在 `rlark-system` 中启用 Kubernetes Lease 选主（`--leader-elect`、`--leader-election-namespace`）。使用 `config/rbac/container-runtime-controller.yaml`，并配置对应 namespace 和管理 API kubeconfig；namespace 必须事先存在。默认 `--enable-job-reservations=false` 仅安装校验控制器；隔离的预览测试可通过 `--enable-job-reservations=true` 启用预留。请用 `Job.spec.suspended` 暂停整个 Job；此阶段拒绝单独暂停的模板。可选进程内 `ControllerExtension()` 仍仅执行校验。同一节点不能运行旧预览分配写入者。撤销权限或关闭控制器不会清理或释放持久化预留；重新启动后继续调谐。预留测试覆盖恢复、容量不可用、配置变更、删除、租户冲突和 API 响应丢失，不代表 Agent 执行或端到端训练已支持。
 
@@ -107,7 +107,15 @@ CPU 观测取进程 affinity 与当前 cgroup 到 cgroup-v2 挂载点之间所�
 
 暂停/删除是持久化清理请求。Agent 先调用私有 supervisor 的幂等 Stop，包括尚未启动的情况，验证精确身份、持久化取消和后代清理后再报告。API 先移除 Host 拥有的认领元数据，再发布 allocation 清理证明；锁释放和 Task 分配保护归 Job 控制器。认领/清理响应丢失后从当前状态恢复。本地观测失败时只协调清理，不发送伪造心跳或启动任务。API 故障保留工作负载和 allocation。撤销/替换的凭据不能报告清理；需恢复精确所有者身份或走独立可审计的运维恢复，不能直接删除保护。
 
-测试通过真实 mTLS 传输搭配假管理面和 supervisor，覆盖跨节点/租户/UID、旧 generation/心跳/版本、伪造字段/状态、Host 重建、GPU 注入、认领提交后响应丢失、部分清理/响应丢失，以及观测失败时的清理。这些测试不代表已部署的云端 Job 验收。Job phase/结果聚合、进程结束后自动释放、日志、接入、升级及 Ray 组仍属后续工作。
+测试通过真实 mTLS 传输搭配假管理面和 supervisor，覆盖跨节点/租户/UID、旧 generation/心跳/版本、伪造字段/状态、Host 重建、GPU 注入、认领提交后响应丢失、部分清理/响应丢失，以及观测失败时的清理。这些测试不代表已部署的云端 Job 验收。多副本/Ray 组、授权日志、接入、升级、UI 和完整 GPU 训练验收仍属后续工作。
+
+### 已实现的执行生命周期增量
+
+已实现的预览只聚合当前支持的单进程 Task。Running 需要当前 Task `observedGeneration` 和 `ExecutionKnown=True`；终态结果还需要当前 `ExecutionCleaned=True`。仅有终态 phase、主进程退出、心跳过期或 supervisor 记录缺失均不能作为释放证明。上报当前成功/失败结果后，限定 API 拒绝新启动和冲突的状态回退。Agent 必须先持久化 supervisor Stop/取消，再由已有 cleanup 端点发布 allocation 清理证明。本地观测不新鲜时也必须能执行这一清理路径。
+
+控制器校验精确 allocation 目标/UID/所有者/租户，等待 Agent 清理认领，持久化已有清理回执，并观察 allocation 删除完成后才发布 Job 成功/失败。清理等待状态与观测到的 Task 结果分别展示。完成的原生 Task、目标及 allocation 保护 finalizer 保留为当前结果身份，即使有人请求删除该 Task；仅 Job 暂停/删除、模板变更或显式重启标记才退役它。控制器/API/Agent 重启后不能再次分配或运行同一个 Task。执行变更沿用已有清理流程退役旧 Task，并重置 Job 时间戳。时间戳代表控制面观测时刻，不代表精确进程启动/退出时间。不需要修改 CRD 或原生生命周期。
+
+测试覆盖成功/失败及运行聚合、过期/缺失条件、精确清理证明、延迟删除、回执/删除/状态响应丢失、控制器重建、不重跑/不重分配、完成后 Job 暂停/删除/重启，以及第二个 Job 获取已释放节点。真实 supervisor 测试证明终态清理会阻止释放后延迟到达的 Ensure。2026-10-30，私网金山云开发机通过 `TestScopedTerminalExecutionRealSupervisor`，使用 CPU 进程、真实 mTLS/Unix 传输和假管理面，观察到 Job 成功及 allocation 删除，再拒绝延迟 Ensure。这不代表已接入的云端 GPU Job 验收。这仍为单进程预览；已接入的云端 GPU 验收、日志、接入、滚动升级和 UI 仍为独立门槛。
 
 ### 交付门槛
 
