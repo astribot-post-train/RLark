@@ -300,6 +300,19 @@ func sameReservation(current, wanted *ext.ContainerAllocation) (*ext.ContainerAl
 // Deletion is observed before removing the lock finalizer, making crash recovery
 // safe. The caller must retain Task identity until this operation finishes.
 func (m Manager) Release(ctx context.Context, key client.ObjectKey, uid string) error {
+	return m.release(ctx, key, uid, "")
+}
+
+// ReleaseUpgrade consumes only cleanup for one exact upgrade operation. The
+// Task release path cannot release an upgrade-owned node lock.
+func (m Manager) ReleaseUpgrade(ctx context.Context, key client.ObjectKey, uid, operationUID string) error {
+	if operationUID == "" {
+		return ErrIdentity
+	}
+	return m.release(ctx, key, uid, operationUID)
+}
+
+func (m Manager) release(ctx context.Context, key client.ObjectKey, uid, operationUID string) error {
 	if m.Client == nil || uid == "" {
 		return ErrIdentity
 	}
@@ -308,6 +321,9 @@ func (m Manager) Release(ctx context.Context, key client.ObjectKey, uid string) 
 		return client.IgnoreNotFound(err)
 	}
 	if string(a.UID) != uid {
+		return ErrIdentity
+	}
+	if operationUID == "" && a.Spec.Upgrade != nil || operationUID != "" && (a.Spec.Upgrade == nil || a.Spec.Upgrade.Operation.UID != operationUID) {
 		return ErrIdentity
 	}
 	proof := meta.FindStatusCondition(a.Status.Conditions, "CleanupConfirmed")

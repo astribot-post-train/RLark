@@ -22,5 +22,6 @@ func init() {
 		&ContainerAllocation{}, &ContainerAllocationList{},
 		&ContainerJob{}, &ContainerJobList{},
 		&AgentRelease{}, &AgentReleaseList{},
+		&AgentUpgrade{}, &AgentUpgradeList{},
 	)
 }

@@ -73,10 +73,14 @@ func (r ContainerClusterReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		}
 		var nodes ext.ContainerNodeList
 		var allocations ext.ContainerAllocationList
+		var upgrades ext.AgentUpgradeList
 		if err := r.Client.List(ctx, &nodes); err != nil {
 			return ctrl.Result{}, err
 		}
 		if err := r.Client.List(ctx, &allocations); err != nil {
+			return ctrl.Result{}, err
+		}
+		if err := r.Client.List(ctx, &upgrades); err != nil {
 			return ctrl.Result{}, err
 		}
 		blocked := false
@@ -90,9 +94,14 @@ func (r ContainerClusterReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 				blocked = true
 			}
 		}
+		for _, op := range upgrades.Items {
+			if op.Spec.ClusterRecord.UID == string(v.UID) || op.Spec.Cluster == v.Spec.Cluster {
+				blocked = true
+			}
+		}
 		before := v.DeepCopy()
 		if blocked {
-			condition(&v.Status.Conditions, v.Generation, "DeletionBlocked", true, "ChildrenRemain", "Container nodes or allocations still reference this native Cluster instance")
+			condition(&v.Status.Conditions, v.Generation, "DeletionBlocked", true, "ChildrenRemain", "Container nodes, allocations or upgrades still reference this native Cluster instance")
 			return persist(ctx, r.Client, before, &v)
 		}
 		controllerutil.RemoveFinalizer(&v, clusterFinalizer)
@@ -193,6 +202,18 @@ func (r ContainerNodeReconciler) Reconcile(ctx context.Context, req ctrl.Request
 				before := v.DeepCopy()
 				v.Status.Schedulable = false
 				condition(&v.Status.Conditions, v.Generation, "DeletionBlocked", true, "AllocationsRemain", "Allocation cleanup must finish before removing the container Node")
+				return persist(ctx, r.Client, before, &v)
+			}
+		}
+		var upgrades ext.AgentUpgradeList
+		if err := r.Client.List(ctx, &upgrades); err != nil {
+			return ctrl.Result{}, err
+		}
+		for _, op := range upgrades.Items {
+			if op.Spec.NodeRecord.UID == string(v.UID) && op.Spec.NodeRecord.Namespace == v.Namespace {
+				before := v.DeepCopy()
+				v.Status.Schedulable = false
+				condition(&v.Status.Conditions, v.Generation, "DeletionBlocked", true, "UpgradeRemains", "Upgrade cancellation or completion must finish before removing the container Node")
 				return persist(ctx, r.Client, before, &v)
 			}
 		}

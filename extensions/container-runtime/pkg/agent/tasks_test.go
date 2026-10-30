@@ -44,6 +44,36 @@ func taskFixture(t *testing.T) (TaskService, Identity, *Assignment) {
 	return taskFixtureWithParameters(t, []byte(`{"argv":["/usr/bin/true"],"env":[],"directory":"/work"}`))
 }
 
+func TestTaskTransportCannotAdoptOrReleaseAnUpgradeAllocation(t *testing.T) {
+	s, id, old := taskFixture(t)
+	ctx := context.Background()
+	a := old.Allocation.DeepCopy()
+	a.Spec.Upgrade = &ext.UpgradeAllocation{Operation: ext.NativeObjectReference{Namespace: a.Namespace, Name: "upgrade", UID: "operation"}, Release: ext.NativeObjectReference{Namespace: a.Namespace, Name: "next", UID: "release"}, SHA256: strings.Repeat("0", 64)}
+	a.Spec.Task = ext.NativeObjectReference{}
+	a.Spec.Job = ext.NativeObjectReference{}
+	a.Spec.ExecutionID = ""
+	a.Spec.JobBindingUID = ""
+	a.Spec.Generation = 0
+	a.Spec.JobGeneration = 0
+	a.OwnerReferences = []metav1.OwnerReference{*metav1.NewControllerRef(&ext.AgentUpgrade{ObjectMeta: metav1.ObjectMeta{Namespace: a.Namespace, Name: "upgrade", UID: "operation"}}, ext.GroupVersion.WithKind("AgentUpgrade"))}
+	must(t, s.Reporter.Client.Update(ctx, a))
+	assignment, err := s.Handle(ctx, id, TaskRequest{Action: "assignment"})
+	must(t, err)
+	if assignment != nil {
+		t.Fatal("upgrade lock was returned as workload assignment")
+	}
+	for _, action := range []string{"get", "authorize", "claim", "status", "cleanup"} {
+		if _, err := s.Handle(ctx, id, requestFor(old, action)); !errors.Is(err, ErrIdentity) {
+			t.Fatalf("task action %s reached upgrade lock: %v", action, err)
+		}
+	}
+	var current ext.ContainerAllocation
+	must(t, s.Reporter.Client.Get(ctx, client.ObjectKeyFromObject(a), &current))
+	if current.Status.CleanupConfirmed || current.UID != a.UID {
+		t.Fatal("Task transport changed upgrade ownership or cleanup")
+	}
+}
+
 func taskFixtureWithParameters(t *testing.T, parameters []byte) (TaskService, Identity, *Assignment) {
 	t.Helper()
 	ctx := context.Background()

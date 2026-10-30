@@ -48,7 +48,7 @@ func decode(path string, out any) error {
 }
 func run(ctx context.Context, args []string, output io.Writer) error {
 	if len(args) == 0 {
-		return errors.New("command required: cluster-create, node-register, node-package")
+		return errors.New("command required: cluster-create, node-register, node-package, upgrade-create")
 	}
 	fs := flag.NewFlagSet(args[0], flag.ContinueOnError)
 	path := fs.String("config", "", "strict JSON request file")
@@ -59,7 +59,7 @@ func run(ctx context.Context, args []string, output io.Writer) error {
 	if *path == "" || fs.NArg() != 0 {
 		return errors.New("--config is required; positional arguments are unsupported")
 	}
-	if args[0] != "cluster-create" && args[0] != "node-register" && args[0] != "node-package" {
+	if args[0] != "cluster-create" && args[0] != "node-register" && args[0] != "node-package" && args[0] != "upgrade-create" {
 		return errors.New("unsupported administrator command")
 	}
 	cfg, err := clientcmd.BuildConfigFromFlags("", *kubeconfig)
@@ -98,6 +98,12 @@ func run(ctx context.Context, args []string, output io.Writer) error {
 			return err
 		}
 		result, err = service.ExportPackage(ctx, req)
+	case "upgrade-create":
+		var req provision.UpgradeRequest
+		if err := decode(*path, &req); err != nil {
+			return err
+		}
+		result, err = service.CreateUpgrade(ctx, req)
 	}
 	if err != nil {
 		return err
