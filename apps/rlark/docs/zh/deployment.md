@@ -224,7 +224,7 @@ rlark 支持三种部署环境模式，在 DeployConfig YAML 中配置：
 | 模式 | 说明 | 适用场景 |
 |------|------|----------|
 | `kubernetes` | 部署到 K8s 集群 | 生产环境、GPU 集群 |
-| `docker` | Docker workload 执行尚未实现 | 后续端侧设备和单机 workload |
+| `docker` | 预览：Ray/RLinf v1 Docker workload，要求宿主机 Docker socket、root Agent 和私网 host network | 固定 GPU Docker 主机 |
 | `raw` | 在已有可信 Node 内实验性执行进程 | 固定 GPU/云容器 |
 
 配置文件中需指定且仅指定 `kubernetes`、`docker`、`raw` 中的一个环境块。

@@ -15,6 +15,7 @@ import (
 
 	"github.com/rlinf/rlark/api/kubeclients/clientset/versioned"
 	rlarkv1alpha1 "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
+	dockerruntime "github.com/rlinf/rlark/apps/rlark/pkg/agent/controllers/task/runtime/docker"
 	"github.com/rlinf/rlark/apps/rlark/pkg/common"
 	"github.com/rlinf/rlark/apps/rlark/pkg/server"
 	"github.com/rlinf/rlark/apps/rlark/pkg/utils"
@@ -29,9 +30,10 @@ type Agent struct {
 	managementConfig *rest.Config
 	managementClient versioned.Interface
 
-	localKubeConfig  *rest.Config
-	localKubeClient  kubernetes.Interface
-	localKubeHandler http.Handler
+	localKubeConfig   *rest.Config
+	localKubeClient   kubernetes.Interface
+	localKubeHandler  http.Handler
+	localDockerClient dockerruntime.EngineClient
 
 	localListener net.Listener
 	localDialer   utils.Dial
@@ -122,7 +124,10 @@ func (a *Agent) init(ctx context.Context) error {
 		a.localKubeHandler = kubeProxy.GetHandler()
 
 	case rlarkv1alpha1.AgentTypeDocker:
-		// TODO: Initialize Docker client
+		a.localDockerClient, err = dockerruntime.NewSDKClient(a.config.DockerHost)
+		if err != nil {
+			return fmt.Errorf("create Docker Engine client: %w", err)
+		}
 
 	case rlarkv1alpha1.AgentTypeRaw:
 		if a.config.RawSupervisorSocket == "" {
@@ -174,6 +179,11 @@ func (a *Agent) Run(ctx context.Context) error {
 		role := ""
 		if a.config.Mode == "node" {
 			role = "node-agent:" + common.NodeName("-")
+		} else if a.config.AgentType == string(rlarkv1alpha1.AgentTypeDocker) {
+			// Docker cluster agents need both the cluster heartbeat and a
+			// node-scoped heartbeat so the shared Node controller can schedule
+			// the host. The server recognizes this role specially.
+			role = "docker-agent:" + common.NodeName(a.config.NodeName)
 		}
 		return a.runTunnel(ctx, role)
 	})

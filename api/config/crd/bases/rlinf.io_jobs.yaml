@@ -141,6 +141,34 @@ spec:
                           - nodeName
                           - nodeUID
                           type: object
+                        dockerBinding:
+                          description: |-
+                            DockerBinding is a controller-owned, UID-fenced Docker execution assignment.
+                            It is intentionally separate from the Raw contract so the two runtimes
+                            cannot accidentally consume each other's reservations.
+                          properties:
+                            allocationID:
+                              type: string
+                            clusterUID:
+                              type: string
+                            incarnation:
+                              type: string
+                            jobUID:
+                              type: string
+                            nodeName:
+                              type: string
+                            nodeUID:
+                              type: string
+                            taskUID:
+                              type: string
+                          required:
+                          - allocationID
+                          - clusterUID
+                          - incarnation
+                          - jobUID
+                          - nodeName
+                          - nodeUID
+                          type: object
                         environment:
                           description: |-
                             Environment selects the observed Raw node environment/profile. It is

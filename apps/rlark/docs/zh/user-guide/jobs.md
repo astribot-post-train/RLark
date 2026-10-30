@@ -26,6 +26,10 @@ Worker 处于等待中时，可悬停或聚焦其状态旁的信息图标。RLar
 
 ## 任务类型
 
+使用 Docker Runtime 时，每个 Job 副本会展开为一个独立 Task 和容器。Ray 任务必须恰好有一个 Header；控制面先为 Header 选择 Docker Node，再把该 Node 的私网 IP 注入 Worker。Docker 主机之间必须在同一私网可互通，容器使用 host network。GPU 按整卡数量独占分配。
+
+Docker 预览路径不支持 Kubernetes volumes、`imagePullSecrets`、`serviceAccount`、`hostAliases` 或 Kubernetes Environment 注入；请将所需配置写入镜像和显式容器字段。容器状态、日志和资源 stats 已由 Agent Provider 观察，但 Gateway Task 日志和指标接口尚未接通。
+
 RLark 支持以下任务类型，每种类型预配置了适合该工作负载的默认角色：
 
 - **强化学习** — 面向分布式 RL 训练工作流。默认角色包括 Actor、Rollout、Environment 和 Learner。

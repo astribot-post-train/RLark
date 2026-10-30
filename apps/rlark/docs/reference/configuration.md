@@ -305,7 +305,7 @@ These names are the exact YAML keys accepted by `rlarkadm`.
 | `insecure-skip-tls-verify` | bool | `false` | Skip Server TLS verification |
 
 !!! warning "Runtime support"
-    The configuration schema retains `kubernetes`, `docker`, and `raw`. Docker has no execution path. Raw requires the explicit Agent flags and administrator-provisioned Node/certificate contract documented in the Raw runtime plan; it is experimental and single-node only. For a Kubernetes data plane, also provide `control-plane-address` and `cert`.
+    The configuration schema retains `kubernetes`, `docker`, and `raw`. Docker is a preview data-plane Agent path for Ray/RLinf v1 and requires the host Docker socket, root privileges, and private host networking. Raw requires the explicit Agent flags and administrator-provisioned Node/certificate contract documented in the Raw runtime plan; it is experimental and single-node only. For a Kubernetes data plane, also provide `control-plane-address` and `cert`.
 
 ### DBConfig
 
@@ -345,8 +345,8 @@ These names are the exact YAML keys accepted by `rlarkadm`.
 
 ### DockerEnv
 
-!!! warning "Not currently supported"
-    These fields remain in the schema for compatibility, but Docker is not a supported workload path and is not recommended for deployment.
+!!! warning "Preview"
+    These fields configure the control-plane deployment environment. Docker workload Agents additionally require `--docker-host` and `--docker-node-ip`; no Docker-in-Docker setup is supported.
 
 | Field | Type | Description |
 | ------- | ------ | ------------- |

@@ -119,7 +119,9 @@ A legacy cluster that has not reconnected is not guessed or synthesized. Keep it
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--mode` | `cluster` | `cluster`, `node`, or `both`; Kubernetes `rlarkadm` uses separate cluster/node workloads |
-| `--agent-type` | `Kubernetes` | Agent type selector. Kubernetes is the general runtime; Raw supports the experimental single-node process path; Docker execution is not implemented |
+| `--agent-type` | `Kubernetes` | Agent type selector: Kubernetes, Docker (preview Ray/RLinf), or Raw (experimental) |
+| `--docker-host` | `unix:///var/run/docker.sock` | Docker Engine endpoint; the host socket is used directly and Docker-in-Docker is unsupported |
+| `--docker-node-ip` | unset | Private IPv4 advertised to Ray workers; required for cross-host Docker training |
 | `--server-address` | `https://localhost:8443` | Server HTTPS/WSS address |
 | `--metrics-bind-address` | `:8081` | Metrics listen address |
 | `--image` | `""` | Network sidecar and SSH image |
@@ -134,6 +136,10 @@ A legacy cluster that has not reconnected is not guessed or synthesized. Keep it
 | `--raw-authorized-gpu-uuid` | unset | Explicitly authorized GPU UUID; repeat once per GPU |
 
 See [Configuration Reference](../reference/configuration.md#rlark-agent) for the complete list.
+
+### Docker Agent requirements
+
+A Docker Agent runs as root on each fixed Docker host with `--agent-type=Docker --mode=cluster`, access to `/var/run/docker.sock`, and a unique `--node-name`. Multiple Docker Agents may share one logical Cluster and management namespace. The control plane expands each replica into one Task, reserves CPU, memory, and whole GPUs on an eligible Node, and writes the head Node private address into Ray workers. Docker containers use host networking and therefore require direct private-network reachability between hosts. The current `rlarkadm` installer does not generate a Docker Agent systemd unit; install and upgrade the root Agent service with the host's systemd tooling.
 
 The Runtime/Workload coordinator is the production writer for Deployment, DaemonSet, and StatefulSet Tasks. It executes ordered Runtime operations. Runtime push controllers only enqueue reconciliation hints; verified targeted observation and Task Status updates run through the pull controller.
 

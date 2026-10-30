@@ -1202,6 +1202,18 @@ Responses:
       - `status`: `string`, required, enum=True,False,Unknown - status of the condition, one of True, False, Unknown.
       - `type`: `string`, required - type of condition in CamelCase or in foo.example.com/CamelCase.
   - `diskPressure`: `boolean`, optional
+  - `dockerReservations`: `array`, optional
+    - `items`: `object`, optional - DockerNodeReservation is controller-owned durable allocation state for one Docker Task. GPU allocation is whole-card ...
+      - `allocationID`: `string`, required
+      - `clusterUID`: `string`, required
+      - `cpuMilli`: `integer`, optional
+      - `gpuCount`: `integer`, optional
+      - `incarnation`: `string`, required
+      - `jobUID`: `string`, required
+      - `memoryBytes`: `integer`, optional
+      - `nodeUID`: `string`, required
+      - `taskUID`: `string`, required
+      - `tenantID`: `string`, required
   - `events`: `array`, optional - Events 由数据面 node-agent 上报节点相关 Kubernetes Event（如 DiskPressure 等 Warning 事件及镜像拉取/调度相关事件）。控制面 Task reconciler 在 Task 处于...
     - `items`: `object`, optional - NodeEvent represents a Kubernetes Event observed on a node that is relevant for surfacing to operators (e.g. DiskPres...
       - `count`: `integer`, optional
@@ -1217,6 +1229,7 @@ Responses:
   - `nodeInfo`: `object`, optional - NodeInfo 是节点基础信息，由数据面 Agent 上报；控制面不写入本字段。
     - `agentVersion`: `string`, optional
     - `architecture`: `string`, optional
+    - `incarnation`: `string`, optional - Incarnation changes when the backing agent/engine identity changes.
     - `kernelVersion`: `string`, optional
     - `operatingSystem`: `string`, optional
   - `phase`: `string`, optional, enum=Online,Offline - Phase 是节点连通性聚合阶段，由数据面 node-agent 上报。
@@ -1228,7 +1241,7 @@ Responses:
       - `speed`: `number`, required
       - `status`: `string`, required
       - `total`: `integer`, required
-  - `raw`: `object`, optional - Raw is Agent-owned capability observation. Reservation is controller-owned.
+  - `raw`: `object`, optional - Raw is Agent-owned capability observation. Reservations are controller-owned.
     - `authorizedGPUUUIDs`: `array`, required
     - `environment`: `string`, required
     - `incarnation`: `string`, required
@@ -1644,6 +1657,14 @@ Responses:
       - `clusterUID`: `string`, required
       - `executionID`: `string`, required
       - `groupDigest`: `string`, required
+      - `incarnation`: `string`, required
+      - `jobUID`: `string`, required
+      - `nodeName`: `string`, required
+      - `nodeUID`: `string`, required
+      - `taskUID`: `string`, optional
+    - `dockerBinding`: `object`, optional - DockerBinding is a controller-owned, UID-fenced Docker execution assignment. It is intentionally separate from the Ra...
+      - `allocationID`: `string`, required
+      - `clusterUID`: `string`, required
       - `incarnation`: `string`, required
       - `jobUID`: `string`, required
       - `nodeName`: `string`, required

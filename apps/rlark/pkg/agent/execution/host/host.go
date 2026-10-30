@@ -162,11 +162,11 @@ func (h *Host) Validate() error {
 			return errors.New("task claimant identity contains an empty component")
 		}
 	}
-	if parts[1] == "Raw" && len(parts) != 3 {
-		return errors.New("raw task claimant requires a node UID")
+	if (parts[1] == "Raw" || parts[1] == "Docker") && len(parts) != 3 {
+		return errors.New("node-scoped task claimant requires a node UID")
 	}
-	if len(parts) == 3 && parts[1] != "Raw" {
-		return errors.New("node-scoped task claimants are supported only for Raw")
+	if len(parts) == 3 && parts[1] != "Raw" && parts[1] != "Docker" {
+		return errors.New("node-scoped task claimants are supported only for Raw or Docker")
 	}
 	return nil
 }

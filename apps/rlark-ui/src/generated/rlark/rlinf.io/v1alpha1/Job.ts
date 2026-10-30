@@ -62,6 +62,20 @@ export interface IJob {
           "taskUID"?: string;
         };
         /**
+         * DockerBinding is a controller-owned, UID-fenced Docker execution assignment.
+         * It is intentionally separate from the Raw contract so the two runtimes
+         * cannot accidentally consume each other's reservations.
+         */
+        "dockerBinding"?: {
+          "allocationID": string;
+          "clusterUID": string;
+          "incarnation": string;
+          "jobUID": string;
+          "nodeName": string;
+          "nodeUID": string;
+          "taskUID"?: string;
+        };
+        /**
          * Environment selects the observed Raw node environment/profile. It is
          * required for Raw Tasks so a placement cannot silently cross image or
          * dependency boundaries.

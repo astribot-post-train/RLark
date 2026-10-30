@@ -305,7 +305,7 @@ Gateway 使用的对象存储后端配置。
 | `insecure-skip-tls-verify` | bool | `false` | 跳过 Server TLS 验证 |
 
 !!! warning "运行时支持范围"
-    配置 schema 仍保留 `kubernetes`、`docker` 和 `raw`。Docker 没有执行路径。Raw 需要明确的 Agent flags、管理员预置 Node/证书契约，且仅为实验性单节点路径；详见 Raw 运行时计划。Kubernetes 数据面还必须提供 `control-plane-address` 和 `cert`。
+    配置 schema 仍保留 `kubernetes`、`docker` 和 `raw`。Docker 是预览数据面 Agent 路径，仅支持 Ray/RLinf v1，要求宿主机 Docker socket、root 权限和 Docker 主机间私网 host network；不支持 Docker-in-Docker。Raw 需要明确的 Agent flags、管理员预置 Node/证书契约，且仅为实验性单节点路径；详见 Raw 运行时计划。Kubernetes 数据面还必须提供 `control-plane-address` 和 `cert`。
 
 ### DBConfig
 
@@ -345,8 +345,8 @@ Gateway 使用的对象存储后端配置。
 
 ### DockerEnv
 
-!!! warning "当前不支持"
-    这些字段为兼容性保留在 schema 中，但 Docker 不是当前支持的工作负载路径，不建议用于部署。
+!!! warning "预览"
+    这些字段用于控制面部署环境。Docker workload Agent 还需要 `--docker-host` 和 `--docker-node-ip`；Agent 必须以 root 运行并直接访问宿主机 Docker socket，不支持 Docker-in-Docker。固定主机的 systemd 服务需要由宿主机自行管理。
 
 | 字段 | 类型 | 说明 |
 | ------ | ------ | ------ |

@@ -4,7 +4,7 @@ This document describes the internal execution boundary between RLark's manageme
 
 ## Compatibility scope
 
-Kubernetes remains the supported general workload runtime. Docker execution is unimplemented. Raw has an experimental single-node process path: reservation, scoped credentials/API, polling Agent, Provider/Host, Job dispatch and standalone Linux supervision for one trusted root Task per pre-provisioned Node. Raw Ray/RLinf group scheduling, replicas, capacity telemetry, remote logs and onboarding packages remain pending. See the [Raw container runtime plan](raw-container-runtime-plan.md) for the exact preview contract and limitations.
+Kubernetes remains the general workload runtime. Docker is supported at preview maturity for Ray/RLinf v1 Tasks using the Docker container carrier. Raw has an experimental single-node process path. Docker uses the host Docker socket (Docker-in-Docker is unsupported), requires a root Agent, and relies on private host networking between Docker machines.
 
 The Kubernetes compatibility contract includes the fixed workload namespace, legacy workload adoption, claimant identity format, in-place template mutation, SSH key injection, cross-domain network sidecar injection, and cleanup order. Workload and carrier selectors are frozen when a Task is claimed. Changing either selector on a claimed Task is rejected without Runtime effects; callers must delete and recreate the Task with a new UID. Native PodTemplate storage semantics apply: `persistentVolumeClaim.claimName` references an existing external PVC, while Kubernetes owns PVCs created from `ephemeral.volumeClaimTemplate`.
 
@@ -346,16 +346,16 @@ Normal pull reconciliation does not stop merely because a Task is already `Runni
 
 | Capability | Kubernetes | Docker | Raw |
 | --- | --- | --- | --- |
-| Task claim and finalizer | Supported | Not implemented | Experimental single-node process |
+| Task claim and finalizer | Supported | Preview supported | Experimental single-node process |
 | Deployment | Supported | Not applicable | Not applicable |
 | StatefulSet | Supported | Not applicable | Not applicable |
 | DaemonSet | Supported | Not applicable | Not applicable |
-| Container/process execution | Kubernetes Pods | Spec scaffolding only | Experimental pre-existing process |
-| Status observation | Supported | Not implemented | Experimental scoped status |
-| Runtime logs | Kubernetes Pod fallback | Not implemented | Not implemented |
+| Container/process execution | Kubernetes Pods | Ray/RLinf Docker containers | Experimental pre-existing process |
+| Status observation | Supported | Docker inspect/stats | Experimental scoped status |
+| Runtime logs | Kubernetes Pod fallback | Provider support; Gateway Task logs not connected | Not implemented |
 | Exec | Kubernetes path | Not implemented | Not implemented |
 | Existing PVC references and generic ephemeral volumes | Kubernetes-native Pod semantics; RLark does not own referenced PVCs | Not implemented | Not implemented |
-| GPU and devices | Kubernetes resource semantics | Not implemented | Experimental authorized whole-GPU count |
+| GPU and devices | Kubernetes resource semantics | Whole-GPU exclusive allocation by count | Experimental authorized whole-GPU count |
 | Addon and Delivery | Supported | Not implemented | Not implemented |
 | Cross-cluster workload networking | Kubernetes sidecar path | Not implemented | Not implemented |
 | Image pull observation | Supported | Partial monitor only; no execution path | Not applicable |

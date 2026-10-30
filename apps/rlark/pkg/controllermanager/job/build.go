@@ -65,9 +65,11 @@ func buildTask(
 	taskName, namespace string,
 ) *rlarkv1alpha1.Task {
 	taskSpec := *t.TaskSpec.DeepCopy()
-	if taskSpec.Runtime.Kind != "Raw" {
+	if taskSpec.Runtime.Kind != "Raw" && taskSpec.Runtime.Kind != "Docker" {
 		setNetworkEnvironment(&taskSpec, job.Spec.Domain)
 		setSSHEnvironment(&taskSpec, job.Spec.SSHPublicKey)
+		setRayExecution(&taskSpec, job, t)
+	} else if taskSpec.Runtime.Kind == "Docker" {
 		setRayExecution(&taskSpec, job, t)
 	}
 	taskSpec.Tags = make([]rlarkv1alpha1.JobTag, len(job.Spec.Tags))
@@ -224,6 +226,13 @@ func findHeadTaskName(job *rlarkv1alpha1.Job) string {
 
 // taskReplicas 返回任务模板的副本数（pod 数量），未显式设置时默认为 1。
 func taskReplicas(t rlarkv1alpha1.JobTaskTemplate) int32 {
+	if t.Workload.Carrier.Type == taskapi.CarrierTypeDockerContainer {
+		parameters, err := taskapi.DecodeParametersStrict[taskapi.DockerReplicatedCarrierParametersV1](t.Workload.Carrier.Parameters)
+		if err == nil && parameters.Replicas != nil && *parameters.Replicas > 0 {
+			return *parameters.Replicas
+		}
+		return 1
+	}
 	if t.Workload.Carrier.Type != taskapi.CarrierTypeKubernetesDeployment && t.Workload.Carrier.Type != taskapi.CarrierTypeKubernetesStatefulSet {
 		return 1
 	}

@@ -4,7 +4,7 @@ RLark provides a unified control plane for heterogeneous embodied-intelligence i
 
 - **Multi-cluster resource management** — onboard multiple runtimes and view usable compute and embodied devices consistently.
     - **Kubernetes Runtime — Preview:** implemented and suitable for evaluation; production stability is not yet guaranteed.
-    - **Docker Runtime — Planned:** Docker container lifecycle is not implemented.
+    - **Docker Runtime — Preview:** Host Docker socket execution is supported for Ray/RLinf v1 container Tasks, with whole-GPU reservations and host networking.
     - **Raw Runtime — Experimental:** A pre-provisioned Node can run one trusted process Task through the scoped Agent/supervisor path. Ray/RLinf groups, replicas, logs and onboarding are not supported.
 - **Job orchestration** — describe distributed jobs as coordinated Tasks across available compute resources.
 - **Cross-cluster networking** — connect workloads through TUN, gVisor netstack, and SSH tunnels without requiring direct inbound connectivity.

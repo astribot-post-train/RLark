@@ -13,6 +13,7 @@ require (
 	github.com/charmbracelet/ssh v0.0.0-20250128164007-98fd5ae11894
 	github.com/charmbracelet/wish v1.4.7
 	github.com/containerd/containerd v1.7.25
+	github.com/docker/docker v23.0.3+incompatible
 	github.com/creack/pty v1.1.21
 	github.com/gin-gonic/gin v1.12.0
 	github.com/go-logr/logr v1.4.3
