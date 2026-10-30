@@ -378,8 +378,14 @@ export class Client {
       {},
       signal,
     );
-    if (!detail(body)) throw malformed();
-    return body;
+    // Older consoles omit this additive capability. Keep inventory available
+    // during upgrades without enabling writes the server did not advertise.
+    const normalized =
+      record(body) && body.jobSubmissionEnabled === undefined
+        ? { ...body, jobSubmissionEnabled: false }
+        : body;
+    if (!detail(normalized)) throw malformed();
+    return normalized;
   }
   async target(
     cluster: Cluster,

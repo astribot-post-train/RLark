@@ -15,7 +15,8 @@ container clusters. It provides:
   authorized GPU UUIDs, heartbeat age, readiness, schedulability, and busy
   state;
 - available Agent releases and the currently selected target release;
-- operation-safe cluster creation, target-release selection and node cordon/uncordon.
+- operation-safe cluster creation, target-release selection and node cordon/uncordon;
+- explicitly enabled single-process Raw Job submission, bound Job lists, and durable suspension.
 
 Allocations, their Job references, and Agent upgrades are displayed as separate dimensions.
 The console never derives utilization from a missing observation and never
@@ -82,6 +83,10 @@ retain their machine-readable HTTP class and show “data unavailable” rather
 than zero counts. A stale node is visible and blocked from scheduling; it is
 not silently removed. Writes use an optimistic resourceVersion and report a
 conflict that asks the administrator to refresh.
+
+During a console upgrade, the UI accepts older inventory responses that omit
+`jobSubmissionEnabled` and treats submission as disabled. An explicitly supplied
+capability must still be a boolean; malformed inventory remains an error.
 
 ## Supported deployment sequence
 
