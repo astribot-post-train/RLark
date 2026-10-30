@@ -75,6 +75,10 @@ func TestTaskTransportCannotAdoptOrReleaseAnUpgradeAllocation(t *testing.T) {
 }
 
 func taskFixtureWithParameters(t *testing.T, parameters []byte) (TaskService, Identity, *Assignment) {
+	return taskFixtureWithJob(t, parameters, nil)
+}
+
+func taskFixtureWithJob(t *testing.T, parameters []byte, mutate func(*native.Job)) (TaskService, Identity, *Assignment) {
 	t.Helper()
 	ctx := context.Background()
 	r, id, n := observerFixture(t)
@@ -88,6 +92,9 @@ func taskFixtureWithParameters(t *testing.T, parameters []byte) (TaskService, Id
 	task := &native.Task{ObjectMeta: metav1.ObjectMeta{Annotations: map[string]string{utils.ParentUIDAnnotation: "job", utils.ChildTemplateAnnotation: "worker"}, Name: "job-worker", Namespace: "agents", UID: "task", Generation: 1, OwnerReferences: []metav1.OwnerReference{*metav1.NewControllerRef(&native.Job{ObjectMeta: metav1.ObjectMeta{Name: "job", UID: "job"}}, native.GroupVersion.WithKind("Job"))}}, Spec: native.TaskSpec{Runtime: native.TaskRuntimeSpec{Kind: "Raw"}, Placement: native.TaskPlacementSpec{Environment: "fleet"}, Workload: native.TaskWorkloadSpec{Kind: "raw.rlark.io/process", Version: "v1", Carrier: native.TaskWorkloadCarrier{Type: "raw.rlark.io/process", Version: "v1"}, Parameters: extensions.JSON{Raw: []byte(`{"argv":["/usr/bin/true"],"env":[],"directory":"/work"}`)}}}}
 	task.Spec.Workload.Parameters.Raw = parameters
 	job := &native.Job{ObjectMeta: metav1.ObjectMeta{Name: "job", UID: "job", Generation: 1, Annotations: map[string]string{nativejob.ControllerOwnerAnnotation: ext.Group}}, Spec: native.JobSpec{Tasks: []native.JobTaskTemplate{{Name: "worker", TaskSpec: *task.Spec.DeepCopy()}}}}
+	if mutate != nil {
+		mutate(job)
+	}
 	binding := &ext.ContainerJob{ObjectMeta: metav1.ObjectMeta{Name: "job", Namespace: "agents", UID: "binding"}, Spec: ext.ContainerJobSpec{Cluster: n.Spec.Cluster, Job: objectRef(job), TenantID: tenant.DefaultID, Runtime: "Raw"}}
 	r.Client = fake.NewClientBuilder().WithScheme(r.Client.Scheme()).WithStatusSubresource(n, task, &ext.ContainerAllocation{}, job).WithObjects(n, &cluster, &nn, &cc, job, binding, task).WithInterceptorFuncs(interceptor.Funcs{Create: func(ctx context.Context, c client.WithWatch, o client.Object, opts ...client.CreateOption) error {
 		if _, ok := o.(*ext.ContainerAllocation); ok {
@@ -178,6 +185,23 @@ func TestTaskTransportFencesEveryIdentityAndStartState(t *testing.T) {
 				t.Fatal("unauthorized start was allowed")
 			}
 		})
+	}
+}
+
+func TestTaskTransportValidatesEveryRawTemplateBeforeAuthorizingMember(t *testing.T) {
+	s, id, a := taskFixture(t)
+	ctx := context.Background()
+	var job native.Job
+	must(t, s.Reporter.Client.Get(ctx, client.ObjectKey{Name: "job"}, &job))
+	second := *job.Spec.Tasks[0].DeepCopy()
+	second.Name = "worker-b"
+	// A malformed sibling must revoke the whole Job contract, even though the
+	// allocation still points at the otherwise valid first member.
+	second.Workload.Kind = "ray.rlark.io/worker"
+	job.Spec.Tasks = append(job.Spec.Tasks, second)
+	must(t, s.Reporter.Client.Update(ctx, &job))
+	if _, err := s.Handle(ctx, id, requestFor(a, "authorize")); !errors.Is(err, ErrIdentity) {
+		t.Fatalf("malformed sibling was ignored: %v", err)
 	}
 }
 
@@ -502,5 +526,59 @@ func TestTaskHTTPRejectsForeignIdentityAndMalformedRequests(t *testing.T) {
 				t.Fatalf("got %d want %d", res.StatusCode, status)
 			}
 		})
+	}
+}
+
+func TestTaskTransportSelectsExactMemberAndRejectsAmbiguousTemplates(t *testing.T) {
+	for _, mode := range []string{"second member", "duplicate", "head", "missing member", "invalid sibling"} {
+		t.Run(mode, func(t *testing.T) {
+			s, id, a := taskFixtureWithJob(t, []byte(`{"argv":["/usr/bin/true"],"env":[],"directory":"/work"}`), func(j *native.Job) {
+				second := *j.Spec.Tasks[0].DeepCopy()
+				second.Name = "first"
+				j.Spec.Tasks = append([]native.JobTaskTemplate{second}, j.Spec.Tasks...)
+			})
+			if _, err := s.Handle(context.Background(), id, requestFor(a, "authorize")); err != nil {
+				t.Fatalf("valid second member rejected: %v", err)
+			}
+			if mode == "second member" {
+				return
+			}
+			var job native.Job
+			must(t, s.Reporter.Client.Get(context.Background(), client.ObjectKey{Name: "job"}, &job))
+			switch mode {
+			case "duplicate":
+				job.Spec.Tasks[0].Name = "worker"
+			case "head":
+				job.Spec.Tasks[0].Head = true
+			case "missing member":
+				job.Spec.Tasks[1].Name = "replaced"
+			case "invalid sibling":
+				job.Spec.Tasks[0].Workload.Kind = "ray.rlark.io/worker"
+			}
+			must(t, s.Reporter.Client.Update(context.Background(), &job))
+			if _, err := s.Handle(context.Background(), id, requestFor(a, "authorize")); !errors.Is(err, ErrIdentity) {
+				t.Fatalf("invalid member contract authorized: %v", err)
+			}
+		})
+	}
+}
+
+func TestTaskRetirementFenceSurvivesJobGenerationChange(t *testing.T) {
+	s, id, a := taskFixture(t)
+	ctx := context.Background()
+	_, err := s.Handle(ctx, id, requestFor(a, "authorize"))
+	must(t, err)
+	var j native.Job
+	must(t, s.Reporter.Client.Get(ctx, client.ObjectKey{Name: "job"}, &j))
+	// A durable retirement condition remains in force even when it was recorded
+	// by a previous Job generation. It is recovery state, not stale readiness.
+	j.Status.Conditions = []metav1.Condition{{Type: "TaskSetRetiring", Status: metav1.ConditionTrue, ObservedGeneration: j.Generation - 1}}
+	must(t, s.Reporter.Client.Status().Update(ctx, &j))
+	if _, err := s.Handle(ctx, id, requestFor(a, "authorize")); !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("retiring Task authorized: %v", err)
+	}
+	// The retained Agent identity must still be able to read/stop its workload.
+	if _, err := s.Handle(ctx, id, requestFor(a, "get")); err != nil {
+		t.Fatalf("retirement blocked cleanup read: %v", err)
 	}
 }

@@ -442,3 +442,12 @@ UUID and input privately and inspect partial resources before starting another
 operation. A registration response with mismatched node, cluster or operation
 identity is an uncertain result, never a successful join. Older APIs omitting
 `nodeRegistrationEnabled` disable the form; a supplied non-boolean is an error.
+
+## Independent Raw template scheduling
+
+The opt-in reservation controller accepts up to 16 uniquely named independent Raw
+process templates in a native Job, with separate allocations and aggregate cleanup.
+The console submission API and form still create one process template. To exercise
+multiple independent members, use the administrator management-API procedure and
+examples in the [delivery plan](raw-container-runtime-plan.md). Partial admission
+is allowed; this is not Ray/RLinf distributed training or a gang scheduler.

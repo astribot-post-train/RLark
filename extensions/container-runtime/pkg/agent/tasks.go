@@ -150,10 +150,21 @@ func (s TaskService) authorize(ctx context.Context, id Identity, a *Assignment) 
 	if err := r.Client.Get(ctx, client.ObjectKey{Namespace: a.Allocation.Spec.Job.Namespace, Name: a.Allocation.Spec.Job.Name}, &job); err != nil {
 		return err
 	}
-	if objectRef(&job) != a.Allocation.Spec.Job || len(job.Spec.Tasks) != 1 || job.Spec.SSHPublicKey != "" {
+	if objectRef(&job) != a.Allocation.Spec.Job || taskcontract.ValidateRawJob(&job) != nil {
 		return ErrIdentity
 	}
-	template := &job.Spec.Tasks[0]
+	if meta.IsStatusConditionTrue(job.Status.Conditions, taskcontract.TaskSetRetiringCondition) {
+		return ErrUnavailable
+	}
+	var template *native.JobTaskTemplate
+	for i := range job.Spec.Tasks {
+		if job.Spec.Tasks[i].Name == t.Annotations[utils.ChildTemplateAnnotation] {
+			template = &job.Spec.Tasks[i]
+		}
+	}
+	if template == nil {
+		return ErrIdentity
+	}
 	desired := template.TaskSpec.DeepCopy()
 	desired.Tags = append(slices.Clone(job.Spec.Tags), desired.Tags...)
 	if template.Head || template.Suspended || t.Name != utils.ChildName(job.Name, template.Name) || !taskcontract.EqualSpec(t.Spec, *desired) || t.Spec.DownstreamName != "" || t.Annotations[utils.ParentUIDAnnotation] != string(job.UID) || t.Annotations[utils.ChildTemplateAnnotation] != template.Name || t.Annotations[nativejob.RestartedAtAnnotation] != job.Annotations[nativejob.RestartedAtAnnotation] {
