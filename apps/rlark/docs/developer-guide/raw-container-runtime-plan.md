@@ -160,7 +160,7 @@ Publication is administrator-managed. Start both components with `--artifact-dir
 Wait for `status.available: true` with `status.observedGeneration == metadata.generation`, then let an administrator set the selected ContainerCluster's `spec.targetAgentRelease` to `agent-v1`. New releases need new records/paths; do not overwrite immutable bytes. No CLI/UI publisher or automatic Agent poller is installed by this change: `TargetRelease` and `DownloadRelease` are client library methods for the future updater. Changing the target can fence scheduling until an operator installs the version and fresh observations confirm readiness. It does not switch binaries, stop a running Task or release capacity. A missing/corrupt artifact produces `Available=False` and a bounded API error; restore the exact bytes or publish a new release and let periodic inspection recover. Do not edit status to bypass verification. Repointing a target is desired configuration, not automatic rollback. Keep the independent supervisor alive throughout any operator-controlled Agent update.
 
 
-### Upgrade reservations (implementation contract)
+### Upgrade reservations (preview)
 
 Before enabling binary installation, the control plane must serialize upgrades against both workload allocation and other upgrades. An `AgentUpgrade` is one immutable, identifiable operation pinned to the native Cluster, ContainerCluster, ContainerNode, container incarnation, enrollment credential and AgentRelease UID/digest. Its name is deterministic from the native Cluster UID in the authoritative Agent namespace, so only one operation per Cluster can exist. The controller/admin must create that operation explicitly; creating it or marking it Reserved never installs a binary.
 
@@ -169,6 +169,20 @@ Upgrade reservation uses the exact same deterministic `ContainerAllocation` name
 The reservation records the observed allocation UID on the operation before the Agent may claim `Applying`. The Agent's scoped upgrade protocol must carry the exact operation and allocation UIDs. Success or verified rollback needs a fresh heartbeat for the resulting version and an explicit idle completion report; failures with uncertain installation retain both locks. Target changes, deletion or certificate revocation deny new application grants but never free an in-flight operation. A pending/reserved operation can be cancelled with an optimistic-concurrency status transition before any application grant; cancellation of an Applying operation requires the owning updater to finish or roll back. Completed operations remain visible until their exact allocation has a terminal proof and deletion is observed. An administrator explicitly removes the completed operation before the next operation; automatic rolling selection/reaping and node installation remain separate implementation gates.
 
 The upcoming node updater must stop/restart only the Agent child, retain and verify the previous binary, persist stage/switch/rollback intent, recover after crashes, and leave the independent workload supervisor running. Local `Busy=false` alone is never sufficient permission to switch a binary. The current increment must not install or switch binaries until the scoped grant and local recovery/health-check path is implemented and tested.
+
+Install all extension CRDs (including `agentupgrades`) and the updated controller RBAC before restarting the controller with `--enable-agent-upgrade-reservations=true`. The flag defaults to false. The controller needs allocation status patch permission to persist cancellation proof; Agents receive no additional Kubernetes or upgrade permissions. After publishing an available target release, fill `config/examples/provision-upgrade.json` with the exact registered node UID/credential, release UID/digest and observed source Agent version. Retain the operation UUID when retrying:
+
+```bash
+./extensions/container-runtime/bin/container-runtime-admin upgrade-create \
+  --kubeconfig=/private/admin/kubeconfig \
+  --config=extensions/container-runtime/config/examples/provision-upgrade.json
+kubectl --kubeconfig=/private/admin/kubeconfig -n REPLACE_AGENT_NAMESPACE \
+  get agentupgrades.containers.rlark.io -o yaml
+```
+
+`upgrade-create` records intent; only the opt-in controller can move it to `Reserved`. Inspect `status.phase`, `status.allocation` and the `Reserved` condition. An unavailable lock stays Pending and retries. Target/credential/identity changes deny new reservations while preserving an already witnessed lock. Cancel a Pending/Reserved operation by deleting its exact observed object; the controller persists cancellation, proves allocation cleanup and waits for observed deletion before removing protection. A stuck or Applying operation requires owning-updater recovery; do not remove finalizers or edit status to bypass it. Automatic operation selection, application grants and installation remain unimplemented. Tests cover workload/upgrade competition, lost create/status responses, stale and foreign identities, delayed deletion, deletion protection and denial of Task-owned cleanup.
+
+On the approved private notebook, a fresh check after replacing the image confirmed `/root/RLinf/.venv-pi05` still imports RLinf source, reports Ray 2.56.1/PyTorch 2.11.0+cu126, and executes a CUDA tensor returning `42.0` on one H100. The default conda Python lacks Ray/RLinf; choose the prepared environment explicitly. This is a direct environment check, not an enrolled RLark GPU Job or upgrade acceptance test.
 
 ### Delivery gates
 

@@ -194,7 +194,7 @@ func TestUpgradeIntentProtectsNodeAndClusterBeforeAllocation(t *testing.T) {
 	r, req := upgradeControllerFixture(t)
 	ctx := context.Background()
 	// The operation exists but has not attempted a node reservation yet.
-	nodeController := ContainerNodeReconciler{Client: r.Client, Now: r.Now}
+	nodeController := ContainerNodeReconciler(r)
 	nodeKey := client.ObjectKey{Namespace: "agents", Name: "worker"}
 	_, err := nodeController.Reconcile(ctx, ctrl.Request{NamespacedName: nodeKey})
 	checkUpgrade(t, err)

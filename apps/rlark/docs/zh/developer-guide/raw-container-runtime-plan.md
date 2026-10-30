@@ -160,7 +160,7 @@ Agent client 复用 TLS 1.3 通道，拒绝重定向并限制下载大小；返�
 等待 `status.available: true` 且 `status.observedGeneration == metadata.generation`，再由管理员将目标 ContainerCluster 的 `spec.targetAgentRelease` 设为 `agent-v1`。新版本使用新的记录和路径，不覆盖不可变字节。本变更未提供 CLI/UI 发布器或 Agent 自动轮询器；`TargetRelease` 和 `DownloadRelease` 是供后续 updater 使用的客户端库方法。改变目标后，在运维安装该版本并由新观测确认就绪前，调度可能被阻止；它不会切换二进制、停止运行中的 Task 或释放容量。文件缺失/损坏会产生 `Available=False` 和有界 API 错误；恢复精确字节或发布新版本，由周期检查恢复。不要修改 status 绕过验证。重新指向目标属于期望配置，不等于自动回滚。运维手动更新 Agent 时也应保持独立 supervisor 持续运行。
 
 
-### 升级预留（实现契约）
+### 升级预留（preview）
 
 启用二进制安装前，控制面必须将升级与工作负载分配及其他升级串行化。`AgentUpgrade` 是不可变、具有独立身份的一次操作，固定到原生 Cluster、ContainerCluster、ContainerNode、容器实例、登记凭据及 AgentRelease UID/摘要。其名称由原生 Cluster UID 确定，位于权威 Agent namespace，因此一个集群同时最多存在一个操作。控制器/管理员必须显式创建操作；创建或标记 Reserved 不会安装二进制。
 
@@ -169,6 +169,20 @@ Agent client 复用 TLS 1.3 通道，拒绝重定向并限制下载大小；返�
 Agent 领取 Applying 前，操作必须记录已观察到的 allocation UID。节点限定升级协议必须携带精确的操作和 allocation UID。成功或已验证回滚需要结果版本的新心跳以及显式空闲完成报告；安装状态不确定的失败保留两个锁。目标变更、删除或撤销证书会拒绝新的应用授权，但不能释放进行中的操作。Pending/Reserved 操作可在任何应用授权之前通过乐观并发状态变更取消；Applying 操作只能由持有它的 updater 完成或回滚。完成操作在其精确 allocation 获得终态证明且确认删除前保持可见。管理员显式移除完成操作后才能创建下一个；自动滚动选择/回收及节点安装仍是独立实现门槛。
 
 后续节点 updater 必须只停止/重启 Agent 子进程，保留并验证上一版二进制，持久化暂存/切换/回滚意图，支持崩溃恢复，并保持独立工作负载 supervisor 运行。仅本地 `Busy=false` 永远不足以授权切换二进制。节点限定授权和本地恢复/健康检查链路实现并验证之前，本增量不得安装或切换二进制。
+
+先安装全部扩展 CRD（含 `agentupgrades`）和更新后的控制器 RBAC，再使用 `--enable-agent-upgrade-reservations=true` 重启控制器；该开关默认关闭。控制器需要 allocation status patch 权限以持久化取消证明；Agent 不会获得额外 Kubernetes 或升级权限。发布可用目标版本后，在 `config/examples/provision-upgrade.json` 填入精确的登记节点 UID/凭据、release UID/摘要及观测到的原 Agent 版本。重试时保留相同操作 UUID：
+
+```bash
+./extensions/container-runtime/bin/container-runtime-admin upgrade-create \
+  --kubeconfig=/private/admin/kubeconfig \
+  --config=extensions/container-runtime/config/examples/provision-upgrade.json
+kubectl --kubeconfig=/private/admin/kubeconfig -n REPLACE_AGENT_NAMESPACE \
+  get agentupgrades.containers.rlark.io -o yaml
+```
+
+`upgrade-create` 仅记录意图，只有按需启用的控制器才能将其推进到 `Reserved`。检查 `status.phase`、`status.allocation` 和 `Reserved` condition。锁不可用时保持 Pending 并重试。目标/凭据/身份变化会拒绝新预留，同时保留已有见证的锁。删除精确观测到的 Pending/Reserved 对象可请求取消；控制器先持久化取消，再证明 allocation 清理并确认删除后移除保护。阻塞或 Applying 操作需要持有者 updater 恢复，不能通过移除 finalizer 或修改 status 绕过。自动选择操作、应用授权和安装尚未实现。测试覆盖工作负载/升级竞争、创建/状态响应丢失、过期与外来身份、延迟删除、删除保护及拒绝任务路径清理升级锁。
+
+在批准的私网测试机替换镜像后，重新核对确认 `/root/RLinf/.venv-pi05` 仍可导入 RLinf 源码，报告 Ray 2.56.1/PyTorch 2.11.0+cu126，且在一张 H100 上执行 CUDA 张量返回 `42.0`。默认 conda Python 不含 Ray/RLinf，需显式选择预置环境。这是直接环境检查，不是已登记 RLark GPU Job 或升级验收。
 
 ### 交付门槛
 
