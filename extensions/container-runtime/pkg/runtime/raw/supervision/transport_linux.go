@@ -30,6 +30,12 @@ type response struct {
 	Error  string     `json:"error,omitempty"`
 }
 
+// Status is a bounded supervisor liveness snapshot. It does not expose task
+// arguments, environment, logs or process IDs.
+type Status struct {
+	Busy bool `json:"busy"`
+}
+
 // Serve accepts the local, trusted Agent protocol on a private Unix socket.
 // The socket lives in the supervisor's private state directory. It is never a
 // public workload API; Gateway authorization must occur before Agent requests.
@@ -66,6 +72,22 @@ func (s *Service) Serve(ctx context.Context) error {
 func (s *Service) handle(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+		return
+	}
+	if r.URL.Path == "/v1/status" {
+		if r.Body != nil {
+			if _, err := io.CopyN(io.Discard, r.Body, 1); err != io.EOF {
+				http.Error(w, "status request body must be empty", http.StatusBadRequest)
+				return
+			}
+		}
+		status, err := s.Status(r.Context())
+		if err != nil {
+			http.Error(w, "supervisor status unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(status)
 		return
 	}
 	var req request
@@ -119,6 +141,9 @@ func (s *Service) handle(w http.ResponseWriter, r *http.Request) {
 // Client reconnects to an independent supervisor without sharing process state.
 type Client struct{ http *http.Client }
 
+// CloseIdleConnections releases idle local transports without stopping work.
+func (c *Client) CloseIdleConnections() { c.http.CloseIdleConnections() }
+
 var _ raw.Supervisor = (*Client)(nil)
 
 // NewClient constructs a context-aware transport; it does not contact the service.
@@ -161,6 +186,35 @@ func (c *Client) call(ctx context.Context, path string, req request) (raw.Record
 // Observe recovers the service's current observation after Agent restart.
 func (c *Client) Observe(ctx context.Context, t rt.TaskIdentity) (raw.Record, error) {
 	return c.call(ctx, "/v1/observe", request{Task: t})
+}
+
+// Status observes whether this supervisor currently owns an active or
+// uncertain execution.
+func (c *Client) Status(ctx context.Context) (Status, error) {
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://supervisor/v1/status", nil)
+	if err != nil {
+		return Status{}, err
+	}
+	res, err := c.http.Do(request)
+	if err != nil {
+		return Status{}, fault.Wrap(fault.Unavailable, "contact Raw supervisor", err)
+	}
+	defer func() { _ = res.Body.Close() }()
+	if res.StatusCode != http.StatusOK {
+		return Status{}, fault.New(fault.Unavailable, fmt.Sprintf("Raw supervisor HTTP status %d", res.StatusCode))
+	}
+	var status struct {
+		Busy *bool `json:"busy"`
+	}
+	decoder := json.NewDecoder(io.LimitReader(res.Body, 4096))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&status); err != nil {
+		return Status{}, err
+	}
+	if status.Busy == nil || decoder.Decode(new(any)) != io.EOF {
+		return Status{}, errors.New("invalid Raw supervisor status")
+	}
+	return Status{Busy: *status.Busy}, nil
 }
 
 // Ensure starts only once for an immutable Task incarnation.

@@ -63,7 +63,9 @@ type ContainerNodeSpec struct {
 	AuthorizedGPUUUIDs []string `json:"authorizedGPUUUIDs,omitempty"`
 }
 type ContainerNodeStatus struct {
-	ObservedGeneration int64              `json:"observedGeneration,omitempty"`
+	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
+	// AgentCredentialID is an enrollment identity, never a secret or token.
+	AgentCredentialID  string             `json:"agentCredentialID,omitempty"`
 	AgentVersion       string             `json:"agentVersion,omitempty"`
 	TargetAgentVersion string             `json:"targetAgentVersion,omitempty"`
 	PrivateAddress     string             `json:"privateAddress,omitempty"`

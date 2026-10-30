@@ -44,8 +44,8 @@ func condition(items *[]metav1.Condition, generation int64, kind string, ok bool
 	meta.SetStatusCondition(items, metav1.Condition{Type: kind, Status: status, Reason: reason, Message: message, ObservedGeneration: generation})
 }
 
-// persist avoids status-event loops and uses optimistic concurrency. All these
-// validation statuses have a single controller owner; Agent fields are untouched.
+// persist avoids status-event loops and uses optimistic concurrency. Agent
+// capability fields are preserved while validation and liveness are fenced.
 func persist(ctx context.Context, c client.Client, before, after client.Object) (ctrl.Result, error) {
 	if !reflect.DeepEqual(before, after) {
 		if err := c.Status().Patch(ctx, after, client.MergeFromWithOptions(before, client.MergeFromWithOptimisticLock{})); err != nil {
@@ -160,9 +160,19 @@ func (r ContainerClusterReconciler) validateCluster(ctx context.Context, v *ext.
 	return nil
 }
 
-// ContainerNodeReconciler owns validation only. Schedulable remains false until
-// a scoped Agent transport, trusted liveness and capability admission exist.
-type ContainerNodeReconciler struct{ Client client.Client }
+// ContainerNodeReconciler owns validation and invalidates stale readiness. It
+// preserves a current Agent observation; registration alone grants no capacity.
+type ContainerNodeReconciler struct {
+	Client client.Client
+	Now    func() time.Time
+}
+
+func (r ContainerNodeReconciler) now() time.Time {
+	if r.Now != nil {
+		return r.Now()
+	}
+	return time.Now()
+}
 
 func (r *ContainerNodeReconciler) SetupWithManager(m ctrl.Manager) error {
 	return builder.ControllerManagedBy(m).For(&ext.ContainerNode{}, builder.WithPredicates(predicate.GenerationChangedPredicate{})).Complete(r)
@@ -202,13 +212,22 @@ func (r ContainerNodeReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	before := v.DeepCopy()
 	validErr := r.validateNode(ctx, &v)
 	v.Status.ObservedGeneration = v.Generation
-	v.Status.Schedulable = false
+	now := r.now()
 	reason, message := "BindingValidated", "Native Node instance, tenant and Cluster membership are valid"
 	if validErr != nil {
 		reason, message = "InvalidBinding", "Native Node, tenant, runtime, incarnation or membership is invalid"
+		v.Status.Schedulable = false
+		condition(&v.Status.Conditions, v.Generation, "Ready", false, "InvalidBinding", "Agent reports cannot override an invalid native binding")
+	} else if ready := meta.FindStatusCondition(v.Status.Conditions, "Ready"); ready == nil || ready.Status != metav1.ConditionTrue || ready.ObservedGeneration != v.Generation || v.Status.AgentCredentialID == "" || v.Status.AgentCredentialID != v.Annotations[ext.AgentCredentialAnnotation] || v.Status.LastHeartbeatTime == nil || !freshHeartbeat(v.Status.LastHeartbeatTime.Time, now) {
+		v.Status.Schedulable = false
+		reason := "AgentNotObserved"
+		message := "No current authenticated Agent observation is available"
+		if v.Status.LastHeartbeatTime != nil && !freshHeartbeat(v.Status.LastHeartbeatTime.Time, now) {
+			reason, message = "AgentHeartbeatExpired", "The last authenticated Agent observation is stale"
+		}
+		condition(&v.Status.Conditions, v.Generation, "Ready", false, reason, message)
 	}
 	condition(&v.Status.Conditions, v.Generation, "Validated", validErr == nil, reason, message)
-	condition(&v.Status.Conditions, v.Generation, "Ready", false, "AgentNotObserved", "Scoped Agent transport and capability observation are not enabled")
 	result, err := persist(ctx, r.Client, before, &v)
 	if err != nil {
 		return result, err
@@ -218,9 +237,13 @@ func (r ContainerNodeReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	}
 	return result, nil
 }
+
+func freshHeartbeat(at, now time.Time) bool {
+	return !at.After(now) && now.Sub(at) <= 45*time.Second
+}
 func (r ContainerNodeReconciler) validateNode(ctx context.Context, v *ext.ContainerNode) error {
 	if err := rawnode.ValidateCapability(&native.RawNodeStatus{Incarnation: v.Spec.InstanceID, TrainingIP: v.Spec.PrivateAddress, NetworkScope: v.Spec.NetworkScope, Environment: v.Spec.Environment, AuthorizedGPUUUIDs: v.Spec.AuthorizedGPUUUIDs}); err != nil {
-		return invalidBinding("private IPv4 address, environment and authorized GPU UUIDs are required")
+		return invalidBinding("container identity, private address or authorized GPU allowlist is invalid")
 	}
 	var cluster native.Cluster
 	var node native.Node

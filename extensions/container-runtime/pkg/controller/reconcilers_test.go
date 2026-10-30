@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"testing"
+	"time"
 
 	containerapi "github.com/astribot-post-train/rlark/extensions/container-runtime/api/v1alpha1"
 	native "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
@@ -84,6 +85,42 @@ func TestContainerNodeRegistrationNeverGrantsScheduling(t *testing.T) {
 	}
 	if got.Status.Schedulable || ready == nil || ready.Reason != "AgentNotObserved" {
 		t.Fatalf("registration was incorrectly treated as schedulable: %#v", got.Status)
+	}
+	// Periodic validation preserves a fresh observation, then fences it when
+	// the heartbeat expires without releasing any workload allocation.
+	now := time.Now()
+	got.Annotations = map[string]string{containerapi.AgentCredentialAnnotation: "credential"}
+	if err := c.Update(ctx, &got); err != nil {
+		t.Fatal(err)
+	}
+	got.Status.AgentCredentialID = "credential"
+	got.Status.Schedulable = true
+	heartbeat := metav1.NewTime(now)
+	got.Status.LastHeartbeatTime = &heartbeat
+	meta.SetStatusCondition(&got.Status.Conditions, metav1.Condition{Type: "Ready", Status: metav1.ConditionTrue, Reason: "AgentObserved", ObservedGeneration: got.Generation})
+	if err := c.Status().Update(ctx, &got); err != nil {
+		t.Fatal(err)
+	}
+	r.Now = func() time.Time { return now.Add(time.Second) }
+	key := types.NamespacedName{Name: "raw-worker", Namespace: "agents"}
+	if _, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: key}); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Get(ctx, key, &got); err != nil {
+		t.Fatal(err)
+	}
+	if !got.Status.Schedulable || !meta.IsStatusConditionTrue(got.Status.Conditions, "Ready") {
+		t.Fatalf("periodic validation erased a fresh observation: %#v", got.Status)
+	}
+	r.Now = func() time.Time { return now.Add(time.Minute) }
+	if _, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: key}); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Get(ctx, key, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Status.Schedulable || meta.FindStatusCondition(got.Status.Conditions, "Ready").Reason != "AgentHeartbeatExpired" {
+		t.Fatalf("expired heartbeat remained schedulable: %#v", got.Status)
 	}
 }
 

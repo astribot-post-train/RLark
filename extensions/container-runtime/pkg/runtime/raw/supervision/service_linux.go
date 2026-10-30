@@ -64,6 +64,23 @@ type Service struct {
 	control  *os.File
 }
 
+// Status reports only occupancy, including uncertain persisted work.
+func (s *Service) Status(ctx context.Context) (Status, error) {
+	if err := ctx.Err(); err != nil {
+		return Status{}, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return Status{}, fault.New(fault.Unavailable, "Raw supervisor closed")
+	}
+	busy := s.active != ""
+	for _, record := range s.records {
+		busy = busy || !record.Cleaned
+	}
+	return Status{Busy: busy}, nil
+}
+
 // Open recovers persisted observations without executing or signalling anything.
 func Open(config Config) (*Service, error) {
 	if config.Backend == "" {

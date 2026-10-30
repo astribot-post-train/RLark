@@ -109,6 +109,10 @@ spec:
               rule: self == oldSelf
           status:
             properties:
+              agentCredentialID:
+                description: AgentCredentialID is an enrollment identity, never a
+                  secret or token.
+                type: string
               agentVersion:
                 type: string
               authorizedGPUUUIDs:
