@@ -27,17 +27,22 @@ import (
 )
 
 // Config names private durable state and operator-authorized workload paths.
-// StateDirectory must survive Agent restarts and must not be workload-writable.
+// StateDirectory must survive Agent restarts. The cgroup backend requires it
+// to be inaccessible to workloads; process-tree workloads share the trusted root identity.
 type Config struct {
-	StateDirectory  string   `json:"stateDirectory"`
-	Executables     []string `json:"executables"`
-	WorkDirectories []string `json:"workDirectories"`
-	LogBytes        int64    `json:"logBytes"`
+	// Backend is cgroup (the compatibility default) or process-tree (trusted root workloads).
+	Backend string `json:"backend,omitempty"`
+	// WorkerExecutable is the canonical raw-supervisor binary for process-tree workers.
+	WorkerExecutable string   `json:"workerExecutable,omitempty"`
+	StateDirectory   string   `json:"stateDirectory"`
+	Executables      []string `json:"executables"`
+	WorkDirectories  []string `json:"workDirectories"`
+	LogBytes         int64    `json:"logBytes"`
 	// CgroupDirectory is an operator-delegated cgroup v2 subtree. Processes
 	// must not be allowed to migrate out of it or modify its control files.
 	CgroupDirectory string `json:"cgroupDirectory"`
-	// WorkloadUID/GID must identify an unprivileged account distinct from the
-	// supervisor. It must not have write access to state, sockets or cgroups.
+	// WorkloadUID/GID identify a distinct unprivileged account for cgroup.
+	// For trusted-root process-tree execution both must be zero.
 	WorkloadUID uint32 `json:"workloadUID"`
 	WorkloadGID uint32 `json:"workloadGID"`
 }
@@ -56,34 +61,52 @@ type Service struct {
 	stopping bool
 	closed   bool
 	group    string
+	control  *os.File
 }
 
 // Open recovers persisted observations without executing or signalling anything.
 func Open(config Config) (*Service, error) {
-	if config.WorkloadUID == 0 || config.WorkloadGID == 0 || config.WorkloadUID == uint32(os.Geteuid()) {
+	if config.Backend == "" {
+		config.Backend = "cgroup"
+	}
+	if config.Backend != "cgroup" && config.Backend != "process-tree" {
+		return nil, errors.New("unsupported Raw supervision backend")
+	}
+	if config.Backend == "cgroup" && (config.WorkloadUID == 0 || config.WorkloadGID == 0 || config.WorkloadUID == uint32(os.Geteuid())) {
 		return nil, errors.New("a distinct unprivileged workload UID and GID are required")
+	}
+	if config.Backend == "process-tree" {
+		if os.Geteuid() != 0 || config.WorkloadUID != 0 || config.WorkloadGID != 0 || config.CgroupDirectory != "" {
+			return nil, errors.New("process-tree requires root and no cgroup or alternate workload credentials")
+		}
+		resolved, err := filepath.EvalSymlinks(config.WorkerExecutable)
+		if err != nil || !filepath.IsAbs(config.WorkerExecutable) || resolved != config.WorkerExecutable {
+			return nil, errors.New("canonical raw-supervisor worker executable required")
+		}
 	}
 	if !filepath.IsAbs(config.StateDirectory) || filepath.Clean(config.StateDirectory) != config.StateDirectory || config.LogBytes <= 0 || len(config.Executables) == 0 || len(config.WorkDirectories) == 0 {
 		return nil, errors.New("canonical absolute state directory, authorized paths and positive log bound are required")
 	}
-	if !filepath.IsAbs(config.CgroupDirectory) || filepath.Clean(config.CgroupDirectory) != config.CgroupDirectory {
-		return nil, errors.New("an operator-delegated cgroup v2 directory is required")
-	}
-	for _, name := range []string{"cgroup.controllers", "cgroup.events", "cgroup.kill"} {
-		if _, err := os.Stat(filepath.Join(config.CgroupDirectory, name)); err != nil {
-			return nil, fmt.Errorf("validate cgroup v2 delegation: %w", err)
+	if config.Backend == "cgroup" {
+		if !filepath.IsAbs(config.CgroupDirectory) || filepath.Clean(config.CgroupDirectory) != config.CgroupDirectory {
+			return nil, errors.New("an operator-delegated cgroup v2 directory is required")
 		}
-	}
-	var fs unix.Statfs_t
-	if err := unix.Statfs(config.CgroupDirectory, &fs); err != nil {
-		return nil, err
-	}
-	if fs.Type != unix.CGROUP2_SUPER_MAGIC {
-		return nil, errors.New("cgroup directory must be on a cgroup v2 filesystem")
-	}
-	resolvedGroup, err := filepath.EvalSymlinks(config.CgroupDirectory)
-	if err != nil || resolvedGroup != config.CgroupDirectory {
-		return nil, errors.New("cgroup directory must be canonical without symlink components")
+		for _, name := range []string{"cgroup.controllers", "cgroup.events", "cgroup.kill"} {
+			if _, err := os.Stat(filepath.Join(config.CgroupDirectory, name)); err != nil {
+				return nil, fmt.Errorf("validate cgroup v2 delegation: %w", err)
+			}
+		}
+		var fs unix.Statfs_t
+		if err := unix.Statfs(config.CgroupDirectory, &fs); err != nil {
+			return nil, err
+		}
+		if fs.Type != unix.CGROUP2_SUPER_MAGIC {
+			return nil, errors.New("cgroup directory must be on a cgroup v2 filesystem")
+		}
+		resolvedGroup, err := filepath.EvalSymlinks(config.CgroupDirectory)
+		if err != nil || resolvedGroup != config.CgroupDirectory {
+			return nil, errors.New("cgroup directory must be canonical without symlink components")
+		}
 	}
 	for _, path := range append(append([]string(nil), config.Executables...), config.WorkDirectories...) {
 		resolved, err := filepath.EvalSymlinks(path)
@@ -273,6 +296,9 @@ func (s *Service) Ensure(ctx context.Context, t rt.TaskIdentity, spec raw.Proces
 		return raw.Record{}, err
 	}
 	output := &boundedLog{file: log, remaining: s.config.LogBytes}
+	if s.config.Backend == "process-tree" {
+		return s.startTree(ctx, k, r, output, log)
+	}
 	cmd := exec.Command(spec.Argv[0], spec.Argv[1:]...)
 	cmd.Env, cmd.Dir = append([]string{}, spec.Env...), spec.Directory
 	cmd.Stdout, cmd.Stderr = output, output
@@ -294,7 +320,7 @@ func (s *Service) Ensure(ctx context.Context, t rt.TaskIdentity, spec raw.Proces
 		if persistErr == nil {
 			s.active = ""
 		} else {
-			r.Phase, r.Message = "Unknown", "Raw start failure could not be persisted"
+			r.Phase, r.Message, r.Cleaned = "Unknown", "Raw start failure could not be persisted", false
 		}
 		s.records[k] = r
 		return r, errors.Join(err, groupFD.Close(), log.Close(), persistErr)
@@ -352,7 +378,7 @@ func (s *Service) reap(k string, cmd *exec.Cmd, log *os.File) {
 	}
 	persistErr := s.persist(r)
 	if persistErr != nil {
-		r.Phase, r.Message = "Unknown", "Raw result could not be persisted"
+		r.Phase, r.Message, r.Cleaned = "Unknown", "Raw result could not be persisted", false
 	}
 	s.records[k], s.process = r, nil
 	if cleaned && persistErr == nil {
@@ -361,7 +387,7 @@ func (s *Service) reap(k string, cmd *exec.Cmd, log *os.File) {
 	close(s.done)
 }
 
-// Stop kills the execution's cgroup only while this supervisor still owns it.
+// Stop requests cleanup only while this supervisor still owns the execution.
 func (s *Service) Stop(ctx context.Context, t rt.TaskIdentity) (raw.Record, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -381,6 +407,15 @@ func (s *Service) Stop(ctx context.Context, t rt.TaskIdentity) (raw.Record, erro
 		return r, nil
 	}
 	if s.active == key(t) && s.process != nil {
+		if s.config.Backend == "process-tree" {
+			if !s.stopping {
+				if _, err := s.control.Write([]byte("stop\n")); err != nil {
+					return raw.Record{}, err
+				}
+				s.stopping = true
+			}
+			return r, nil
+		}
 		s.stopping = true
 		if err := os.WriteFile(filepath.Join(s.group, "cgroup.kill"), []byte("1"), 0600); err != nil {
 			return raw.Record{}, err

@@ -62,16 +62,17 @@ rlarkadm 生成配置和前台启动包，可接已有 supervisor，不假设容
 - `raw.NodeAdmission` 重新读取 Task、所属 Job 和整组预留，拒绝直接创建的 Task、旧 generation、暂停、容器替换、跨租户或不完整组。调用方必须使用不经缓存的管理客户端；生产凭证/RBAC 接线待完成。
 - `raw.Provider` 实现已有 Runtime Provider 和 inventory 契约，启动和清理委派给独立 supervisor；未确认清理持续返回处理中。Raw Host claimant 必须精确包含 Node UID，禁止接管旧声明。
 - `raw.NewCoordinator` 和 `raw.NewHost` 通过现有框架组装显式工作负载 adapter、版本化 process carrier 解码、节点级声明、执行和状态。进程 manifest 带类型化 API 元数据，namespace/name/UID 必须与 Task 一致；验证和 lowering 不产生进程副作用。已测试 Host 重建、重复协调、同级节点隔离和暂停清理。尚未注册内置 Ray adapter、watch/定期重同步循环或生产入口。Unknown 观测映射为 `Pending`，并设置 `ExecutionKnown=False` 及已观测 Task generation；不能据此认定进程已停止。
-- Linux supervisor 在启动前持久化意图，原子放入 cgroup，记录结果，通过私有 Unix socket 仅接受 Task 身份。已测试 Agent 客户端重新连接。supervisor 自身重启后将未确认执行标为 Unknown 并阻止复用，不接管 PID。
+- Linux supervisor 在启动前持久化意图，显式支持 cgroup 和可信 root 进程树两种后端，记录结果，通过私有 Unix socket 仅接受 Task 身份。已测试 Agent 客户端重新连接。supervisor 自身重启后将未确认执行标为 Unknown 并阻止复用，不接管 PID。
 
 ### 实验 supervisor 前置条件与构建
 
-执行 `make -C apps/rlark raw-supervisor` 构建。该目标按需启用，不表示 Raw Agent 已可用。服务要求 Linux cgroup v2、`cgroup.kill`，以及内核支持原子 `CLONE_INTO_CGROUP` 放置。运维需提供可写的委派子树和独立非 root 工作负载 UID/GID。工作负载不得迁移到其他 cgroup、写控制文件、读取节点凭证或写 supervisor 状态/socket 路径。普通云容器可能没有所需权限，需先验证委派；不能因此接入 Docker socket，也不应默认要求 privileged 模式。
+执行 `make -C apps/rlark raw-supervisor` 构建。该目标按需启用，不表示 Raw Agent 已可用。默认 `cgroup` 后端要求 Linux cgroup v2、`cgroup.kill`，以及内核支持原子 `CLONE_INTO_CGROUP` 放置。运维需提供可写的委派子树和独立非 root 工作负载 UID/GID。工作负载不得迁移到其他 cgroup、写控制文件、读取节点凭证或写 supervisor 状态/socket 路径。普通云容器可能没有所需权限，需先验证委派；不能因此接入 Docker socket，也不应默认要求 privileged 模式。
 
 通过 `bin/raw-supervisor --config /private/supervisor.json` 传入严格 JSON，字段如下：
 
 ```json
 {
+  "backend": "cgroup",
   "stateDirectory": "/var/lib/rlark-supervisor",
   "executables": ["/usr/bin/python3.12"],
   "workDirectories": ["/workspace/training"],
@@ -82,7 +83,7 @@ rlarkadm 生成配置和前台启动包，可接已有 supervisor，不假设容
 }
 ```
 
-路径必须存在且为规范绝对路径，配置可执行文件前先解析符号链接。状态目录私有（0700），位于工作负载目录之外，跨 Agent 重启保留。授权可执行文件及其父目录必须防止工作负载替换；路径白名单本身不保证文件完整性。训练不继承 Agent/supervisor 环境，仅接收显式环境，按配置 UID/GID 运行。Unix socket 权限 0600，只供可信本地 Agent 身份使用；该 socket 不提供远程日志鉴权。
+路径必须存在且为规范绝对路径，配置可执行文件前先解析符号链接。状态目录私有（0700），位于工作负载目录之外，跨 Agent 重启保留。授权可执行文件及其父目录必须防止工作负载替换；路径白名单本身不保证文件完整性。训练不继承 Agent/supervisor 环境，仅接收显式环境。cgroup 后端按配置 UID/GID 运行；进程树后端以 root 运行可信任务，私有文件权限不是对这些任务的安全边界。Unix socket 权限 0600，只供可信本地 Agent 身份使用；该 socket 不提供远程日志鉴权。
 
 当前日志只保留每次执行最初 `logBytes` 字节，持续读取并丢弃超额输出；尚未实现轮转、tail、since、follow 或 Gateway 路由。记录和每次执行的 cgroup 目录尚无自动回收。不得删除活动或未知记录来绕过所有权检查。活动期间停止/重启 supervisor 可能留下未知后代；重新创建节点实例前，需取得容器/平台生命周期证据并经过可审计恢复流程。目前故意不提供强制释放/恢复端点。supervisor 不删除私有状态目录之外的 checkpoint。
 
@@ -94,7 +95,7 @@ rlarkadm 生成配置和前台启动包，可接已有 supervisor，不假设容
 4. 实现类型化 Ray 配置、预检/就绪屏障、有界超时、按网络范围预留端口、精确成员验证和训练结果。全部分配成员验证前禁止训练；区分 Unknown 与失败，确认组失败后停止全部成员。
 5. 完成清理/重试所有权：Job 删除/重启或部分分发时，所有 supervisor 确认清理前保留预留。为 supervisor 丢失提供可审计运维恢复；心跳消失不释放容量。
 6. 完成前台注册/启动包、授权日志路由及有界保留、资源观测、UI 能力开关与副本进度。链路可用后才添加可执行中英文部署/训练示例。
-7. 在两个准备好的容器验证真实 cgroup 委派、授权 GPU UUID 和支持的 Ray/RLinf 版本；覆盖端口占用、后代清理、Agent 重启、supervisor 丢失、断网、head/worker 失败和 checkpoint 保留。本地尚未执行这些平台测试。
+7. 在两个准备好的容器验证显式选择的监督后端、授权 GPU UUID 和支持的 Ray/RLinf 版本；覆盖端口占用、后代清理、Agent 重启、supervisor 丢失、断网、head/worker 失败和 checkpoint 保留。本地尚未执行这些平台测试。
 
 ### 本地验证证据
 
@@ -106,13 +107,46 @@ rlarkadm 生成配置和前台启动包，可接已有 supervisor，不假设容
 
 | 检查项 | 实测结果 | 影响 |
 | --- | --- | --- |
-| 内核与 cgroup | Linux 5.15；cgroup v2 为只读挂载 | 创建子 cgroup 返回 `EROFS`，当前 supervisor 无法在此容器运行；仅存在 `cgroup.kill` 不足以满足要求。 |
+| 内核与 cgroup | Linux 5.15；cgroup v2 为只读挂载 | 创建子 cgroup 返回 `EROFS`，cgroup 后端无法在此容器运行；仅存在 `cgroup.kill` 不足以满足要求。 |
 | CPU 与内存边界 | CPU affinity 为 192；`cpu.max` 为 `12000000 100000`；`memory.max` 为 `1523639648256` | 仅按 affinity 会高估 CPU 容量，实际 quota 相当于 120 个 CPU。 |
 | GPU 可见性 | `nvidia-smi` 列出六张 H100 80GB | 可以枚举设备，但不代表已获分配授权；没有执行 GPU 任务。 |
-| 默认 Python | 所检查解释器中没有 `ray`、`torch`、`rlinf` 发行包；PATH 无 `ray` | 此解释器不是已准备好的训练环境；尚未穷尽检查其他自定义环境。 |
+| 默认 Python | 所检查解释器中没有 `ray`、`torch`、`rlinf` 发行包；PATH 无 `ray` | 此解释器不是已准备好的训练环境；后续已找到预装环境，见下文。 |
 | CPU 子进程 | 短时 Python 子进程正常退出 | 普通进程执行可用。 |
 | user/PID namespace | `unshare --user --map-root-user --pid --fork` 成功 | 存在替代隔离边界的可能性，但当前 supervisor 未实现。 |
 | namespace 后代清理 | namespace PID 1 退出，其子进程创建新 session，父进程按 PID/start time 验证无存活的非僵尸进程 | 内核清理了本次 `setsid` CPU 后代；仅为可行性探针，不代表 Ray/GPU 验收通过，也不是生产所有权/恢复实现。 |
 | 私有 proc 挂载 | user/mount/PID namespace 结合 `--mount-proc` 在更改挂载传播属性时返回 `EPERM` | 不能假定允许挂载私有 `/proc`；namespace 实现需要单独设计和验证。 |
 
 当前可查询的开发任务列表没有匹配该 SSH 端点，平台 GPU 分配授权仍未确认，不能用六个可见 UUID 推导授权白名单。当前 cgroup supervisor 在该目标上存在阻塞；需先实现并验证兼容真实容器的执行边界，再继续生产接入。不得静默降级为仅按进程组清理，也不得改成 privileged 模式或重新挂载宿主机 cgroup。
+
+### 可信 root 进程树后端
+
+已确认的云容器模式让 Agent、服务、专用执行 worker 和训练全部使用 root，保留容器原有 PID namespace 和 `/proc`。必须显式选择，cgroup 预检失败不会自动切换。要求 Linux subreaper、pidfd、匹配的 `/proc` 和可信训练代码。不创建额外容器或 mount namespace，不提供 UID 隔离或任务级 CPU/内存硬限制，资源边界仍是外层云容器。一个容器同时独占一个 Task，直到证实清理完成。root 训练可以修改服务文件或凭证，因此这不是沙箱，也不能作为互不信任租户之间的执行安全边界。
+
+构建 `raw-supervisor`，解析安装路径及 Python 符号链接，准备工作目录，传入以下配置（路径需替换为实际规范路径）：
+
+```json
+{
+  "backend": "process-tree",
+  "workerExecutable": "/usr/local/bin/raw-supervisor",
+  "stateDirectory": "/var/lib/rlark-supervisor",
+  "executables": ["/usr/local/bin/python3.11"],
+  "workDirectories": ["/workspace/training"],
+  "logBytes": 10485760
+}
+```
+
+`workloadUID`、`workloadGID` 必须省略或为零，`cgroupDirectory` 必须省略。未知后端、混合凭证/cgroup 配置均拒绝。worker 使用已安装的同一个 `raw-supervisor` 二进制；`--process-tree-worker` 是需要继承协议描述符的内部模式，不是用户训练命令。Agent 重启后连接原服务 socket，不要随 Agent 一起重启服务。
+
+每次执行由服务先持久化意图，再启动唯一专用 worker。worker 在启动训练前启用 subreaper，接收显式环境并保留原 `/proc`。仅内核证明的子进程关系可以授权发送信号。清理时打开 pidfd，通过 `waitid(P_PIDFD)` 再次确认子进程归属，然后反复终止和回收被收养的后代；只有 `ECHILD` 才证明清理完成，进程名/PID 列表为空不够。禁止按 root UID、命令名、端口或进程组批量清理，禁止全局 `ray stop`/`pkill`。主进程正常退出后仍清理后代。停止先向主进程发送 SIGTERM，等待 30 秒后使用 SIGKILL；主进程强制退出确认和后代清理各有 30 秒上限，任一无法确认都阻止复用。
+
+服务必须同时收到 worker 的清理成功结果并观测其正常退出，才持久化 `cleaned=true`。结果缺失/非法、worker 丢失、意图传输中断或持久化不确定均保留占用。服务自身重启后不接管旧 PID，即使 worker 可能仍在运行。未知执行通过已验证的平台容器替换恢复，不提供强制释放端点。宿主机 boot ID 或 Agent 重启都不能单独证明容器已替换。状态目录外的 checkpoint 保留。Agent 失联不会指示 worker 停止训练，但服务自身丢失暂不支持透明恢复。
+
+后续云探针找到 Python 3.11.16 环境：`/root/fleet/venv/bin/python` 包含 Ray 2.59.0、PyTorch 2.10.0、RLinf 0.4.0；`/opt/rl_dashboard_bundle/env/bin/python` 包含 Ray 2.56.1、PyTorch 2.7.0。user/PID namespace 中 CPU Ray 任务虽能完成，但继承的 `/proc` 会引发 psutil PID 错误，`include_dashboard=False` 也会启动部分后台服务。在临时挂载点挂载私有 proc 和 tmpfs 同样失败。选用进程树后端避免该 PID 不匹配问题。已验证 GPU 可见，GPU 授权和真实 GPU/多容器训练尚未验证。授权环境前必须解析 Python 可执行文件符号链接。
+
+root 进程测试覆盖脱离会话后代清理、无关进程保护、重复启动/停止、完成结果恢复和结果缺失后的阻塞恢复。这些测试不代表生产 Agent 注册、限定授权、Job 副本分发、Ray 屏障、授权日志或 UI 已接通；完成这些接线和端到端验收前，交付清单仍未完成。
+
+实际云容器验收：已构建的新 supervisor 以 root 运行进程树后端，通过私有 socket 启动 Ray 2.59.0 CPU 任务（1 CPU、0 GPU），返回 `{value:45, uid:0}`，最终 `Succeeded` 且 `cleaned=true`。重复 Ensure 复用原执行，每次 Observe 使用新连接；确认清理后 Stop 返回删除标记。未安装依赖、未运行 GPU 计算。该测试没有覆盖完整 RLark Job/Agent 接入。
+
+当前只允许规范可执行路径。Python venv 的符号链接解析后可能失去 venv 的 `sys.prefix` 和包搜索路径；本次探针显式设置已准备环境的 `PYTHONPATH` 和 `PATH`，不能据此宣称直接传 venv 链接即可运行。正式环境适配还需验证 Python 前缀和依赖解析。
+
+新增故障测试覆盖运行中 socket 重连、忽略 SIGTERM 后等待 30 秒再强制停止，以及结果持久化失败。结果落盘失败返回 Unknown、`cleaned=false`，恢复磁盘后重复 Stop 也不释放节点；重启只读取原持久化意图并继续阻塞。
