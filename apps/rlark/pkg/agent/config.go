@@ -105,6 +105,12 @@ type Config struct {
 	// It is required for AgentType=Raw; the Agent never starts or replaces the
 	// supervisor and never accepts a workload PID from the management API.
 	RawSupervisorSocket string
+	// Raw capability values are operator-authorized observations of the
+	// existing container. GPU UUIDs are not inferred authorization.
+	RawTrainingIP         string
+	RawNetworkScope       string
+	RawEnvironment        string
+	RawAuthorizedGPUUUIDs []string
 }
 
 // DefaultConfig returns the default config.
@@ -171,4 +177,8 @@ func (c *Config) SetupFlags(fs *pflag.FlagSet) {
 	fs.StringVar(&c.ContainerdNamespace, "containerd-namespace", c.ContainerdNamespace, "containerd namespace used by ctr for image pulling (Kubernetes agent type, default k8s.io)")
 	fs.StringVar(&c.NodeName, "node-name", c.NodeName, "Name of the local node, used for Kubernetes node-selector matching (defaults to $NODE_NAME)")
 	fs.StringVar(&c.RawSupervisorSocket, "raw-supervisor-socket", c.RawSupervisorSocket, "Private raw-supervisor Unix socket (required for Raw agents)")
+	fs.StringVar(&c.RawTrainingIP, "raw-training-ip", c.RawTrainingIP, "Explicit local private IPv4 address for Raw workload communication (required for Raw)")
+	fs.StringVar(&c.RawNetworkScope, "raw-network-scope", c.RawNetworkScope, "Operator-authorized private network scope shared by Raw nodes")
+	fs.StringVar(&c.RawEnvironment, "raw-environment", c.RawEnvironment, "Preinstalled Raw workload environment/profile identifier")
+	fs.StringSliceVar(&c.RawAuthorizedGPUUUIDs, "raw-authorized-gpu-uuid", c.RawAuthorizedGPUUUIDs, "Explicitly authorized GPU UUID; repeat for each GPU")
 }

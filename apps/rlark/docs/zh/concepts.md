@@ -366,7 +366,7 @@ status:
 |------|------|----------|
 | `Kubernetes` | 使用 Deployment、DaemonSet 或 StatefulSet 作为 Kubernetes carrier 运行 RLark/Ray Task | GPU 集群大规模训练 |
 | `Docker` | 计划中的 Provider，把统一 Pod template lowering 为 Docker 容器；当前未实现、未广告 | 端侧设备（机械臂、传感器、摄像头） |
-| `Raw` | 计划中的 Provider，把统一 Pod template lowering 为宿主机进程；当前未实现、未广告 | 裸金属服务器、嵌入式设备 |
+| `Raw` | 实验性 Provider，在预置可信 Node 上运行一个显式进程 Task；不把 Pod template lowering 为进程 | 固定 GPU/云容器 |
 
 `runtime.kind`、`workload.kind` 与 `workload.carrier.type` 是开放标识，而不是 CRD enum。开放性使 Provider 可在不替换 Task Schema 的情况下扩展，但不表示相应能力已受支持。Agent 必须在任何外部副作用前解析已注册 Provider 与 Adapter，并完成能力校验。Workload 语义使用 `kind`、`version` 和 `parameters`；carrier 独立使用 `type`、`version` 和 `parameters`。`environments` 是有序列表，同一种 Environment 可使用不同参数重复装配。
 

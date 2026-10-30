@@ -156,6 +156,12 @@ spec:
                                     - nodeName
                                     - nodeUID
                                     type: object
+                                  environment:
+                                    description: |-
+                                      Environment selects the observed Raw node environment/profile. It is
+                                      required for Raw Tasks so a placement cannot silently cross image or
+                                      dependency boundaries.
+                                    type: string
                                   nodeSelector:
                                     additionalProperties:
                                       type: string

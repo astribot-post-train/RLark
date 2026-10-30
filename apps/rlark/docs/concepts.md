@@ -366,7 +366,7 @@ status:
 |------|-------------|----------|
 | `Kubernetes` | Run RLark/Ray Tasks using Deployment, DaemonSet, or StatefulSet as the Kubernetes carrier | GPU clusters for large-scale training |
 | `Docker` | Planned provider that lowers the common Pod template to Docker containers; not implemented or advertised | Edge devices (robot arm, sensor, camera) |
-| `Raw` | Planned provider that lowers the common Pod template to host processes; not implemented or advertised | Bare metal servers, embedded devices |
+| `Raw` | Experimental provider for one explicit process Task on a pre-provisioned trusted Node; it does not lower Pod templates | Fixed GPU/cloud containers |
 
 `runtime.kind`, `workload.kind`, and `workload.carrier.type` are open identifiers rather than CRD enums. Openness permits provider extension without replacing the Task schema; it does not imply support. The Agent must resolve a registered Provider and Adapter and validate capabilities before any external effect. Workload semantics use `kind`, `version`, and `parameters`; the carrier independently uses `type`, `version`, and `parameters`. `environments` is an ordered list and may contain the same environment type more than once with different parameters.
 

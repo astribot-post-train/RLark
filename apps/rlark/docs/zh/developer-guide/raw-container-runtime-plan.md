@@ -38,11 +38,11 @@ rlarkadm 生成配置和前台启动包，可接已有 supervisor，不假设容
 
 - [x] 从确认的父分支创建功能分支。
 - [x] 中英文设计与交付计划。
-- [ ] 类型 API、schema/deepcopy 生成、兼容及所有权测试。
-- [ ] 持久化独占预留、回滚和恢复。
-- [ ] 通过 Host/Coordinator 完成单节点 supervisor 执行。
+- [x] 预览契约的类型 API、schema/deepcopy 生成、兼容及所有权测试。
+- [x] 一个 Task 独占一个 Node 的持久化预留、回滚和恢复。
+- [x] 通过 Host/Coordinator 和轮询 Agent 完成单节点 supervisor 执行。
 - [ ] 多节点 Ray 屏障及整组生命周期。
-- [ ] 节点注册、凭证、容量和环境校验。
+- [x] 预览路径的节点注册、限定凭证、GPU 授权和环境校验。
 - [ ] rlarkadm 启动包、授权日志、Gateway 和 UI。
 - [ ] 中英文示例、能力矩阵、部署和运维文档。
 - [ ] 定向及仓库 Go/web/doc 检查，附证据的草稿 PR。
@@ -53,15 +53,15 @@ rlarkadm 生成配置和前台启动包，可接已有 supervisor，不假设容
 
 ## 当前实现证据与剩余接线
 
-本分支已接入实验性 Raw Agent Task watch、受限心跳和 Host/Coordinator 路径，但尚非生产 Ray/RLinf Job 支持。完成预留分发、GPU 授权和 group barrier 验证前，不能注册生产 GPU 节点或提交训练。生成的 `status.raw`、`status.reservation` 和 `spec.placement.binding` 是实验契约；向节点身份开放前，必须完成凭证和服务端状态字段写权限约束。
+本分支已接入实验性 Raw Agent 轮询、受限心跳、受限 API、Job 分发和 Host/Coordinator 路径。它只支持预置 Node 上一个可信 root 进程 Task，不代表生产 Ray/RLinf 或多节点 Job 支持。group barrier、端口分配和 GPU/平台验收完成前不要提交 Ray/RLinf 训练。生成的 `status.raw`、`status.reservation`、`spec.placement.binding` 和 `spec.placement.environment` 是预览契约。
 
 已实现的边界：
 
-- `rawallocation.Manager` 使用实时读取和乐观锁状态补丁，实现整节点组预留、逐步提交、相同执行恢复和未提交预留回滚。环境标识固定在预留中。组校验检查当前成员关系、节点/容器身份、心跳、禁止调度/排空、租户、私网范围、不同训练 IP 和组内 GPU UUID 不重叠。尚未证明不同组或平台分配之间的 GPU 独占性。
+- `rawallocation.Manager` 使用实时读取和乐观锁状态补丁，实现整节点预留、逐步提交、相同执行恢复和未提交预留回滚。环境标识固定在预留中。校验检查成员关系、节点/容器身份、心跳、禁止调度/排空、租户、私网范围、不同训练 IP 和 RLark inventory 中 GPU UUID 不重叠；不能证明云平台授权的独占性，也不能阻止 RLark 外部进程。
 - `AssignTask` 将已提交预留幂等绑定到唯一 Task UID。仅提交预留不能授权执行；节点准入要求组内每个节点均已分配 Task UID，还实时验证每个同组 Task 存在、未暂停、绑定完全一致，并由同一个权威 Job 实例持有。
-- `raw.NodeAdmission` 重新读取 Task、所属 Job 和整组预留，拒绝直接创建的 Task、旧 generation、暂停、容器替换、跨租户或不完整组。调用方必须使用不经缓存的管理客户端；生产凭证/RBAC 接线待完成。
+- `raw.NodeAdmission` 重新读取 Task、所属 Job 和整组预留，拒绝直接创建的 Task、旧 generation、暂停、容器替换、跨租户或不完整组。受限服务端只允许限定读取、心跳、状态和 claim 写入；discovery、watch、tunnel 和任意资源均拒绝。
 - `raw.Provider` 实现已有 Runtime Provider 和 inventory 契约，启动和清理委派给独立 supervisor；未确认清理持续返回处理中。Raw Host claimant 必须精确包含 Node UID，禁止接管旧声明。
-- `raw.NewCoordinator` 和 `raw.NewHost` 通过现有框架组装显式工作负载 adapter、版本化 process carrier 解码、节点级声明、执行和状态。进程 manifest 带类型化 API 元数据，namespace/name/UID 必须与 Task 一致；验证和 lowering 不产生进程副作用。已测试 Host 重建、重复协调、同级节点隔离和暂停清理。尚未注册内置 Ray adapter、watch/定期重同步循环或生产入口。Unknown 观测映射为 `Pending`，并设置 `ExecutionKnown=False` 及已观测 Task generation；不能据此认定进程已停止。
+- `raw.NewCoordinator` 和 `raw.NewHost` 通过现有框架组装显式 workload adapter、版本化 process carrier 解码、节点级声明、执行和状态。进程 manifest 的 namespace/name/UID 必须与 Task 一致；验证和 lowering 不产生进程副作用。已测试 Host 重建、重复协调、同级节点隔离、暂停清理、Job 替换和所有权冲突。Agent 每五秒轮询以修复丢失通知。尚未注册内置 Ray adapter。Unknown 映射为 `Pending` 并设置 `ExecutionKnown=False`，不能据此认定进程已停止。
 - Linux supervisor 在启动前持久化意图，显式支持 cgroup 和可信 root 进程树两种后端，记录结果，通过私有 Unix socket 仅接受 Task 身份。已测试 Agent 客户端重新连接。supervisor 自身重启后将未确认执行标为 Unknown 并阻止复用，不接管 PID。
 
 ### 实验 supervisor 前置条件与构建

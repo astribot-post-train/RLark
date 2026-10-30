@@ -300,12 +300,12 @@ Gateway 使用的对象存储后端配置。
 | `db` | DBConfig | 未设置 | 数据库配置；在 `rlarkadm` 部署中启用 PostgreSQL 组件 |
 | `kubernetes` | KubernetesEnv | 未设置 | Kubernetes 部署环境 |
 | `docker` | DockerEnv | 未设置 | Docker 部署环境 |
-| `raw` | RawEnv | 未设置 | Raw 部署环境 |
+| `raw` | RawEnv | 未设置 | Raw 部署环境；仅实验性单节点进程路径 |
 | `cert` | CertConfig | 未设置 | 证书配置；数据面部署时必填 |
 | `insecure-skip-tls-verify` | bool | `false` | 跳过 Server TLS 验证 |
 
 !!! warning "运行时支持范围"
-    配置 schema 仍保留 `kubernetes`、`docker` 和 `raw`，但当前仅支持 Kubernetes 工作负载路径。现阶段部署不应使用 Docker 或 Raw；这两种路径不受支持，也不推荐使用。Kubernetes 数据面还必须提供 `control-plane-address` 和 `cert`。
+    配置 schema 仍保留 `kubernetes`、`docker` 和 `raw`。Docker 没有执行路径。Raw 需要明确的 Agent flags、管理员预置 Node/证书契约，且仅为实验性单节点路径；详见 Raw 运行时计划。Kubernetes 数据面还必须提供 `control-plane-address` 和 `cert`。
 
 ### DBConfig
 
@@ -363,7 +363,7 @@ Gateway 使用的对象存储后端配置。
 ### RawEnv
 
 !!! warning "当前不支持"
-    这些字段为兼容性保留在 schema 中，但 Raw 不是当前支持的工作负载路径，不建议用于部署。请使用 Kubernetes。
+    这些字段为兼容性保留在 schema 中。Raw 部署还需要明确的 `raw-*` Agent flags 和独立管理的 supervisor；本节不是 Docker 配置或容器创建接口。
 
 | 字段 | 类型 | 说明 |
 | ------ | ------ | ------ |

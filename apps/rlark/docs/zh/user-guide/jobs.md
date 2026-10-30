@@ -215,6 +215,50 @@ WebTerminal 支持文件上传和下载：
 - **编辑** — 修改已停止任务的配置（角色、资源、命令）并重新提交。
 - **克隆** — 复制现有任务配置，作为新任务的模板。
 
+## 实验性 Raw 进程任务
+
+Raw 任务会在管理员预置的 GPU 容器内运行一个可信进程，不会拉取镜像、创建
+Docker 容器或使用 Docker socket。Node 必须已注册为 `agentType: Raw`，独立的
+`raw-supervisor` 必须持续运行，任务请求的环境和私有训练网络必须与 Node
+能力一致。
+
+首版 Raw 路径严格支持一个 Node 上的一个进程 Task。GPU 申请会预留整个 Node，
+控制器将已授权的 GPU UUID 注入为 `CUDA_VISIBLE_DEVICES`；RLark inventory 的
+唯一性检查不能证明云平台 GPU entitlement。Ray/RLinf 多节点组、副本展开、远程
+日志和 UI 创建暂不支持。通过 API 提交 Raw Job 时，使用容器内已经存在的可执行
+文件和工作目录：
+
+```yaml
+apiVersion: rlinf.io/v1alpha1
+kind: Job
+metadata:
+  name: raw-smoke
+spec:
+  tasks:
+  - name: worker
+    role: Actor
+    placement:
+      environment: prepared-python
+      nodeSelector:
+        pool: gpu
+    runtime:
+      kind: Raw
+      name: raw-node
+    workload:
+      kind: raw.rlark.io/process
+      version: v1
+      carrier:
+        type: raw.rlark.io/process
+        version: v1
+      parameters:
+        argv: ["/opt/venv/bin/python", "-c", "print(42)"]
+        directory: /workspace/training
+        env: ["PATH=/opt/venv/bin:/usr/bin"]
+```
+
+进程以 root 身份在现有容器内运行。停止、重启和删除会等待 supervisor 确认清理
+后才释放 Node；清理结果未知时会继续保留预留，避免新旧进程重叠。
+
 ## 提交前检查清单
 
 提交任务前请确认：

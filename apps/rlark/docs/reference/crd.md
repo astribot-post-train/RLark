@@ -1649,6 +1649,7 @@ Responses:
       - `nodeName`: `string`, required
       - `nodeUID`: `string`, required
       - `taskUID`: `string`, optional
+    - `environment`: `string`, optional - Environment selects the observed Raw node environment/profile. It is required for Raw Tasks so a placement cannot sil...
     - `nodeSelector`: `object`, optional
   - `role`: `string`, required - TaskRole 描述 Task 在业务编排中的角色，用于前端分组与展示。 该字段当前不在 CRD 层做枚举校验：它可能承载上层编排框架的自定义角色名， 收窄取值会阻止合法的既有数据写入。请勿据此推断取值的封闭集合。
   - `runtime`: `object`, required - TaskRuntimeSpec selects the runtime implementation and instance that lowers the common Pod template. Name is a stable...

@@ -122,6 +122,28 @@ func (m Manager) Reserve(ctx context.Context, req Request) ([]api.RawTaskBinding
 		}
 		nodes = append(nodes, node)
 	}
+	// Reject duplicate authorized scopes across the inventory, including idle
+	// nodes. Otherwise two single-node Jobs could each reserve overlapping GPUs
+	// or a shared address and defeat exclusive ownership/port isolation.
+	var inventory api.NodeList
+	if err := m.Client.List(ctx, &inventory); err != nil {
+		return nil, fmt.Errorf("check exclusive Raw inventory: %w", err)
+	}
+	for _, selected := range nodes {
+		for _, other := range inventory.Items {
+			if other.UID == selected.UID || other.Spec.AgentType != api.AgentTypeRaw || other.Status.Raw == nil {
+				continue
+			}
+			for _, id := range selected.Status.Raw.AuthorizedGPUUUIDs {
+				if slices.Contains(other.Status.Raw.AuthorizedGPUUUIDs, id) {
+					return nil, fmt.Errorf("%w: duplicate authorized GPU scope in Raw inventory", ErrUnavailable)
+				}
+			}
+			if selected.Status.Raw.NetworkScope == other.Status.Raw.NetworkScope && selected.Status.Raw.TrainingIP == other.Status.Raw.TrainingIP {
+				return nil, fmt.Errorf("%w: duplicate training address in Raw inventory", ErrUnavailable)
+			}
+		}
+	}
 	members := make([]string, 0, len(nodes))
 	for _, node := range nodes {
 		members = append(members, string(node.UID))

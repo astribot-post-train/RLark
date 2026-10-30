@@ -79,6 +79,9 @@ func (a *Agent) init(ctx context.Context) error {
 	if a.config.PodStaleTTL <= 0 {
 		return fmt.Errorf("pod stale TTL must be positive")
 	}
+	if err := a.config.validateRaw(); err != nil {
+		return err
+	}
 	// Initialize server client
 	a.serverClient, err = server.NewClientFromConfig(a.config.ClientConfig)
 	if err != nil {
@@ -159,6 +162,10 @@ func (a *Agent) Run(ctx context.Context) error {
 		a.drainMu.Unlock()
 		cancel()
 	}()
+
+	if a.config.AgentType == string(rlarkv1alpha1.AgentTypeRaw) {
+		return (&clusterAgent{a: a}).Run(ctx)
+	}
 
 	var eg errgroup.Group
 

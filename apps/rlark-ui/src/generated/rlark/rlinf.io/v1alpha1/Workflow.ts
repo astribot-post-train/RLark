@@ -69,6 +69,12 @@ export interface IWorkflow {
               "nodeUID": string;
               "taskUID"?: string;
             };
+            /**
+             * Environment selects the observed Raw node environment/profile. It is
+             * required for Raw Tasks so a placement cannot silently cross image or
+             * dependency boundaries.
+             */
+            "environment"?: string;
             "nodeSelector"?: {
               [key: string]: string;
             };

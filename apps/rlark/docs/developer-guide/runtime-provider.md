@@ -4,7 +4,7 @@ This document describes the internal execution boundary between RLark's manageme
 
 ## Compatibility scope
 
-Kubernetes is the only supported workload runtime. Docker execution remains unimplemented. Raw has experimental reservation, Provider/Host and standalone Linux supervision building blocks, including an explicitly selected trusted-root process-tree backend for existing cloud containers. The experimental Raw Agent watch, scoped heartbeat and Task dispatch path are wired; Job replica and Ray group scheduling remain pending, so these building blocks do not make Raw Jobs operational. See the [Raw container runtime plan](raw-container-runtime-plan.md) for configuration, recovery contracts, validation evidence and remaining integration. The execution boundary is internal: it does not define CRDs, generated clients, REST endpoints, CLI flags, configuration, status schemas, finalizer or annotation keys, or generated Kubernetes object shapes.
+Kubernetes remains the supported general workload runtime. Docker execution is unimplemented. Raw has an experimental single-node process path: reservation, scoped credentials/API, polling Agent, Provider/Host, Job dispatch and standalone Linux supervision for one trusted root Task per pre-provisioned Node. Raw Ray/RLinf group scheduling, replicas, capacity telemetry, remote logs and onboarding packages remain pending. See the [Raw container runtime plan](raw-container-runtime-plan.md) for the exact preview contract and limitations.
 
 The Kubernetes compatibility contract includes the fixed workload namespace, legacy workload adoption, claimant identity format, in-place template mutation, SSH key injection, cross-domain network sidecar injection, and cleanup order. Workload and carrier selectors are frozen when a Task is claimed. Changing either selector on a claimed Task is rejected without Runtime effects; callers must delete and recreate the Task with a new UID. Native PodTemplate storage semantics apply: `persistentVolumeClaim.claimName` references an existing external PVC, while Kubernetes owns PVCs created from `ephemeral.volumeClaimTemplate`.
 
@@ -346,16 +346,16 @@ Normal pull reconciliation does not stop merely because a Task is already `Runni
 
 | Capability | Kubernetes | Docker | Raw |
 | --- | --- | --- | --- |
-| Task claim and finalizer | Supported | Not implemented | Not implemented |
+| Task claim and finalizer | Supported | Not implemented | Experimental single-node process |
 | Deployment | Supported | Not applicable | Not applicable |
 | StatefulSet | Supported | Not applicable | Not applicable |
 | DaemonSet | Supported | Not applicable | Not applicable |
-| Container/process execution | Kubernetes Pods | Spec scaffolding only | Spec scaffolding only |
-| Status observation | Supported | Not implemented | Not implemented |
+| Container/process execution | Kubernetes Pods | Spec scaffolding only | Experimental pre-existing process |
+| Status observation | Supported | Not implemented | Experimental scoped status |
 | Runtime logs | Kubernetes Pod fallback | Not implemented | Not implemented |
 | Exec | Kubernetes path | Not implemented | Not implemented |
 | Existing PVC references and generic ephemeral volumes | Kubernetes-native Pod semantics; RLark does not own referenced PVCs | Not implemented | Not implemented |
-| GPU and devices | Kubernetes resource semantics | Not implemented | Not implemented |
+| GPU and devices | Kubernetes resource semantics | Not implemented | Experimental authorized whole-GPU count |
 | Addon and Delivery | Supported | Not implemented | Not implemented |
 | Cross-cluster workload networking | Kubernetes sidecar path | Not implemented | Not implemented |
 | Image pull observation | Supported | Partial monitor only; no execution path | Not applicable |

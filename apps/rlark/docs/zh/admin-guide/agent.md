@@ -119,7 +119,7 @@ kubectl get cluster <cluster-id> -o jsonpath='{.spec.agentNamespace}{"\n"}'
 | 参数 | 默认值 | 说明 |
 |------|--------|------|
 | `--mode` | `cluster` | `cluster`、`node` 或 `both`；Kubernetes `rlarkadm` 使用分离的 cluster/node 工作负载 |
-| `--agent-type` | `Kubernetes` | Agent 类型 selector；只有 Kubernetes 具备 workload 执行路径，Docker 和 Raw 仍是骨架，不能执行 Task |
+| `--agent-type` | `Kubernetes` | Agent 类型 selector；Kubernetes 是通用运行时，Raw 支持实验性单节点进程路径，Docker 执行尚未实现 |
 | `--server-address` | `https://localhost:8443` | Server HTTPS/WSS 地址 |
 | `--metrics-bind-address` | `:8081` | 指标监听地址 |
 | `--image` | `""` | 网络 Sidecar 和 SSH 镜像 |
@@ -127,6 +127,11 @@ kubectl get cluster <cluster-id> -o jsonpath='{.spec.agentNamespace}{"\n"}'
 | `--task-runtime-resync-period` | `15m` | cluster 模式有界 Task Runtime 修复扫描的基础周期；实际间隔使用 80%–120% 抖动，`0` 表示禁用；`cluster`/`both` 模式下负值无效，node-only 模式接受这个共享 flag，但不会运行扫描器 |
 | `--enable-cross-cluster-direct` | `true` | 允许跨集群 Pod 直连路由 |
 | `--containerd-socket` | `/run/containerd/containerd.sock` | 节点 Agent 的 Containerd Socket |
+| `--raw-supervisor-socket` | 未设置 | 独立管理的 Raw supervisor 私有 Unix socket；Raw 必须设置 |
+| `--raw-training-ip` | 未设置 | Raw workload 使用的本地私有 IPv4；Raw 必须设置 |
+| `--raw-network-scope` | 未设置 | Raw Node 共享的管理员授权私有网络范围 |
+| `--raw-environment` | 未设置 | 预装 Raw workload 环境/配置标识 |
+| `--raw-authorized-gpu-uuid` | 未设置 | 明确授权的 GPU UUID；每张 GPU 重复设置一次 |
 
 完整参数列表参见[配置项参考](../reference/configuration.md#rlark-agent)。
 

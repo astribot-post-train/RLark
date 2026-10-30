@@ -224,8 +224,8 @@ RLark supports three deployment environment modes, configured in the DeployConfi
 | Mode | Description | Use Case |
 |------|-------------|----------|
 | `kubernetes` | Deploy to K8s cluster | Production, GPU cluster |
-| `docker` | Manage via Docker API (TODO) | Edge devices, single-node |
-| `raw` | Download artifact and execute (TODO) | Bare metal, embedded |
+| `docker` | Docker workload execution is not implemented | Future edge devices and single-node workloads |
+| `raw` | Experimental process execution in an existing trusted Node | Fixed GPU/cloud containers |
 
 In the config file, specify exactly one of `kubernetes`, `docker`, or `raw` env blocks.
 

@@ -29,6 +29,8 @@ const (
 // Reconciler reconciles Job resources.
 type Reconciler struct {
 	client.Client
+	// RawClient is uncached; allocation and cleanup must never use informer state.
+	RawClient               client.Client
 	Scheme                  *runtime.Scheme
 	MaxConcurrentReconciles int
 }
@@ -44,6 +46,20 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	job := &rlarkv1alpha1.Job{}
 	if err := r.Get(ctx, req.NamespacedName, job); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
+	}
+	if hasRawTemplates(job) {
+		return r.reconcileRawJob(ctx, req.NamespacedName)
+	}
+	if r.RawClient != nil {
+		var children rlarkv1alpha1.TaskList
+		if err := r.RawClient.List(ctx, &children, client.MatchingLabels{jobLabel: job.Name}); err != nil {
+			return ctrl.Result{}, err
+		}
+		for _, child := range children.Items {
+			if child.Spec.Runtime.Kind == "Raw" {
+				return r.reconcileRawJob(ctx, req.NamespacedName)
+			}
+		}
 	}
 	if job.DeletionTimestamp.IsZero() {
 		if !controllerutil.ContainsFinalizer(job, CleanupFinalizer) {
@@ -196,6 +212,13 @@ func (r *Reconciler) ReconcileStateMachine(ctx context.Context, obj client.Objec
 
 // SetupWithManager registers the controller with the manager.
 func (r *Reconciler) SetupWithManager(mgr ctrl.Manager) error {
+	if r.RawClient == nil {
+		direct, err := client.New(mgr.GetConfig(), client.Options{Scheme: r.Scheme})
+		if err != nil {
+			return fmt.Errorf("create Raw allocation client: %w", err)
+		}
+		r.RawClient = direct
+	}
 	if err := mgr.GetFieldIndexer().IndexField(context.Background(), &rlarkv1alpha1.Task{}, taskJobField, indexTaskByJob); err != nil {
 		return fmt.Errorf("index Tasks by Job: %w", err)
 	}

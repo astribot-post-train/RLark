@@ -245,5 +245,11 @@ func (p *Provider) ListInstances(ctx context.Context, q rt.InstanceQuery) (rt.In
 	if r.Deleted {
 		return rt.InstanceSnapshot{}, nil
 	}
+	// A leader's exit alone does not prove the process tree is gone. Never
+	// publish a terminal phase that could release a node while descendants live.
+	if (r.Phase == "Succeeded" || r.Phase == "Failed" || r.Phase == "Stopped") && !r.Cleaned {
+		r.Phase = "Unknown"
+		r.Message = "Raw process cleanup has not been confirmed"
+	}
 	return rt.InstanceSnapshot{Revision: string(r.Phase), Instances: []rt.Instance{{Ref: rt.InstanceRef{RuntimeID: p.ID, ID: r.Task.ObjectUID, UID: r.Task.ObjectUID, Parent: p.ref(r.Task)}, Task: r.Task, Name: r.Task.Logical.Name, Phase: r.Phase, Message: r.Message}}}, nil
 }

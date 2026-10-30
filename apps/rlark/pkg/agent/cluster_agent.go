@@ -23,11 +23,6 @@ import (
 	"github.com/rlinf/rlark/apps/rlark/pkg/agent/controllers/node"
 	"github.com/rlinf/rlark/apps/rlark/pkg/agent/controllers/pod"
 	"github.com/rlinf/rlark/apps/rlark/pkg/agent/controllers/task"
-	rawruntime "github.com/rlinf/rlark/apps/rlark/pkg/agent/controllers/task/runtime/raw"
-	"github.com/rlinf/rlark/apps/rlark/pkg/agent/controllers/task/runtime/raw/supervision"
-	"github.com/rlinf/rlark/apps/rlark/pkg/agent/execution/coordination/coordinator"
-	"github.com/rlinf/rlark/apps/rlark/pkg/agent/execution/host"
-	"github.com/rlinf/rlark/apps/rlark/pkg/agent/execution/workload"
 	"github.com/rlinf/rlark/apps/rlark/pkg/auth/cert"
 	"github.com/rlinf/rlark/apps/rlark/pkg/log"
 	"github.com/rlinf/rlark/apps/rlark/pkg/rawnode"
@@ -49,6 +44,10 @@ func (c *clusterAgent) Run(ctx context.Context) error {
 	logger.Info(fmt.Sprintf("agentType=%s, clusterID=%s", agentType, clusterID))
 	if clusterID == "" {
 		return fmt.Errorf("cluster ID is empty")
+	}
+
+	if agentType == string(rlarkv1alpha1.AgentTypeRaw) {
+		return c.runRaw(ctx)
 	}
 
 	mm, err := ctrl.NewManager(c.a.managementConfig, ctrl.Options{
@@ -80,8 +79,6 @@ func (c *clusterAgent) Run(ctx context.Context) error {
 		Add(manager.Runnable) error
 	}
 	var localManager ctrl.Manager
-	var rawRuntimeHost *host.Host
-	var rawRuntimeExecution *coordinator.Coordinator
 
 	switch rlarkv1alpha1.AgentType(agentType) {
 	case rlarkv1alpha1.AgentTypeKubernetes:
@@ -118,34 +115,6 @@ func (c *clusterAgent) Run(ctx context.Context) error {
 		// TODO: initialize Docker controller manager
 		return fmt.Errorf("docker agent is not implemented yet")
 
-	case rlarkv1alpha1.AgentTypeRaw:
-		// Raw execution has no local Kubernetes manager. It watches the
-		// management API and delegates process effects to the independently
-		// supervised, private Unix socket.
-		localManager = mm
-		lm = mm
-		bc.LocalRawClient = mclient
-		identity, err := rawIdentityFromClientCertificate(c.a.config.ClientConfig)
-		if err != nil {
-			return fmt.Errorf("load Raw node identity: %w", err)
-		}
-		supervisor, err := supervision.NewClient(c.a.config.RawSupervisorSocket)
-		if err != nil {
-			return fmt.Errorf("create Raw supervisor client: %w", err)
-		}
-		admission := rawruntime.NodeAdmission{Client: mclient, Node: client.ObjectKey{Namespace: identity.Namespace, Name: identity.Node}, NodeUID: identity.NodeUID, Incarnation: identity.Incarnation, TenantID: identity.TenantID}
-		provider := &rawruntime.Provider{ID: "raw-node", Supervisor: supervisor}
-		adapters := []workload.Adapter{rawruntime.ProcessAdapter{}}
-		rawExecution, err := rawruntime.NewCoordinator(ctx, provider, adapters)
-		if err != nil {
-			return fmt.Errorf("initialize Raw execution coordinator: %w", err)
-		}
-		rawHost, err := rawruntime.NewHost(ctx, mclient, admission, provider, adapters)
-		if err != nil {
-			return fmt.Errorf("initialize Raw Task Host: %w", err)
-		}
-		rawRuntimeExecution, rawRuntimeHost = rawExecution, rawHost
-
 	default:
 		return fmt.Errorf("unknown AgentType: %s", agentType)
 	}
@@ -159,14 +128,7 @@ func (c *clusterAgent) Run(ctx context.Context) error {
 		"task-statefulset": c.a.config.ControllerConcurrency.TaskStatefulSet,
 	}
 	tc := task.NewTaskController(taskController)
-	if rawRuntimeHost != nil {
-		tc.WithExecutionCoordinator(rawRuntimeExecution).WithHost(rawRuntimeHost)
-		if err := tc.SetupPullController(mm); err != nil {
-			return fmt.Errorf("setup Raw Task pull controller: %w", err)
-		}
-		go runRawHeartbeat(ctx, c.a.serverClient)
-		return mm.Start(ctx)
-	}
+
 	execution, err := task.NewKubernetesExecutionCoordinator(taskController.LocalKubeClient, taskController.Image)
 	if err != nil {
 		return fmt.Errorf("initialize task execution coordinator: %w", err)

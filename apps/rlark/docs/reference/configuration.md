@@ -300,12 +300,12 @@ These names are the exact YAML keys accepted by `rlarkadm`.
 | `db` | DBConfig | unset | Database configuration; enables PostgreSQL components in `rlarkadm` deployments |
 | `kubernetes` | KubernetesEnv | unset | Kubernetes deployment environment |
 | `docker` | DockerEnv | unset | Docker deployment environment |
-| `raw` | RawEnv | unset | Raw deployment environment |
+| `raw` | RawEnv | unset | Raw deployment environment; experimental single-node process path only |
 | `cert` | CertConfig | unset | Certificate configuration; required for the data plane |
 | `insecure-skip-tls-verify` | bool | `false` | Skip Server TLS verification |
 
 !!! warning "Runtime support"
-    The configuration schema retains `kubernetes`, `docker`, and `raw`, but the current supported workload path is Kubernetes only. Do not use Docker or Raw for current deployments; they are not recommended or supported workload paths. For a Kubernetes data plane, also provide `control-plane-address` and `cert`.
+    The configuration schema retains `kubernetes`, `docker`, and `raw`. Docker has no execution path. Raw requires the explicit Agent flags and administrator-provisioned Node/certificate contract documented in the Raw runtime plan; it is experimental and single-node only. For a Kubernetes data plane, also provide `control-plane-address` and `cert`.
 
 ### DBConfig
 
@@ -363,7 +363,7 @@ These names are the exact YAML keys accepted by `rlarkadm`.
 ### RawEnv
 
 !!! warning "Not currently supported"
-    These fields remain in the schema for compatibility, but Raw is not a supported workload path and is not recommended for deployment. Use Kubernetes.
+    These fields remain in the schema for compatibility. Raw deployment requires the explicit `raw-*` Agent flags and an independently managed supervisor; this section is not a Docker configuration or container creation interface.
 
 | Field | Type | Description |
 | ------- | ------ | ------------- |

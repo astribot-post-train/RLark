@@ -4,7 +4,7 @@
 
 ## 兼容范围
 
-Kubernetes 是唯一受支持的 workload 运行时。Docker 执行尚未实现。Raw 已有实验性的预留、Provider/Host 和独立 Linux 进程监管组件，包括为现有云容器显式选择的可信 root 进程树后端。实验性 Raw Agent 的 watch、受限心跳和 Task 分发路径已经接通；Job 副本和 Ray group 调度仍待完成，因此这些组件不代表 Raw Job 已可生产运行。配置、恢复契约、验证证据及剩余接线见 [Raw 容器运行时计划](raw-container-runtime-plan.md)。该执行边界属于内部实现，不定义 CRD、生成客户端、REST 接口、CLI 参数、配置、Status Schema、Finalizer、Annotation key 或生成的 Kubernetes 对象结构。
+Kubernetes 仍是通用 workload 运行时。Docker 执行尚未实现。Raw 已有实验性单节点进程路径：预置 Node 的一个可信 root Task 可使用预留、限定凭证/API、轮询 Agent、Provider/Host、Job 分发和独立 Linux supervisor。Raw Ray/RLinf 组调度、副本、容量遥测、远程日志和接入安装包仍待完成。精确预览契约和限制见 [Raw 容器运行时计划](raw-container-runtime-plan.md)。
 
 Kubernetes 兼容契约包括固定 workload namespace、legacy workload 收养、claimant identity 格式、原地模板修改、SSH key 注入、跨 Domain 网络 sidecar 注入和清理顺序。Task 被 claim 时会冻结 workload 与 carrier selector；已 claim Task 修改任一 selector 都会在不产生 Runtime effect 的情况下被拒绝，调用方必须删除并以新 UID 重建 Task。存储采用原生 PodTemplate 语义：`persistentVolumeClaim.claimName` 引用已有外部 PVC，而 `ephemeral.volumeClaimTemplate` 创建的 PVC 由 Kubernetes 随 Pod 管理。
 
@@ -317,16 +317,16 @@ Binding revision 是标准化的 `sha256:` digest，输入包括 binding kind/na
 
 | 能力 | Kubernetes | Docker | Raw |
 | --- | --- | --- | --- |
-| Task claim 与 finalizer | 支持 | 未实现 | 未实现 |
+| Task claim 与 finalizer | 支持 | 未实现 | 实验性单节点进程 |
 | Deployment | 支持 | 不适用 | 不适用 |
 | StatefulSet | 支持 | 不适用 | 不适用 |
 | DaemonSet | 支持 | 不适用 | 不适用 |
-| 容器/进程执行 | Kubernetes Pod | 仅有 Spec 骨架 | 仅有 Spec 骨架 |
-| 状态观察 | 支持 | 未实现 | 未实现 |
+| 容器/进程执行 | Kubernetes Pod | 仅有 Spec 骨架 | 实验性已有进程 |
+| 状态观察 | 支持 | 未实现 | 实验性限定状态 |
 | 运行时日志 | Kubernetes Pod fallback | 未实现 | 未实现 |
 | Exec | Kubernetes 路径 | 未实现 | 未实现 |
 | 已有 PVC 引用与 generic ephemeral volume | 采用 Kubernetes 原生 Pod 语义；RLark 不拥有被引用 PVC | 未实现 | 未实现 |
-| GPU 与设备 | Kubernetes resource 语义 | 未实现 | 未实现 |
+| GPU 与设备 | Kubernetes resource 语义 | 未实现 | 实验性授权整卡计数 |
 | Addon 与 Delivery | 支持 | 未实现 | 未实现 |
 | 跨集群 workload 网络 | Kubernetes sidecar 路径 | 未实现 | 未实现 |
 | 镜像拉取观察 | 支持 | 仅有部分 monitor，无执行链路 | 不适用 |
