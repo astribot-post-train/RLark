@@ -451,3 +451,5 @@ The console submission API and form still create one process template. To exerci
 multiple independent members, use the administrator management-API procedure and
 examples in the [delivery plan](raw-container-runtime-plan.md). Partial admission
 is allowed; this is not Ray/RLinf distributed training or a gang scheduler.
+
+A two-template Job may execute sequentially on one eligible node; a cleaned, released sibling does not block the next member. Starts still require the member's exact current allocation, and whole-set retirement still blocks new starts.

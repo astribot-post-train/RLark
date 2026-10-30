@@ -64,6 +64,14 @@ Before enrollment, verify cgroup quota, platform GPU entitlement and UUID, prepa
 
 On 2026-10-30, the created test notebook `kaic-6e552a55-4108-4d14-b719-e8a392e193d9` first failed with registry `NotFound` for the source autosave tag. With user approval, the existing notebook was stopped, changed to the available personal image `rlinf-dashboard:1.1` (`0f71ac0b-6dfe-43ce-9e6f-f2fb94b26874`), and restarted. It is running at private Pod IP `10.0.3.85` in the selected `regular-training` queue with 1 GPU, 20 CPU and 236 GiB, no public SSH/EIP. The reference notebook is used only as an SSH jump; its files and environment were not copied.
 
+A read-only platform recheck on 2026-10-31 found this same notebook stopped, with
+successful autosave and a newer personal autosave image. Queue, 1 GPU, 20 CPU,
+236 GiB and private-only SSH settings were retained. The previous private IP is
+not proof of a live container or a reusable node incarnation. Before another
+cloud run, read current platform state and retire/re-enroll a replacement through
+the documented exact-identity recovery flow; do not reset the saved environment
+to the old base image merely because it was previously approved.
+
 The default Python is 3.11.11 with PyTorch 2.6.0+cu124 and no Ray/RLinf, but further inspection found usable preinstalled environments. No dependencies were installed:
 
 | Python entry point | Observed packages and checks |
@@ -413,12 +421,34 @@ Paths must exist and be canonical absolute paths, including resolving executable
 
 Current logs retain only the first `logBytes` bytes per execution and discard excess while draining process output; rotation, tail, since, follow and Gateway routing are not implemented. Records and per-execution cgroup directories are not automatically garbage-collected. Do not remove active or uncertain records to bypass ownership checks. A supervisor stop/restart while work is active can leave uncertain descendants; use container/platform lifecycle evidence and an audited recovery procedure before provisioning a fresh node incarnation. The current code deliberately has no force-release/recover endpoint. Checkpoints outside private supervisor state are not deleted by this supervisor.
 
+### Independent-process admission versus distributed readiness
+
+Independent `raw.rlark.io/process` members do not wait for all sibling allocations
+before starting. A Job with two templates and one eligible node can complete one
+member, retain its terminal Task identity, release its exact cleaned allocation,
+and then run the waiting member on that same node. A missing or already released
+sibling allocation must not become a generic Agent start fence. Current Job,
+Task, credential and own-allocation checks still apply to every start; the durable
+`TaskSetRetiring` condition still blocks starts during whole-set replacement.
+
+This is intentionally distinct from the planned Ray/RLinf adapter. That adapter
+must reserve and verify every required member before training, with exact run
+membership, port claims, bounded readiness deadlines and confirmed group cleanup.
+Independent-process partial admission is not evidence of distributed readiness.
+
+Local regression combines the actual reservation controller, mTLS Task API and
+Host/Coordinator with a fake supervisor. It covers two templates sharing one node,
+first-member success or failure, unavailable-supervisor cleanup, controller
+reconstruction, rejection of a late old-member cleanup request, and aggregation
+only after both allocations are cleaned. This is local integration evidence,
+not cloud GPU or distributed-training acceptance.
+
 ### Ordered integration work
 
 1. Add measured CPU/memory capacity from effective cgroup or affinity limits, resource observations and operator-facing health.
 2. [x] Add runtime-neutral multi-template validation and legacy conflict handling. Expand a Raw Job into stable per-template Tasks with independent allocations and aggregate cleanup. Ray/RLinf barriers remain a later step.
-3. Assemble the Ray adapter, typed configuration, readiness barriers, port reservations, exact membership and training result reporting. No training starts before every member is verified.
-4. Implement typed Ray configuration, preflight/ready barriers, bounded deadlines, per-network-scope port reservations, exact membership and training result reporting. No training before every assigned member is verified. Distinguish Unknown from failed, and stop all assigned members on confirmed group failure.
+3. Define and validate the typed Ray/RLinf workload contract: exact run/member identity, supported versions, head/worker roles, network scope, private addresses and port requirements. Reject this workload at dispatch until the complete adapter is wired.
+4. Assemble the adapter with whole-group reservation, preflight/ready barriers, bounded deadlines, per-network-scope port reservations, exact membership and one training-result owner. No training before every assigned member is verified. Distinguish Unknown from failed, and stop all assigned members on confirmed group failure.
 5. Complete cleanup/retry ownership: retain reservations until every supervisor confirms cleanup, including Job deletion/restart and partially dispatched groups. Add auditable operator recovery for supervisor loss; absence of a heartbeat never releases capacity.
 6. Add the foreground enrollment/start package, authorized log route and bounded retention, UI capability gates and per-replica progress. Add executable EN/ZH deployment and training examples only when this route works.
 7. Run two prepared containers with the explicitly chosen supervision backend, authorized GPU UUIDs and supported Ray/RLinf versions. Verify busy ports, descendant cleanup, Agent restart, supervisor loss, network loss, head/worker failure and retained checkpoints. These platform tests have not been run locally.
