@@ -74,7 +74,7 @@ Raw supervisor 即使尚未启动该 Task，也会在停止时持久化一个仅
 
 ### 前台 Raw 观测 Agent（preview）
 
-`make -C extensions/container-runtime build` 在 API/controller 和 `raw-supervisor` 之外构建仅支持 Linux 的 `container-runtime-agent`。该命令默认只上报观测，显式开关可启用下文的限定 Raw 进程执行。它不注册节点、不签发证书、不传输日志，也不安装升级。先创建并验证原生/companion 绑定，独立安装可信 root supervisor，并由运维配置专用 Agent 证书：签名元数据必须包含精确 ContainerNode namespace/name/UID、原生 Cluster UID、容器实例、租户及当前 `containers.rlark.io/agent-credential` 注解。禁止向 Agent 签发原生管理员证书。专用 CA 私钥保留在 API/Agent 之外，API listener 仅配置 CA 证书。这些接入步骤仍由运维管理，尚无一键接入。
+`make -C extensions/container-runtime build` 在 API/controller 和 `raw-supervisor` 之外构建仅支持 Linux 的 `container-runtime-agent`。该命令默认只上报观测，显式开关可启用下文的限定 Raw 进程执行。它不注册节点、不签发证书、不传输日志，也不安装升级。先创建并验证原生/companion 绑定，独立安装可信 root supervisor，并由运维配置专用 Agent 证书：签名元数据必须包含精确 ContainerNode namespace/name/UID、原生 Cluster UID、容器实例、租户及当前 `containers.rlark.io/agent-credential` 注解。禁止向 Agent 签发原生管理员证书。专用 CA 私钥保留在 API/Agent 之外，API listener 仅配置 CA 证书。这些步骤仍由运维管理；下文管理员工具可自动完成显式登记和离线安装包导出，尚无自动注册/续签。
 
 运维配置好文件并运行 supervisor 后，支持的观测命令为：
 
@@ -116,6 +116,36 @@ CPU 观测取进程 affinity 与当前 cgroup 到 cgroup-v2 挂载点之间所�
 控制器校验精确 allocation 目标/UID/所有者/租户，等待 Agent 清理认领，持久化已有清理回执，并观察 allocation 删除完成后才发布 Job 成功/失败。清理等待状态与观测到的 Task 结果分别展示。完成的原生 Task、目标及 allocation 保护 finalizer 保留为当前结果身份，即使有人请求删除该 Task；仅 Job 暂停/删除、模板变更或显式重启标记才退役它。控制器/API/Agent 重启后不能再次分配或运行同一个 Task。执行变更沿用已有清理流程退役旧 Task，并重置 Job 时间戳。时间戳代表控制面观测时刻，不代表精确进程启动/退出时间。不需要修改 CRD 或原生生命周期。
 
 测试覆盖成功/失败及运行聚合、过期/缺失条件、精确清理证明、延迟删除、回执/删除/状态响应丢失、控制器重建、不重跑/不重分配、完成后 Job 暂停/删除/重启，以及第二个 Job 获取已释放节点。真实 supervisor 测试证明终态清理会阻止释放后延迟到达的 Ensure。2026-10-30，私网金山云开发机通过 `TestScopedTerminalExecutionRealSupervisor`，使用 CPU 进程、真实 mTLS/Unix 传输和假管理面，观察到 Job 成功及 allocation 删除，再拒绝延迟 Ensure。这不代表已接入的云端 GPU Job 验收。这仍为单进程预览；已接入的云端 GPU 验收、日志、接入、滚动升级和 UI 仍为独立门槛。
+
+### 管理员显式接入（预览）
+
+已实现独立 `container-runtime-admin` 命令，使用严格 JSON 配置执行 `cluster-create`、`node-register`、`node-package` 三个显式操作。管理 kubeconfig 仅由接入机器上的管理员使用，不下发给 Agent。创建集群会新建原生 Cluster、专用 namespace 及按 UID 固定的 ContainerCluster。登记节点会在选定集群中创建原生 Raw Node 和 ContainerNode，显式配置容器实例、私网地址、预装环境、网络范围及平台授权 GPU UUID。每次创建都带调用者保留的 UUID 和规范请求摘要，创建响应丢失后通过实时读取恢复，并拒绝修改部分创建的意图；既有资源若操作身份、租户或期望内容不符则报冲突，绝不接管。部分创建保留可见供重试。登记不设置 Ready，也不解除禁止调度。
+
+导出包要求精确 ContainerNode UID，重新校验原生及附属 Cluster/Node 实例和租户，并由管理员独立 Agent CA 签发有期限、仅 client-auth 的证书。不修改或轮换当前凭据。仅写入全新的私有目录，包含节点证书/私钥、API 服务端 CA、不可变身份清单、Agent 启动器、独立 supervisor 启动器及可选 systemd 单元，不含 CA 签名私钥、管理 kubeconfig 或复制的用户环境。导出重试可为同一当前凭据签发另一张证书；旧/替换凭据必须拒绝。管理员私下传输并分别启动 supervisor；停止或更新 Agent 不得停止 supervisor。自动注册/续签和滚动升级仍属后续工作。
+
+首个安装包支持已选定的 Linux 可信 root process-tree Raw 模式，要求明确的规范可执行/工作/状态/安装路径、Linux Agent/supervisor 文件及 SHA-256 验证，不从可见性推断 GPU 授权，也不安装 Python 依赖。故障测试覆盖外来资源、跨租户/namespace、替换 UID、部分创建/响应丢失、无效 CA/期限、输出私有权限和启动参数转义。真实 mTLS 测试验证签发证书可认证登记节点、凭据轮换后被拒绝。此管理员路径不代表云端已部署接入。Docker 安装包、自动续签和 systemd 安装编排仍属后续工作。
+
+执行前先安装扩展 CRD、启动独立校验控制器/API，并准备专用 Agent 签名 CA，以及 SAN 匹配私网 API origin 的 HTTPS 服务端证书。接入身份需要原生 Cluster/Node 和附属资源的 list/get/create 权限及 namespace 的 get/create 权限。这是可信管理员路径，不是租户自助 API。签名私钥必须是无 group/other 权限的普通文件。证书期限为 1–720 小时，不能超过签发 CA 的有效期。开发机必须能访问该私网 API，Agent 无需公网地址。
+
+仓库中的 `extensions/container-runtime/config/examples/` 只是模板：从管理面和平台重新读取后替换全部 `REPLACE_...` 值。以下命令都在接入机上使用管理员 kubeconfig 执行；若响应丢失，必须保留并重用同一个 operation UUID：
+
+```bash
+./extensions/container-runtime/bin/container-runtime-admin cluster-create \
+  --kubeconfig=/private/admin/kubeconfig \
+  --config=extensions/container-runtime/config/examples/provision-cluster.json
+./extensions/container-runtime/bin/container-runtime-admin node-register \
+  --kubeconfig=/private/admin/kubeconfig \
+  --config=extensions/container-runtime/config/examples/provision-node.json
+./extensions/container-runtime/bin/container-runtime-admin node-package \
+  --kubeconfig=/private/admin/kubeconfig \
+  --config=extensions/container-runtime/config/examples/provision-package.json
+```
+
+把集群结果中的 `spec.cluster.uid` 填入 `clusterUID`，把 ContainerNode 结果中的 `metadata.uid` 填入 `node.uid`；二者属于不同资源实例。`credentialID` 使用当前凭据注解，每个新的创建意图使用新的 operation UUID。Notebook ID 或私网 IP 都不能证明当前容器实例或 GPU 授权。安装包示例默认仅观测（`enableExecution: false`）；启用执行还需要上文 API/controller 的开关及支持的 Job 契约。
+
+将导出的目录私下传到配置的 `installDirectory`，保留目录/可执行文件 0700、数据文件 0600 权限，先执行 `sha256sum -c SHA256SUMS`，再分成两个独立进程启动：先运行 `start-supervisor`，再运行 `start-agent`。示例使用已准备好的 `/opt/conda/bin/python3.11`，不会安装 Ray、RLinf 或 CUDA 依赖。命令创建原生/附属资源和离线目录，不生成压缩包，也不远程安装。启动前先在目标上创建并验证工作目录，工作路径不能与私有安装/状态路径重叠。生成的 systemd 单元可选且不会自动安装，Notebook 使用前台启动器。部分导出会保留 `INCOMPLETE` 并拒绝启动，管理员检查后应导出到新目录，不得直接删除标记绕过失败。登记/导出不会把节点标记为 Ready，也不会派发 Job。写入前后均重新验证凭据和节点期望配置；SHA-256 检测文件损坏，不构成对恶意可信 root 任务的安全边界。仅更新 Agent 时不要重启 supervisor。
+
+本增量本地验证：仓库 `make test-go`、接入/CLI 定向竞态测试、独立模块 `vet`/构建、定向 golangci-lint（零问题）及严格双语 MkDocs 构建通过。仓库 `make lint-go` 仍被原生 Docker/网络及相关预览代码中 30 个已有问题阻塞。本接入增量未执行云端登记或 GPU Job。
 
 ### 交付门槛
 
