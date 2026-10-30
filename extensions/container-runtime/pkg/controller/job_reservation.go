@@ -6,12 +6,11 @@ import (
 	"fmt"
 	"reflect"
 	"slices"
-	"strings"
+	"sort"
 	"time"
 
 	ext "github.com/astribot-post-train/rlark/extensions/container-runtime/api/v1alpha1"
 	"github.com/astribot-post-train/rlark/extensions/container-runtime/pkg/allocation/companion"
-	rawruntime "github.com/astribot-post-train/rlark/extensions/container-runtime/pkg/runtime/raw"
 	"github.com/astribot-post-train/rlark/extensions/container-runtime/pkg/scheduler"
 	"github.com/astribot-post-train/rlark/extensions/container-runtime/pkg/taskcontract"
 	native "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
@@ -20,9 +19,8 @@ import (
 	"github.com/rlinf/rlark/apps/rlark/pkg/tenant"
 	"github.com/rlinf/rlark/apps/rlark/pkg/utils"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	meta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/labels"
-	"k8s.io/apimachinery/pkg/util/validation"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -38,10 +36,11 @@ const scheduleInterval = 5 * time.Second
 const (
 	jobExecutionObservedCondition  = "ExecutionObserved"
 	jobAllocationReleasedCondition = "AllocationReleased"
+	jobTaskSetRetiringCondition    = taskcontract.TaskSetRetiringCondition
 )
 
-// JobReservationReconciler materializes one Raw process Task, reserves its
-// node, and aggregates the supported single-process execution lifecycle. It is
+// JobReservationReconciler materializes independent Raw process Tasks, reserves
+// one node per Task, and aggregates the observed execution lifecycle. It is
 // opt-in; runtime effects remain behind the separately scoped Agent API.
 // Client must be uncached; current API state and CAS are the concurrency
 // authority.
@@ -106,35 +105,25 @@ func (r JobReservationReconciler) binding(ctx context.Context, job *native.Job) 
 }
 
 func processTemplate(job *native.Job, binding *ext.ContainerJob) error {
-	if binding.Spec.Runtime != "Raw" || len(job.Spec.Tasks) != 1 || job.Spec.SSHPublicKey != "" {
-		return invalidBinding("preview reserves one Raw process template; SSH and groups are unsupported")
+	if binding.Spec.Runtime != "Raw" {
+		return invalidBinding("only Raw process templates are supported")
 	}
-	t := &job.Spec.Tasks[0]
-	if t.Name == "" || len(validation.IsDNS1123Subdomain(utils.ChildName(job.Name, t.Name))) != 0 || t.Head || t.Suspended || t.Runtime.Kind != "Raw" || t.Runtime.Name != "" || t.Placement.Environment == "" || t.Placement.Binding != nil || t.Placement.DockerBinding != nil || t.DownstreamName != "" || len(t.Environments) != 0 || t.Workload.Template != nil || string(t.Workload.Kind) != string(rawruntime.ProcessWorkload) || t.Workload.Version != "v1" || t.Workload.Carrier.Type != string(rawruntime.ProcessWorkload) || t.Workload.Carrier.Version != "v1" || len(t.Workload.Carrier.Parameters.Raw) != 0 {
-		return invalidBinding("unsupported Raw process template")
-	}
-	spec, err := rawruntime.DecodeProcess(t.Workload.Parameters.Raw)
-	if err != nil {
-		return invalidBinding("invalid Raw process parameters")
-	}
-	if _, err := labels.ValidatedSelectorFromSet(t.Placement.NodeSelector); err != nil {
-		return invalidBinding("invalid Node selector")
-	}
-	for _, env := range spec.Env {
-		name, _, _ := strings.Cut(env, "=")
-		if name == "CUDA_VISIBLE_DEVICES" || name == "NVIDIA_VISIBLE_DEVICES" {
-			return invalidBinding("GPU visibility is assigned by the allocation, not user environment")
-		}
+	if err := taskcontract.ValidateRawJob(job); err != nil {
+		return invalidBinding("invalid Raw process templates")
 	}
 	return nil
 }
 
-func desiredTask(job *native.Job, binding *ext.ContainerJob) *native.Task {
-	template := &job.Spec.Tasks[0]
-	task := &native.Task{ObjectMeta: metav1.ObjectMeta{Name: utils.ChildName(job.Name, template.Name), Namespace: binding.Namespace, Annotations: map[string]string{utils.ParentUIDAnnotation: string(job.UID), utils.ChildTemplateAnnotation: template.Name, nativejob.RestartedAtAnnotation: job.Annotations[nativejob.RestartedAtAnnotation]}, OwnerReferences: []metav1.OwnerReference{*metav1.NewControllerRef(job, native.GroupVersion.WithKind("Job"))}}, Spec: *template.TaskSpec.DeepCopy()}
-	task.Spec.Tags = append(slices.Clone(job.Spec.Tags), task.Spec.Tags...)
-	tenant.Inherit(job, task)
-	return task
+func desiredTasks(job *native.Job, binding *ext.ContainerJob) []*native.Task {
+	result := make([]*native.Task, 0, len(job.Spec.Tasks))
+	for i := range job.Spec.Tasks {
+		template := &job.Spec.Tasks[i]
+		task := &native.Task{ObjectMeta: metav1.ObjectMeta{Name: utils.ChildName(job.Name, template.Name), Namespace: binding.Namespace, Annotations: map[string]string{utils.ParentUIDAnnotation: string(job.UID), utils.ChildTemplateAnnotation: template.Name, nativejob.RestartedAtAnnotation: job.Annotations[nativejob.RestartedAtAnnotation]}, OwnerReferences: []metav1.OwnerReference{*metav1.NewControllerRef(job, native.GroupVersion.WithKind("Job"))}}, Spec: *template.TaskSpec.DeepCopy()}
+		task.Spec.Tags = append(slices.Clone(job.Spec.Tags), task.Spec.Tags...)
+		tenant.Inherit(job, task)
+		result = append(result, task)
+	}
+	return result
 }
 
 func taskOwnedBy(task *native.Task, job *native.Job) bool {
@@ -159,6 +148,7 @@ func (r JobReservationReconciler) children(ctx context.Context, job *native.Job)
 		}
 		result = append(result, *t)
 	}
+	sort.Slice(result, func(i, j int) bool { return result[i].Name < result[j].Name })
 	return result, nil
 }
 
@@ -294,6 +284,81 @@ func (r JobReservationReconciler) report(ctx context.Context, job *native.Job, r
 	return r.reportState(ctx, job, phase, nil, reason, message, scheduled, false, reason == "Stopped")
 }
 
+// reconcileProcesses handles the multi-template slice after every Task has
+// been materialized. It deliberately keeps group semantics runtime-neutral:
+// each member is independently admitted and cleaned, while the Job status is
+// only an aggregate observation. Ray barriers and cross-member ordering belong
+// to a later workload adapter.
+func (r JobReservationReconciler) reconcileProcesses(ctx context.Context, job *native.Job, binding *ext.ContainerJob, children []native.Task) (ctrl.Result, error) {
+	planner := scheduler.Planner{Allocator: companion.Manager{Client: r.Client, Now: r.Now}}
+	statuses := make([]native.JobTaskStatus, 0, len(children))
+	anyObserved, anyRunning, anyFailed, anyReserved, waiting := false, false, false, false, false
+	allTerminal, allReleased, allSucceeded, allScheduled := true, true, true, true
+	for i := range children {
+		task := &children[i]
+		row := native.JobTaskStatus{Name: task.Annotations[utils.ChildTemplateAnnotation], Phase: native.TaskPhasePending}
+		if taskcontract.Observed(task) {
+			anyObserved = true
+			row.Phase, row.Message = task.Status.Phase, task.Status.Message
+			anyRunning = anyRunning || task.Status.Phase == native.TaskPhaseRunning
+		}
+		statuses = append(statuses, row)
+		if taskcontract.HasResult(task) {
+			if !taskcontract.Completed(task) {
+				allTerminal, allReleased, allSucceeded, allScheduled = false, false, false, false
+				continue
+			}
+			target, err := companion.Target(task)
+			if err != nil {
+				return ctrl.Result{}, err
+			}
+			if target == nil || target.Task != (ext.NativeObjectReference{Namespace: task.Namespace, Name: task.Name, UID: string(task.UID)}) || target.Generation != task.Generation || target.Job != (ext.NativeObjectReference{Namespace: job.Namespace, Name: job.Name, UID: string(job.UID)}) || target.JobGeneration != job.Generation || target.TenantID != tenant.IDOf(job) {
+				return ctrl.Result{}, invalidBinding("terminal Task has no exact allocation target")
+			}
+			done, err := r.releaseAllocations(ctx, task)
+			if err != nil {
+				return ctrl.Result{}, err
+			}
+			allReleased = allReleased && done
+			anyReserved = anyReserved || !done
+			anyFailed = anyFailed || task.Status.Phase == native.TaskPhaseFailed
+			allSucceeded = allSucceeded && task.Status.Phase == native.TaskPhaseSucceeded
+			continue
+		}
+		allTerminal, allReleased, allSucceeded = false, false, false
+		_, err := planner.Acquire(ctx, scheduler.Request{Binding: client.ObjectKeyFromObject(binding), Task: client.ObjectKeyFromObject(task)})
+		if err != nil {
+			if errors.Is(err, scheduler.ErrNoCandidate) || errors.Is(err, companion.ErrUnavailable) {
+				waiting, allScheduled = true, false
+				// A blocked earlier member must not starve later observation,
+				// allocation recovery, or terminal cleanup.
+				continue
+			}
+			return ctrl.Result{}, err
+		}
+		anyReserved = true
+	}
+	if allTerminal && allReleased {
+		phase := native.JobPhaseSucceeded
+		reason := "ExecutionCompleted"
+		message := "All Raw replicas succeeded and exact allocation cleanup/deletion are confirmed"
+		if anyFailed || !allSucceeded {
+			phase, reason, message = native.JobPhaseFailed, "ExecutionFailed", "A Raw replica failed after its exact cleanup and allocation deletion were confirmed"
+		}
+		return r.reportState(ctx, job, phase, statuses, reason, message, false, true, true)
+	}
+	phase, reason, message := native.JobPhasePending, "ReservedAwaitingDispatch", "Raw replica Tasks and exclusive node allocations are persisted; awaiting current Agent observations"
+	if waiting {
+		reason, message = "WaitingForCapacity", "At least one Raw process has no eligible free node; other members continue observation and cleanup"
+	}
+	if anyRunning {
+		phase, reason, message = native.JobPhaseRunning, "ExecutionObserved", "At least one Raw replica is running; all allocations remain protected"
+	} else if anyObserved && !waiting {
+		reason, message = "ExecutionObserved", "Raw replica execution observations are available; allocations remain protected"
+	}
+	return r.reportState(ctx, job, phase, statuses, reason, message, allScheduled && anyReserved, anyObserved, false)
+}
+
 // Reconcile reserves the exact current Job execution without creating runtime
 // effects. Stop, invalid configuration and deletion all retire previous Tasks.
 func (r JobReservationReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -346,24 +411,60 @@ func (r JobReservationReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		}
 	}
 	stopping := !owned || validationErr != nil || job.Spec.Suspended || !job.DeletionTimestamp.IsZero()
-	var desired *native.Task
+	var desired []*native.Task
 	if !stopping {
-		desired = desiredTask(&job, binding)
+		desired = desiredTasks(&job, binding)
 	}
+	// A changed member or generation retires the whole prior set before any
+	// replacement is materialized. Otherwise unchanged siblings could retain an
+	// allocation pinned to an old Job generation while new siblings start.
+	retirement := meta.FindStatusCondition(job.Status.Conditions, jobTaskSetRetiringCondition)
+	retiring := stopping || retirement != nil && retirement.Status == metav1.ConditionTrue
 	for i := range children {
 		task := &children[i]
-		matches := desired != nil && task.Name == desired.Name && task.Namespace == desired.Namespace && taskcontract.EqualSpec(task.Spec, desired.Spec) && task.Annotations[utils.ChildTemplateAnnotation] == desired.Annotations[utils.ChildTemplateAnnotation] && task.Annotations[nativejob.RestartedAtAnnotation] == desired.Annotations[nativejob.RestartedAtAnnotation] && (task.DeletionTimestamp.IsZero() || taskcontract.Completed(task))
-		if matches {
-			continue
+		matches := false
+		for _, wanted := range desired {
+			if task.Name == wanted.Name && task.Namespace == wanted.Namespace && taskcontract.EqualSpec(task.Spec, wanted.Spec) && task.Annotations[utils.ChildTemplateAnnotation] == wanted.Annotations[utils.ChildTemplateAnnotation] && task.Annotations[nativejob.RestartedAtAnnotation] == wanted.Annotations[nativejob.RestartedAtAnnotation] && (task.DeletionTimestamp.IsZero() || taskcontract.Completed(task)) {
+				matches = true
+			}
 		}
-		done, err := r.retire(ctx, task)
+		target, err := companion.Target(task)
 		if err != nil {
 			return ctrl.Result{}, err
 		}
-		if !done {
+		if !matches || target != nil && target.JobGeneration != job.Generation {
+			retiring = true
+		}
+	}
+	if retiring && len(children) > 0 {
+		if retirement == nil || retirement.Status != metav1.ConditionTrue {
+			before := job.DeepCopy()
+			condition(&job.Status.Conditions, job.Generation, jobTaskSetRetiringCondition, true, "RetiringPreviousTasks", "All previous Task identities must be observed absent before replacement")
+			if err := r.Client.Status().Patch(ctx, &job, client.MergeFromWithOptions(before, client.MergeFromWithOptimisticLock{})); err != nil {
+				return ctrl.Result{}, err
+			}
+		}
+		// Request stop for every member before waiting on the first cleanup.
+		// This is recoverable fan-out, not ordered by a volatile event queue.
+		allDone := true
+		var retireErr error
+		for i := range children {
+			done, err := r.retire(ctx, &children[i])
+			retireErr = errors.Join(retireErr, err)
+			allDone = allDone && done
+		}
+		if retireErr != nil {
+			return ctrl.Result{}, retireErr
+		}
+		if !allDone {
 			return r.report(ctx, &job, "CleanupPending", "Previous Task identities and allocations are retained until cleanup is proven", false)
 		}
 		return ctrl.Result{RequeueAfter: time.Millisecond}, nil
+	}
+	if retirement != nil && retirement.Status == metav1.ConditionTrue {
+		before := job.DeepCopy()
+		condition(&job.Status.Conditions, job.Generation, jobTaskSetRetiringCondition, false, "PreviousTasksAbsent", "All previous Task identities are absent")
+		return ctrl.Result{RequeueAfter: time.Millisecond}, r.Client.Status().Patch(ctx, &job, client.MergeFromWithOptions(before, client.MergeFromWithOptimisticLock{}))
 	}
 	if stopping {
 		var allocations ext.ContainerAllocationList
@@ -385,22 +486,33 @@ func (r JobReservationReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		}
 		return r.report(ctx, &job, "Stopped", "No owned Tasks or allocations remain", false)
 	}
-	if len(children) == 0 {
+	for _, wanted := range desired {
+		found := false
+		for i := range children {
+			if children[i].Namespace == wanted.Namespace && children[i].Name == wanted.Name {
+				found = true
+				break
+			}
+		}
+		if found {
+			continue
+		}
 		var collision native.Task
-		if err := r.Client.Get(ctx, client.ObjectKeyFromObject(desired), &collision); err == nil {
+		if err := r.Client.Get(ctx, client.ObjectKeyFromObject(wanted), &collision); err == nil {
 			return r.report(ctx, &job, "OwnershipConflict", "The deterministic Task name is occupied by an object with unproven ownership", false)
 		} else if !apierrors.IsNotFound(err) {
 			return ctrl.Result{}, err
 		}
-		if err := r.Client.Create(ctx, desired); err != nil {
-			// Never adopt an object by deterministic name; the next reconciliation
-			// inspects exact ownership before changing anything.
+		if err := r.Client.Create(ctx, wanted); err != nil {
 			return ctrl.Result{}, fmt.Errorf("create owned container Task: %w", err)
 		}
 		return ctrl.Result{RequeueAfter: time.Millisecond}, nil
 	}
-	if len(children) != 1 {
+	if len(children) != len(desired) {
 		return ctrl.Result{}, invalidBinding("ambiguous owned Tasks")
+	}
+	if len(children) > 1 {
+		return r.reconcileProcesses(ctx, &job, binding, children)
 	}
 	task := &children[0]
 	if taskcontract.HasResult(task) {
