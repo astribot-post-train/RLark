@@ -19,7 +19,7 @@ import (
 )
 
 func main() {
-	enableReservations := flag.Bool("enable-job-reservations", false, "Opt in to preview Raw process Task creation and capacity reservation; no Agent dispatch")
+	enableReservations := flag.Bool("enable-job-reservations", false, "Opt in to preview Raw process Task reservation and single-process lifecycle aggregation")
 	leaderElect := flag.Bool("leader-elect", true, "Use a Kubernetes Lease for controller leadership")
 	leaderNamespace := flag.String("leader-election-namespace", "rlark-system", "Namespace for the controller leadership Lease")
 	flag.Parse()
