@@ -90,6 +90,61 @@ test("transport rejects malformed inventory rather than reporting empty capacity
     (e) => e instanceof APIError && e.code === "invalid_response",
   );
 });
+test("legacy console inventory loads with submission disabled and rejects invalid capabilities", async () => {
+  const inventory = {
+    cluster: {
+      namespace: "agents",
+      name: "cloud",
+      uid: "cluster-uid",
+      resourceVersion: "42",
+      tenantID: "tenant",
+      runtime: "Raw",
+      targetAgentRelease: "",
+      bindingValid: true,
+      deleting: false,
+      nodeCount: 0,
+      readyNodes: 0,
+      busyNodes: 0,
+      gpuCount: 0,
+      allocationCount: 0,
+      upgradeCount: 0,
+      conditions: null,
+    },
+    nodes: [],
+    releases: [],
+    allocations: [],
+    upgrades: [],
+  };
+  const client = new Client("admin");
+  globalThis.fetch = async () => new Response(JSON.stringify(inventory));
+  assert.deepEqual(await client.detail("agents", "cloud"), {
+    ...inventory,
+    jobSubmissionEnabled: false,
+  });
+  for (const capability of [false, true]) {
+    globalThis.fetch = async () =>
+      new Response(
+        JSON.stringify({ ...inventory, jobSubmissionEnabled: capability }),
+      );
+    assert.equal(
+      (await client.detail("agents", "cloud")).jobSubmissionEnabled,
+      capability,
+    );
+  }
+  for (const capability of [null, "false", 0]) {
+    globalThis.fetch = async () =>
+      new Response(
+        JSON.stringify({ ...inventory, jobSubmissionEnabled: capability }),
+      );
+    await assert.rejects(
+      client.detail("agents", "cloud"),
+      (e) => e instanceof APIError && e.code === "invalid_response",
+    );
+  }
+  globalThis.fetch = async () =>
+    new Response(JSON.stringify({ ...inventory, nodes: null }));
+  await assert.rejects(client.detail("agents", "cloud"), APIError);
+});
 test("server errors preserve status without replacing inventory with zeros", async () => {
   globalThis.fetch = async () =>
     new Response(
