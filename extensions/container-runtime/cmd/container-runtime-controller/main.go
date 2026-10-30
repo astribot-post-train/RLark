@@ -17,9 +17,11 @@ import (
 	"github.com/astribot-post-train/rlark/extensions/container-runtime/pkg/artifact"
 	containercontroller "github.com/astribot-post-train/rlark/extensions/container-runtime/pkg/controller"
 	nativeapi "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
+	"github.com/rlinf/rlark/apps/rlark/pkg/log"
 )
 
 func main() {
+	ctrl.SetLogger(log.GetLogger())
 	enableReservations := flag.Bool("enable-job-reservations", false, "Opt in to preview Raw process Task reservation and single-process lifecycle aggregation")
 	enableUpgrades := flag.Bool("enable-agent-upgrade-reservations", false, "Opt in to explicit AgentUpgrade node-lock reservations; does not install Agent binaries")
 	enableRollouts := flag.Bool("enable-agent-rollouts", false, "Opt in to target-driven idle Agent upgrade selection; requires upgrade reservations and additive rollout RBAC")

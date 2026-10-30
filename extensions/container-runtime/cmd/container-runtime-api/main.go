@@ -26,24 +26,32 @@ import (
 func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
-	if err := run(ctx); err != nil {
+	if err := run(ctx, os.Args[1:]); err != nil && !errors.Is(err, flag.ErrHelp) {
 		log.FromContext(ctx).Error(err, "container-runtime API failed")
 		os.Exit(1)
 	}
 }
 
-func run(ctx context.Context) error {
+func run(ctx context.Context, args []string) error {
 	var addr, kubeconfig, certificate, key, agentCA, artifactDirectory string
 	var enableTasks, enableUpgrades bool
-	flag.BoolVar(&enableTasks, "enable-task-execution", false, "enable preview node-scoped Raw Task transport")
-	flag.BoolVar(&enableUpgrades, "enable-agent-upgrades", false, "enable preview node-scoped Agent upgrade grant/completion transport")
-	flag.StringVar(&addr, "addr", ":9444", "HTTPS listen address")
-	flag.StringVar(&kubeconfig, "kubeconfig", "", "Management API kubeconfig (empty uses in-cluster config)")
-	flag.StringVar(&certificate, "tls-cert", "", "HTTPS server certificate path")
-	flag.StringVar(&key, "tls-key", "", "HTTPS server private key path")
-	flag.StringVar(&agentCA, "agent-ca", "", "Dedicated container Agent client CA path")
-	flag.StringVar(&artifactDirectory, "artifact-directory", "", "Read-only verified Agent artifact directory (optional)")
-	flag.Parse()
+	// controller-runtime dependencies register kubeconfig on flag.CommandLine
+	// during init. Keep this executable's flags private to avoid a startup panic.
+	fs := flag.NewFlagSet("container-runtime-api", flag.ContinueOnError)
+	fs.BoolVar(&enableTasks, "enable-task-execution", false, "enable preview node-scoped Raw Task transport")
+	fs.BoolVar(&enableUpgrades, "enable-agent-upgrades", false, "enable preview node-scoped Agent upgrade grant/completion transport")
+	fs.StringVar(&addr, "addr", ":9444", "HTTPS listen address")
+	fs.StringVar(&kubeconfig, "kubeconfig", "", "Management API kubeconfig (empty uses in-cluster config)")
+	fs.StringVar(&certificate, "tls-cert", "", "HTTPS server certificate path")
+	fs.StringVar(&key, "tls-key", "", "HTTPS server private key path")
+	fs.StringVar(&agentCA, "agent-ca", "", "Dedicated container Agent client CA path")
+	fs.StringVar(&artifactDirectory, "artifact-directory", "", "Read-only verified Agent artifact directory (optional)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 0 {
+		return errors.New("positional arguments are unsupported")
+	}
 	if certificate == "" || key == "" || agentCA == "" {
 		return errors.New("tls-cert, tls-key and dedicated agent-ca are required")
 	}
