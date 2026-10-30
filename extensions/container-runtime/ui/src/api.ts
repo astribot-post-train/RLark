@@ -180,7 +180,11 @@ function conditions(value: unknown): boolean {
   );
 }
 const uint64 = (value: unknown): value is string => {
-  if (typeof value !== "string" || value.length > 20 || !/^(0|[1-9][0-9]*)$/.test(value))
+  if (
+    typeof value !== "string" ||
+    value.length > 20 ||
+    !/^(0|[1-9][0-9]*)$/.test(value)
+  )
     return false;
   try {
     return BigInt(value) <= 18446744073709551615n;
@@ -189,9 +193,16 @@ const uint64 = (value: unknown): value is string => {
   }
 };
 function statsSnapshot(value: unknown): value is StatsSnapshot {
-  if (!record(value) || typeof value.sampledAt !== "string" ||
-      !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?Z$/.test(value.sampledAt) ||
-      !Number.isFinite(Date.parse(value.sampledAt)) || Date.parse(value.sampledAt) > Date.now()+60000) return false;
+  if (
+    !record(value) ||
+    typeof value.sampledAt !== "string" ||
+    !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?Z$/.test(
+      value.sampledAt,
+    ) ||
+    !Number.isFinite(Date.parse(value.sampledAt)) ||
+    Date.parse(value.sampledAt) > Date.now() + 60000
+  )
+    return false;
   return [
     "cpuUsageNS",
     "memoryUsageBytes",

@@ -112,7 +112,8 @@ const labels = {
     read: "读",
     write: "写",
     bytes: "字节",
-    gpuStatsHint: "单次采样不提供 CPU 百分比、GPU 利用率和 host network 流量归属。",
+    gpuStatsHint:
+      "单次采样不提供 CPU 百分比、GPU 利用率和 host network 流量归属。",
     unavailableValue: "不可用",
     logLoading: "读取中…",
     logUnavailable: "日志不可用",
@@ -220,7 +221,8 @@ const labels = {
     read: "read",
     write: "write",
     bytes: "bytes",
-    gpuStatsHint: "One sample does not provide CPU percentage, GPU utilization or host-network traffic attribution.",
+    gpuStatsHint:
+      "One sample does not provide CPU percentage, GPU utilization or host-network traffic attribution.",
     unavailableValue: "Unavailable",
     logLoading: "Reading…",
     logUnavailable: "Logs unavailable",
@@ -464,7 +466,13 @@ function App() {
     }
   }
   const readLogs = async (allocation: Detail["allocations"][number]) => {
-    if (!client || !selection || !detail || !canReadDiagnostic(detail,allocation)) return;
+    if (
+      !client ||
+      !selection ||
+      !detail ||
+      !canReadDiagnostic(detail, allocation)
+    )
+      return;
     const controller = new AbortController();
     logRequest.current?.abort();
     logRequest.current = controller;
@@ -498,7 +506,13 @@ function App() {
     }
   };
   const readStats = async (allocation: Detail["allocations"][number]) => {
-    if (!client || !selection || !detail || !canReadDiagnostic(detail,allocation)) return;
+    if (
+      !client ||
+      !selection ||
+      !detail ||
+      !canReadDiagnostic(detail, allocation)
+    )
+      return;
     const node = detail?.nodes.find((n) => n.name === allocation.nodeName);
     if (
       detail?.cluster.runtime !== "Docker" ||
@@ -536,7 +550,10 @@ function App() {
     setStats(undefined);
     setLogLoading(false);
     setStatsLoading(false);
-    return () => { logRequest.current?.abort(); statsRequest.current?.abort(); };
+    return () => {
+      logRequest.current?.abort();
+      statsRequest.current?.abort();
+    };
   }, [client, selection, diagnosticScope]);
   useEffect(() => {
     if (!client || writing) return;
@@ -1025,13 +1042,25 @@ function App() {
                             </small>
                             <button
                               type="button"
-                              disabled={logLoading || statsLoading || !canReadDiagnostic(detail,a)}
+                              disabled={
+                                logLoading ||
+                                statsLoading ||
+                                !canReadDiagnostic(detail, a)
+                              }
                               onClick={() => void readLogs(a)}
                             >
                               {logLoading ? t.logLoading : t.logs}
                             </button>
                             {detail.cluster.runtime === "Docker" && (
-                              <button type="button" disabled={statsLoading || logLoading || !canReadDiagnostic(detail,a)} onClick={() => void readStats(a)}>
+                              <button
+                                type="button"
+                                disabled={
+                                  statsLoading ||
+                                  logLoading ||
+                                  !canReadDiagnostic(detail, a)
+                                }
+                                onClick={() => void readStats(a)}
+                              >
                                 {statsLoading ? t.statsLoading : t.stats}
                               </button>
                             )}
