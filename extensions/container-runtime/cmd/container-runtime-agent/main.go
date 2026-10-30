@@ -4,14 +4,18 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/hex"
 	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
+	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -22,7 +26,8 @@ import (
 type Config struct {
 	Endpoint, TLSCert, TLSKey, ServerCA, Version, PrivateAddress, NvidiaSMI, CgroupMount, SupervisorSocket string
 	Interval, RetryMax                                                                                     time.Duration
-	EnableExecution                                                                                        bool
+	EnableExecution, EnableUpgrades                                                                        bool
+	InstallPath, UpgradeStateDirectory                                                                     string
 }
 
 func DefaultConfig() Config {
@@ -35,9 +40,20 @@ func (c Config) Validate() error {
 	if c.Interval <= 0 || c.RetryMax <= 0 || c.RetryMax < c.Interval || c.RetryMax > 5*time.Minute || c.Interval > 15*time.Second {
 		return errors.New("positive retry interval and retry max are required")
 	}
+	if c.EnableUpgrades {
+		if err := (agent.UpdaterPaths{InstallPath: c.InstallPath, StateDirectory: c.UpgradeStateDirectory}).Validate(); err != nil {
+			return err
+		}
+		if filepath.Dir(c.SupervisorSocket) == c.UpgradeStateDirectory || strings.HasPrefix(c.UpgradeStateDirectory, filepath.Dir(c.SupervisorSocket)+"/") || strings.HasPrefix(filepath.Dir(c.SupervisorSocket), c.UpgradeStateDirectory+"/") {
+			return errors.New("supervisor and updater state directories must be separate")
+		}
+	}
 	return nil
 }
 func (c *Config) SetupFlags(fs *flag.FlagSet) {
+	fs.BoolVar(&c.EnableUpgrades, "enable-agent-upgrades", c.EnableUpgrades, "enable preview idle Agent binary updates")
+	fs.StringVar(&c.InstallPath, "agent-install-path", c.InstallPath, "absolute installed Agent executable path")
+	fs.StringVar(&c.UpgradeStateDirectory, "upgrade-state-directory", c.UpgradeStateDirectory, "private existing upgrade journal directory")
 	fs.BoolVar(&c.EnableExecution, "enable-task-execution", c.EnableExecution, "enable preview scoped Raw process execution")
 	fs.StringVar(&c.Endpoint, "endpoint", c.Endpoint, "extension API HTTPS origin")
 	fs.StringVar(&c.TLSCert, "tls-cert", c.TLSCert, "node Agent client certificate")
@@ -85,6 +101,23 @@ func run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+	var updater *agent.Updater
+	if cfg.EnableUpgrades {
+		hash := sha256.New()
+		_, _ = hash.Write([]byte(cfg.Endpoint + "\x00"))
+		_, _ = hash.Write(certificate.Certificate[0]) // Hash.Write cannot fail.
+		updater, err = agent.NewUpdater(agent.UpdaterConfig{Paths: agent.UpdaterPaths{InstallPath: cfg.InstallPath, StateDirectory: cfg.UpgradeStateDirectory}, Scope: hex.EncodeToString(hash.Sum(nil)), BootstrapVersion: cfg.Version}, client, func(ctx context.Context, path string) error {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			return syscall.Exec(path, append([]string{path}, os.Args[1:]...), os.Environ())
+		})
+		if err != nil {
+			return err
+		}
+		defer updater.Close()
+		cfg.Version = updater.Version()
+	}
 	observer := agent.LocalObserver{Version: cfg.Version, PrivateAddress: cfg.PrivateAddress, NvidiaSMI: cfg.NvidiaSMI, CgroupMount: cfg.CgroupMount, SupervisorSocket: cfg.SupervisorSocket}
 	defer client.HTTPClient.CloseIdleConnections()
 	if cfg.EnableExecution {
@@ -93,8 +126,12 @@ func run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 			return err
 		}
 		defer supervisor.CloseIdleConnections()
-		execution := agent.ExecutionObserver{Observer: observer, Client: client, Supervisor: supervisor}
+		execution := agent.ExecutionObserver{Observer: observer, Client: client, Supervisor: supervisor, Updater: updater}
 		return agent.RunExecution(ctx, execution, cfg.Interval, cfg.RetryMax, logger)
 	}
-	return agent.Run(ctx, observer, client, cfg.Interval, cfg.RetryMax, logger)
+	var heartbeater agent.Heartbeater = client
+	if updater != nil {
+		heartbeater = agent.UpgradingHeartbeater{Client: client, Updater: updater}
+	}
+	return agent.Run(ctx, observer, heartbeater, cfg.Interval, cfg.RetryMax, logger)
 }

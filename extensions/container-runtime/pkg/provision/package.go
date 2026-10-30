@@ -47,6 +47,7 @@ type PackageRequest struct {
 	WorkDirectories  []string     `json:"workDirectories"`
 	LogBytes         int64        `json:"logBytes"`
 	EnableExecution  bool         `json:"enableExecution"`
+	EnableUpgrades   bool         `json:"enableUpgrades"`
 }
 
 // PackageManifest records public identity, validity and artifact integrity.
@@ -174,7 +175,13 @@ func (s Service) ExportPackage(ctx context.Context, req PackageRequest) (*Packag
 	if !targetPath(req.InstallDirectory) || !targetPath(req.StateDirectory) || within(req.InstallDirectory, req.StateDirectory) || within(req.StateDirectory, req.InstallDirectory) || req.LogBytes <= 0 || len(req.Executables) == 0 || len(req.WorkDirectories) == 0 {
 		return nil, errors.New("separate canonical install/state paths, workload paths and positive log bound required")
 	}
+	if req.EnableUpgrades && (within(req.StateDirectory+"-agent-upgrades", req.InstallDirectory) || within(req.InstallDirectory, req.StateDirectory+"-agent-upgrades")) {
+		return nil, errors.New("updater state must be separate from install")
+	}
 	for _, path := range append(append([]string{}, req.Executables...), req.WorkDirectories...) {
+		if req.EnableUpgrades && (within(req.StateDirectory+"-agent-upgrades", path) || within(path, req.StateDirectory+"-agent-upgrades")) {
+			return nil, errors.New("workload paths must exclude updater state")
+		}
 		if !targetPath(path) || within(req.StateDirectory, path) || within(path, req.StateDirectory) || within(req.InstallDirectory, path) || within(path, req.InstallDirectory) {
 			return nil, errors.New("canonical workload paths must exclude private install/state paths")
 		}
@@ -245,7 +252,16 @@ func (s Service) ExportPackage(ctx context.Context, req PackageRequest) (*Packag
 	if req.EnableExecution {
 		argv = append(argv, "--enable-task-execution=true")
 	}
+	if req.EnableUpgrades {
+		argv = append(argv, "--enable-agent-upgrades=true", "--agent-install-path="+base+"/container-runtime-agent", "--upgrade-state-directory="+req.StateDirectory+"-agent-upgrades")
+	}
 	preflight := "#!/bin/sh\nset -eu\n[ \"$(id -u)\" -eq 0 ] || { echo 'root required' >&2; exit 1; }\ncd " + quote(base) + "\n[ ! -e INCOMPLETE ] || { echo 'incomplete package' >&2; exit 1; }\nsha256sum -c SHA256SUMS >&2\n"
+	if req.EnableUpgrades {
+		// Keep package validation for every immutable file; verify the Agent against
+		// its original digest or one of the private updater-persisted switch digests.
+		preflight = strings.ReplaceAll(preflight, "sha256sum -c SHA256SUMS >&2\n", "sed '/  container-runtime-agent$/d' SHA256SUMS | sha256sum -c - >&2\n"+
+			"(printf '%s  container-runtime-agent\\n' "+quote(fmt.Sprintf("%x", sha256.Sum256(agentBinary)))+" | sha256sum -c - >&2) || sha256sum -c container-runtime-agent.upgrade-target.sha256 >&2 || sha256sum -c container-runtime-agent.upgrade-source.sha256 >&2\n")
+	}
 	files["start-agent"] = []byte(preflight + command(argv...))
 	config := struct {
 		Backend          string   `json:"backend"`
