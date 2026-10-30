@@ -43,3 +43,16 @@ writes. It is a preview surface; it does not add native UI routes or advertise
 multi-node Ray/RLinf or Docker Engine lifecycle support.
 
 Build and deployment details: [English](../../apps/rlark/docs/developer-guide/container-runtime-console.md) / [中文](../../apps/rlark/docs/zh/developer-guide/container-runtime-console.md).
+
+The console now supports guarded node cordon/uncordon through native
+`Node.spec.unschedulable`. It checks companion/native identity and patches with
+atomic UID/resourceVersion tests. Cordon retains running workloads and their
+locks; uncordon waits for exact or uncertain locks and legacy reservations to
+disappear. This does not perform drain or pause the independent Agent rollout.
+
+After a platform stop/start, compare the current container incarnation with the
+registered `instanceID`. A changed incarnation requires exact old Node retirement,
+new registration/credentials and a package in separate install/state directories.
+Do not adopt a replacement by editing the old binding or reusing its credential.
+Automatic enrollment/startup recovery and durable replacement of the test SSH
+reverse tunnel remain incomplete; see the bilingual console recovery section.

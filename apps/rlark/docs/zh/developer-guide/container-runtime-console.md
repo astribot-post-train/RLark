@@ -12,9 +12,9 @@ Cluster、Node、Job、Task API 增加容器专属字段。
 - 节点的权威身份、私网地址、运行时、能力、授权 GPU UUID、心跳新鲜度、
   Ready、可调度和忙闲状态；
 - 可用 Agent 版本及当前目标版本；
-- 可恢复的集群创建和目标版本选择。
+- 可恢复的集群创建、目标版本选择和节点 cordon/uncordon。
 
-Allocation、Job 和 Agent 升级作为独立维度展示。控制台不会在缺少观测时
+Allocation、其中的 Job 引用和 Agent 升级作为独立维度展示。控制台不会在缺少观测时
 伪造利用率，也不会把过期心跳当作 Ready 或可调度。Ray/RLinf 组提交、远程
 日志、terminal/exec、自动注册、Docker Engine 创建和多节点调度仍不属于本
 预览版。
@@ -97,7 +97,8 @@ TLS 或仅监听回环地址的反向代理。认证响应设置 `Cache-Control:
 位于 `rlark-system`，更换 namespace 时需同步修改三处引用。该身份可读取资源、
 创建原生 Cluster 和专用 namespace、创建/patch 附属 Cluster；不能读取 Secret、
 派发 Task、修改观测 Status、删除资源或释放 allocation。签名密钥不放在该
-kubeconfig 中。
+kubeconfig 中。原生 Node patch 由 API 限定为 `spec.unschedulable`；Kubernetes
+RBAC 无法按字段限制 patch 权限，因此控制台仍是受信任管理员服务。
 
 HS256 密钥必须是配置 Gateway 使用的原始字节（至少 32 字节），以只读文件
 挂载到受信任控制面服务。HS256 是对称算法，持有密钥也能签发 token，因此
@@ -123,7 +124,7 @@ bin/container-runtime-console \
 Node.js 24。
 
 预览 UI 创建 Raw 集群。API/CLI 也能创建 Docker 资源记录，但不代表 Docker
-Engine 注册/执行已支持。节点加入、安装包导出、产物发布、cordon/drain 仍通过
+Engine 注册/执行已支持。节点加入、安装包导出、产物发布、drain 仍通过
 CLI 或运维流程完成。页面 Job 名来自 allocation 引用，不是任务提交或历史接口。
 
 页面每 15 秒刷新观测。心跳超过 45 秒、未来心跳、过期 generation、凭据不匹配、
@@ -147,3 +148,37 @@ ServiceAccount 验证了管理员登录、真实 `ksyun-containers` 资源、普
 专用临时集群创建（故意丢弃首次已提交响应）、相同 UUID 重试、发布目标版本、
 中英文切换和退出。浏览器没有 JavaScript 异常。临时资源通过正常生命周期清理，
 现有云端 Cluster 的目标版本未改变；不代表多节点训练或生产部署已验收。
+
+## 节点调度管理
+
+控制台为现有 Raw 节点提供管理员 cordon/uncordon。接口只修改原生
+`Node.spec.unschedulable`，每次校验 companion UID、引用的原生 UID 和原生
+resourceVersion。页面把原生调度意图与 Ready、忙闲、已有 allocation 分开展示。
+Cordon 阻止后续启动授权，不停止运行中进程、不释放 allocation，也不请求 Agent 升级。
+它不暂停已配置的 Agent rollout，升级仍需独立的空闲证明和锁；也不能撤销恰好
+在该意图被观察到前并发取得的启动授权。
+Uncordon 只有在所有已知锁和旧版预留消失后才清空意图，不授予 Ready，也不绕过
+placement/升级校验。未知锁、正在删除的锁、预留读取失败都阻止 uncordon。
+
+接口为 `PATCH /api/v1/container-runtime/clusters/{namespace}/{cluster}/nodes/{node}`，
+请求必须包含 `uid`（companion Node UID）、`resourceVersion`（原生 Node 版本）和
+显式布尔 `unschedulable`。冲突或响应不确定时先重新读取，不能对新对象盲目重试
+切换。写入与集群操作使用同样的平台管理员认证。新增 console RBAC 仅授予原生
+Node `patch`，不允许修改 Node status。
+
+Drain 是后续独立操作：停止 Job、证明清理和退役 allocation 必须可恢复。该调度
+意图接口不提供 drain 或强制解锁按钮。
+
+## 开发机重启后的恢复
+
+平台停止/启动可能替换已有容器的实例，即使开发机 ID、私网地址和 GPU UUID 不变。
+需要比较当前 PID namespace、PID 1 启动证据和 boot identity 与注册的 `instanceID`。
+不能复用旧凭据，也不能修改不可变绑定来接管新实例。确认旧实例已停止，且 Task、
+allocation 和升级操作都已消失后，使用 UID/resourceVersion 前置条件正常退役精确的
+旧原生/companion Node，再重新注册并导出新 package 到独立安装/状态目录。Cluster
+继续与本地 Kubernetes 资源分开。自动注册和启动恢复尚未实现，临时反向隧道也需重建。
+
+2026-10-31 发现测试开发机已停止后，显式重启，未改变队列、规格或公网配置。
+PID 1 启动证据发生变化；Python/PyTorch/Ray 和 CUDA `42.0` 仍可用。旧节点通过
+正常生命周期退役，随后创建新实例的精确注册和 package。这是人工运维恢复，
+与 Agent 二进制滚动升级是不同流程，不代表已实现自动恢复。

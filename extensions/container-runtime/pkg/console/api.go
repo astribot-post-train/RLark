@@ -106,6 +106,8 @@ func (a *API) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		a.clusterDetail(w, r, parts[1], parts[2])
 	case len(parts) == 3 && parts[0] == "clusters" && parts[1] != "" && parts[2] != "" && r.Method == http.MethodPatch:
 		a.patchCluster(w, r, parts[1], parts[2], subject)
+	case len(parts) == 5 && parts[0] == "clusters" && parts[3] == "nodes" && parts[1] != "" && parts[2] != "" && parts[4] != "" && r.Method == http.MethodPatch:
+		a.patchNodeScheduling(w, r, parts[1], parts[2], parts[4], subject)
 	default:
 		writeError(w, 404, "not_found", "route not found")
 	}
@@ -131,6 +133,8 @@ type clusterSummary struct {
 	LastAgentUpgrade   *ext.AgentRolloutReceipt `json:"lastAgentUpgrade,omitempty"`
 }
 type nodeSummary struct {
+	ResourceVersion    string             `json:"resourceVersion"`
+	NativeUID          string             `json:"nativeUID"`
 	Name               string             `json:"name"`
 	UID                string             `json:"uid"`
 	InstanceID         string             `json:"instanceID"`
@@ -141,6 +145,7 @@ type nodeSummary struct {
 	Ready              bool               `json:"ready"`
 	Schedulable        bool               `json:"schedulable"`
 	Busy               bool               `json:"busy"`
+	Unschedulable      bool               `json:"unschedulable"`
 	Held               bool               `json:"held"`
 	BindingValid       bool               `json:"bindingValid"`
 	Capacity           map[string]string  `json:"capacity"`
@@ -268,7 +273,7 @@ func (a *API) detail(ctx context.Context, cc *ext.ContainerCluster) (*clusterDet
 		fresh := heartbeat != nil && !heartbeat.After(a.now()) && a.now().Sub(heartbeat.Time) <= 45*time.Second
 		ready := nv && n.DeletionTimestamp.IsZero() && nn.DeletionTimestamp.IsZero() && nc.DeletionTimestamp.IsZero() && cc.DeletionTimestamp.IsZero() && fresh && n.Status.ObservedGeneration == n.Generation && current(n.Status.Conditions, "Ready", n.Generation) && n.Status.AgentCredentialID != "" && n.Status.AgentCredentialID == n.Annotations[ext.AgentCredentialAnnotation]
 		schedulable := ready && n.Status.Schedulable && !n.Status.Busy && !held[string(n.UID)] && !held["native/"+n.Spec.Node.UID] && !nn.Spec.Unschedulable && !nc.Spec.Cordoned && !nc.Spec.Draining && nn.Status.Reservation == nil && len(nn.Status.DockerReservations) == 0
-		result.Nodes = append(result.Nodes, nodeSummary{Name: n.Name, UID: string(n.UID), InstanceID: n.Spec.InstanceID, PrivateAddress: n.Spec.PrivateAddress, Environment: n.Spec.Environment, NetworkScope: n.Spec.NetworkScope, AgentVersion: n.Status.AgentVersion, Ready: ready, Schedulable: schedulable, Busy: n.Status.Busy, Held: held[string(n.UID)] || held["native/"+n.Spec.Node.UID], BindingValid: nv, Capacity: n.Status.Capacity, AuthorizedGPUUUIDs: n.Spec.AuthorizedGPUUUIDs, Capabilities: n.Status.Capabilities, LastHeartbeatTime: heartbeat, Conditions: n.Status.Conditions})
+		result.Nodes = append(result.Nodes, nodeSummary{Name: n.Name, UID: string(n.UID), ResourceVersion: nn.ResourceVersion, NativeUID: string(nn.UID), InstanceID: n.Spec.InstanceID, PrivateAddress: n.Spec.PrivateAddress, Environment: n.Spec.Environment, NetworkScope: n.Spec.NetworkScope, AgentVersion: n.Status.AgentVersion, Ready: ready, Schedulable: schedulable, Busy: n.Status.Busy, Unschedulable: nn.Spec.Unschedulable, Held: held[string(n.UID)] || held["native/"+n.Spec.Node.UID], BindingValid: nv, Capacity: n.Status.Capacity, AuthorizedGPUUUIDs: n.Spec.AuthorizedGPUUUIDs, Capabilities: n.Status.Capabilities, LastHeartbeatTime: heartbeat, Conditions: n.Status.Conditions})
 		result.Cluster.NodeCount++
 		result.Cluster.GPUCount += len(n.Spec.AuthorizedGPUUUIDs)
 		if ready {
@@ -432,6 +437,7 @@ func (a *API) patchCluster(w http.ResponseWriter, r *http.Request, namespace, na
 		ResourceVersion string `json:"resourceVersion"`
 	}{cc.ResourceVersion})
 }
+
 func decodeStrict(w http.ResponseWriter, r *http.Request, v any) bool {
 	d := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10))
 	d.DisallowUnknownFields()

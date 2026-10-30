@@ -16,7 +16,7 @@ rules:
     verbs: ["get", "list", "create"]
   - apiGroups: ["rlinf.io"]
     resources: ["nodes"]
-    verbs: ["get"]
+    verbs: ["get", "patch"]
   - apiGroups: [""]
     resources: ["namespaces"]
     verbs: ["get", "create"]
