@@ -41,6 +41,16 @@ func (r JobOwner) Owns(ctx context.Context, job *native.Job) (bool, error) {
 	if match == nil {
 		return false, nil
 	}
+	validated := false
+	for _, condition := range match.Status.Conditions {
+		if condition.Type == "Validated" && condition.Status == "True" && condition.ObservedGeneration == match.Generation && match.Status.ObservedGeneration == match.Generation {
+			validated = true
+			break
+		}
+	}
+	if !validated {
+		return false, fmt.Errorf("container Job binding has not been validated for its current generation")
+	}
 	if job.Annotations[nativejob.ControllerOwnerAnnotation] != containerapi.Group || tenant.IDOf(match) != tenant.IDOf(job) {
 		return false, fmt.Errorf("container Job declared owner or tenant metadata conflicts")
 	}
