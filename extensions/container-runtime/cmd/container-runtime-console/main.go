@@ -34,12 +34,13 @@ func main() {
 	}
 }
 func run(ctx context.Context, args []string) error {
-	var addr, kubeconfig, keyFile, certFile, tlsKey, uiDirectory, gateway string
+	var addr, kubeconfig, keyFile, certFile, tlsKey, uiDirectory, gateway, logOrigin string
 	fs := flag.NewFlagSet("container-runtime-console", flag.ContinueOnError)
 	fs.StringVar(&addr, "addr", "127.0.0.1:9445", "listen address; HTTP is loopback only")
 	fs.StringVar(&kubeconfig, "kubeconfig", "", "restricted management kubeconfig; empty uses in-cluster config")
 	fs.StringVar(&keyFile, "gateway-jwt-key-file", "", "read-only Gateway signing key file (at least 32 bytes)")
 	fs.StringVar(&gateway, "gateway-origin", "", "trusted Gateway HTTPS origin; loopback HTTP allowed for development")
+	fs.StringVar(&logOrigin, "log-api-origin", "", "optional loopback HTTP administrator log API origin")
 	fs.StringVar(&certFile, "tls-cert", "", "optional HTTPS certificate; required off loopback")
 	fs.StringVar(&tlsKey, "tls-key", "", "HTTPS private key")
 	fs.StringVar(&uiDirectory, "ui-directory", "", "built independent UI directory (optional)")
@@ -83,6 +84,12 @@ func run(ctx context.Context, args []string) error {
 		return fmt.Errorf("create management client: %w", err)
 	}
 	api := &console.API{Client: management, Creator: provision.Service{Client: management}, Auth: auth}
+	if logOrigin != "" {
+		api.Logs, err = console.NewLogProxy(logOrigin)
+		if err != nil {
+			return err
+		}
+	}
 	if uiDirectory != "" {
 		info, err := os.Stat(uiDirectory + "/index.html")
 		if err != nil || !info.Mode().IsRegular() {

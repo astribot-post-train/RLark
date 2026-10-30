@@ -60,9 +60,14 @@ type Handler struct {
 	Reporter       Reporter
 	EnableTasks    bool
 	EnableUpgrades bool
+	Logs           *LogBroker
 }
 
 func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path == "/v1/logs" && h.EnableTasks && h.Logs != nil {
+		h.serveLogs(w, r)
+		return
+	}
 	if r.URL.Path == "/v1/upgrade" && h.EnableUpgrades {
 		h.serveUpgrade(w, r)
 		return

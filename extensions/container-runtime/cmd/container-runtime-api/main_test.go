@@ -29,3 +29,20 @@ func TestStartupRejectsUnexpectedArguments(t *testing.T) {
 		}
 	}
 }
+
+func TestLogReadListenerMustRemainLoopbackAndExplicit(t *testing.T) {
+	if err := validateLogListen("", "", false); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateLogListen("127.0.0.1:9446", "/private/key", true); err != nil {
+		t.Fatal(err)
+	}
+	for _, input := range []struct {
+		addr, key string
+		tasks     bool
+	}{{":9446", "key", true}, {"0.0.0.0:9446", "key", true}, {"localhost:9446", "key", true}, {"10.0.0.1:9446", "key", true}, {"127.0.0.1:9446", "", true}, {"", "key", true}, {"127.0.0.1:9446", "key", false}} {
+		if err := validateLogListen(input.addr, input.key, input.tasks); err == nil {
+			t.Fatalf("accepted %#v", input)
+		}
+	}
+}

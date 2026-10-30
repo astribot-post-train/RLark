@@ -26,7 +26,7 @@ import (
 type Config struct {
 	Endpoint, TLSCert, TLSKey, ServerCA, Version, PrivateAddress, NvidiaSMI, CgroupMount, SupervisorSocket string
 	Interval, RetryMax                                                                                     time.Duration
-	EnableExecution, EnableUpgrades                                                                        bool
+	EnableExecution, EnableUpgrades, EnableLogReads                                                        bool
 	InstallPath, UpgradeStateDirectory                                                                     string
 }
 
@@ -34,6 +34,9 @@ func DefaultConfig() Config {
 	return Config{NvidiaSMI: "nvidia-smi", CgroupMount: "/sys/fs/cgroup", Interval: 15 * time.Second, RetryMax: 2 * time.Minute}
 }
 func (c Config) Validate() error {
+	if c.EnableLogReads && !c.EnableExecution {
+		return errors.New("log reads require scoped task execution")
+	}
 	if c.Endpoint == "" || c.TLSCert == "" || c.TLSKey == "" || c.ServerCA == "" || c.Version == "" || c.PrivateAddress == "" || c.SupervisorSocket == "" {
 		return errors.New("endpoint, TLS files, version, private address and supervisor socket are required")
 	}
@@ -55,6 +58,7 @@ func (c *Config) SetupFlags(fs *flag.FlagSet) {
 	fs.StringVar(&c.InstallPath, "agent-install-path", c.InstallPath, "absolute installed Agent executable path")
 	fs.StringVar(&c.UpgradeStateDirectory, "upgrade-state-directory", c.UpgradeStateDirectory, "private existing upgrade journal directory")
 	fs.BoolVar(&c.EnableExecution, "enable-task-execution", c.EnableExecution, "enable preview scoped Raw process execution")
+	fs.BoolVar(&c.EnableLogReads, "enable-log-reads", c.EnableLogReads, "enable on-demand scoped Raw log snapshots")
 	fs.StringVar(&c.Endpoint, "endpoint", c.Endpoint, "extension API HTTPS origin")
 	fs.StringVar(&c.TLSCert, "tls-cert", c.TLSCert, "node Agent client certificate")
 	fs.StringVar(&c.TLSKey, "tls-key", c.TLSKey, "node Agent client private key")
@@ -126,6 +130,12 @@ func run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 			return err
 		}
 		defer supervisor.CloseIdleConnections()
+		if cfg.EnableLogReads {
+			logCtx, cancelLogs := context.WithCancel(ctx)
+			done := make(chan struct{})
+			go func() { defer close(done); agent.RunLogReads(logCtx, client, supervisor) }()
+			defer func() { cancelLogs(); <-done }()
+		}
 		execution := agent.ExecutionObserver{Observer: observer, Client: client, Supervisor: supervisor, Updater: updater}
 		return agent.RunExecution(ctx, execution, cfg.Interval, cfg.RetryMax, logger)
 	}

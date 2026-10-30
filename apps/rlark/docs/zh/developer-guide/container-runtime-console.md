@@ -15,9 +15,9 @@ Cluster、Node、Job、Task API 增加容器专属字段。
 - 可恢复的集群创建、目标版本选择和节点 cordon/uncordon。
 
 Allocation、其中的 Job 引用和 Agent 升级作为独立维度展示。控制台不会在缺少观测时
-伪造利用率，也不会把过期心跳当作 Ready 或可调度。Ray/RLinf 组提交、远程
-日志、terminal/exec、自动注册、Docker Engine 创建和多节点调度仍不属于本
-预览版。
+伪造利用率，也不会把过期心跳当作 Ready 或可调度。Ray/RLinf 组提交、
+terminal/exec、自动注册、Docker Engine 创建和多节点调度仍不属于本预览版。
+有界 Raw 日志读取需要显式启用独立的回环日志监听器和节点轮询器。
 
 ## 资源与所有权
 
@@ -182,3 +182,27 @@ allocation 和升级操作都已消失后，使用 UID/resourceVersion 前置条
 PID 1 启动证据发生变化；Python/PyTorch/Ray 和 CUDA `42.0` 仍可用。旧节点通过
 正常生命周期退役，随后创建新实例的精确注册和 package。这是人工运维恢复，
 与 Agent 二进制滚动升级是不同流程，不代表已实现自动恢复。
+
+
+## 有界 Raw 日志预览
+
+启动 API 时增加 `--log-read-addr=127.0.0.1:9446` 和
+`--gateway-jwt-key-file=/private/gateway-jwt.key`，并在 Agent 安装包中同时启用
+`enableExecution: true`、`enableLogReads: true`，控制台即可查看保留的 Raw Task
+日志。Agent 通过既有 mTLS 接口轮询，supervisor 只读取精确 Task 的保留日志。
+`--log-read-addr` 只接受明确的回环地址；独立控制台用
+`--log-api-origin=http://127.0.0.1:9446` 代理固定的
+`/api/v1/container-runtime/logs` 路由。
+
+读取必须携带当前 inventory 中的 allocation UID 和 Task UID。最多返回合并
+stdout/stderr 的开头 64 KiB，并附带截断信息。请求最长等待 20 秒，每节点一个、
+全局 32 个；API 重启后请求丢弃。禁止调度、暂停和就绪过期不会撤销精确诊断访问，
+但凭据撤销、对象替换、allocation 释放和含糊所有权会拒绝。监听器不接受路径、
+不把日志写入 Status、不转发 Cookie、不跟随重定向。工作负载输出按转义纯文本显示；
+历史归档、follow/tail、stats 和 terminal/exec 不在此预览范围。
+
+2026-10-31，私有云验收通过控制台代理在专用 `regular-training` H100 开发机上
+实际验证了该路径。测试使用短期 Gateway token，拒绝未认证、非法 path 和错误
+Task UID 请求，然后读取到 65,536 字节的 CUDA 标记及截断元数据。任务正常停止
+并释放 allocation 后，旧 allocation 身份再次访问也被拒绝。验收运行器只使用
+管理 kubeconfig；受限 controller 凭据按设计不能创建原生 Job。

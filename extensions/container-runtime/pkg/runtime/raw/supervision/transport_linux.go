@@ -21,13 +21,15 @@ import (
 )
 
 type request struct {
-	Task rt.TaskIdentity  `json:"task"`
-	Spec *raw.ProcessSpec `json:"spec,omitempty"`
+	Task     rt.TaskIdentity  `json:"task"`
+	Spec     *raw.ProcessSpec `json:"spec,omitempty"`
+	MaxBytes int64            `json:"maxBytes,omitempty"`
 }
 type response struct {
-	Record raw.Record `json:"record"`
-	Code   fault.Code `json:"code,omitempty"`
-	Error  string     `json:"error,omitempty"`
+	Record raw.Record       `json:"record"`
+	Logs   *raw.LogSnapshot `json:"logs,omitempty"`
+	Code   fault.Code       `json:"code,omitempty"`
+	Error  string           `json:"error,omitempty"`
 }
 
 // Status is a bounded supervisor liveness snapshot. It does not expose task
@@ -118,6 +120,21 @@ func (s *Service) handle(w http.ResponseWriter, r *http.Request) {
 		record, err = s.Ensure(r.Context(), req.Task, *req.Spec)
 	case "/v1/stop":
 		record, err = s.Stop(r.Context(), req.Task)
+	case "/v1/logs":
+		logs, logErr := s.Logs(r.Context(), req.Task, req.MaxBytes)
+		result := response{Logs: &logs}
+		if logErr != nil {
+			result.Code, result.Error = fault.Unavailable, "Raw log read failed"
+			for _, code := range []fault.Code{fault.NotFound, fault.Conflict, fault.PermissionDenied, fault.InvalidArgument} {
+				if fault.Is(logErr, code) {
+					result.Code = code
+					break
+				}
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(result)
+		return
 	default:
 		http.NotFound(w, r)
 		return
@@ -225,4 +242,42 @@ func (c *Client) Ensure(ctx context.Context, t rt.TaskIdentity, spec raw.Process
 // Stop requests cleanup without accepting a caller-supplied PID or path.
 func (c *Client) Stop(ctx context.Context, t rt.TaskIdentity) (raw.Record, error) {
 	return c.call(ctx, "/v1/stop", request{Task: t})
+}
+
+// Logs reads only the bounded log retained for an exact Task incarnation.
+// maxBytes must be positive and is additionally capped by the supervisor's
+// configured retention limit.
+func (c *Client) Logs(ctx context.Context, t rt.TaskIdentity, maxBytes int64) (raw.LogSnapshot, error) {
+	if maxBytes <= 0 || maxBytes > raw.MaxLogBytes {
+		return raw.LogSnapshot{}, fault.New(fault.InvalidArgument, "bounded Raw log size required")
+	}
+	data, err := json.Marshal(request{Task: t, MaxBytes: maxBytes})
+	if err != nil {
+		return raw.LogSnapshot{}, err
+	}
+	r, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://supervisor/v1/logs", bytes.NewReader(data))
+	if err != nil {
+		return raw.LogSnapshot{}, err
+	}
+	res, err := c.http.Do(r)
+	if err != nil {
+		return raw.LogSnapshot{}, fault.Wrap(fault.Unavailable, "contact Raw supervisor", err)
+	}
+	defer func() { _ = res.Body.Close() }()
+	if res.StatusCode != http.StatusOK {
+		return raw.LogSnapshot{}, fault.New(fault.Unavailable, fmt.Sprintf("Raw supervisor HTTP status %d", res.StatusCode))
+	}
+	var result response
+	decoder := json.NewDecoder(io.LimitReader(res.Body, 2<<20))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&result); err != nil || result.Logs == nil || decoder.Decode(new(any)) != io.EOF {
+		return raw.LogSnapshot{}, errors.New("invalid Raw supervisor log response")
+	}
+	if result.Error != "" {
+		return raw.LogSnapshot{}, fault.New(result.Code, result.Error)
+	}
+	if int64(len(result.Logs.Data)) > maxBytes {
+		return raw.LogSnapshot{}, errors.New("oversized Raw supervisor log response")
+	}
+	return *result.Logs, nil
 }

@@ -20,8 +20,9 @@ container clusters. It provides:
 Allocations, their Job references, and Agent upgrades are displayed as separate dimensions.
 The console never derives utilization from a missing observation and never
 turns a stale heartbeat into a Ready or schedulable state. Ray/RLinf group
-submission, remote logs, terminal/exec, automatic enrollment, Docker Engine
-creation, and multi-node scheduling remain outside this preview.
+submission, terminal/exec, automatic enrollment, Docker Engine creation, and multi-node
+scheduling remain outside this preview. Bounded Raw log reads are available only
+when the separate loopback log listener and node poller are explicitly enabled.
 
 ## Resource and ownership model
 
@@ -231,3 +232,35 @@ without changing its queue, resources or public-network settings. Its PID 1 star
 evidence changed. Python/PyTorch/Ray and CUDA `42.0` remained available; the old
 node was normally retired and a new exact registration/package created. This
 operator recovery is separate from Agent binary rollout and is not automatic.
+
+
+## Bounded Raw log preview
+
+The console can show a retained Raw Task snapshot when the API is started with
+`--log-read-addr=127.0.0.1:9446` and
+`--gateway-jwt-key-file=/private/gateway-jwt.key`. The Agent package must be
+exported with `enableExecution: true` and `enableLogReads: true`; the Agent
+polls the existing mTLS endpoint and the supervisor reads only the exact retained
+Task log. `--log-read-addr` accepts an explicit loopback address only. The
+console uses `--log-api-origin=http://127.0.0.1:9446` to proxy the fixed
+`/api/v1/container-runtime/logs` route.
+
+A read requires the allocation UID and Task UID from the current inventory. It
+returns at most 64 KiB of combined stdout/stderr, from the beginning of the
+retained file, with truncation metadata. Requests time out after 20 seconds,
+are limited to one per node and 32 globally, and are discarded on API restart.
+Cordon, suspension and stale readiness do not revoke exact diagnostic access;
+credential revocation, object replacement, allocation release and ambiguous
+ownership do. The listener never accepts a path, stores log bytes in Status,
+forwards cookies or follows redirects. Workload output is rendered as escaped
+plain text; historical archives, follow/tail, stats and terminal/exec are not
+part of this preview.
+
+The private-cloud acceptance on 2026-10-31 exercised this route through the
+console proxy on the dedicated `regular-training` H100 notebook. The test
+authenticated with a short-lived Gateway token, rejected unauthenticated,
+malformed-path and wrong-Task-UID requests, then read 65,536 bytes containing
+the CUDA marker and truncation metadata. After normal stop and allocation
+release, the old allocation identity was rejected. The runner used the
+management kubeconfig only; restricted controller credentials cannot create
+native Jobs.

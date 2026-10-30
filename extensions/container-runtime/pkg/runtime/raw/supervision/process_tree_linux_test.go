@@ -115,6 +115,59 @@ func TestTreeCancellationSurvivesSupervisorRestart(t *testing.T) {
 	}
 }
 
+func TestTreeLogsRetainBoundedOutputAcrossRestart(t *testing.T) {
+	s, task, work := treeFixture(t)
+	spec := raw.ProcessSpec{Argv: []string{s.config.Executables[0], "-c", "printf 'first stdout\\n'; printf 'second stderr\\n' >&2; head -c 8192 /dev/zero"}, Directory: work, Env: []string{"PATH=/usr/bin:/bin"}}
+	if _, err := s.Ensure(context.Background(), task, spec); err != nil {
+		t.Fatal(err)
+	}
+	r := waitTree(t, s, task)
+	if !r.Cleaned || r.Phase != "Succeeded" {
+		t.Fatalf("execution failed: %+v", r)
+	}
+	logs, err := s.Logs(context.Background(), task, raw.MaxLogBytes)
+	if err != nil || len(logs.Data) != 4096 || !strings.HasPrefix(string(logs.Data), "first stdout\nsecond stderr\n") || !logs.RetentionLimitReached {
+		t.Fatalf("retained logs: %d %+v %v", len(logs.Data), logs, err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := Open(s.config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = reopened.Close() }()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- reopened.Serve(ctx) }()
+	socket := filepath.Join(s.config.StateDirectory, "supervisor.sock")
+	for deadline := time.Now().Add(time.Second); ; {
+		if _, err := os.Stat(socket); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("socket absent")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	client, err := NewClient(socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.CloseIdleConnections()
+	for range 2 {
+		got, err := client.Logs(context.Background(), task, 12)
+		if err != nil || string(got.Data) != "first stdout" || !got.Truncated || !got.RetentionLimitReached {
+			t.Fatalf("restart log read: %+v %v", got, err)
+		}
+	}
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}
+
 func waitTree(t *testing.T, s *Service, task rt.TaskIdentity) raw.Record {
 	t.Helper()
 	select {

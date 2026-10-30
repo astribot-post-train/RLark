@@ -66,3 +66,19 @@ func TestUpgradeFlagsRequireIsolatedPaths(t *testing.T) {
 		}
 	}
 }
+
+func TestLogReadsRequireScopedExecution(t *testing.T) {
+	cfg := configured()
+	fs := flag.NewFlagSet("logs", flag.ContinueOnError)
+	cfg.SetupFlags(fs)
+	if err := fs.Parse([]string{"--enable-log-reads=true"}); err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.EnableLogReads || cfg.Validate() == nil {
+		t.Fatal("log reads accepted without scoped execution")
+	}
+	cfg.EnableExecution = true
+	if err := cfg.Validate(); err != nil {
+		t.Fatal(err)
+	}
+}

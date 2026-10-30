@@ -6,7 +6,60 @@ import {
   nodeState,
   heartbeatAge,
   clusterState,
+  logText,
 } from "../.test-build/models.js";
+
+test("log reads pin exact allocation and Task identity and preserve cancellation/auth", async () => {
+  let request;
+  const controller = new AbortController();
+  globalThis.fetch = async (path, init) => {
+    request = { path, init };
+    return new Response(
+      JSON.stringify({
+        data: "bG9nCg==",
+        truncated: false,
+        retentionLimitReached: false,
+      }),
+    );
+  };
+  const client = new Client("admin");
+  const snapshot = await client.logs(
+    "agents",
+    { name: "lock", uid: "exact-allocation", taskUID: "exact-task" },
+    controller.signal,
+  );
+  const url = new URL(request.path, "http://localhost");
+  assert.equal(url.pathname, "/api/v1/container-runtime/logs");
+  assert.deepEqual(Object.fromEntries(url.searchParams), {
+    namespace: "agents",
+    allocation: "lock",
+    allocationUID: "exact-allocation",
+    taskUID: "exact-task",
+  });
+  assert.equal(request.init.headers.Authorization, "Bearer admin");
+  assert.equal(request.init.credentials, "omit");
+  assert.equal(request.init.redirect, "error");
+  assert.equal(request.init.signal, controller.signal);
+  assert.equal(logText(snapshot.data), "log\n");
+  globalThis.fetch = async () =>
+    new Response(JSON.stringify({ data: "", truncated: "false" }));
+  await assert.rejects(
+    client.logs("agents", { name: "lock", uid: "uid", taskUID: "task" }),
+    APIError,
+  );
+});
+
+test("log rendering bounds decoded bytes and neutralizes control sequences", () => {
+  const data = btoa(
+    String.fromCharCode(
+      ...new TextEncoder().encode("日志\n<script>text</script>\x1b[31m\u202e"),
+    ),
+  );
+  assert.equal(logText(data), "日志\n<script>text</script>�[31m�");
+  assert.equal(logText(btoa("X".repeat(65536))).length, 65536);
+  assert.throws(() => logText(btoa("X".repeat(65537))));
+  assert.throws(() => logText("invalid base64!"));
+});
 
 test("stale requests cannot publish after refresh or logout", () => {
   const gate = new LoadGate();

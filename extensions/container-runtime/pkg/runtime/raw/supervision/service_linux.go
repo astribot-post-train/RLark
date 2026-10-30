@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -248,6 +249,55 @@ func (s *Service) Observe(ctx context.Context, t rt.TaskIdentity) (raw.Record, e
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.observe(ctx, t)
+}
+
+// Logs returns only the bounded output retained for an exact Task incarnation.
+// It never accepts a caller-supplied path and never reports logs for an
+// execution the supervisor has not durably recorded.
+func (s *Service) Logs(ctx context.Context, t rt.TaskIdentity, maxBytes int64) (raw.LogSnapshot, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return raw.LogSnapshot{}, err
+	}
+	if s.closed {
+		return raw.LogSnapshot{}, fault.New(fault.Unavailable, "Raw supervisor closed")
+	}
+	if t.ObjectUID == "" || t.Logical.Validate() != nil {
+		return raw.LogSnapshot{}, fault.New(fault.InvalidArgument, "Raw Task identity required")
+	}
+	if _, ok := s.records[key(t)]; !ok {
+		return raw.LogSnapshot{}, fault.New(fault.NotFound, "Raw execution absent")
+	}
+	if maxBytes <= 0 || maxBytes > raw.MaxLogBytes {
+		return raw.LogSnapshot{}, fault.New(fault.InvalidArgument, "bounded Raw log size required")
+	}
+	if maxBytes > s.config.LogBytes {
+		maxBytes = s.config.LogBytes
+	}
+	fd, err := unix.Open(filepath.Join(s.config.StateDirectory, key(t)+".log"), unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_NONBLOCK|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return raw.LogSnapshot{}, fault.Wrap(fault.Unavailable, "open Raw log", err)
+	}
+	f := os.NewFile(uintptr(fd), "raw-log")
+	defer func() { _ = f.Close() }()
+	info, err := f.Stat()
+	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0077 != 0 {
+		return raw.LogSnapshot{}, fault.New(fault.Unavailable, "private regular Raw log required")
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok || stat.Nlink != 1 || stat.Uid != uint32(os.Geteuid()) || info.Size() > s.config.LogBytes {
+		return raw.LogSnapshot{}, fault.New(fault.Unavailable, "Raw log ownership or retention conflicts")
+	}
+	data, err := io.ReadAll(io.LimitReader(f, maxBytes+1))
+	if err != nil {
+		return raw.LogSnapshot{}, fault.Wrap(fault.Unavailable, "read Raw log", err)
+	}
+	truncated := int64(len(data)) > maxBytes
+	if truncated {
+		data = data[:maxBytes]
+	}
+	return raw.LogSnapshot{Data: data, Truncated: truncated, RetentionLimitReached: info.Size() >= s.config.LogBytes}, nil
 }
 
 func (s *Service) observe(ctx context.Context, t rt.TaskIdentity) (raw.Record, error) {

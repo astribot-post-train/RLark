@@ -47,6 +47,7 @@ type PackageRequest struct {
 	WorkDirectories  []string     `json:"workDirectories"`
 	LogBytes         int64        `json:"logBytes"`
 	EnableExecution  bool         `json:"enableExecution"`
+	EnableLogReads   bool         `json:"enableLogReads"`
 	EnableUpgrades   bool         `json:"enableUpgrades"`
 }
 
@@ -166,6 +167,9 @@ func readArtifact(path, architecture string) ([]byte, error) {
 // leaves an INCOMPLETE marker; it never overwrites or deletes an existing path.
 // This is an offline administrator export, not automatic enrollment/renewal.
 func (s Service) ExportPackage(ctx context.Context, req PackageRequest) (*PackageManifest, error) {
+	if req.EnableLogReads && !req.EnableExecution {
+		return nil, errors.New("log reads require scoped task execution")
+	}
 	if req.Architecture != "amd64" && req.Architecture != "arm64" {
 		return nil, errors.New("linux amd64 or arm64 architecture required")
 	}
@@ -251,6 +255,9 @@ func (s Service) ExportPackage(ctx context.Context, req PackageRequest) (*Packag
 	argv := []string{base + "/container-runtime-agent", "--endpoint=" + req.Endpoint, "--tls-cert=" + base + "/agent.crt", "--tls-key=" + base + "/agent.key", "--server-ca=" + base + "/server-ca.crt", "--version=" + req.Version, "--private-address=" + node.Spec.PrivateAddress, "--supervisor-socket=" + req.StateDirectory + "/supervisor.sock"}
 	if req.EnableExecution {
 		argv = append(argv, "--enable-task-execution=true")
+	}
+	if req.EnableLogReads {
+		argv = append(argv, "--enable-log-reads=true")
 	}
 	if req.EnableUpgrades {
 		argv = append(argv, "--enable-agent-upgrades=true", "--agent-install-path="+base+"/container-runtime-agent", "--upgrade-state-directory="+req.StateDirectory+"-agent-upgrades")

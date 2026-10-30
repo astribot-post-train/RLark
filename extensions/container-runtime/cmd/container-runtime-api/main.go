@@ -7,6 +7,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -16,8 +17,10 @@ import (
 	ext "github.com/astribot-post-train/rlark/extensions/container-runtime/api/v1alpha1"
 	"github.com/astribot-post-train/rlark/extensions/container-runtime/pkg/agent"
 	"github.com/astribot-post-train/rlark/extensions/container-runtime/pkg/artifact"
+	"github.com/astribot-post-train/rlark/extensions/container-runtime/pkg/console"
 	native "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
 	"github.com/rlinf/rlark/apps/rlark/pkg/log"
+	"golang.org/x/sync/errgroup"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/clientcmd"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -33,7 +36,7 @@ func main() {
 }
 
 func run(ctx context.Context, args []string) error {
-	var addr, kubeconfig, certificate, key, agentCA, artifactDirectory string
+	var addr, kubeconfig, certificate, key, agentCA, artifactDirectory, logAddr, jwtKey string
 	var enableTasks, enableUpgrades bool
 	// controller-runtime dependencies register kubeconfig on flag.CommandLine
 	// during init. Keep this executable's flags private to avoid a startup panic.
@@ -46,11 +49,16 @@ func run(ctx context.Context, args []string) error {
 	fs.StringVar(&key, "tls-key", "", "HTTPS server private key path")
 	fs.StringVar(&agentCA, "agent-ca", "", "Dedicated container Agent client CA path")
 	fs.StringVar(&artifactDirectory, "artifact-directory", "", "Read-only verified Agent artifact directory (optional)")
+	fs.StringVar(&logAddr, "log-read-addr", "", "optional explicit loopback HTTP administrator log read address")
+	fs.StringVar(&jwtKey, "gateway-jwt-key-file", "", "Gateway administrator JWT signing key; required with log-read-addr")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if fs.NArg() != 0 {
 		return errors.New("positional arguments are unsupported")
+	}
+	if err := validateLogListen(logAddr, jwtKey, enableTasks); err != nil {
+		return err
 	}
 	if certificate == "" || key == "" || agentCA == "" {
 		return errors.New("tls-cert, tls-key and dedicated agent-ca are required")
@@ -90,23 +98,70 @@ func run(ctx context.Context, args []string) error {
 			return err
 		}
 	}
-	server := &http.Server{Addr: addr, Handler: agent.Handler{Reporter: agent.Reporter{Client: management, ReleaseStore: store}, EnableTasks: enableTasks, EnableUpgrades: enableUpgrades},
+	reporter := agent.Reporter{Client: management, ReleaseStore: store}
+	var broker *agent.LogBroker
+	var logServer *http.Server
+	if logAddr != "" {
+		keyBytes, err := os.ReadFile(jwtKey)
+		if err != nil {
+			return fmt.Errorf("read Gateway verification key: %w", err)
+		}
+		auth, err := console.NewGatewayJWT(keyBytes)
+		if err != nil {
+			return err
+		}
+		broker = &agent.LogBroker{}
+		logServer = &http.Server{Addr: logAddr, Handler: console.LogReadAPI{Auth: auth, Reader: agent.LogService{Tasks: agent.TaskService{Reporter: reporter}, Broker: broker}}, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 5 * time.Second, WriteTimeout: 25 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 32 << 10}
+	}
+	server := &http.Server{Addr: addr, Handler: agent.Handler{Reporter: reporter, EnableTasks: enableTasks, EnableUpgrades: enableUpgrades, Logs: broker},
 		ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 30 * time.Second,
 		TLSConfig: &tls.Config{MinVersion: tls.VersionTLS13, ClientAuth: tls.RequireAndVerifyClientCert, ClientCAs: pool, Certificates: []tls.Certificate{tlsCert}}}
+	g, groupCtx := errgroup.WithContext(ctx)
+	g.Go(func() error { return serve(groupCtx, server, true) })
+	if logServer != nil {
+		g.Go(func() error { return serve(groupCtx, logServer, false) })
+	}
+	return g.Wait()
+}
+
+func validateLogListen(addr, key string, tasks bool) error {
+	if addr == "" && key == "" {
+		return nil
+	}
+	if addr == "" || key == "" || !tasks {
+		return errors.New("log-read-addr requires gateway-jwt-key-file and enable-task-execution")
+	}
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return errors.New("explicit loopback log read address required")
+	}
+	ip := net.ParseIP(host)
+	if ip == nil || !ip.IsLoopback() {
+		return errors.New("log read listener must use an explicit loopback IP")
+	}
+	return nil
+}
+
+func serve(ctx context.Context, server *http.Server, tls bool) error {
 	stopped := make(chan struct{})
+	defer close(stopped)
 	go func() {
 		select {
 		case <-ctx.Done():
-			shutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			shutdown, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 			if err := server.Shutdown(shutdown); err != nil {
-				log.FromContext(ctx).Error(err, "container-runtime API shutdown failed")
+				_ = server.Close()
 			}
 		case <-stopped:
 		}
 	}()
-	err = server.ListenAndServeTLS("", "")
-	close(stopped)
+	var err error
+	if tls {
+		err = server.ListenAndServeTLS("", "")
+	} else {
+		err = server.ListenAndServe()
+	}
 	if errors.Is(err, http.ErrServerClosed) {
 		return nil
 	}
