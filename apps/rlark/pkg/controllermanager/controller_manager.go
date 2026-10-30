@@ -11,6 +11,7 @@ import (
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
@@ -35,17 +36,33 @@ type Reconciler interface {
 	SetupWithManager(ctrl.Manager) error
 }
 
-var (
-	scheme = runtime.NewScheme()
-)
-
-func init() {
-	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
-	utilruntime.Must(rlarkv1alpha1.AddToScheme(scheme))
+// Extension is an explicitly assembled controller extension. Native binaries
+// remain independent from optional API groups and their implementation modules.
+type Extension struct {
+	AddToScheme func(*runtime.Scheme) error
+	Setup       func(manager.Manager) error
+	// JobOwner receives an uncached reader for authoritative ownership checks.
+	JobOwner func(client.Reader) job.OwnerResolver
 }
 
 // New creates a new instance.
-func New(config Config) (manager.Manager, error) {
+func New(config Config, extensions ...Extension) (manager.Manager, error) {
+	localScheme := runtime.NewScheme()
+	if err := clientgoscheme.AddToScheme(localScheme); err != nil {
+		return nil, err
+	}
+	if err := rlarkv1alpha1.AddToScheme(localScheme); err != nil {
+		return nil, err
+	}
+	for _, extension := range extensions {
+		if extension.AddToScheme != nil {
+			if err := extension.AddToScheme(localScheme); err != nil {
+				return nil, fmt.Errorf("register extension API: %w", err)
+			}
+		}
+	}
+	scheme := localScheme
+
 	logger := log.GetLogger()
 	ctrl.SetLogger(logger)
 	if err := config.ControllerConcurrency.Validate(); err != nil {
@@ -56,7 +73,7 @@ func New(config Config) (manager.Manager, error) {
 	if err != nil {
 		return nil, fmt.Errorf("build Kubernetes client config: %w", err)
 	}
-	options, err := managerOptions(config, restConfig)
+	options, err := managerOptions(config, restConfig, scheme)
 	if err != nil {
 		return nil, err
 	}
@@ -69,13 +86,23 @@ func New(config Config) (manager.Manager, error) {
 		return nil, fmt.Errorf("create replication controller: %w", err)
 	}
 
+	jobController := &job.Reconciler{Client: mgr.GetClient(), Scheme: scheme, MaxConcurrentReconciles: config.ControllerConcurrency.Job}
+	var owners []job.OwnerResolver
+	for _, extension := range extensions {
+		if extension.JobOwner != nil {
+			owner := extension.JobOwner(mgr.GetAPIReader())
+			if owner == nil {
+				return nil, fmt.Errorf("extension Job owner constructor returned nil")
+			}
+			owners = append(owners, owner)
+		}
+	}
+	if len(owners) > 0 {
+		jobController.ExternalOwner = extensionOwners(owners)
+	}
 	reconcilers := []Reconciler{
 		replicationReconciler,
-		&job.Reconciler{
-			Client:                  mgr.GetClient(),
-			Scheme:                  scheme,
-			MaxConcurrentReconciles: config.ControllerConcurrency.Job,
-		},
+		jobController,
 		&task.Reconciler{
 			Client:                  mgr.GetClient(),
 			Scheme:                  scheme,
@@ -155,6 +182,13 @@ func New(config Config) (manager.Manager, error) {
 		}
 	}
 
+	for _, extension := range extensions {
+		if extension.Setup != nil {
+			if err := extension.Setup(mgr); err != nil {
+				return nil, fmt.Errorf("setup controller extension: %w", err)
+			}
+		}
+	}
 	for _, r := range reconcilers {
 		if err := r.SetupWithManager(mgr); err != nil {
 			return nil, fmt.Errorf("setup controller: %w", err)
@@ -171,9 +205,15 @@ func New(config Config) (manager.Manager, error) {
 	return mgr, nil
 }
 
-func managerOptions(config Config, restConfig *rest.Config) (ctrl.Options, error) {
+func managerOptions(config Config, restConfig *rest.Config, schemes ...*runtime.Scheme) (ctrl.Options, error) {
+	localScheme := runtime.NewScheme()
+	utilruntime.Must(clientgoscheme.AddToScheme(localScheme))
+	utilruntime.Must(rlarkv1alpha1.AddToScheme(localScheme))
+	if len(schemes) > 0 && schemes[0] != nil {
+		localScheme = schemes[0]
+	}
 	options := ctrl.Options{
-		Scheme:                 scheme,
+		Scheme:                 localScheme,
 		Metrics:                metricsserver.Options{BindAddress: config.MetricsBindAddress},
 		HealthProbeBindAddress: config.ProbeBindAddress,
 		LeaderElection:         config.LeaderElection.Enabled,
@@ -208,4 +248,23 @@ func managerOptions(config Config, restConfig *rest.Config) (ctrl.Options, error
 		options.RetryPeriod = &config.LeaderElection.RetryPeriod
 	}
 	return options, nil
+}
+
+// extensionOwners rejects ambiguous claims instead of letting registration order
+// decide which controller owns a workload.
+type extensionOwners []job.OwnerResolver
+
+func (owners extensionOwners) Owns(ctx context.Context, value *rlarkv1alpha1.Job) (bool, error) {
+	claimed := false
+	for _, owner := range owners {
+		owned, err := owner.Owns(ctx, value)
+		if err != nil {
+			return false, err
+		}
+		if owned && claimed {
+			return false, fmt.Errorf("multiple extensions claim Job %s/%s", value.Namespace, value.Name)
+		}
+		claimed = claimed || owned
+	}
+	return claimed, nil
 }
