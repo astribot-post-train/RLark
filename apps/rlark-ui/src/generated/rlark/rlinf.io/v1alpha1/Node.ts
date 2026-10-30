@@ -91,6 +91,18 @@ export interface INode {
       "type": string;
     }>;
     "diskPressure"?: boolean;
+    "dockerReservations"?: Array<{
+      "allocationID": string;
+      "clusterUID": string;
+      "cpuMilli"?: number;
+      "gpuCount"?: number;
+      "incarnation": string;
+      "jobUID": string;
+      "memoryBytes"?: number;
+      "nodeUID": string;
+      "taskUID": string;
+      "tenantID": string;
+    }>;
     /**
      * Events 由数据面 node-agent 上报节点相关 Kubernetes Event（如 DiskPressure
      * 等 Warning 事件及镜像拉取/调度相关事件）。控制面 Task reconciler 在 Task
@@ -123,6 +135,10 @@ export interface INode {
     "nodeInfo"?: {
       "agentVersion"?: string;
       "architecture"?: string;
+      /**
+       * Incarnation changes when the backing agent/engine identity changes.
+       */
+      "incarnation"?: string;
       "kernelVersion"?: string;
       "operatingSystem"?: string;
     };
@@ -142,7 +158,7 @@ export interface INode {
       "total": number;
     }>;
     /**
-     * Raw is Agent-owned capability observation. Reservation is controller-owned.
+     * Raw is Agent-owned capability observation. Reservations are controller-owned.
      */
     "raw"?: {
       "authorizedGPUUUIDs": Array<string>;

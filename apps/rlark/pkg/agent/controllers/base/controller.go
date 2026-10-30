@@ -146,7 +146,7 @@ type Controller struct {
 	LocalKubeHTTP         *http.Client
 	LocalKubeAPIHost      string
 	LocalKubeConfig       *rest.Config
-	LocalDockerClient     any // TODO
+	LocalDockerClient     any
 	LocalRawClient        any // TODO
 
 	Image                       string

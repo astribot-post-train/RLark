@@ -81,10 +81,26 @@ type RawNodeReservation struct {
 	Committed    bool   `json:"committed"`
 }
 
+// DockerNodeReservation is controller-owned durable allocation state for one
+// Docker Task. GPU allocation is whole-card and represented by GPUCount.
+type DockerNodeReservation struct {
+	TaskUID      string `json:"taskUID"`
+	JobUID       string `json:"jobUID"`
+	TenantID     string `json:"tenantID"`
+	NodeUID      string `json:"nodeUID"`
+	ClusterUID   string `json:"clusterUID"`
+	Incarnation  string `json:"incarnation"`
+	AllocationID string `json:"allocationID"`
+	CPUMilli     int64  `json:"cpuMilli,omitempty"`
+	MemoryBytes  int64  `json:"memoryBytes,omitempty"`
+	GPUCount     int64  `json:"gpuCount,omitempty"`
+}
+
 type NodeStatus struct {
-	// Raw is Agent-owned capability observation. Reservation is controller-owned.
-	Raw         *RawNodeStatus      `json:"raw,omitempty"`
-	Reservation *RawNodeReservation `json:"reservation,omitempty"`
+	// Raw is Agent-owned capability observation. Reservations are controller-owned.
+	Raw                *RawNodeStatus          `json:"raw,omitempty"`
+	Reservation        *RawNodeReservation     `json:"reservation,omitempty"`
+	DockerReservations []DockerNodeReservation `json:"dockerReservations,omitempty"`
 	// Phase 是节点连通性聚合阶段，由数据面 node-agent 上报。
 	// +kubebuilder:validation:Enum=Online;Offline
 	Phase NodePhase `json:"phase,omitempty"`
@@ -151,6 +167,8 @@ type NodeInfo struct {
 	KernelVersion   string `json:"kernelVersion,omitempty"`
 	AgentVersion    string `json:"agentVersion,omitempty"`
 	OperatingSystem string `json:"operatingSystem,omitempty"`
+	// Incarnation changes when the backing agent/engine identity changes.
+	Incarnation string `json:"incarnation,omitempty"`
 }
 
 // +genclient

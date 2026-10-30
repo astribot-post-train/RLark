@@ -7,6 +7,7 @@ const (
 	WorkloadVersionRayV1             = "v1"
 	CarrierTypeKubernetesDeployment  = "rlinf.io/kubernetes-deployment"
 	CarrierTypeKubernetesStatefulSet = "rlinf.io/kubernetes-statefulset"
+	CarrierTypeDockerContainer       = "docker.rlark.io/container"
 	CarrierVersionKubernetesV1       = "v1"
 	EnvironmentTypeSSH               = "rlinf.io/ssh"
 	EnvironmentVersionSSHV1          = "v1"
@@ -31,8 +32,11 @@ type InlineScript struct {
 
 // RayExecutionParametersV1 是 rlinf.io/ray/v1 的参数合同。
 type RayExecutionParametersV1 struct {
-	Role          RayRole       `json:"role"`
-	HeadTaskName  string        `json:"headTaskName,omitempty"`
+	Role         RayRole `json:"role"`
+	HeadTaskName string  `json:"headTaskName,omitempty"`
+	// HeadAddress is controller-resolved private address for host-networked
+	// workers. HeadTaskName remains the stable logical identity and port key.
+	HeadAddress   string        `json:"headAddress,omitempty"`
 	TotalNodes    int32         `json:"totalNodes,omitempty"`
 	NodeRankStart int32         `json:"nodeRankStart,omitempty"`
 	Prepare       *InlineScript `json:"prepare,omitempty"`
@@ -42,6 +46,11 @@ type RayExecutionParametersV1 struct {
 // KubernetesReplicatedCarrierParametersV1 configures replicated Kubernetes
 // carriers such as Deployment and StatefulSet.
 type KubernetesReplicatedCarrierParametersV1 struct {
+	Replicas *int32 `json:"replicas,omitempty"`
+}
+
+// DockerReplicatedCarrierParametersV1 expands replicas into independent Tasks.
+type DockerReplicatedCarrierParametersV1 struct {
 	Replicas *int32 `json:"replicas,omitempty"`
 }
 

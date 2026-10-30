@@ -24,6 +24,8 @@ type NodeInfoApplyConfiguration struct {
 	KernelVersion   *string `json:"kernelVersion,omitempty"`
 	AgentVersion    *string `json:"agentVersion,omitempty"`
 	OperatingSystem *string `json:"operatingSystem,omitempty"`
+	// Incarnation changes when the backing agent/engine identity changes.
+	Incarnation *string `json:"incarnation,omitempty"`
 }
 
 // NodeInfoApplyConfiguration constructs a declarative configuration of the NodeInfo type for use with
@@ -61,5 +63,13 @@ func (b *NodeInfoApplyConfiguration) WithAgentVersion(value string) *NodeInfoApp
 // If called multiple times, the OperatingSystem field is set to the value of the last call.
 func (b *NodeInfoApplyConfiguration) WithOperatingSystem(value string) *NodeInfoApplyConfiguration {
 	b.OperatingSystem = &value
+	return b
+}
+
+// WithIncarnation sets the Incarnation field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the Incarnation field is set to the value of the last call.
+func (b *NodeInfoApplyConfiguration) WithIncarnation(value string) *NodeInfoApplyConfiguration {
+	b.Incarnation = &value
 	return b
 }

@@ -107,6 +107,10 @@ type Config struct {
 	RawNetworkScope       string
 	RawEnvironment        string
 	RawAuthorizedGPUUUIDs []string
+	// DockerHost selects the host Docker Engine endpoint. The default is the
+	// root-owned local Unix socket; Docker-in-Docker is not supported.
+	DockerHost   string
+	DockerNodeIP string
 }
 
 // DefaultConfig returns the default config.
@@ -139,6 +143,7 @@ func DefaultConfig() Config {
 		ContainerdSocket:    "/run/containerd/containerd.sock",
 		ContainerdNamespace: "k8s.io",
 		NodeName:            os.Getenv("NODE_NAME"),
+		DockerHost:          "unix:///var/run/docker.sock",
 	}
 }
 
@@ -177,4 +182,6 @@ func (c *Config) SetupFlags(fs *pflag.FlagSet) {
 	fs.StringVar(&c.RawNetworkScope, "raw-network-scope", c.RawNetworkScope, "Operator-authorized private network scope shared by Raw nodes")
 	fs.StringVar(&c.RawEnvironment, "raw-environment", c.RawEnvironment, "Preinstalled Raw workload environment/profile identifier")
 	fs.StringSliceVar(&c.RawAuthorizedGPUUUIDs, "raw-authorized-gpu-uuid", c.RawAuthorizedGPUUUIDs, "Explicitly authorized GPU UUID; repeat for each GPU")
+	fs.StringVar(&c.DockerHost, "docker-host", c.DockerHost, "Docker Engine endpoint for Docker agents (default unix:///var/run/docker.sock)")
+	fs.StringVar(&c.DockerNodeIP, "docker-node-ip", c.DockerNodeIP, "Private IP advertised by a Docker node for host-networked Ray workers")
 }

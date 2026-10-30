@@ -50,6 +50,9 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	if hasRawTemplates(job) {
 		return r.reconcileRawJob(ctx, req.NamespacedName)
 	}
+	if hasDockerTemplates(job) {
+		return r.reconcileDockerJob(ctx, req.NamespacedName)
+	}
 	if r.RawClient != nil {
 		var children rlarkv1alpha1.TaskList
 		if err := r.RawClient.List(ctx, &children, client.MatchingLabels{jobLabel: job.Name}); err != nil {
@@ -58,6 +61,9 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		for _, child := range children.Items {
 			if child.Spec.Runtime.Kind == "Raw" {
 				return r.reconcileRawJob(ctx, req.NamespacedName)
+			}
+			if child.Spec.Runtime.Kind == "Docker" {
+				return r.reconcileDockerJob(ctx, req.NamespacedName)
 			}
 		}
 	}

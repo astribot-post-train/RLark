@@ -43,6 +43,10 @@ func ForKind(kind schema.GroupVersionKind) interface{} {
 		return &rlarkiov1alpha1.ClusterSpecApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("ClusterStatus"):
 		return &rlarkiov1alpha1.ClusterStatusApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("DockerNodeReservation"):
+		return &rlarkiov1alpha1.DockerNodeReservationApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("DockerTaskBinding"):
+		return &rlarkiov1alpha1.DockerTaskBindingApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("Domain"):
 		return &rlarkiov1alpha1.DomainApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("DomainIPAllocation"):

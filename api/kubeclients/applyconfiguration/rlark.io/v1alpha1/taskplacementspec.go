@@ -30,6 +30,10 @@ type TaskPlacementSpecApplyConfiguration struct {
 	// Binding is a controller-owned, UID-fenced Raw execution assignment.
 	// It does not authorize execution without a matching Node reservation.
 	Binding *RawTaskBindingApplyConfiguration `json:"binding,omitempty"`
+	// DockerBinding is a controller-owned, UID-fenced Docker execution assignment.
+	// It is intentionally separate from the Raw contract so the two runtimes
+	// cannot accidentally consume each other's reservations.
+	DockerBinding *DockerTaskBindingApplyConfiguration `json:"dockerBinding,omitempty"`
 }
 
 // TaskPlacementSpecApplyConfiguration constructs a declarative configuration of the TaskPlacementSpec type for use with
@@ -65,5 +69,13 @@ func (b *TaskPlacementSpecApplyConfiguration) WithEnvironment(value string) *Tas
 // If called multiple times, the Binding field is set to the value of the last call.
 func (b *TaskPlacementSpecApplyConfiguration) WithBinding(value *RawTaskBindingApplyConfiguration) *TaskPlacementSpecApplyConfiguration {
 	b.Binding = value
+	return b
+}
+
+// WithDockerBinding sets the DockerBinding field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the DockerBinding field is set to the value of the last call.
+func (b *TaskPlacementSpecApplyConfiguration) WithDockerBinding(value *DockerTaskBindingApplyConfiguration) *TaskPlacementSpecApplyConfiguration {
+	b.DockerBinding = value
 	return b
 }

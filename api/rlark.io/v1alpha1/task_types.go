@@ -21,6 +21,10 @@ type TaskPlacementSpec struct {
 	// Binding is a controller-owned, UID-fenced Raw execution assignment.
 	// It does not authorize execution without a matching Node reservation.
 	Binding *RawTaskBinding `json:"binding,omitempty"`
+	// DockerBinding is a controller-owned, UID-fenced Docker execution assignment.
+	// It is intentionally separate from the Raw contract so the two runtimes
+	// cannot accidentally consume each other's reservations.
+	DockerBinding *DockerTaskBinding `json:"dockerBinding,omitempty"`
 }
 
 // RuntimeKind 表示负责执行 Task 工作负载的 Runtime 类型。
@@ -159,4 +163,15 @@ type RawTaskBinding struct {
 	ClusterUID   string `json:"clusterUID"`
 	GroupDigest  string `json:"groupDigest"`
 	JobUID       string `json:"jobUID"`
+}
+
+// DockerTaskBinding identifies one exclusive Docker host allocation.
+type DockerTaskBinding struct {
+	TaskUID      string `json:"taskUID,omitempty"`
+	NodeName     string `json:"nodeName"`
+	NodeUID      string `json:"nodeUID"`
+	Incarnation  string `json:"incarnation"`
+	JobUID       string `json:"jobUID"`
+	ClusterUID   string `json:"clusterUID"`
+	AllocationID string `json:"allocationID"`
 }

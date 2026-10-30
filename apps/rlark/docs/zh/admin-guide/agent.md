@@ -7,6 +7,8 @@ Agent 运行在每个数据面集群中。`rlarkadm` 创建的 Kubernetes 部署
 - `rlark-agent` Deployment，以 `--mode=cluster` 运行，负责集群级同步。
 - `rlark-agent-node` DaemonSet，以 `--mode=node` 运行，负责节点网络和镜像预拉取。它只会调度到带有 `rlark.io/enabled=true` 标签的 Node，且仅这些 Node 会作为活动节点上报到管理面。RLark 创建的 Kubernetes Task 工作负载也强制要求该标签，因此用户提供的节点选择器不能将 Task 调度到其他恰好匹配的 Kubernetes Node。后续移除该标签或本地 Node 消失时，cluster Agent 会保留管理面的 Node 记录并将其标记为 `Offline`。
 
+固定 Docker 主机使用 `--agent-type=Docker --mode=cluster` 运行一个 root Agent。Agent 直接挂载宿主机 `/var/run/docker.sock`，不使用 Docker-in-Docker；通过 `--docker-node-ip` 提供可被同一私网其他 Docker 主机访问的地址。多个 Docker Agent 可以注册到同一个逻辑 Cluster，控制面会为每个副本选择一个 Node。`rlarkadm` 当前不会为固定 Docker 主机生成 systemd 安装包，请使用宿主机 systemd 或其他进程管理器维护 Agent。
+
 ### 前置条件
 
 - 具有 `kubectl` 访问权限的 Kubernetes 集群。
@@ -119,7 +121,7 @@ kubectl get cluster <cluster-id> -o jsonpath='{.spec.agentNamespace}{"\n"}'
 | 参数 | 默认值 | 说明 |
 |------|--------|------|
 | `--mode` | `cluster` | `cluster`、`node` 或 `both`；Kubernetes `rlarkadm` 使用分离的 cluster/node 工作负载 |
-| `--agent-type` | `Kubernetes` | Agent 类型 selector；Kubernetes 是通用运行时，Raw 支持实验性单节点进程路径，Docker 执行尚未实现 |
+| `--agent-type` | `Kubernetes` | Agent 类型 selector；Kubernetes 是通用运行时，Docker 预览支持 Ray/RLinf v1，Raw 支持实验性单节点进程路径 |
 | `--server-address` | `https://localhost:8443` | Server HTTPS/WSS 地址 |
 | `--metrics-bind-address` | `:8081` | 指标监听地址 |
 | `--image` | `""` | 网络 Sidecar 和 SSH 镜像 |
