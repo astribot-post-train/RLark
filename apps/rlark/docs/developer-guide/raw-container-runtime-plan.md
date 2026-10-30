@@ -38,11 +38,11 @@ rlarkadm generates configuration and a foreground start package; integrate with 
 
 - [x] Feature branch based on the approved parent branch.
 - [x] English and Chinese design/delivery plan.
-- [ ] Typed API, schema/deepcopy generation, compatibility and ownership tests.
-- [ ] Durable exclusive reservation, rollback and recovery.
-- [ ] Single-node supervised Raw execution through Host/Coordinator.
+- [x] Typed API, schema/deepcopy generation, compatibility and ownership tests for the preview contract.
+- [x] Durable exclusive reservation, rollback and recovery for one Task per Node.
+- [x] Single-node supervised Raw execution through Host/Coordinator and the polling Agent.
 - [ ] Multi-node Ray barriers and group lifecycle.
-- [ ] Node registration, credentials, capacity and environment validation.
+- [x] Node registration, scoped credentials, GPU authorization and environment validation for the preview path.
 - [ ] rlarkadm package, authorized logs, Gateway and UI integration.
 - [ ] Examples, runtime capability/deployment/operations documentation in both languages.
 - [ ] Focused and repository Go/web/doc checks; draft PR with evidence.
@@ -53,15 +53,15 @@ Cover competing reservations, partial rollback, controller restart, crash after 
 
 ## Current implementation evidence and remaining integration
 
-This branch wires an experimental Raw Agent Task watch, scoped heartbeat and Host/Coordinator path. It is not production Ray/RLinf Job support. Do not register production GPU nodes or submit training Jobs until reservation dispatch, GPU authorization and group barriers are verified. The generated `status.raw`, `status.reservation` and `spec.placement.binding` fields are experimental contracts; credentials and server-side status-field ownership must be implemented before exposing them to node identities.
+This branch wires an experimental Raw Agent polling loop, scoped heartbeat, restricted API, Job dispatch and Host/Coordinator path. It supports one trusted root process Task on one pre-provisioned Node; it is not production Ray/RLinf or multi-node Job support. Do not submit Ray/RLinf training until group barriers, port allocation and GPU/platform acceptance are complete. The generated `status.raw`, `status.reservation`, `spec.placement.binding` and `spec.placement.environment` fields are preview contracts.
 
 Implemented boundaries:
 
-- `rawallocation.Manager` uses fresh reads and optimistic status patches for whole-node group reservations, incremental commit, same-execution recovery and rollback of uncommitted claims. The environment is frozen in the reservation. Group validation checks current membership, node/container identity, heartbeat, cordon/drain, tenant, private network scope, distinct training IPs and non-overlapping GPU UUIDs within the group. It does not yet prove GPU exclusivity across separate groups or platform allocations.
+- `rawallocation.Manager` uses fresh reads and optimistic status patches for whole-node reservations, incremental commit, same-execution recovery and rollback of uncommitted claims. The environment is frozen in the reservation. Validation checks membership, node/container identity, heartbeat, cordon/drain, tenant, private network scope, distinct training IPs and non-overlapping GPU UUIDs across the RLark inventory. This does not prove platform entitlement exclusivity or protect against processes outside RLark.
 - `AssignTask` assigns an already committed reservation to one Task UID, idempotently. Allocation commit alone never authorizes an execution. Every node must have an assigned Task UID before node admission accepts the complete group. Admission also freshly verifies that every peer Task exists, is unsuspended, has its exact binding, and belongs to the same authoritative Job instance.
-- `raw.NodeAdmission` re-reads the Task, owning Job and all reservations. It rejects direct Tasks, stale generations, suspension, replacement containers, wrong tenant and incomplete groups. The caller must use an uncached privileged management client; production credential/RBAC wiring remains pending.
+- `raw.NodeAdmission` re-reads the Task, owning Job and all reservations. It rejects direct Tasks, stale generations, suspension, replacement containers, wrong tenant and incomplete groups. The restricted server API permits only scoped reads, heartbeat, status and claim writes; discovery, watches, tunnels and arbitrary resources are denied.
 - `raw.Provider` implements the existing Runtime Provider and inventory contracts. It delegates starts and cleanup to an independent supervisor; unconfirmed cleanup remains in progress. Raw Host claimant identities require the exact node UID and never adopt legacy claims.
-- `raw.NewCoordinator` and `raw.NewHost` assemble explicit workload adapters, versioned process-carrier decoding, node-scoped claims, execution and status through the existing framework. Process manifests contain typed API metadata whose namespace/name/UID must match the Task; validation and lowering have no process effects. Host restart, duplicate reconciliation, sibling-node isolation and suspension cleanup are tested. No built-in Ray adapter, watch/resync loop or production entrypoint is registered. Unknown observations project to `Pending` with `ExecutionKnown=False` and the observed Task generation; this does not prove the process has stopped.
+- `raw.NewCoordinator` and `raw.NewHost` assemble explicit workload adapters, versioned process-carrier decoding, node-scoped claims, execution and status through the existing framework. Process manifests contain typed API metadata whose namespace/name/UID must match the Task; validation and lowering have no process effects. Host restart, duplicate reconciliation, sibling-node isolation, suspension cleanup, Job replacement and ownership conflicts are tested. The Agent polls every five seconds to repair lost notifications. No built-in Ray adapter is registered. Unknown observations project to `Pending` with `ExecutionKnown=False`; this does not prove the process has stopped.
 - The Linux supervisor persists intent before starting, supports explicit cgroup and trusted-root process-tree backends, records results, and only accepts Task identity on a private Unix socket. Agent client reconnection is tested. A supervisor restart marks uncertain persisted work Unknown and blocks reuse; it does not adopt PIDs.
 
 ### Experimental supervisor prerequisites and build
@@ -89,12 +89,12 @@ Current logs retain only the first `logBytes` bytes per execution and discard ex
 
 ### Ordered integration work
 
-1. Complete production ownership enforcement: scoped bootstrap/enrollment, unique Node/incarnation persistence, narrowly scoped status writes, leases, capacity from cgroups/affinity, and authoritative GPU binding across all groups. Prove that two agents cannot impersonate the same Node.
-2. Add runtime-neutral replica validation and legacy conflict handling; expand Raw templates into stable per-replica Tasks. Create Tasks suspended/unbound, assign their UIDs, persist all bindings, then permit dispatch. Job-controller restart must reconstruct this sequence from current state.
-3. Assemble the Raw decoder, Ray adapter, provider, lifecycle and status mapping through Host/Coordinator. Reject unsupported Kubernetes environments, carriers and Pod-template features. Keep the existing Kubernetes path unchanged and covered by regression tests.
+1. Add measured CPU/memory capacity from effective cgroup or affinity limits, resource observations and operator-facing health.
+2. Add runtime-neutral multi-replica validation and legacy conflict handling. Expand a Raw Job into stable per-replica Tasks only after the single-node contract is accepted.
+3. Assemble the Ray adapter, typed configuration, readiness barriers, port reservations, exact membership and training result reporting. No training starts before every member is verified.
 4. Implement typed Ray configuration, preflight/ready barriers, bounded deadlines, per-network-scope port reservations, exact membership and training result reporting. No training before every assigned member is verified. Distinguish Unknown from failed, and stop all assigned members on confirmed group failure.
 5. Complete cleanup/retry ownership: retain reservations until every supervisor confirms cleanup, including Job deletion/restart and partially dispatched groups. Add auditable operator recovery for supervisor loss; absence of a heartbeat never releases capacity.
-6. Add the foreground enrollment/start package, authorized log route and bounded retention, resource observations, UI capability gates and per-replica progress. Add executable EN/ZH deployment and training examples only when this route works.
+6. Add the foreground enrollment/start package, authorized log route and bounded retention, UI capability gates and per-replica progress. Add executable EN/ZH deployment and training examples only when this route works.
 7. Run two prepared containers with the explicitly chosen supervision backend, authorized GPU UUIDs and supported Ray/RLinf versions. Verify busy ports, descendant cleanup, Agent restart, supervisor loss, network loss, head/worker failure and retained checkpoints. These platform tests have not been run locally.
 
 ### Local validation evidence

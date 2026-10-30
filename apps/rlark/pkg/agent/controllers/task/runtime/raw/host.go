@@ -104,5 +104,11 @@ func processStatus(result coordinator.ReconcileResult, snapshot coordination.Tas
 		known = metav1.ConditionFalse
 		reason = "ProcessStateUnknown"
 	}
-	return &host.StatusIntent{TaskUID: snapshot.Identity.ObjectUID, Generation: snapshot.Identity.Generation, Phase: string(phase), MessageSet: true, Message: observation.Message, Priority: host.StatusPriorityWorkload, Conditions: []host.ConditionMutation{{Condition: metav1.Condition{Type: "ExecutionKnown", Status: known, Reason: reason, Message: observation.Message, ObservedGeneration: snapshot.Identity.Generation}}}}
+	cleaned := metav1.ConditionFalse
+	if phase == api.TaskPhaseSucceeded || phase == api.TaskPhaseFailed {
+		cleaned = metav1.ConditionTrue
+	}
+	conditions := []host.ConditionMutation{{Condition: metav1.Condition{Type: "ExecutionCleaned", Status: cleaned, Reason: "SupervisedProcessObservation", ObservedGeneration: snapshot.Identity.Generation}}}
+	conditions = append(conditions, host.ConditionMutation{Condition: metav1.Condition{Type: "ExecutionKnown", Status: known, Reason: reason, Message: observation.Message, ObservedGeneration: snapshot.Identity.Generation}})
+	return &host.StatusIntent{TaskUID: snapshot.Identity.ObjectUID, Generation: snapshot.Identity.Generation, Phase: string(phase), MessageSet: true, Message: observation.Message, Priority: host.StatusPriorityWorkload, Conditions: conditions}
 }

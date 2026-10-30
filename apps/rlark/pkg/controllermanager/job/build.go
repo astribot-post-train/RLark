@@ -92,9 +92,11 @@ func buildTask(
 	taskName, namespace string,
 ) *rlarkv1alpha1.Task {
 	taskSpec := *t.TaskSpec.DeepCopy()
-	setNetworkEnvironment(&taskSpec, job.Spec.Domain)
-	setSSHEnvironment(&taskSpec, job.Spec.SSHPublicKey)
-	setRayExecution(&taskSpec, job, t)
+	if taskSpec.Runtime.Kind != "Raw" {
+		setNetworkEnvironment(&taskSpec, job.Spec.Domain)
+		setSSHEnvironment(&taskSpec, job.Spec.SSHPublicKey)
+		setRayExecution(&taskSpec, job, t)
+	}
 	taskSpec.Tags = make([]rlarkv1alpha1.JobTag, len(job.Spec.Tags))
 	for i, tag := range job.Spec.Tags {
 		taskSpec.Tags[i] = rlarkv1alpha1.JobTag{
@@ -105,6 +107,13 @@ func buildTask(
 
 	taskSpec.Suspended = job.Spec.Suspended
 
+	annotations := buildRayAnnotations(job, t)
+	if taskSpec.Runtime.Kind == "Raw" {
+		annotations = map[string]string{}
+		if restartedAt := job.Annotations[RestartedAtAnnotation]; restartedAt != "" {
+			annotations[RestartedAtAnnotation] = restartedAt
+		}
+	}
 	result := &rlarkv1alpha1.Task{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      taskName,
@@ -112,7 +121,7 @@ func buildTask(
 			Labels: map[string]string{
 				"rlinf.io/job": job.Name,
 			},
-			Annotations: utils.MergeAnnotations(buildRayAnnotations(job, t), map[string]string{
+			Annotations: utils.MergeAnnotations(annotations, map[string]string{
 				utils.ParentUIDAnnotation:     string(job.UID),
 				utils.ChildTemplateAnnotation: t.Name,
 			}),

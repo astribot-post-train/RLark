@@ -238,6 +238,53 @@ Both actions prefill the editor from the source Job and keep its roles, includin
 
 The source cluster is not stored on the Job itself. The editor resolves it from each role's node selector, so verify the cluster selection before resubmitting.
 
+## Experimental Raw process Jobs
+
+Raw jobs run one trusted process inside an administrator-provisioned GPU
+container. They do not pull an image, create a Docker container, or use a
+Docker socket. The Node must already be registered with `agentType: Raw`, an
+independent `raw-supervisor` must be running, and the requested environment and
+private training network must match the Node capability.
+
+The first Raw path supports exactly one process Task on one Node. GPU requests
+reserve the complete Node and the controller injects the authorized GPU UUIDs
+as `CUDA_VISIBLE_DEVICES`; RLark inventory checks do not prove cloud-provider
+GPU entitlement. Ray/RLinf multi-node groups, replica expansion, remote logs,
+and UI creation are not supported yet. Submit a Raw Job through the API with a
+preinstalled executable and working directory:
+
+```yaml
+apiVersion: rlinf.io/v1alpha1
+kind: Job
+metadata:
+  name: raw-smoke
+spec:
+  tasks:
+  - name: worker
+    role: Actor
+    placement:
+      environment: prepared-python
+      nodeSelector:
+        pool: gpu
+    runtime:
+      kind: Raw
+      name: raw-node
+    workload:
+      kind: raw.rlark.io/process
+      version: v1
+      carrier:
+        type: raw.rlark.io/process
+        version: v1
+      parameters:
+        argv: ["/opt/venv/bin/python", "-c", "print(42)"]
+        directory: /workspace/training
+        env: ["PATH=/opt/venv/bin:/usr/bin"]
+```
+
+The process runs as root in the existing container. Stop, restart, and delete
+wait for the supervisor to confirm cleanup before releasing the Node; an
+unknown cleanup result keeps the reservation to prevent overlap.
+
 ## Preflight Checklist
 
 Before submitting a job, verify the following:

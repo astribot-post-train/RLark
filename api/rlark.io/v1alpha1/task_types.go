@@ -14,6 +14,10 @@ type TaskRole string
 // TaskPlacementSpec describes scheduling constraints for the workload.
 type TaskPlacementSpec struct {
 	NodeSelector map[string]string `json:"nodeSelector,omitempty"`
+	// Environment selects the observed Raw node environment/profile. It is
+	// required for Raw Tasks so a placement cannot silently cross image or
+	// dependency boundaries.
+	Environment string `json:"environment,omitempty"`
 	// Binding is a controller-owned, UID-fenced Raw execution assignment.
 	// It does not authorize execution without a matching Node reservation.
 	Binding *RawTaskBinding `json:"binding,omitempty"`

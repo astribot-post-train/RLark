@@ -119,7 +119,7 @@ A legacy cluster that has not reconnected is not guessed or synthesized. Keep it
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--mode` | `cluster` | `cluster`, `node`, or `both`; Kubernetes `rlarkadm` uses separate cluster/node workloads |
-| `--agent-type` | `Kubernetes` | Agent type selector. Only Kubernetes has a workload execution path; Docker and Raw are scaffolding and cannot execute Tasks |
+| `--agent-type` | `Kubernetes` | Agent type selector. Kubernetes is the general runtime; Raw supports the experimental single-node process path; Docker execution is not implemented |
 | `--server-address` | `https://localhost:8443` | Server HTTPS/WSS address |
 | `--metrics-bind-address` | `:8081` | Metrics listen address |
 | `--image` | `""` | Network sidecar and SSH image |
@@ -127,6 +127,11 @@ A legacy cluster that has not reconnected is not guessed or synthesized. Keep it
 | `--task-runtime-resync-period` | `15m` | Base period for the bounded cluster-mode Task Runtime repair scan; intervals use 80–120% jitter, `0` disables it, and negative values are invalid in `cluster`/`both` mode; node-only mode accepts the shared flag but does not run the scanner |
 | `--enable-cross-cluster-direct` | `true` | Permit direct cross-cluster Pod routes |
 | `--containerd-socket` | `/run/containerd/containerd.sock` | Node Agent containerd socket |
+| `--raw-supervisor-socket` | unset | Private Unix socket for the independently managed Raw supervisor; required for Raw |
+| `--raw-training-ip` | unset | Explicit local private IPv4 used by Raw workloads; required for Raw |
+| `--raw-network-scope` | unset | Operator-authorized private network scope shared by Raw Nodes |
+| `--raw-environment` | unset | Preinstalled Raw workload environment/profile identifier |
+| `--raw-authorized-gpu-uuid` | unset | Explicitly authorized GPU UUID; repeat once per GPU |
 
 See [Configuration Reference](../reference/configuration.md#rlark-agent) for the complete list.
 

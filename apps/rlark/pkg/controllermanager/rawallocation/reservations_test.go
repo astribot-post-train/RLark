@@ -354,3 +354,29 @@ func TestGroupCapabilityDriftAndDuplicateGPUFailClosed(t *testing.T) {
 		})
 	}
 }
+
+// Independent singleton Jobs must not defeat exclusive GPU/address ownership.
+func TestSingletonAllocationRejectsOverlappingInventory(t *testing.T) {
+	for _, mode := range []string{"gpu", "address"} {
+		t.Run(mode, func(t *testing.T) {
+			m, req := fixture(t)
+			ctx := context.Background()
+			req.Nodes = req.Nodes[:1]
+			var peer api.Node
+			if err := m.Client.Get(ctx, client.ObjectKey{Namespace: "agents", Name: "b"}, &peer); err != nil {
+				t.Fatal(err)
+			}
+			if mode == "gpu" {
+				peer.Status.Raw.AuthorizedGPUUUIDs = []string{"GPU-a"}
+			} else {
+				peer.Status.Raw.TrainingIP = "10.0.0.1"
+			}
+			if err := m.Client.Status().Update(ctx, &peer); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := m.Reserve(ctx, req); !errors.Is(err, ErrUnavailable) {
+				t.Fatalf("overlap accepted: %v", err)
+			}
+		})
+	}
+}

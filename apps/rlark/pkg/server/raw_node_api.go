@@ -17,6 +17,7 @@ import (
 	"github.com/rlinf/rlark/apps/rlark/pkg/rawnode"
 	"github.com/rlinf/rlark/apps/rlark/pkg/tenant"
 	"github.com/rlinf/rlark/apps/rlark/pkg/utils"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -74,6 +75,10 @@ func (s *Server) handleRawNodeAPI(c *gin.Context) {
 	}
 	if c.Request.Method == http.MethodPatch && resource == "tasks" && name != "" && (sub == "" || sub == "status") {
 		s.patchRawTask(c, i, name, sub)
+		return
+	}
+	if c.Request.Method == http.MethodPatch && resource == "nodes" && name == i.Node && sub == "status" {
+		s.patchRawNodeStatus(c, i)
 		return
 	}
 	rawDenied(c)
@@ -311,6 +316,88 @@ func (s *Server) patchRawTask(c *gin.Context, i rawnode.Identity, name, sub stri
 	result.Kind = "Task"
 	c.JSON(http.StatusOK, result)
 }
+
+// patchRawNodeStatus accepts Kubernetes merge patches with caller-observed
+// resourceVersion. The server preserves all controller-owned status and metadata.
+func (s *Server) patchRawNodeStatus(c *gin.Context, i rawnode.Identity) {
+	current, err := s.validateRawNode(c.Request.Context(), i, true)
+	if err != nil {
+		rawAPIError(c, err)
+		return
+	}
+	data, err := io.ReadAll(http.MaxBytesReader(c.Writer, c.Request.Body, 1<<20))
+	if err != nil || c.ContentType() != string(types.MergePatchType) {
+		rawDenied(c)
+		return
+	}
+	if !rawPatchVersion(c.ContentType(), data, current.ResourceVersion) {
+		rawAPIError(c, apierrors.NewConflict(schema.GroupResource{Group: api.GroupVersion.Group, Resource: "nodes"}, i.Node, errors.New("explicit current resourceVersion required")))
+		return
+	}
+	original, err := json.Marshal(current)
+	if err != nil {
+		rawAPIError(c, err)
+		return
+	}
+	updated, err := jsonpatch.MergePatch(original, data)
+	if err != nil {
+		rawDenied(c)
+		return
+	}
+	var desired api.Node
+	decoder := json.NewDecoder(bytes.NewReader(updated))
+	decoder.DisallowUnknownFields()
+	if decoder.Decode(&desired) != nil {
+		rawDenied(c)
+		return
+	}
+	allowed := current.DeepCopy()
+	allowed.Status.Raw = desired.Status.Raw
+	allowed.Status.NodeInfo = desired.Status.NodeInfo
+	allowed.Status.Addresses = desired.Status.Addresses
+	allowed.Status.Capacity = desired.Status.Capacity
+	allowed.Status.Allocatable = desired.Status.Allocatable
+	allowed.Status.Used = desired.Status.Used
+	authorized, err := rawnode.AuthorizedCapability(current)
+	if err != nil || rawnode.ValidateCapability(desired.Status.Raw) != nil || !rawnode.SameCapability(authorized, desired.Status.Raw) || !equality.Semantic.DeepEqual(allowed, &desired) || !validRawResources(&desired) {
+		rawDenied(c)
+		return
+	}
+	// Capability replacement requires quiescing and re-enrolling the node. A
+	// delayed report cannot change the environment underneath a reservation.
+	if current.Status.Reservation != nil && !rawnode.SameCapability(current.Status.Raw, desired.Status.Raw) {
+		rawDenied(c)
+		return
+	}
+	result, err := s.rlarkClient.RlinfV1alpha1().Nodes(i.Namespace).UpdateStatus(c.Request.Context(), &desired, metav1.UpdateOptions{})
+	if err != nil {
+		rawAPIError(c, err)
+		return
+	}
+	result.APIVersion = api.GroupVersion.String()
+	result.Kind = "Node"
+	c.JSON(http.StatusOK, result)
+}
+
+func validRawResources(node *api.Node) bool {
+	gpu := corev1.ResourceName("nvidia.com/gpu")
+	quantity := node.Status.Capacity[gpu]
+	if quantity.CmpInt64(int64(len(node.Status.Raw.AuthorizedGPUUUIDs))) != 0 {
+		return false
+	}
+	for _, resources := range []corev1.ResourceList{node.Status.Capacity, node.Status.Allocatable, node.Status.Used} {
+		for name, value := range resources {
+			if name != corev1.ResourceCPU && name != corev1.ResourceMemory && name != gpu {
+				return false
+			}
+			capacity, ok := node.Status.Capacity[name]
+			if value.Sign() < 0 || !ok || value.Cmp(capacity) > 0 {
+				return false
+			}
+		}
+	}
+	return true
+}
 func validRawTaskStatus(t *api.Task, i rawnode.Identity) bool {
 	switch t.Status.Phase {
 	case "", api.TaskPhasePending, api.TaskPhaseRunning, api.TaskPhaseSucceeded, api.TaskPhaseFailed, api.TaskPhaseStopped:
@@ -323,7 +410,7 @@ func validRawTaskStatus(t *api.Task, i rawnode.Identity) bool {
 		}
 	}
 	for _, v := range t.Status.Conditions {
-		if v.Type == "ExecutionKnown" && (v.ObservedGeneration != t.Generation || (v.Status != metav1.ConditionTrue && v.Status != metav1.ConditionFalse && v.Status != metav1.ConditionUnknown) || v.Reason == "" || v.LastTransitionTime.IsZero()) {
+		if (v.Type == "ExecutionKnown" || v.Type == "ExecutionCleaned") && (v.ObservedGeneration != t.Generation || (v.Status != metav1.ConditionTrue && v.Status != metav1.ConditionFalse && v.Status != metav1.ConditionUnknown) || v.Reason == "" || v.LastTransitionTime.IsZero()) {
 			return false
 		}
 	}
@@ -360,20 +447,21 @@ func rawPatchVersion(contentType string, data []byte, version string) bool {
 }
 
 func validRawConditions(old, next *api.Task) bool {
-	// Only ExecutionKnown belongs to this Agent. Preserve controller conditions.
+	// Only execution observation/cleanup belong to this Agent. Preserve controller conditions.
 	withoutOwned := func(in []metav1.Condition) []metav1.Condition {
-		return slices.DeleteFunc(slices.Clone(in), func(v metav1.Condition) bool { return v.Type == "ExecutionKnown" })
+		return slices.DeleteFunc(slices.Clone(in), func(v metav1.Condition) bool { return v.Type == "ExecutionKnown" || v.Type == "ExecutionCleaned" })
 	}
 	if !slices.Equal(withoutOwned(old.Status.Conditions), withoutOwned(next.Status.Conditions)) {
 		return false
 	}
-	count := 0
+	seen := map[string]bool{}
 	for _, v := range next.Status.Conditions {
-		if v.Type == "ExecutionKnown" {
-			count++
+		if seen[v.Type] {
+			return false
 		}
+		seen[v.Type] = true
 	}
-	return count <= 1
+	return true
 }
 
 func validRawClaimMutation(old, next *api.Task, i rawnode.Identity) bool {
