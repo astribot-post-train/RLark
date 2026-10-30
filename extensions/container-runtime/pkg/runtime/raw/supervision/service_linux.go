@@ -51,17 +51,18 @@ type Config struct {
 // refuses to adopt processes after its own restart: only the same live supervisor
 // can prove process ownership. Persisted uncertain executions block all new work.
 type Service struct {
-	mu       sync.Mutex
-	config   Config
-	lock     *os.File
-	records  map[string]raw.Record
-	active   string
-	process  *exec.Cmd
-	done     chan struct{}
-	stopping bool
-	closed   bool
-	group    string
-	control  *os.File
+	mu           sync.Mutex
+	config       Config
+	lock         *os.File
+	records      map[string]raw.Record
+	pendingStops map[string]bool
+	active       string
+	process      *exec.Cmd
+	done         chan struct{}
+	stopping     bool
+	closed       bool
+	group        string
+	control      *os.File
 }
 
 // Status reports only occupancy, including uncertain persisted work.
@@ -405,10 +406,31 @@ func (s *Service) reap(k string, cmd *exec.Cmd, log *os.File) {
 }
 
 // Stop requests cleanup only while this supervisor still owns the execution.
+// An absent execution is durably cancelled before reporting cleanup, so a late
+// Ensure for that Task UID cannot start after the controller releases its lock.
 func (s *Service) Stop(ctx context.Context, t rt.TaskIdentity) (raw.Record, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if t.ObjectUID == "" || t.Logical.Validate() != nil {
+		return raw.Record{}, fault.New(fault.InvalidArgument, "Raw Task identity required")
+	}
 	r, err := s.observe(ctx, t)
+	if fault.Is(err, fault.NotFound) || err == nil && s.pendingStops[key(t)] {
+		r = raw.Record{Task: t, Phase: "Stopped", Cleaned: true, Deleted: true}
+		if err := s.persist(r); err != nil {
+			// Reject late Ensure and withhold proof even if rename or fsync
+			// partly succeeded. A later Stop retries cancellation persistence.
+			s.records[key(t)] = raw.Record{Task: t, Phase: "Unknown", Message: "Raw cancellation could not be persisted"}
+			if s.pendingStops == nil {
+				s.pendingStops = map[string]bool{}
+			}
+			s.pendingStops[key(t)] = true
+			return raw.Record{}, fmt.Errorf("persist Raw cancellation: %w", err)
+		}
+		s.records[key(t)] = r
+		delete(s.pendingStops, key(t))
+		return r, nil
+	}
 	if err != nil {
 		return raw.Record{}, err
 	}

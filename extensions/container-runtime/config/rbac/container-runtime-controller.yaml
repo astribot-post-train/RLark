@@ -1,0 +1,78 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: container-runtime-controller
+  namespace: rlark-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: container-runtime-controller
+rules:
+  - apiGroups: ["rlinf.io"]
+    resources: ["clusters", "nodes"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["rlinf.io"]
+    resources: ["jobs"]
+    verbs: ["get", "list", "watch", "patch"]
+  - apiGroups: ["rlinf.io"]
+    resources: ["tasks"]
+    verbs: ["get", "list", "watch", "create", "patch", "delete"]
+  - apiGroups: ["rlinf.io"]
+    resources: ["jobs/status"]
+    verbs: ["get", "patch"]
+  - apiGroups: ["rlinf.io"]
+    resources: ["jobs/finalizers", "tasks/finalizers"]
+    verbs: ["update"]
+  - apiGroups: ["containers.rlark.io"]
+    resources: ["containerclusters", "containernodes"]
+    verbs: ["get", "list", "watch", "patch"]
+  - apiGroups: ["containers.rlark.io"]
+    resources: ["containerjobs", "agentreleases"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["containers.rlark.io"]
+    resources: ["containerallocations"]
+    verbs: ["get", "list", "watch", "create", "patch", "delete"]
+  - apiGroups: ["containers.rlark.io"]
+    resources: ["containerclusters/status", "containernodes/status", "containerjobs/status", "agentreleases/status"]
+    verbs: ["get", "patch"]
+  - apiGroups: ["containers.rlark.io"]
+    resources: ["containerclusters/finalizers", "containernodes/finalizers", "containerallocations/finalizers"]
+    verbs: ["update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: container-runtime-controller
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: container-runtime-controller
+subjects:
+  - kind: ServiceAccount
+    name: container-runtime-controller
+    namespace: rlark-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: container-runtime-controller-leader
+  namespace: rlark-system
+rules:
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: container-runtime-controller-leader
+  namespace: rlark-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: container-runtime-controller-leader
+subjects:
+  - kind: ServiceAccount
+    name: container-runtime-controller
+    namespace: rlark-system

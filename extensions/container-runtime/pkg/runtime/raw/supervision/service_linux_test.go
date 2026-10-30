@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -85,6 +86,62 @@ func TestUncertainCleanupNeverCreatesTombstone(t *testing.T) {
 	r, err = s.Stop(context.Background(), task)
 	if err != nil || !r.Deleted {
 		t.Fatalf("duplicate stop failed: %+v %v", r, err)
+	}
+}
+
+func TestStopBeforeEnsurePersistsCancellationTombstone(t *testing.T) {
+	s, task := serviceFixture(t)
+	executable, err := filepath.EvalSymlinks("/bin/true")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.config.Executables = []string{executable}
+	s.config.WorkDirectories = []string{"/tmp"}
+	stopped, err := s.Stop(context.Background(), task)
+	if err != nil || !stopped.Deleted || !stopped.Cleaned {
+		t.Fatalf("stop-before-start did not persist tombstone: %+v %v", stopped, err)
+	}
+	if _, err := s.Ensure(context.Background(), task, raw.ProcessSpec{Argv: []string{executable}, Directory: "/tmp"}); !fault.Is(err, fault.Conflict) {
+		t.Fatalf("late Ensure bypassed cancellation tombstone: %v", err)
+	}
+	recovered, err := s.Observe(context.Background(), task)
+	if err != nil || !recovered.Deleted || !recovered.Cleaned {
+		t.Fatalf("tombstone was not observable: %+v %v", recovered, err)
+	}
+}
+
+func TestFailedCancellationPersistenceReturnsNoProofAndCanRetry(t *testing.T) {
+	s, task := serviceFixture(t)
+	state := s.config.StateDirectory
+	s.config.StateDirectory = filepath.Join(state, "missing", "directory")
+	if result, err := s.Stop(context.Background(), task); err == nil || result.Cleaned || result.Deleted {
+		t.Fatalf("failed cancellation returned cleanup proof: %+v %v", result, err)
+	}
+	if observed, err := s.Observe(context.Background(), task); err != nil || observed.Cleaned || observed.Deleted {
+		t.Fatalf("failed cancellation became observed cleanup proof: %+v %v", observed, err)
+	}
+	s.config.StateDirectory = state
+	result, err := s.Stop(context.Background(), task)
+	if err != nil || !result.Cleaned || !result.Deleted {
+		t.Fatalf("cancellation persistence did not recover: %+v %v", result, err)
+	}
+}
+
+func TestCancelledOrInvalidStopNeverPersistsProof(t *testing.T) {
+	for _, invalid := range []bool{false, true} {
+		t.Run(fmt.Sprintf("invalid=%t", invalid), func(t *testing.T) {
+			s, task := serviceFixture(t)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			if invalid {
+				task.ObjectUID = ""
+			} else {
+				cancel()
+			}
+			if result, err := s.Stop(ctx, task); err == nil || result.Cleaned || len(s.records) != 0 {
+				t.Fatalf("invalid cancellation produced proof: %+v %v", result, err)
+			}
+		})
 	}
 }
 
