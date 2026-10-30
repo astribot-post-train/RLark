@@ -57,6 +57,9 @@ spec:
                 - name
                 - uid
                 type: object
+                x-kubernetes-validations:
+                - message: referenced object instance is immutable
+                  rule: self == oldSelf
               environment:
                 type: string
               instanceID:
@@ -77,6 +80,9 @@ spec:
                 - name
                 - uid
                 type: object
+                x-kubernetes-validations:
+                - message: referenced object instance is immutable
+                  rule: self == oldSelf
               privateAddress:
                 description: Operator-provisioned capability; Agent visibility cannot
                   grant GPUs.

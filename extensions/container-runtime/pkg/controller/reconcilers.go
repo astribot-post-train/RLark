@@ -12,6 +12,7 @@ import (
 
 	ext "github.com/astribot-post-train/rlark/extensions/container-runtime/api/v1alpha1"
 	"github.com/astribot-post-train/rlark/extensions/container-runtime/pkg/ownership"
+	"github.com/astribot-post-train/rlark/extensions/container-runtime/pkg/rawnode"
 	native "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
 	nativejob "github.com/rlinf/rlark/apps/rlark/pkg/controllermanager/job"
 	"github.com/rlinf/rlark/apps/rlark/pkg/tenant"
@@ -26,6 +27,7 @@ import (
 )
 
 const clusterFinalizer = "containers.rlark.io/cluster-protection"
+const nodeFinalizer = "containers.rlark.io/node-protection"
 const repairInterval = 30 * time.Second
 
 var errInvalidBinding = errors.New("invalid companion binding")
@@ -170,6 +172,33 @@ func (r ContainerNodeReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	if err := r.Client.Get(ctx, req.NamespacedName, &v); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
+	if !v.DeletionTimestamp.IsZero() {
+		if !controllerutil.ContainsFinalizer(&v, nodeFinalizer) {
+			return ctrl.Result{}, nil
+		}
+		var allocations ext.ContainerAllocationList
+		if err := r.Client.List(ctx, &allocations); err != nil {
+			return ctrl.Result{}, err
+		}
+		for _, allocation := range allocations.Items {
+			if allocation.Spec.NodeRecordUID == string(v.UID) || allocation.Spec.Node == v.Spec.Node {
+				before := v.DeepCopy()
+				v.Status.Schedulable = false
+				condition(&v.Status.Conditions, v.Generation, "DeletionBlocked", true, "AllocationsRemain", "Allocation cleanup must finish before removing the container Node")
+				return persist(ctx, r.Client, before, &v)
+			}
+		}
+		before := v.DeepCopy()
+		controllerutil.RemoveFinalizer(&v, nodeFinalizer)
+		return ctrl.Result{}, r.Client.Patch(ctx, &v, client.MergeFromWithOptions(before, client.MergeFromWithOptimisticLock{}))
+	}
+	if !controllerutil.ContainsFinalizer(&v, nodeFinalizer) {
+		before := v.DeepCopy()
+		controllerutil.AddFinalizer(&v, nodeFinalizer)
+		if err := r.Client.Patch(ctx, &v, client.MergeFromWithOptions(before, client.MergeFromWithOptimisticLock{})); err != nil {
+			return ctrl.Result{}, err
+		}
+	}
 	before := v.DeepCopy()
 	validErr := r.validateNode(ctx, &v)
 	v.Status.ObservedGeneration = v.Generation
@@ -190,6 +219,9 @@ func (r ContainerNodeReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	return result, nil
 }
 func (r ContainerNodeReconciler) validateNode(ctx context.Context, v *ext.ContainerNode) error {
+	if err := rawnode.ValidateCapability(&native.RawNodeStatus{Incarnation: v.Spec.InstanceID, TrainingIP: v.Spec.PrivateAddress, NetworkScope: v.Spec.NetworkScope, Environment: v.Spec.Environment, AuthorizedGPUUUIDs: v.Spec.AuthorizedGPUUUIDs}); err != nil {
+		return invalidBinding("private IPv4 address, environment and authorized GPU UUIDs are required")
+	}
 	var cluster native.Cluster
 	var node native.Node
 	if err := getNative(ctx, r.Client, v.Spec.Cluster, &cluster); err != nil {

@@ -3,6 +3,7 @@ package v1alpha1
 import metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 // NativeObjectReference pins an extension record to one exact RLark object incarnation.
+// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="referenced object instance is immutable"
 type NativeObjectReference struct {
 	Namespace string `json:"namespace,omitempty"`
 	Name      string `json:"name"`
@@ -15,11 +16,13 @@ type Runtime string
 
 // ContainerCluster stores container-runtime settings for a native RLark Cluster.
 type ContainerClusterSpec struct {
-	Cluster            NativeObjectReference `json:"cluster"`
-	Runtime            Runtime               `json:"runtime"`
-	AgentNamespace     string                `json:"agentNamespace"`
-	TargetAgentRelease string                `json:"targetAgentRelease,omitempty"`
-	MaxUnavailable     int32                 `json:"maxUnavailable,omitempty"`
+	Cluster NativeObjectReference `json:"cluster"`
+	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="runtime is immutable"
+	Runtime Runtime `json:"runtime"`
+	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="authoritative namespace is immutable"
+	AgentNamespace     string `json:"agentNamespace"`
+	TargetAgentRelease string `json:"targetAgentRelease,omitempty"`
+	MaxUnavailable     int32  `json:"maxUnavailable,omitempty"`
 }
 type ContainerClusterStatus struct {
 	ObservedGeneration int64              `json:"observedGeneration,omitempty"`
@@ -100,8 +103,13 @@ type ContainerAllocationSpec struct {
 	Node           NativeObjectReference `json:"node"`
 	TenantID       string                `json:"tenantID"`
 	Generation     int64                 `json:"generation"`
+	JobGeneration  int64                 `json:"jobGeneration"`
 	ExecutionID    string                `json:"executionID"`
 	NodeInstanceID string                `json:"nodeInstanceID"`
+	PrivateAddress string                `json:"privateAddress"`
+	NetworkScope   string                `json:"networkScope"`
+	NodeRecordUID  string                `json:"nodeRecordUID"`
+	JobBindingUID  string                `json:"jobBindingUID"`
 	GPUUUIDs       []string              `json:"gpuUUIDs,omitempty"`
 }
 type ContainerAllocationStatus struct {

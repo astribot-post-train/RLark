@@ -45,6 +45,9 @@ spec:
             properties:
               agentNamespace:
                 type: string
+                x-kubernetes-validations:
+                - message: authoritative namespace is immutable
+                  rule: self == oldSelf
               cluster:
                 description: NativeObjectReference pins an extension record to one
                   exact RLark object incarnation.
@@ -59,6 +62,9 @@ spec:
                 - name
                 - uid
                 type: object
+                x-kubernetes-validations:
+                - message: referenced object instance is immutable
+                  rule: self == oldSelf
               maxUnavailable:
                 format: int32
                 type: integer
@@ -69,6 +75,9 @@ spec:
                 - Raw
                 - Docker
                 type: string
+                x-kubernetes-validations:
+                - message: runtime is immutable
+                  rule: self == oldSelf
               targetAgentRelease:
                 type: string
             required:
