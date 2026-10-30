@@ -21,6 +21,7 @@ import (
 
 func main() {
 	enableReservations := flag.Bool("enable-job-reservations", false, "Opt in to preview Raw process Task reservation and single-process lifecycle aggregation")
+	enableUpgrades := flag.Bool("enable-agent-upgrade-reservations", false, "Opt in to explicit AgentUpgrade node-lock reservations; does not install Agent binaries")
 	leaderElect := flag.Bool("leader-elect", true, "Use a Kubernetes Lease for controller leadership")
 	leaderNamespace := flag.String("leader-election-namespace", "rlark-system", "Namespace for the controller leadership Lease")
 	artifactDirectory := flag.String("artifact-directory", "", "Read-only verified Agent artifact directory (optional)")
@@ -64,6 +65,15 @@ func main() {
 			fail(fmt.Errorf("create uncached Job reservation client: %w", err))
 		}
 		if err := (&containercontroller.JobReservationReconciler{Client: direct}).SetupWithManager(mgr); err != nil {
+			fail(err)
+		}
+	}
+	if *enableUpgrades {
+		direct, err := client.New(config, client.Options{Scheme: scheme})
+		if err != nil {
+			fail(fmt.Errorf("create uncached Agent upgrade client: %w", err))
+		}
+		if err := (&containercontroller.AgentUpgradeReconciler{Client: direct}).SetupWithManager(mgr); err != nil {
 			fail(err)
 		}
 	}

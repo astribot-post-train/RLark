@@ -95,6 +95,11 @@ func (s TaskService) assignment(ctx context.Context, id Identity) (*Assignment, 
 	if a.UID == "" || a.Generation < 1 || a.Spec.Cluster != n.Spec.Cluster || a.Spec.Node != n.Spec.Node || a.Spec.NodeRecordUID != string(n.UID) || a.Spec.NodeInstanceID != n.Spec.InstanceID || a.Spec.PrivateAddress != n.Spec.PrivateAddress || a.Spec.NetworkScope != n.Spec.NetworkScope || a.Spec.TenantID != id.TenantID || tenant.IDOf(&a) != id.TenantID || !sameGPUSet(a.Spec.GPUUUIDs, n.Spec.AuthorizedGPUUUIDs) || !controllerutil.ContainsFinalizer(&a, companion.Finalizer) {
 		return nil, ErrIdentity
 	}
+	// An upgrade occupies the same node lock and carries no workload Task.
+	// Returning no assignment never authorizes upgrade installation or cleanup.
+	if a.Spec.Upgrade != nil {
+		return nil, nil
+	}
 	var task native.Task
 	if err := s.Reporter.Client.Get(ctx, client.ObjectKey{Namespace: a.Spec.Task.Namespace, Name: a.Spec.Task.Name}, &task); err != nil {
 		return nil, err

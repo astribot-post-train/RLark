@@ -131,24 +131,69 @@ spec:
                   rule: self == oldSelf
               tenantID:
                 type: string
+              upgrade:
+                description: Upgrade is absent for legacy and canonical workload allocations.
+                properties:
+                  operation:
+                    description: NativeObjectReference pins an extension record to
+                      one exact RLark object incarnation.
+                    properties:
+                      name:
+                        type: string
+                      namespace:
+                        type: string
+                      uid:
+                        type: string
+                    required:
+                    - name
+                    - uid
+                    type: object
+                    x-kubernetes-validations:
+                    - message: referenced object instance is immutable
+                      rule: self == oldSelf
+                  release:
+                    description: NativeObjectReference pins an extension record to
+                      one exact RLark object incarnation.
+                    properties:
+                      name:
+                        type: string
+                      namespace:
+                        type: string
+                      uid:
+                        type: string
+                    required:
+                    - name
+                    - uid
+                    type: object
+                    x-kubernetes-validations:
+                    - message: referenced object instance is immutable
+                      rule: self == oldSelf
+                  sha256:
+                    pattern: ^[a-f0-9]{64}$
+                    type: string
+                required:
+                - operation
+                - release
+                - sha256
+                type: object
             required:
             - cluster
-            - executionID
-            - generation
-            - job
-            - jobBindingUID
-            - jobGeneration
             - networkScope
             - node
             - nodeInstanceID
             - nodeRecordUID
             - privateAddress
-            - task
             - tenantID
             type: object
             x-kubernetes-validations:
             - message: allocation identity is immutable
               rule: self == oldSelf
+            - message: allocation must identify either an upgrade operation or a workload
+                Task
+              rule: 'has(self.upgrade) ? (!has(self.job) && !has(self.task) && !has(self.executionID)
+                && !has(self.jobBindingUID) && !has(self.generation) && !has(self.jobGeneration))
+                : (has(self.job) && has(self.task) && has(self.executionID) && has(self.jobBindingUID)
+                && has(self.generation) && has(self.jobGeneration))'
           status:
             properties:
               cleanupConfirmed:

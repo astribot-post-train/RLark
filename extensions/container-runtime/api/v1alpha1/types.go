@@ -98,21 +98,34 @@ type ContainerNodeList struct {
 }
 
 // +kubebuilder:validation:XValidation:rule="self == oldSelf",message="allocation identity is immutable"
+// +kubebuilder:validation:XValidation:rule="has(self.upgrade) ? (!has(self.job) && !has(self.task) && !has(self.executionID) && !has(self.jobBindingUID) && !has(self.generation) && !has(self.jobGeneration)) : (has(self.job) && has(self.task) && has(self.executionID) && has(self.jobBindingUID) && has(self.generation) && has(self.jobGeneration))",message="allocation must identify either an upgrade operation or a workload Task"
 type ContainerAllocationSpec struct {
-	Cluster        NativeObjectReference `json:"cluster"`
-	Job            NativeObjectReference `json:"job"`
-	Task           NativeObjectReference `json:"task"`
+	Cluster NativeObjectReference `json:"cluster"`
+	// Upgrade is absent for legacy and canonical workload allocations.
+	Upgrade *UpgradeAllocation `json:"upgrade,omitempty"`
+	// +optional
+	Job NativeObjectReference `json:"job,omitzero"`
+	// +optional
+	Task           NativeObjectReference `json:"task,omitzero"`
 	Node           NativeObjectReference `json:"node"`
 	TenantID       string                `json:"tenantID"`
-	Generation     int64                 `json:"generation"`
-	JobGeneration  int64                 `json:"jobGeneration"`
-	ExecutionID    string                `json:"executionID"`
+	Generation     int64                 `json:"generation,omitempty"`
+	JobGeneration  int64                 `json:"jobGeneration,omitempty"`
+	ExecutionID    string                `json:"executionID,omitempty"`
 	NodeInstanceID string                `json:"nodeInstanceID"`
 	PrivateAddress string                `json:"privateAddress"`
 	NetworkScope   string                `json:"networkScope"`
 	NodeRecordUID  string                `json:"nodeRecordUID"`
-	JobBindingUID  string                `json:"jobBindingUID"`
+	JobBindingUID  string                `json:"jobBindingUID,omitempty"`
 	GPUUUIDs       []string              `json:"gpuUUIDs,omitempty"`
+}
+
+// UpgradeAllocation pins a shared node lock to one exact upgrade operation.
+type UpgradeAllocation struct {
+	Operation NativeObjectReference `json:"operation"`
+	Release   NativeObjectReference `json:"release"`
+	// +kubebuilder:validation:Pattern="^[a-f0-9]{64}$"
+	SHA256    string                `json:"sha256"`
 }
 type ContainerAllocationStatus struct {
 	ObservedGeneration int64              `json:"observedGeneration,omitempty"`
@@ -205,4 +218,49 @@ type AgentReleaseList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
 	Items           []AgentRelease `json:"items"`
+}
+
+// AgentUpgradeSpec is the immutable intent for one node upgrade. Its object
+// UID is the operation-instance identity; its deterministic name serializes
+// all operations for one native Cluster.
+// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="upgrade operation identity is immutable"
+type AgentUpgradeSpec struct {
+	Cluster       NativeObjectReference `json:"cluster"`
+	ClusterRecord NativeObjectReference `json:"clusterRecord"`
+	NodeRecord    NativeObjectReference `json:"nodeRecord"`
+	Release       NativeObjectReference `json:"release"`
+	ReleaseSpec   AgentReleaseSpec      `json:"releaseSpec"`
+	TenantID      string                `json:"tenantID"`
+	InstanceID    string                `json:"instanceID"`
+	CredentialID  string                `json:"credentialID"`
+	FromVersion   string                `json:"fromVersion"`
+}
+
+// AgentUpgradeStatus separates reservation, application and terminal proof.
+type AgentUpgradeStatus struct {
+	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
+	// +kubebuilder:validation:Enum=Pending;Reserved;Applying;Succeeded;RolledBack;Failed;Cancelled
+	Phase      string                 `json:"phase,omitempty"`
+	Allocation *NativeObjectReference `json:"allocation,omitempty"`
+	StartedAt  *metav1.Time           `json:"startedAt,omitempty"`
+	Conditions []metav1.Condition     `json:"conditions,omitempty"`
+}
+
+// +kubebuilder:object:root=true
+// +kubebuilder:subresource:status
+// +kubebuilder:resource:scope=Namespaced
+// AgentUpgrade is an identifiable operation and exclusive per-Cluster gate.
+type AgentUpgrade struct {
+	metav1.TypeMeta   `json:",inline"`
+	metav1.ObjectMeta `json:"metadata,omitempty"`
+	Spec              AgentUpgradeSpec   `json:"spec"`
+	Status            AgentUpgradeStatus `json:"status,omitempty"`
+}
+
+// +kubebuilder:object:root=true
+// AgentUpgradeList contains AgentUpgrade objects.
+type AgentUpgradeList struct {
+	metav1.TypeMeta `json:",inline"`
+	metav1.ListMeta `json:"metadata,omitempty"`
+	Items           []AgentUpgrade `json:"items"`
 }

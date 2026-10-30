@@ -1,0 +1,262 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.18.0
+  name: agentupgrades.containers.rlark.io
+spec:
+  group: containers.rlark.io
+  names:
+    kind: AgentUpgrade
+    listKind: AgentUpgradeList
+    plural: agentupgrades
+    singular: agentupgrade
+  scope: Namespaced
+  versions:
+  - name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: AgentUpgrade is an identifiable operation and exclusive per-Cluster
+          gate.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: |-
+              AgentUpgradeSpec is the immutable intent for one node upgrade. Its object
+              UID is the operation-instance identity; its deterministic name serializes
+              all operations for one native Cluster.
+            properties:
+              cluster:
+                description: NativeObjectReference pins an extension record to one
+                  exact RLark object incarnation.
+                properties:
+                  name:
+                    type: string
+                  namespace:
+                    type: string
+                  uid:
+                    type: string
+                required:
+                - name
+                - uid
+                type: object
+                x-kubernetes-validations:
+                - message: referenced object instance is immutable
+                  rule: self == oldSelf
+              clusterRecord:
+                description: NativeObjectReference pins an extension record to one
+                  exact RLark object incarnation.
+                properties:
+                  name:
+                    type: string
+                  namespace:
+                    type: string
+                  uid:
+                    type: string
+                required:
+                - name
+                - uid
+                type: object
+                x-kubernetes-validations:
+                - message: referenced object instance is immutable
+                  rule: self == oldSelf
+              credentialID:
+                type: string
+              fromVersion:
+                type: string
+              instanceID:
+                type: string
+              nodeRecord:
+                description: NativeObjectReference pins an extension record to one
+                  exact RLark object incarnation.
+                properties:
+                  name:
+                    type: string
+                  namespace:
+                    type: string
+                  uid:
+                    type: string
+                required:
+                - name
+                - uid
+                type: object
+                x-kubernetes-validations:
+                - message: referenced object instance is immutable
+                  rule: self == oldSelf
+              release:
+                description: NativeObjectReference pins an extension record to one
+                  exact RLark object incarnation.
+                properties:
+                  name:
+                    type: string
+                  namespace:
+                    type: string
+                  uid:
+                    type: string
+                required:
+                - name
+                - uid
+                type: object
+                x-kubernetes-validations:
+                - message: referenced object instance is immutable
+                  rule: self == oldSelf
+              releaseSpec:
+                properties:
+                  architecture:
+                    type: string
+                  artifactPath:
+                    type: string
+                  os:
+                    type: string
+                  protocol:
+                    type: string
+                  sha256:
+                    pattern: ^[a-f0-9]{64}$
+                    type: string
+                  version:
+                    type: string
+                required:
+                - architecture
+                - artifactPath
+                - os
+                - protocol
+                - sha256
+                - version
+                type: object
+                x-kubernetes-validations:
+                - message: release artifacts are immutable
+                  rule: self == oldSelf
+              tenantID:
+                type: string
+            required:
+            - cluster
+            - clusterRecord
+            - credentialID
+            - fromVersion
+            - instanceID
+            - nodeRecord
+            - release
+            - releaseSpec
+            - tenantID
+            type: object
+            x-kubernetes-validations:
+            - message: upgrade operation identity is immutable
+              rule: self == oldSelf
+          status:
+            description: AgentUpgradeStatus separates reservation, application and
+              terminal proof.
+            properties:
+              allocation:
+                description: NativeObjectReference pins an extension record to one
+                  exact RLark object incarnation.
+                properties:
+                  name:
+                    type: string
+                  namespace:
+                    type: string
+                  uid:
+                    type: string
+                required:
+                - name
+                - uid
+                type: object
+                x-kubernetes-validations:
+                - message: referenced object instance is immutable
+                  rule: self == oldSelf
+              conditions:
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+              observedGeneration:
+                format: int64
+                type: integer
+              phase:
+                enum:
+                - Pending
+                - Reserved
+                - Applying
+                - Succeeded
+                - RolledBack
+                - Failed
+                - Cancelled
+                type: string
+              startedAt:
+                format: date-time
+                type: string
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
