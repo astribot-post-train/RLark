@@ -74,3 +74,8 @@ patch and retained receipt. Identical operation retries preserve later suspensio
 and completion. The typed UI keeps uncertain process input only in memory and
 never accepts GPU visibility overrides. This remains an opt-in preview; see the
 paired console documents for API contracts, recovery and cloud acceptance limits.
+
+The console now provides explicitly enabled Raw node registration with retained
+operation IDs and exact Cluster UID preconditions. Certificate/package export
+stays on the administrator machine; see the paired console documents for the
+contract and cloud acceptance boundaries.

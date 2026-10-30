@@ -17,6 +17,8 @@ import {
   type JobSummary,
   type RawJobRequest,
   type Node,
+  type NodeRegistration,
+  type RegisteredNode,
 } from "./api";
 import {
   clusterState,
@@ -25,8 +27,10 @@ import {
   nodeState,
   logText as decodeLogText,
   rawJobIntent,
+  nodeRegistrationIntent,
 } from "./models";
 import { JobsPanel } from "./JobsPanel";
+import { NodeRegistrationPanel } from "./NodeRegistrationPanel";
 import "./style.css";
 const labels = {
   zh: {
@@ -38,6 +42,16 @@ const labels = {
     empty: "没有容器集群",
     select: "选择集群查看节点和升级状态",
     nodes: "节点",
+    registerNode: "登记已有容器",
+    nodeName: "节点名称",
+    instanceID: "已核验的容器实例身份",
+    privateAddress: "私网 IPv4 地址",
+    networkScope: "网络范围",
+    gpuInput: "平台授权 GPU UUID（JSON 字符串数组）",
+    registrationHint: "登记硬件授权后，在管理员机器使用 container-runtime-admin node-package 制包。安装并收到新鲜心跳后才会就绪；请先核验实例与 GPU 授权。",
+    registrationPending: "登记结果待确认。保存 UUID 和原始输入，重试相同请求。切换集群已禁用；刷新或退出会丢失内存请求。",
+    registrationDone: "节点登记已确认；请单独核对安装和心跳。以下为 node-package 的 node 身份字段：",
+    invalidNode: "请填写有效节点名、实例身份、私网 IPv4、环境、网络范围及不重复的授权 GPU JSON 数组。",
     releases: "Agent 版本",
     allocations: "资源预留",
     upgrades: "升级操作",
@@ -78,7 +92,7 @@ const labels = {
     targetHint:
       "目标是持续期望状态。清空目标只暂停新升级，不取消正在应用的操作。",
     onboarding:
-      "节点加入与安装包导出请使用 container-runtime-admin；Raw 日志需单独启用。Ray/RLinf 多节点和 Docker Engine 执行尚未验收。",
+      "节点登记入口需管理员显式启用；安装包导出请使用 container-runtime-admin。Raw 日志需单独启用。Ray/RLinf 多节点和 Docker Engine 执行尚未验收。",
     logs: "读取日志",
     logLoading: "读取中…",
     logUnavailable: "日志不可用",
@@ -118,6 +132,16 @@ const labels = {
     empty: "No container clusters",
     select: "Select a cluster to inspect nodes and upgrades",
     nodes: "Nodes",
+    registerNode: "Register existing container",
+    nodeName: "Node name",
+    instanceID: "Verified container incarnation",
+    privateAddress: "Private IPv4 address",
+    networkScope: "Network scope",
+    gpuInput: "Platform-authorized GPU UUIDs (JSON string array)",
+    registrationHint: "After authorizing inventory, use container-runtime-admin node-package on the administrator machine. Installation and a fresh heartbeat are required for readiness. Verify incarnation and GPU entitlement first.",
+    registrationPending: "Registration is unconfirmed. Retain the UUID and exact input and retry. Cluster switching is disabled; refresh or sign out loses the in-memory request.",
+    registrationDone: "Node registration confirmed; verify installation and heartbeat separately. Use these node identity fields in node-package:",
+    invalidNode: "Provide a valid node name, incarnation, private IPv4, environment, network scope and unique authorized GPU JSON array.",
     releases: "Agent releases",
     allocations: "Allocations",
     upgrades: "Upgrade operations",
@@ -159,7 +183,7 @@ const labels = {
     targetHint:
       "The target is durable intent. Clearing it pauses new upgrades; it does not cancel an applying operation.",
     onboarding:
-      "Use container-runtime-admin for node join and package export. Raw logs require separate enablement. Multi-node Ray/RLinf and Docker Engine execution are not accepted yet.",
+      "Node registration requires administrator enablement. Use container-runtime-admin for package export. Raw logs require separate enablement. Multi-node Ray/RLinf and Docker Engine execution are not accepted yet.",
     logs: "Read logs",
     logLoading: "Reading…",
     logUnavailable: "Logs unavailable",
@@ -246,6 +270,9 @@ function App() {
   const [logLoading, setLogLoading] = useState(false);
   const [showJob, setShowJob] = useState(false);
   const [jobIntent, setJobIntent] = useState<RawJobRequest>();
+  const [showNodeRegistration, setShowNodeRegistration] = useState(false);
+  const [nodeIntent, setNodeIntent] = useState<NodeRegistration>();
+  const [registeredNode, setRegisteredNode] = useState<RegisteredNode>();
   const logRequest = useRef<AbortController | undefined>(undefined);
   const pending = useRef(new Set<AbortController>());
   const listGate = useRef(new LoadGate());
@@ -278,6 +305,9 @@ function App() {
     setJobs(undefined);
     setShowJob(false);
     setJobIntent(undefined);
+    setNodeIntent(undefined);
+    setShowNodeRegistration(false);
+    setRegisteredNode(undefined);
     setSelection(undefined);
     logRequest.current?.abort();
     setLogText(undefined);
@@ -319,6 +349,8 @@ function App() {
     setDetail(undefined);
     setJobs(undefined);
     setShowJob(false);
+    setShowNodeRegistration(false);
+    setRegisteredNode(undefined);
   }, [client, selection]);
   useEffect(() => {
     if (!client || !selection) return;
@@ -442,7 +474,7 @@ function App() {
   };
   const create = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!client || jobIntent) return;
+    if (!client || jobIntent || nodeIntent) return;
     const data = new FormData(event.currentTarget);
     const retained: ClusterIntent = intent ?? {
       operationID: crypto.randomUUID(),
@@ -467,12 +499,12 @@ function App() {
         /* No credentials were persisted. */
       }
       setShowCreate(false);
-      if (!jobIntent) setSelection(created);
+      if (!jobIntent && !nodeIntent) setSelection(created);
     });
   };
   const submitJob = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!client || !selection || !detail) return;
+    if (!client || !selection || !detail || nodeIntent || intent) return;
     const data = new FormData(event.currentTarget);
     let request: RawJobRequest;
     try {
@@ -515,6 +547,38 @@ function App() {
       if (signal.aborted) return;
       setJobIntent(undefined);
       setShowJob(false);
+    });
+  };
+  const registerNode = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!client || !selection || !detail || jobIntent || intent) return;
+    const data = new FormData(event.currentTarget);
+    let request: NodeRegistration;
+    try {
+      request = nodeIntent ?? nodeRegistrationIntent(crypto.randomUUID(), detail.cluster.uid, {
+        name: String(data.get("name") || ""), instanceID: String(data.get("instanceID") || ""),
+        privateAddress: String(data.get("privateAddress") || ""), environment: String(data.get("environment") || ""),
+        networkScope: String(data.get("networkScope") || ""), gpuText: String(data.get("gpus") || "[]"),
+      });
+      if (request.clusterUID !== detail.cluster.uid || !detail.nodeRegistrationEnabled) throw new Error();
+    } catch {
+      setError(t.invalidNode);
+      return;
+    }
+    setNodeIntent(request);
+    setRegisteredNode(undefined);
+    void mutate(async (signal) => {
+      try {
+        const result = await client.registerNode(selection.namespace, selection.name, request, signal);
+        if (signal.aborted) return;
+        setRegisteredNode(result);
+        setNodeIntent(undefined);
+        setShowNodeRegistration(false);
+      } catch (e) {
+        // Only API validation before provisioning has no possible effects.
+        if (!signal.aborted && e instanceof APIError && e.status === 400) setNodeIntent(undefined);
+        throw e;
+      }
     });
   };
   return (
@@ -565,7 +629,7 @@ function App() {
               <div className="actions">
                 <h2>{t.title}</h2>
                 <button
-                  disabled={writing || !!jobIntent}
+                  disabled={writing || !!jobIntent || !!nodeIntent}
                   onClick={() => setShowCreate((v) => !v)}
                 >
                   ＋
@@ -580,7 +644,7 @@ function App() {
               ) : (
                 clusters.map((c) => (
                   <button
-                    disabled={writing || !!jobIntent}
+                    disabled={writing || !!jobIntent || !!nodeIntent}
                     className={`cluster ${selection?.name === c.name && selection.namespace === c.namespace ? "selected" : ""}`}
                     key={c.uid}
                     onClick={() => {
@@ -747,7 +811,7 @@ function App() {
                   <JobsPanel
                     detail={detail}
                     t={t}
-                    writing={writing}
+                    writing={writing || !!nodeIntent || !!intent}
                     showJob={showJob}
                     jobIntent={jobIntent}
                     jobsLoading={jobsLoading}
@@ -765,6 +829,11 @@ function App() {
                           );
                         });
                     }}
+                  />
+                  <NodeRegistrationPanel
+                    detail={detail} t={t} writing={writing} blocked={!!jobIntent || !!intent}
+                    open={showNodeRegistration} intent={nodeIntent} result={registeredNode}
+                    onToggle={() => setShowNodeRegistration((v) => !v)} onSubmit={registerNode}
                   />
                   <section className="panel">
                     <h3>{t.nodes}</h3>

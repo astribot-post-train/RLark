@@ -1,4 +1,4 @@
-import type { Cluster, Node, RawJobRequest } from "./api";
+import type { Cluster, Node, RawJobRequest, NodeRegistration } from "./api";
 
 // Explicit arrays preserve whitespace and empty arguments without shell parsing
 // or inheriting the browser/Agent environment. Server validation is authoritative.
@@ -100,4 +100,29 @@ export class LoadGate {
   cancel(): void {
     this.generation++;
   }
+}
+
+// Registration authorizes existing hardware. Never infer GPU entitlement from
+// an empty list or silently change incarnation/private network identity.
+export function nodeRegistrationIntent(
+  operationID: string,
+  clusterUID: string,
+  fields: { name: string; instanceID: string; privateAddress: string; environment: string; networkScope: string; gpuText: string },
+): NodeRegistration {
+  const authorizedGPUUUIDs: unknown = JSON.parse(fields.gpuText);
+  const octets = fields.privateAddress.split(".");
+  const privateIPv4 = octets.length === 4 && octets.every((v) => /^(0|[1-9][0-9]{0,2})$/.test(v) && Number(v) <= 255) &&
+    (octets[0] === "10" || (octets[0] === "172" && Number(octets[1]) >= 16 && Number(octets[1]) <= 31) || (octets[0] === "192" && octets[1] === "168"));
+  if (
+    !operationID || !clusterUID || fields.name.length > 253 ||
+    !fields.name.split(".").every((v) => /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(v)) ||
+    !fields.instanceID.trim() || !fields.environment.trim() || !fields.networkScope.trim() || !privateIPv4 ||
+    !Array.isArray(authorizedGPUUUIDs) || !authorizedGPUUUIDs.length ||
+    !authorizedGPUUUIDs.every((v) => typeof v === "string" && v.startsWith("GPU-") && !/[\s,]/.test(v)) ||
+    new Set(authorizedGPUUUIDs).size !== authorizedGPUUUIDs.length
+  ) throw new Error("Invalid node registration");
+  const { gpuText: _gpuText, ...identity } = fields;
+  const value = { operationID, clusterUID, ...identity, authorizedGPUUUIDs: [...authorizedGPUUUIDs].sort() };
+  if (new TextEncoder().encode(JSON.stringify(value)).length > 65536) throw new Error("Node registration exceeds request limit");
+  return value;
 }

@@ -51,7 +51,9 @@ TLS 或仅监听回环地址的反向代理。认证响应设置 `Cache-Control:
 401；已认证但不是管理员返回 403。
 
 浏览器只接收类型化摘要，不接收 Secret、证书路径、私钥或管理 kubeconfig。
-节点加入和安装包导出仍是管理员 CLI 操作；UI 只展示节点状态，不成为注册通道。
+启用 `--enable-node-registration=true` 并安装附加登记 RBAC 后，管理员可以在选定集群
+页面声明已有 Raw 节点。证书/安装包导出仍在管理员 CLI 完成，浏览器不会成为接入或
+签名通道。
 
 ## UI 状态与失败处理
 
@@ -119,8 +121,13 @@ bin/container-runtime-console \
   --kubeconfig=/private/console.kubeconfig \
   --gateway-jwt-key-file=/private/gateway-jwt.key \
   --gateway-origin=http://127.0.0.1:19000 \
-  --ui-directory=ui/dist
+  --ui-directory=ui/dist \
+  --enable-node-registration=true
 ```
+
+启用该开关前，先与基础控制台角色一起应用
+`extensions/container-runtime/config/rbac/container-runtime-console-registration.yaml`；
+关闭登记能力时同时移除附加绑定。
 
 打开 `http://127.0.0.1:9445/` 并用管理员登录。HTTP 只允许显式回环 IP；其他
 地址必须提供 `--tls-cert` 和 `--tls-key`。远程 Gateway 也必须使用系统 CA
@@ -129,7 +136,7 @@ bin/container-runtime-console \
 Node.js 24。
 
 预览 UI 创建 Raw 集群。API/CLI 也能创建 Docker 资源记录，但不代表 Docker
-Engine 注册/执行已支持。节点加入、安装包导出、产物发布、drain 仍通过
+Engine 注册/执行已支持。节点登记仅在显式启用的管理员入口提供；安装包导出、产物发布、drain 仍通过
 CLI 或运维流程完成。allocation 行保留其 Job 引用；可选 Raw Job 面板单独列出经过
 验证的绑定 Job、提交单进程和记录暂停意图，不提供历史归档。
 
@@ -302,3 +309,48 @@ Running，以精确 UID/resourceVersion 暂停，等待 Stopped 和 allocation �
 扩展测试/vet/build、submission/console race 测试、11 项 UI 传输/模型测试、
 UI 生产构建与严格双语文档构建通过。仓库 `make test-go` 通过；增量 lint 零问题，
 全仓库 lint 仍被原生 RLark 中的 30 项既有发现阻塞。
+
+## 管理员节点登记
+
+本增量在选定集群的详情页提供显式启用的已有 Raw 容器登记入口，API/UI 及失败/恢复
+测试已覆盖；云端接入和 Agent 安装包验收仍是独立的运维门槛。启用
+`--enable-node-registration=true`，并安装附加权限
+`extensions/container-runtime/config/rbac/container-runtime-console-registration.yaml`。
+默认控制台没有登记路由和 Node 创建权限。附加角色仅增加原生 Node 与
+ContainerNode 创建，不增加 Secret、签名、status、删除、派发或凭据导出权限。
+
+`POST /api/v1/container-runtime/clusters/{namespace}/{cluster}/nodes` 要求管理员
+JWT 和严格 JSON 请求体：
+
+```json
+{
+  "operationID": "5b70ee0b-563c-4bc9-8117-58e80ba70f75",
+  "clusterUID": "replace-with-current-containercluster-uid",
+  "name": "cloud-gpu-2",
+  "instanceID": "replace-with-verified-container-incarnation",
+  "privateAddress": "10.0.3.86",
+  "environment": "rlinf-pi05",
+  "networkScope": "ksyun-private",
+  "authorizedGPUUUIDs": ["GPU-replace-with-platform-authorized-uuid"]
+}
+```
+
+`clusterUID` 是 companion UID 前置条件，不是原生 Cluster UID。服务端读取精确
+原生绑定、namespace 与独立租户；请求自行携带租户/原生引用会被拒绝。登记仅支持
+已有容器 Raw 模式。先核对真实实例证据和平台 GPU 授权，不能从可见性推断授权。
+同网络范围内重复私网地址、重复 GPU UUID 均报冲突。服务再次校验 companion UID
+及原生绑定。CLI 的可选 `containerClusterUID` 前置条件也可固定 companion 实例；
+省略它保持原 CLI 请求和操作摘要兼容。
+
+成功响应包含 `namespace`、`name`、companion `uid`、`nativeUID`、`clusterUID` 和
+`operationID`。登记不写 Ready，不签发证书、安装包或启动进程，也不解除已有 cordon。
+在可信制包机上使用这些精确节点身份执行管理员 `node-package`，其中 `credentialID`
+为登记操作 UUID。CA 私钥保留在制包机，私下传输/安装包，收到新鲜授权心跳后
+再确认可调度。
+
+浏览器首次 POST 前在内存中保留完整请求。响应不确定、HTTP 409 或服务不可用时
+保留原请求，并禁止切换集群及并发创建 Job/集群；重试沿用相同 UUID 与输入。
+只有副作用前的 HTTP 400 校验失败允许重新编辑。刷新、退出或关闭页面会丢失
+内存请求：应私下保留 UUID 与输入，检查部分创建资源后再决定下一操作。
+响应中的节点、集群或操作身份不匹配视为结果不确定，不能当成接入成功。
+旧 API 省略 `nodeRegistrationEnabled` 时禁用表单，显式非布尔值仍报错。

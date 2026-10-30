@@ -103,7 +103,26 @@ export type Upgrade = {
   phase: string;
   conditions: Condition[] | null;
 };
+export type NodeRegistration = {
+  operationID: string;
+  clusterUID: string;
+  name: string;
+  instanceID: string;
+  privateAddress: string;
+  environment: string;
+  networkScope: string;
+  authorizedGPUUUIDs: string[];
+};
+export type RegisteredNode = {
+  namespace: string;
+  name: string;
+  uid: string;
+  nativeUID: string;
+  clusterUID: string;
+  operationID: string;
+};
 export type Detail = {
+  nodeRegistrationEnabled: boolean;
   jobSubmissionEnabled: boolean;
   cluster: Cluster;
   nodes: Node[];
@@ -216,6 +235,7 @@ function detail(value: unknown): value is Detail {
   return (
     record(value) &&
     typeof value.jobSubmissionEnabled === "boolean" &&
+    typeof value.nodeRegistrationEnabled === "boolean" &&
     cluster(value.cluster) &&
     Array.isArray(value.nodes) &&
     value.nodes.every(
@@ -380,12 +400,36 @@ export class Client {
     );
     // Older consoles omit this additive capability. Keep inventory available
     // during upgrades without enabling writes the server did not advertise.
-    const normalized =
-      record(body) && body.jobSubmissionEnabled === undefined
-        ? { ...body, jobSubmissionEnabled: false }
-        : body;
+    const normalized = record(body)
+      ? {
+          ...body,
+          jobSubmissionEnabled: body.jobSubmissionEnabled === undefined ? false : body.jobSubmissionEnabled,
+          nodeRegistrationEnabled: body.nodeRegistrationEnabled === undefined ? false : body.nodeRegistrationEnabled,
+        }
+      : body;
     if (!detail(normalized)) throw malformed();
     return normalized;
+  }
+  async registerNode(
+    namespace: string,
+    name: string,
+    value: NodeRegistration,
+    signal?: AbortSignal,
+  ): Promise<RegisteredNode> {
+    const body = await request(
+      `${this.path(namespace, name)}/nodes`,
+      this.token,
+      { method: "POST", body: JSON.stringify(value) },
+      signal,
+    );
+    if (
+      !record(body) ||
+      !strings(body, ["namespace", "name", "uid", "nativeUID", "clusterUID", "operationID"]) ||
+      !body.uid || !body.nativeUID ||
+      body.namespace !== namespace || body.name !== value.name ||
+      body.clusterUID !== value.clusterUID || body.operationID !== value.operationID
+    ) throw malformed();
+    return body as RegisteredNode;
   }
   async target(
     cluster: Cluster,

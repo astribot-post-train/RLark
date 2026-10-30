@@ -93,8 +93,8 @@ capability must still be a boolean; malformed inventory remains an error.
 1. Install the extension CRDs and scoped API/controller RBAC.
 2. Create a dedicated native Cluster and container companion with
    `container-runtime-admin`.
-3. Register each existing Raw container host and export its bounded Agent
-   package. The host runs the trusted root process-tree backend when cgroup-v2
+3. Optionally register each existing Raw container host from the administrator
+   console (or CLI), then export its bounded Agent package. The host runs the trusted root process-tree backend when cgroup-v2
    or systemd is unavailable; this is not a task isolation boundary.
 4. Start the extension controller, Agent API, and independent console. Enable
    Job reservations and task execution only for an isolated preview cluster.
@@ -144,8 +144,11 @@ bin/container-runtime-console \
   --kubeconfig=/private/console.kubeconfig \
   --gateway-jwt-key-file=/private/gateway-jwt.key \
   --gateway-origin=http://127.0.0.1:19000 \
-  --ui-directory=ui/dist
+  --ui-directory=ui/dist \
+  --enable-node-registration=true
 ```
+
+Before enabling this flag, apply `extensions/container-runtime/config/rbac/container-runtime-console-registration.yaml` together with the base console role. Remove the additive binding when registration is disabled.
 
 Open `http://127.0.0.1:9445/` and sign in as an administrator. The command accepts
 HTTP only on an explicit loopback IP. Off loopback, supply `--tls-cert` and
@@ -156,8 +159,8 @@ separate `container-runtime-api` service. The UI build requires Node.js
 
 The preview UI creates Raw clusters. API/CLI provisioning can also create
 Docker inventory records, but that does not enable Docker Engine registration
-or execution. Join/package export, artifact publication and node drain
-remain CLI/operator workflows. Allocation rows retain their Job references; the
+or execution. Package export, artifact publication and node drain remain CLI/operator workflows;
+registration is available only through the explicitly enabled administrator route. Allocation rows retain their Job references; the
 optional Raw Job panel separately lists verified bound Jobs, submits one process
 and records suspension intent. It is not a historical archive.
 
@@ -382,3 +385,58 @@ The extension test/vet/build, submission/console race tests, eleven UI transport
 model tests, production UI build and strict bilingual documentation build pass.
 Repository `make test-go` passes. Incremental lint reports zero issues; full
 repository lint remains blocked by thirty existing findings in native RLark.
+
+## Administrator node registration
+
+This increment adds opt-in registration of an existing Raw container from its
+selected cluster detail page. The API/UI and failure/recovery tests are covered;
+cloud enrollment and Agent package acceptance remain separate operational gates.
+Enable `--enable-node-registration=true` and install the additive
+`extensions/container-runtime/config/rbac/container-runtime-console-registration.yaml`.
+The default console has no registration route or Node-create permission. The
+additive role grants only native Node and ContainerNode creation; it grants no
+Secrets, signing, status, delete, dispatch or credential export permissions.
+
+`POST /api/v1/container-runtime/clusters/{namespace}/{cluster}/nodes` requires an
+administrator JWT and a strict JSON body:
+
+```json
+{
+  "operationID": "5b70ee0b-563c-4bc9-8117-58e80ba70f75",
+  "clusterUID": "replace-with-current-containercluster-uid",
+  "name": "cloud-gpu-2",
+  "instanceID": "replace-with-verified-container-incarnation",
+  "privateAddress": "10.0.3.86",
+  "environment": "rlinf-pi05",
+  "networkScope": "ksyun-private",
+  "authorizedGPUUUIDs": ["GPU-replace-with-platform-authorized-uuid"]
+}
+```
+
+`clusterUID` is the companion UID precondition, not the native Cluster UID.
+The server resolves the exact native binding, namespace and independent tenant;
+client-supplied tenant/native references are rejected. Registration supports only
+Raw existing-container mode. Verify the actual incarnation and platform GPU
+entitlement first; visibility alone does not authorize a GPU. Duplicate private
+addresses in the same network scope and duplicate GPU UUIDs are conflicts.
+The service rechecks the companion UID as well as the native binding. The CLI's
+optional `containerClusterUID` precondition pins the same companion instance;
+omitting it preserves existing CLI requests and their operation digests.
+
+A successful response contains `namespace`, `name`, companion `uid`, `nativeUID`,
+`clusterUID` and `operationID`. It creates no Ready observation, certificate,
+package or process and cannot release an existing cordon. Use those exact node
+identities with administrator `node-package` on the trusted provisioning machine;
+its `credentialID` is the registration operation UUID. Keep the CA private key
+there. Transfer/install the package privately, then verify a fresh authorized
+heartbeat before scheduling.
+
+The browser keeps the exact request in memory before its first POST. An uncertain
+response, HTTP 409 or unavailable service retains it and disables cluster switching
+and concurrent Job/cluster creation. Retry uses the identical operation UUID and
+input. Only pre-effect HTTP 400 validation permits editing a new request. Refresh,
+logout or closing the browser loses the in-memory request: retain the operation
+UUID and input privately and inspect partial resources before starting another
+operation. A registration response with mismatched node, cluster or operation
+identity is an uncertain result, never a successful join. Older APIs omitting
+`nodeRegistrationEnabled` disable the form; a supplied non-boolean is an error.

@@ -1,0 +1,27 @@
+# Apply only when the console is started with --enable-node-registration=true.
+# This additive identity can create the exact resources used by provisioning;
+# it cannot read Secrets, sign credentials, patch status, dispatch workloads or delete.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: container-runtime-console-registration
+rules:
+  - apiGroups: ["rlinf.io"]
+    resources: ["nodes"]
+    verbs: ["get", "list", "create"]
+  - apiGroups: ["containers.rlark.io"]
+    resources: ["containernodes"]
+    verbs: ["get", "list", "create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: container-runtime-console-registration
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: container-runtime-console-registration
+subjects:
+  - kind: ServiceAccount
+    name: container-runtime-console
+    namespace: rlark-system

@@ -62,16 +62,32 @@ func (req ClusterRequest) Validate() error {
 
 // NodeRequest registers an explicitly authorized existing container.
 type NodeRequest struct {
-	OperationID        string   `json:"operationID"`
-	Cluster            string   `json:"cluster"`
-	ClusterUID         string   `json:"clusterUID"`
-	TenantID           string   `json:"tenantID"`
-	Name               string   `json:"name"`
-	InstanceID         string   `json:"instanceID"`
-	PrivateAddress     string   `json:"privateAddress"`
-	Environment        string   `json:"environment"`
-	NetworkScope       string   `json:"networkScope"`
-	AuthorizedGPUUUIDs []string `json:"authorizedGPUUUIDs"`
+	OperationID         string   `json:"operationID"`
+	Cluster             string   `json:"cluster"`
+	ClusterUID          string   `json:"clusterUID"`
+	ContainerClusterUID string   `json:"containerClusterUID,omitempty"`
+	TenantID            string   `json:"tenantID"`
+	Name                string   `json:"name"`
+	InstanceID          string   `json:"instanceID"`
+	PrivateAddress      string   `json:"privateAddress"`
+	Environment         string   `json:"environment"`
+	NetworkScope        string   `json:"networkScope"`
+	AuthorizedGPUUUIDs  []string `json:"authorizedGPUUUIDs"`
+}
+
+// Validate checks node registration input without reading or mutating resources.
+// Cluster and tenant identity are resolved by callers from an authoritative
+// binding; they remain in the request so the provisioning fingerprint includes
+// the exact parent and tenant used for the operation.
+func (req NodeRequest) Validate() error {
+	if err := validateOperation(req.OperationID, req.TenantID, req.Name); err != nil {
+		return err
+	}
+	if req.Cluster == "" || req.ClusterUID == "" {
+		return errors.New("exact Cluster name and UID required")
+	}
+	capability := &native.RawNodeStatus{Incarnation: req.InstanceID, TrainingIP: req.PrivateAddress, Environment: req.Environment, NetworkScope: req.NetworkScope, AuthorizedGPUUUIDs: req.AuthorizedGPUUUIDs}
+	return rawnode.ValidateCapability(capability)
 }
 
 // Service uses authoritative reads and never adopts unmarked existing objects.
@@ -262,11 +278,10 @@ func (s Service) cluster(ctx context.Context, name, uid, tenantID string) (*nati
 // RegisterNode records operator-authorized capability. It does not report
 // readiness, observe devices, issue a certificate, or uncordon existing nodes.
 func (s Service) RegisterNode(ctx context.Context, req NodeRequest) (*ext.ContainerNode, error) {
-	if err := validateOperation(req.OperationID, req.TenantID, req.Name); err != nil {
-		return nil, err
+	if s.Client == nil {
+		return nil, errors.New("management client required")
 	}
-	capability := &native.RawNodeStatus{Incarnation: req.InstanceID, TrainingIP: req.PrivateAddress, Environment: req.Environment, NetworkScope: req.NetworkScope, AuthorizedGPUUUIDs: req.AuthorizedGPUUUIDs}
-	if err := rawnode.ValidateCapability(capability); err != nil {
+	if err := req.Validate(); err != nil {
 		return nil, err
 	}
 	req.AuthorizedGPUUUIDs = slices.Clone(req.AuthorizedGPUUUIDs)
@@ -278,6 +293,9 @@ func (s Service) RegisterNode(ctx context.Context, req NodeRequest) (*ext.Contai
 	cluster, cc, err := s.cluster(ctx, req.Cluster, req.ClusterUID, req.TenantID)
 	if err != nil {
 		return nil, err
+	}
+	if req.ContainerClusterUID != "" && req.ContainerClusterUID != string(cc.UID) {
+		return nil, ErrConflict
 	}
 	if cc.Spec.Runtime != "Raw" {
 		return nil, errors.New("node provisioning currently supports Raw existing-container mode only")
