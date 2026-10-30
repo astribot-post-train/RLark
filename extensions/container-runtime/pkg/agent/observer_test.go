@@ -80,3 +80,86 @@ func TestTargetReleaseFencesSchedulingWithoutHidingHeartbeat(t *testing.T) {
 		t.Fatalf("release fence lost liveness: %#v", got.Status)
 	}
 }
+
+func TestDockerReporterIdentityCapacityAndObservationOnly(t *testing.T) {
+	for _, mode := range []string{"valid", "busy", "runtime-missing", "runtime-wrong", "instance-missing", "instance-replaced", "capability", "upgrade", "zero-cpu", "zero-memory", "missing-gpu", "credential"} {
+		t.Run(mode, func(t *testing.T) {
+			r, id, node := observerFixture(t)
+			ctx := context.Background()
+			node.Spec.Runtime = "Docker"
+			if err := r.Client.Update(ctx, node); err != nil {
+				t.Fatal(err)
+			}
+			var nn native.Node
+			if err := r.Client.Get(ctx, client.ObjectKey{Namespace: "agents", Name: "worker"}, &nn); err != nil {
+				t.Fatal(err)
+			}
+			nn.Spec.AgentType = native.AgentTypeDocker
+			if err := r.Client.Update(ctx, &nn); err != nil {
+				t.Fatal(err)
+			}
+			var cc ext.ContainerCluster
+			if err := r.Client.Get(ctx, client.ObjectKey{Namespace: "agents", Name: "cloud"}, &cc); err != nil {
+				t.Fatal(err)
+			}
+			cc.Spec.Runtime = "Docker"
+			if err := r.Client.Update(ctx, &cc); err != nil {
+				t.Fatal(err)
+			}
+			obs := Observation{Runtime: "Docker", InstanceID: id.InstanceID, Version: "v1", PrivateAddress: "10.0.3.85", Capacity: map[string]string{"cpu": "20", "memory": "236Gi"}, Capabilities: []string{"docker-observation-v1"}, VisibleGPUUUIDs: []string{"GPU-a", "GPU-extra"}}
+			switch mode {
+			case "busy":
+				obs.Busy = true
+			case "runtime-missing":
+				obs.Runtime = ""
+			case "runtime-wrong":
+				obs.Runtime = "Raw"
+			case "instance-missing":
+				obs.InstanceID = ""
+			case "instance-replaced":
+				obs.InstanceID = "new-engine"
+			case "capability":
+				obs.Capabilities = nil
+			case "upgrade":
+				obs.Capabilities = append(obs.Capabilities, UpgradeCapability)
+			case "zero-cpu":
+				obs.Capacity["cpu"] = "0"
+			case "zero-memory":
+				obs.Capacity["memory"] = "0"
+			case "missing-gpu":
+				obs.VisibleGPUUUIDs = nil
+			case "credential":
+				id.CredentialID = "revoked"
+			}
+			err := r.Report(ctx, id, obs)
+			var got ext.ContainerNode
+			if getErr := r.Client.Get(ctx, client.ObjectKeyFromObject(node), &got); getErr != nil {
+				t.Fatal(getErr)
+			}
+			if mode != "valid" && mode != "busy" {
+				if err == nil || got.Status.LastHeartbeatTime != nil {
+					t.Fatalf("invalid report refreshed status: %v %#v", err, got.Status)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.Status.Schedulable || got.Status.LastHeartbeatTime == nil || got.Status.Capacity["nvidia.com/gpu"] != "1" || got.Status.Busy != obs.Busy {
+				t.Fatalf("unsafe Docker status: %#v", got.Status)
+			}
+			var ready, execution bool
+			for _, cond := range got.Status.Conditions {
+				if cond.Type == "Ready" {
+					ready = cond.Status == metav1.ConditionTrue
+				}
+				if cond.Type == "ExecutionReady" {
+					execution = cond.Status == metav1.ConditionFalse && cond.Reason == "DockerObservationOnly"
+				}
+			}
+			if !ready || !execution {
+				t.Fatalf("missing observation boundary: %#v", got.Status.Conditions)
+			}
+		})
+	}
+}

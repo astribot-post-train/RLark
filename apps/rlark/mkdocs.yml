@@ -80,6 +80,7 @@ plugins:
             "API Conventions": "API 约定"
             "Raw Container Runtime Plan": "固定 GPU 容器接入计划"
             "Container Runtime Management Console": "容器运行时管理控制台"
+            "Docker Host Agent Observation": "Docker 主机 Agent 观测"
             "Technical Architecture": 技术架构
             "New Device Integration": 新设备适配
             Contributing: 贡献指南
@@ -126,6 +127,7 @@ nav:
     - Project Design Principles: developer-guide/design-principles.md
     - Raw Container Runtime Plan: developer-guide/raw-container-runtime-plan.md
     - Container Runtime Management Console: developer-guide/container-runtime-console.md
+    - Docker Host Agent Observation: developer-guide/docker-agent-observation.md
     - API Conventions: developer-guide/api-conventions.md
     - Local Development and Debugging: developer-guide/local-development.md
     - Debugging: developer-guide/debugging.md

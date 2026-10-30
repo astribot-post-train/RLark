@@ -53,6 +53,8 @@ type Identity struct {
 // Observation is supplied by a trusted Agent after local checks. Capacity is
 // a bounded snapshot, separate from the operator-authorized GPU allowlist.
 type Observation struct {
+	Runtime         ext.Runtime       `json:"runtime,omitempty"`
+	InstanceID      string            `json:"instanceID,omitempty"`
 	Version         string            `json:"version"`
 	PrivateAddress  string            `json:"privateAddress"`
 	Capacity        map[string]string `json:"capacity,omitempty"`
@@ -117,11 +119,14 @@ func (r Reporter) Report(ctx context.Context, id Identity, obs Observation) erro
 	node.Status.Capacity["nvidia.com/gpu"] = strconv.Itoa(len(node.Spec.AuthorizedGPUUUIDs))
 	node.Status.Capabilities = slices.Clone(obs.Capabilities)
 	node.Status.AuthorizedGPUUUIDs = slices.Clone(node.Spec.AuthorizedGPUUUIDs)
-	node.Status.Schedulable = releaseReady && !obs.Busy
+	node.Status.Schedulable = node.Spec.Runtime == "Raw" && releaseReady && !obs.Busy
 	node.Status.Busy = obs.Busy
 	now := metav1.NewTime(r.now())
 	node.Status.LastHeartbeatTime = &now
 	meta.SetStatusCondition(&node.Status.Conditions, metav1.Condition{Type: "Ready", Status: metav1.ConditionTrue, Reason: "AgentObserved", Message: "Authenticated Agent reported an authorized capability", ObservedGeneration: node.Generation, LastTransitionTime: now})
+	if node.Spec.Runtime == "Docker" {
+		meta.SetStatusCondition(&node.Status.Conditions, metav1.Condition{Type: "ExecutionReady", Status: metav1.ConditionFalse, Reason: "DockerObservationOnly", Message: "Docker host observation is available; scoped Docker Task execution is not enabled", ObservedGeneration: node.Generation, LastTransitionTime: now})
+	}
 	releaseStatus, releaseReason := metav1.ConditionTrue, "AgentReleaseObserved"
 	if !releaseReady {
 		releaseStatus, releaseReason = metav1.ConditionFalse, "AgentReleasePending"
@@ -200,6 +205,15 @@ func (r Reporter) validateBindings(ctx context.Context, node *ext.ContainerNode,
 }
 
 func validateObservation(node *ext.ContainerNode, obs Observation) error {
+	// Preserve legacy Raw heartbeats while requiring explicit Docker runtime
+	// and daemon identity. A successful connection to another socket cannot
+	// make a replacement Engine appear as the registered node.
+	if node.Spec.Runtime != "Raw" && node.Spec.Runtime != "Docker" || obs.Runtime != "" && obs.Runtime != node.Spec.Runtime || obs.InstanceID != "" && obs.InstanceID != node.Spec.InstanceID {
+		return ErrIdentity
+	}
+	if node.Spec.Runtime == "Docker" && (obs.Runtime != "Docker" || obs.InstanceID != node.Spec.InstanceID || !slices.Contains(obs.Capabilities, "docker-observation-v1") || slices.Contains(obs.Capabilities, UpgradeCapability) || obs.Capacity["cpu"] == "" || obs.Capacity["memory"] == "") {
+		return ErrCapability
+	}
 	if len(obs.Version) > 128 || strings.TrimSpace(obs.Version) == "" || strings.TrimSpace(obs.PrivateAddress) == "" || obs.PrivateAddress != node.Spec.PrivateAddress || len(obs.Capabilities) > 16 || len(obs.VisibleGPUUUIDs) > 256 {
 		return ErrCapability
 	}
@@ -230,7 +244,7 @@ func validateObservation(node *ext.ContainerNode, obs Observation) error {
 			return ErrCapability
 		}
 		q, err := resource.ParseQuantity(value)
-		if err != nil || q.Sign() < 0 {
+		if err != nil || q.Sign() < 0 || node.Spec.Runtime == "Docker" && q.Sign() == 0 {
 			return ErrCapability
 		}
 		if key == "nvidia.com/gpu" && (q.MilliValue()%1000 != 0 || q.Value() != int64(len(node.Spec.AuthorizedGPUUUIDs))) {

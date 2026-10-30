@@ -297,8 +297,8 @@ func (s Service) RegisterNode(ctx context.Context, req NodeRequest) (*ext.Contai
 	if req.ContainerClusterUID != "" && req.ContainerClusterUID != string(cc.UID) {
 		return nil, ErrConflict
 	}
-	if cc.Spec.Runtime != "Raw" {
-		return nil, errors.New("node provisioning currently supports Raw existing-container mode only")
+	if cc.Spec.Runtime != "Raw" && cc.Spec.Runtime != "Docker" {
+		return nil, errors.New("unsupported container runtime")
 	}
 	var retained ext.ContainerNode
 	if err := s.Client.Get(ctx, client.ObjectKey{Namespace: cc.Namespace, Name: req.Name}, &retained); err == nil {
@@ -325,7 +325,11 @@ func (s Service) RegisterNode(ctx context.Context, req NodeRequest) (*ext.Contai
 			}
 		}
 	}
-	node := &native.Node{ObjectMeta: metadata(req.Name, cc.Namespace, req.TenantID, req.OperationID, intent), Spec: native.NodeSpec{AgentType: native.AgentTypeRaw}}
+	agentType := native.AgentTypeRaw
+	if cc.Spec.Runtime == "Docker" {
+		agentType = native.AgentTypeDocker
+	}
+	node := &native.Node{ObjectMeta: metadata(req.Name, cc.Namespace, req.TenantID, req.OperationID, intent), Spec: native.NodeSpec{AgentType: agentType}}
 	existing := &native.Node{}
 	if err := s.ensureCreate(ctx, node, existing, func() bool {
 		return existing.Spec.AgentType == node.Spec.AgentType && existing.Status.Reservation == nil && len(existing.Status.DockerReservations) == 0
@@ -371,7 +375,7 @@ func (s Service) ReadNode(ctx context.Context, id NodeIdentity) (*ext.ContainerN
 	if err := s.Client.Get(ctx, client.ObjectKey{Namespace: id.Namespace, Name: id.Name}, &node); err != nil {
 		return nil, err
 	}
-	if string(node.UID) != id.UID || tenant.IDOf(&node) != id.TenantID || node.Annotations[ext.AgentCredentialAnnotation] != id.CredentialID || !node.DeletionTimestamp.IsZero() || node.Spec.Runtime != "Raw" {
+	if string(node.UID) != id.UID || tenant.IDOf(&node) != id.TenantID || node.Annotations[ext.AgentCredentialAnnotation] != id.CredentialID || !node.DeletionTimestamp.IsZero() || node.Spec.Runtime != "Raw" && node.Spec.Runtime != "Docker" {
 		return nil, ErrConflict
 	}
 	cluster, cc, err := s.cluster(ctx, node.Spec.Cluster.Name, node.Spec.Cluster.UID, id.TenantID)
@@ -385,7 +389,7 @@ func (s Service) ReadNode(ctx context.Context, id NodeIdentity) (*ext.ContainerN
 	if err := s.Client.Get(ctx, client.ObjectKey{Namespace: node.Spec.Node.Namespace, Name: node.Spec.Node.Name}, &nn); err != nil {
 		return nil, err
 	}
-	if ownership.MatchesNative(node.Spec.Node, &nn) != nil || nn.Namespace != node.Namespace || nn.Spec.AgentType != native.AgentTypeRaw || tenant.IDOf(&nn) != id.TenantID || !nn.DeletionTimestamp.IsZero() || nn.Status.Reservation != nil || len(nn.Status.DockerReservations) != 0 {
+	if ownership.MatchesNative(node.Spec.Node, &nn) != nil || nn.Namespace != node.Namespace || string(nn.Spec.AgentType) != string(node.Spec.Runtime) || tenant.IDOf(&nn) != id.TenantID || !nn.DeletionTimestamp.IsZero() || nn.Status.Reservation != nil || len(nn.Status.DockerReservations) != 0 {
 		return nil, ErrConflict
 	}
 	if err := rawnode.ValidateCapability(&native.RawNodeStatus{Incarnation: node.Spec.InstanceID, TrainingIP: node.Spec.PrivateAddress, Environment: node.Spec.Environment, NetworkScope: node.Spec.NetworkScope, AuthorizedGPUUUIDs: node.Spec.AuthorizedGPUUUIDs}); err != nil {

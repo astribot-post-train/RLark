@@ -82,3 +82,36 @@ func TestLogReadsRequireScopedExecution(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestDockerModeHasNoSupervisorOrExecutionCapabilities(t *testing.T) {
+	cfg := configured()
+	cfg.SupervisorSocket = ""
+	fs := flag.NewFlagSet("docker", flag.ContinueOnError)
+	cfg.SetupFlags(fs)
+	if err := fs.Parse([]string{"--runtime=docker", "--docker-host=unix:///run/docker.sock"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	for _, mutate := range []func(*Config){
+		func(c *Config) { c.SupervisorSocket = "/raw/supervisor.sock" },
+		func(c *Config) { c.EnableExecution = true },
+		func(c *Config) { c.EnableLogReads = true },
+		func(c *Config) { c.EnableUpgrades = true },
+		func(c *Config) { c.Runtime = "unknown" },
+		func(c *Config) { c.DockerHost = "tcp://127.0.0.1:2375" },
+		func(c *Config) { c.DockerHost = "unix:///run/../docker.sock" },
+	} {
+		bad := cfg
+		mutate(&bad)
+		if err := bad.Validate(); err == nil {
+			t.Fatalf("accepted unsupported Docker config: %+v", bad)
+		}
+	}
+	bad := configured()
+	bad.DockerHost = "unix:///run/docker.sock"
+	if err := bad.Validate(); err == nil {
+		t.Fatal("Raw mode accepted Docker host")
+	}
+}
