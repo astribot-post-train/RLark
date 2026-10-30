@@ -77,6 +77,24 @@ export type LogSnapshot = {
   truncated: boolean;
   retentionLimitReached: boolean;
 };
+export type JobSummary = {
+  name: string;
+  uid: string;
+  resourceVersion: string;
+  bindingUID: string;
+  operationID: string;
+  phase: string;
+  observed: boolean;
+  suspended: boolean;
+  activated: boolean;
+  bindingValid: boolean;
+};
+export type RawJobRequest = {
+  operationID: string;
+  clusterUID: string;
+  environment: string;
+  process: { argv: string[]; env: string[]; directory: string };
+};
 export type Upgrade = {
   name: string;
   uid: string;
@@ -86,6 +104,7 @@ export type Upgrade = {
   conditions: Condition[] | null;
 };
 export type Detail = {
+  jobSubmissionEnabled: boolean;
   cluster: Cluster;
   nodes: Node[];
   releases: Release[];
@@ -138,6 +157,20 @@ function stringArray(value: unknown): boolean {
     (Array.isArray(value) && value.every((v) => typeof v === "string"))
   );
 }
+function jobSummary(value: unknown): value is JobSummary {
+  return (
+    record(value) &&
+    strings(value, [
+      "name",
+      "uid",
+      "resourceVersion",
+      "bindingUID",
+      "operationID",
+      "phase",
+    ]) &&
+    booleans(value, ["observed", "suspended", "activated", "bindingValid"])
+  );
+}
 function cluster(value: unknown): value is Cluster {
   return (
     record(value) &&
@@ -182,6 +215,7 @@ function cluster(value: unknown): value is Cluster {
 function detail(value: unknown): value is Detail {
   return (
     record(value) &&
+    typeof value.jobSubmissionEnabled === "boolean" &&
     cluster(value.cluster) &&
     Array.isArray(value.nodes) &&
     value.nodes.every(
@@ -413,6 +447,61 @@ export class Client {
     )
       throw malformed();
     return body as LogSnapshot;
+  }
+  async jobs(
+    namespace: string,
+    name: string,
+    signal?: AbortSignal,
+  ): Promise<JobSummary[]> {
+    const body = await request(
+      `/api/v1/container-runtime/clusters/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/jobs`,
+      this.token,
+      {},
+      signal,
+    );
+    if (
+      !record(body) ||
+      !Array.isArray(body.items) ||
+      !body.items.every(jobSummary)
+    )
+      throw malformed();
+    return body.items;
+  }
+  async submitJob(
+    namespace: string,
+    name: string,
+    value: RawJobRequest,
+    signal?: AbortSignal,
+  ): Promise<JobSummary> {
+    const body = await request(
+      `/api/v1/container-runtime/clusters/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/jobs`,
+      this.token,
+      { method: "POST", body: JSON.stringify(value) },
+      signal,
+    );
+    if (!jobSummary(body)) throw malformed();
+    return body;
+  }
+  async suspendJob(
+    namespace: string,
+    cluster: string,
+    job: JobSummary,
+    signal?: AbortSignal,
+  ): Promise<JobSummary> {
+    const body = await request(
+      `/api/v1/container-runtime/clusters/${encodeURIComponent(namespace)}/${encodeURIComponent(cluster)}/jobs/${encodeURIComponent(job.name)}/suspend`,
+      this.token,
+      {
+        method: "PATCH",
+        body: JSON.stringify({
+          uid: job.uid,
+          resourceVersion: job.resourceVersion,
+        }),
+      },
+      signal,
+    );
+    if (!jobSummary(body)) throw malformed();
+    return body;
   }
   async create(
     intent: ClusterIntent,

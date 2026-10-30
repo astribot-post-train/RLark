@@ -16,6 +16,7 @@ import (
 	"github.com/astribot-post-train/rlark/extensions/container-runtime/pkg/artifact"
 	"github.com/astribot-post-train/rlark/extensions/container-runtime/pkg/ownership"
 	"github.com/astribot-post-train/rlark/extensions/container-runtime/pkg/provision"
+	"github.com/astribot-post-train/rlark/extensions/container-runtime/pkg/submission"
 	"github.com/google/uuid"
 	native "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
 	"github.com/rlinf/rlark/apps/rlark/pkg/log"
@@ -38,15 +39,23 @@ type ClusterCreator interface {
 	CreateCluster(context.Context, provision.ClusterRequest) (*ext.ContainerCluster, error)
 }
 
-// API has explicit dependencies and uses an uncached management client.
-// Auth is required even for reads. UI is an optional static, public application.
+// JobSubmission is the explicitly enabled administrator workload service.
+type JobSubmission interface {
+	Submit(context.Context, submission.ClusterTarget, submission.Request) (submission.Summary, error)
+	List(context.Context, submission.ClusterTarget) ([]submission.Summary, error)
+	Suspend(context.Context, submission.ClusterTarget, string, string, string) (submission.Summary, error)
+}
+
+// API uses explicitly injected management and optional workload capabilities.
 type API struct {
 	Client  Management
 	Creator ClusterCreator
 	Auth    Authenticator
 	UI      http.Handler
 	Logs    http.Handler
-	Now     func() time.Time
+	// Jobs is nil by default; workload submission requires explicit opt-in.
+	Jobs JobSubmission
+	Now  func() time.Time
 }
 
 func (a *API) now() time.Time {
@@ -105,6 +114,24 @@ func (a *API) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		a.Logs.ServeHTTP(w, r)
+	case len(parts) == 4 && parts[0] == "clusters" && parts[3] == "jobs" && r.Method == http.MethodGet:
+		if a.Jobs == nil {
+			writeError(w, http.StatusNotFound, "unsupported", "Job submission is disabled")
+			return
+		}
+		a.listJobs(w, r, parts[1], parts[2])
+	case len(parts) == 4 && parts[0] == "clusters" && parts[3] == "jobs" && r.Method == http.MethodPost:
+		if a.Jobs == nil {
+			writeError(w, http.StatusNotFound, "unsupported", "Job submission is disabled")
+			return
+		}
+		a.submitJob(w, r, parts[1], parts[2], subject)
+	case len(parts) == 6 && parts[0] == "clusters" && parts[3] == "jobs" && parts[5] == "suspend" && r.Method == http.MethodPatch:
+		if a.Jobs == nil {
+			writeError(w, http.StatusNotFound, "unsupported", "Job submission is disabled")
+			return
+		}
+		a.suspendJob(w, r, parts[1], parts[2], parts[4], subject)
 	case len(parts) == 1 && parts[0] == "clusters" && r.Method == http.MethodGet:
 		a.listClusters(w, r)
 	case len(parts) == 1 && parts[0] == "clusters" && r.Method == http.MethodPost:
@@ -191,11 +218,12 @@ type upgradeSummary struct {
 	Conditions  []metav1.Condition `json:"conditions"`
 }
 type clusterDetailResponse struct {
-	Cluster     clusterSummary      `json:"cluster"`
-	Nodes       []nodeSummary       `json:"nodes"`
-	Releases    []releaseSummary    `json:"releases"`
-	Allocations []allocationSummary `json:"allocations"`
-	Upgrades    []upgradeSummary    `json:"upgrades"`
+	JobSubmissionEnabled bool                `json:"jobSubmissionEnabled"`
+	Cluster              clusterSummary      `json:"cluster"`
+	Nodes                []nodeSummary       `json:"nodes"`
+	Releases             []releaseSummary    `json:"releases"`
+	Allocations          []allocationSummary `json:"allocations"`
+	Upgrades             []upgradeSummary    `json:"upgrades"`
 }
 
 func current(items []metav1.Condition, typ string, generation int64) bool {
@@ -244,6 +272,7 @@ func (a *API) detail(ctx context.Context, cc *ext.ContainerCluster) (*clusterDet
 		return nil, err
 	}
 	result := &clusterDetailResponse{Cluster: clusterSummary{Namespace: cc.Namespace, Name: cc.Name, UID: string(cc.UID), ResourceVersion: cc.ResourceVersion, TenantID: tenant.IDOf(cc), Runtime: cc.Spec.Runtime, TargetAgentRelease: cc.Spec.TargetAgentRelease, BindingValid: valid, Deleting: !cc.DeletionTimestamp.IsZero(), Conditions: cc.Status.Conditions, LastAgentUpgrade: cc.Status.LastAgentUpgrade}, Nodes: []nodeSummary{}, Releases: []releaseSummary{}, Allocations: []allocationSummary{}, Upgrades: []upgradeSummary{}}
+	result.JobSubmissionEnabled = a.Jobs != nil && cc.Spec.Runtime == "Raw" && valid && cc.DeletionTimestamp.IsZero()
 	var allocations ext.ContainerAllocationList
 	if err := a.Client.List(ctx, &allocations, client.InNamespace(cc.Namespace)); err != nil {
 		return nil, err
