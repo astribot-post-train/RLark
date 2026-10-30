@@ -143,8 +143,15 @@ test("legacy console inventory loads with submission disabled and rejects invali
     );
   }
   for (const capability of [true, false, null, "false", 0]) {
-    globalThis.fetch = async () => new Response(JSON.stringify({ ...inventory, nodeRegistrationEnabled: capability }));
-    if (typeof capability === "boolean") assert.equal((await client.detail("agents", "cloud")).nodeRegistrationEnabled, capability);
+    globalThis.fetch = async () =>
+      new Response(
+        JSON.stringify({ ...inventory, nodeRegistrationEnabled: capability }),
+      );
+    if (typeof capability === "boolean")
+      assert.equal(
+        (await client.detail("agents", "cloud")).nodeRegistrationEnabled,
+        capability,
+      );
     else await assert.rejects(client.detail("agents", "cloud"), APIError);
   }
   globalThis.fetch = async () =>
