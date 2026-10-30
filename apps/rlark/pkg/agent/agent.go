@@ -86,7 +86,11 @@ func (a *Agent) init(ctx context.Context) error {
 	}
 
 	// Initialize Management Kube API client
-	a.managementConfig, err = a.config.ClientConfig.BuildRestConfig()
+	if rlarkv1alpha1.AgentType(a.config.AgentType) == rlarkv1alpha1.AgentTypeRaw {
+		a.managementConfig, err = a.config.ClientConfig.BuildRawRestConfig()
+	} else {
+		a.managementConfig, err = a.config.ClientConfig.BuildRestConfig()
+	}
 	if err != nil {
 		return fmt.Errorf("build management API config: %w", err)
 	}
@@ -118,7 +122,9 @@ func (a *Agent) init(ctx context.Context) error {
 		// TODO: Initialize Docker client
 
 	case rlarkv1alpha1.AgentTypeRaw:
-		// TODO: Initialize Raw client
+		if a.config.RawSupervisorSocket == "" {
+			return fmt.Errorf("raw-supervisor socket is required for Raw agent")
+		}
 
 	default:
 		return fmt.Errorf("unknown AgentType: %s", a.config.AgentType)

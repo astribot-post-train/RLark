@@ -154,6 +154,7 @@ rlark-controller-manager \
 | `--ca-cert` | string | `""` | CA 证书路径 |
 | `--insecure-skip-tls-verify` | bool | `false` | 跳过 TLS 证书验证 |
 | `--agent-type` | string | `Kubernetes` | Agent 类型：Kubernetes、Docker、Raw |
+| `--raw-supervisor-socket` | string | 未设置 | Raw 独立 supervisor 的私有 Unix socket；`Raw` Agent 必须设置 |
 | `--mode` | string | `cluster` | Agent 模式：cluster、node、both |
 | `--leader-election` | bool | `false` | 启用 Leader Election |
 | `--leader-election-key` | string | `default/rlark-agent` | Leader Election Key（namespace/name） |

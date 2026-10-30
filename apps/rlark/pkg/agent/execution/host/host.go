@@ -117,10 +117,11 @@ func (w KubernetesStatusWriter) WriteStatus(ctx context.Context, task *rlarkv1al
 	if reflect.DeepEqual(task.Status, desired.Status) {
 		return nil
 	}
-	if err := w.Client.Status().Patch(ctx, desired, client.MergeFrom(task)); err != nil {
+	if err := w.Client.Status().Patch(ctx, desired, client.MergeFromWithOptions(task, client.MergeFromWithOptimisticLock{})); err != nil {
 		return fmt.Errorf("patch Task status: %w", err)
 	}
 	task.Status = desired.Status
+	task.ResourceVersion = desired.ResourceVersion
 	return nil
 }
 

@@ -154,6 +154,7 @@ Data plane agent. Deployed on each cluster or node. Manages node registration, T
 | `--ca-cert` | string | `""` | CA certificate path |
 | `--insecure-skip-tls-verify` | bool | `false` | Skip TLS certificate verification |
 | `--agent-type` | string | `Kubernetes` | Agent type: Kubernetes, Docker, Raw |
+| `--raw-supervisor-socket` | string | unset | Private Unix socket for the independent Raw supervisor; required for `Raw` agents |
 | `--mode` | string | `cluster` | Agent mode: cluster, node, both |
 | `--leader-election` | bool | `false` | Enable agent leader election |
 | `--leader-election-key` | string | `default/rlark-agent` | Leader election key (namespace/name) |

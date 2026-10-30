@@ -53,7 +53,7 @@ rlarkadm 生成配置和前台启动包，可接已有 supervisor，不假设容
 
 ## 当前实现证据与剩余接线
 
-本分支目前提供内部基础组件，尚非可运行的 Raw Agent。`agent --agent-type=Raw` 尚未接入这些组件。不能仅因 schema 增加字段就注册生产 GPU 节点或提交训练。生成的 `status.raw`、`status.reservation` 和 `spec.placement.binding` 是实验契约；向节点身份开放前，必须完成凭证和服务端状态字段写权限约束。
+本分支已接入实验性 Raw Agent Task watch、受限心跳和 Host/Coordinator 路径，但尚非生产 Ray/RLinf Job 支持。完成预留分发、GPU 授权和 group barrier 验证前，不能注册生产 GPU 节点或提交训练。生成的 `status.raw`、`status.reservation` 和 `spec.placement.binding` 是实验契约；向节点身份开放前，必须完成凭证和服务端状态字段写权限约束。
 
 已实现的边界：
 
