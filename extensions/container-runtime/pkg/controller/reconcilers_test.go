@@ -86,6 +86,15 @@ func TestJobOwnerRequiresOneCurrentUIDAndTenantBinding(t *testing.T) {
 	binding := &containerapi.ContainerJob{ObjectMeta: metav1.ObjectMeta{Name: "train", Namespace: "control", Labels: map[string]string{tenant.IDLabel: "team-a"}}, Spec: containerapi.ContainerJobSpec{Job: containerapi.NativeObjectReference{Name: "train", UID: "job-uid"}, TenantID: "team-a", Runtime: "Raw"}}
 	c := fake.NewClientBuilder().WithScheme(testScheme(t)).WithObjects(binding).Build()
 	owner := JobOwner{Client: c}
+	if _, err := owner.Owns(ctx, job); err == nil {
+		t.Fatal("unvalidated binding claimed native Job")
+	}
+	binding.Generation = 2
+	binding.Status.ObservedGeneration = 2
+	binding.Status.Conditions = []metav1.Condition{{Type: "Validated", Status: metav1.ConditionTrue, ObservedGeneration: 2}}
+	if err := c.Update(ctx, binding); err != nil {
+		t.Fatal(err)
+	}
 	owned, err := owner.Owns(ctx, job)
 	if err != nil || !owned {
 		t.Fatalf("valid extension binding not recognized: owned=%v err=%v", owned, err)
