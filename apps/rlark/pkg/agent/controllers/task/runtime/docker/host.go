@@ -27,6 +27,7 @@ func NewHost(ctx context.Context, management client.Client, admission NodeAdmiss
 		return nil, errors.New("management client and complete Docker node identity required")
 	}
 	local := *provider
+	local.Admission = admission
 	execution, err := NewCoordinator(ctx, &local, adapters)
 	if err != nil {
 		return nil, err
@@ -73,7 +74,7 @@ func (e nodeEligibility) ValidationMessage(task *api.Task) string {
 }
 
 func decodeTask(task *api.Task) (coordination.TaskSnapshot, error) {
-	if task == nil || task.Spec.Runtime.Kind != api.RuntimeKind(RuntimeKind) || task.Spec.Workload.Carrier.Type != CarrierType || task.Spec.Workload.Carrier.Version != CarrierVersion || len(task.Spec.Workload.Carrier.Parameters.Raw) != 0 {
+	if task == nil || task.Spec.Runtime.Kind != api.RuntimeKind(RuntimeKind) || task.Spec.Workload.Carrier.Type != CarrierType || task.Spec.Workload.Carrier.Version != CarrierVersion || len(task.Spec.Workload.Carrier.Parameters.Raw) != 0 || len(task.Spec.Environments) != 0 {
 		return coordination.TaskSnapshot{}, fmt.Errorf("Docker Task requires the v1 container carrier")
 	}
 	identity := rt.TaskIdentity{Logical: rt.LogicalTaskID{Namespace: task.Namespace, Name: task.Name}, ObjectUID: string(task.UID), Generation: task.Generation}

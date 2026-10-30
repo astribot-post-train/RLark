@@ -172,7 +172,7 @@ func (a *Agent) Run(ctx context.Context) error {
 		return (&clusterAgent{a: a}).Run(ctx)
 	}
 
-	var eg errgroup.Group
+	eg, ctx := errgroup.WithContext(ctx)
 
 	// Run tunnel for all modes
 	eg.Go(func() error {

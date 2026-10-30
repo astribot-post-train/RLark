@@ -220,6 +220,8 @@ func (c *clusterAgent) Run(ctx context.Context) error {
 }
 
 func (c *clusterAgent) runDocker(ctx context.Context, mm ctrl.Manager, mclient client.Client, bc base.Controller, clusterID string) error {
+	logger := log.FromContext(ctx).WithName("docker-agent").WithValues("cluster", clusterID)
+	logger.Info("initializing Docker runtime")
 	if c.a.localDockerClient == nil {
 		return fmt.Errorf("Docker Engine client is not configured")
 	}
@@ -227,20 +229,26 @@ func (c *clusterAgent) runDocker(ctx context.Context, mm ctrl.Manager, mclient c
 	if nodeName == "" {
 		nodeName = common.Hostname("docker-node")
 	}
+	logger.Info("ensuring Docker Node", "node", nodeName)
 	node, err := ensureDockerNode(ctx, mclient, clusterID, nodeName)
 	if err != nil {
+		logger.Error(err, "Docker Node setup failed", "node", nodeName)
 		return err
 	}
+	logger.Info("Docker Node ready", "node", node.Name, "uid", node.UID)
 	info, err := c.a.localDockerClient.Info(ctx)
 	if err != nil {
+		logger.Error(err, "Docker Engine inspection failed")
 		return fmt.Errorf("inspect Docker Engine identity: %w", err)
 	}
 	incarnation := info.ID
 	if incarnation == "" {
 		incarnation = nodeName
 	}
+	logger.Info("Docker Engine ready", "incarnation", incarnation)
 	provider := &dockerruntime.Provider{ID: dockerruntime.DefaultID, Client: c.a.localDockerClient}
 	admission := dockerruntime.NodeAdmission{Client: mclient, Node: client.ObjectKeyFromObject(node), NodeUID: string(node.UID), Incarnation: incarnation, TenantID: tenant.IDOf(node)}
+	provider.Admission = admission
 	bc.LocalDockerClient = c.a.localDockerClient
 	taskController := bc
 	taskController.PullMaxConcurrentReconciles = c.a.config.ControllerConcurrency.TaskPull
@@ -249,27 +257,34 @@ func (c *clusterAgent) runDocker(ctx context.Context, mm ctrl.Manager, mclient c
 	if err != nil {
 		return fmt.Errorf("initialize Docker task execution coordinator: %w", err)
 	}
+	logger.Info("Docker task coordinator ready")
 	tc.WithExecutionCoordinator(execution)
 	taskHost, err := dockerruntime.NewHost(ctx, mclient, admission, provider, []workload.Adapter{dockerray.Adapter{}})
 	if err != nil {
 		return fmt.Errorf("initialize Docker Task Host: %w", err)
 	}
+	logger.Info("Docker Task host ready")
 	tc.WithHost(taskHost)
 	if err := tc.SetupPullController(mm); err != nil {
 		return fmt.Errorf("setup Docker Task pull controller: %w", err)
 	}
+	logger.Info("Docker Task pull controller ready")
 	if err := mm.Add(task.NewTaskResync(mclient, clusterID, c.a.config.TaskRuntimeResyncPeriod, tc)); err != nil {
 		return fmt.Errorf("setup Docker Task resync: %w", err)
 	}
+	logger.Info("Docker Task resync ready")
 	local := &dockerManager{}
 	if err := tc.SetupPushController(local); err != nil {
 		return fmt.Errorf("setup Docker Task push controller: %w", err)
 	}
+	logger.Info("Docker Task push controller ready")
 	observer := &dockerruntime.NodeObserver{Client: mclient, Engine: c.a.localDockerClient, Node: client.ObjectKeyFromObject(node), NodeIP: c.a.config.DockerNodeIP, NodeUID: string(node.UID), Incarnation: incarnation}
 	if err := local.Add(observer); err != nil {
 		return fmt.Errorf("setup Docker Node observer: %w", err)
 	}
-	var eg errgroup.Group
+	logger.Info("Docker Node observer ready")
+	eg, ctx := errgroup.WithContext(ctx)
+	logger.Info("starting Docker managers")
 	eg.Go(func() error { return mm.Start(ctx) })
 	eg.Go(func() error { return local.Start(ctx) })
 	return eg.Wait()

@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"reflect"
+	"strconv"
 	"strings"
 
 	"github.com/docker/docker/api/types"
@@ -22,8 +24,11 @@ import (
 // Provider owns only containers whose full Task identity is present in labels.
 // It never shells out to Docker and never exposes the daemon socket to a task.
 type Provider struct {
-	ID     rt.ID
-	Client EngineClient
+	ID        rt.ID
+	Client    EngineClient
+	Admission interface {
+		Authorize(context.Context, rt.TaskIdentity) error
+	}
 }
 
 var _ rt.Provider = (*Provider)(nil)
@@ -125,16 +130,28 @@ func (p *Provider) object(task rt.TaskIdentity, c types.ContainerJSON) (rt.Objec
 		spec.Image, spec.Env, spec.WorkingDir = c.Config.Image, append([]string(nil), c.Config.Env...), c.Config.WorkingDir
 		spec.Entrypoint = append([]string(nil), c.Config.Entrypoint...)
 		spec.Command = append([]string(nil), c.Config.Cmd...)
-		spec.Labels = labels(task)
+	}
+	if c.HostConfig != nil {
+		spec.CPU = c.HostConfig.NanoCPUs / 1_000_000
+		spec.MemoryBytes = c.HostConfig.Memory
+		for _, request := range c.HostConfig.DeviceRequests {
+			spec.GPUCount += int64(request.Count)
+		}
+	}
+	for _, value := range spec.Env {
+		if port, ok := strings.CutPrefix(value, "RLARK_RAY_PORT="); ok {
+			parsed, err := strconv.ParseInt(port, 10, 32)
+			if err != nil {
+				return rt.Object{}, err
+			}
+			spec.RayPort = int32(parsed)
+		}
 	}
 	data, err := json.Marshal(manifestFor(task, spec))
 	if err != nil {
 		return rt.Object{}, err
 	}
-	name := strings.TrimPrefix(c.Name, "/")
-	if name == "" {
-		name = containerName(task)
-	}
+	name := task.Logical.Name
 	return rt.Object{Ref: p.ref(task, c.ID, name), Manifest: rt.TypedManifest{Type: ContainerKind, Object: data}}, nil
 }
 
@@ -220,16 +237,30 @@ func (p *Provider) Apply(ctx context.Context, req rt.ApplyRequest) (rt.ApplyResu
 	if req.Current != nil && (req.Current.RuntimeID != p.runtimeID() || req.Current.LogicalTask != req.Task.Logical) {
 		return rt.ApplyResult{}, fault.New(fault.PermissionDenied, "Docker current reference is outside Task ownership")
 	}
+	if p.Admission == nil {
+		return rt.ApplyResult{}, fault.New(fault.FailedPrecondition, "Docker node admission is required")
+	}
+	if err := p.Admission.Authorize(ctx, req.Task); err != nil {
+		return rt.ApplyResult{}, err
+	}
 	name := containerName(req.Task)
 	c, inspectErr := p.Client.ContainerInspect(ctx, name)
 	if inspectErr == nil {
 		if !owned(c, req.Task) {
 			return rt.ApplyResult{}, fault.New(fault.Conflict, "existing Docker name is owned by another Task")
 		}
-		if c.Config == nil || c.Config.Image != m.Spec.Image {
+		observed, err := p.object(req.Task, c)
+		if err != nil {
+			return rt.ApplyResult{}, err
+		}
+		equal, err := p.Equal(observed.Manifest, req.Desired)
+		if err != nil {
+			return rt.ApplyResult{}, err
+		}
+		if !equal {
 			return rt.ApplyResult{}, fault.New(fault.Conflict, "Docker container configuration is immutable")
 		}
-		if c.State == nil || !c.State.Running {
+		if c.State != nil && c.State.Status == "created" {
 			if err := p.Client.ContainerStart(ctx, c.ID, types.ContainerStartOptions{}); err != nil {
 				return rt.ApplyResult{}, fault.Wrap(fault.Unavailable, "start Docker container", err)
 			}
@@ -296,7 +327,7 @@ func dockerConfig(spec ContainerSpec, task rt.TaskIdentity) (*container.Config, 
 }
 
 func (p *Provider) Delete(ctx context.Context, req rt.DeleteRequest) error {
-	if req.Ref.RuntimeID != p.runtimeID() || req.Ref.LogicalTask != req.Task.Logical || req.Ref.UID != req.Task.ObjectUID {
+	if req.Ref.RuntimeID != p.runtimeID() || req.Ref.LogicalTask != req.Task.Logical || req.Ref.ID == "" || req.Ref.UID != req.Ref.ID {
 		return fault.New(fault.PermissionDenied, "Docker cleanup reference is outside Task ownership")
 	}
 	c, err := p.inspectOwned(ctx, req.Task, req.Ref.ID)
@@ -321,7 +352,7 @@ func (p *Provider) ListInstances(ctx context.Context, q rt.InstanceQuery) (rt.In
 	if len(q.Workloads) == 0 {
 		return rt.InstanceSnapshot{}, nil
 	}
-	if len(q.Workloads) != 1 || q.Workloads[0].RuntimeID != p.runtimeID() || q.Workloads[0].LogicalTask != q.Task.Logical || q.Workloads[0].UID != q.Task.ObjectUID {
+	if len(q.Workloads) != 1 || q.Workloads[0].RuntimeID != p.runtimeID() || q.Workloads[0].LogicalTask != q.Task.Logical || q.Workloads[0].UID != q.Workloads[0].ID {
 		return rt.InstanceSnapshot{}, fault.New(fault.PermissionDenied, "Docker instance query outside Task ownership")
 	}
 	c, err := p.inspectOwned(ctx, q.Task, q.Workloads[0].ID)
@@ -354,4 +385,38 @@ func phase(c types.ContainerJSON) (rt.InstancePhase, string, string) {
 	default:
 		return "Unknown", c.State.Status, c.State.Error
 	}
+}
+
+// Equal compares immutable container configuration while allowing environment
+// defaults supplied by the image. It never treats exit state as desired drift.
+func (p *Provider) Equal(current rt.TypedManifest, desired rt.DesiredObject) (bool, error) {
+	actual, err := decodeManifest(current.Object)
+	if err != nil {
+		return false, err
+	}
+	wanted, err := decodeManifest(desired.Manifest.Object)
+	if err != nil {
+		return false, err
+	}
+	if actual.Metadata != wanted.Metadata {
+		return false, nil
+	}
+	actualEnv := make(map[string]string)
+	for _, entry := range actual.Spec.Env {
+		key, value, _ := strings.Cut(entry, "=")
+		actualEnv[key] = value
+	}
+	for _, entry := range wanted.Spec.Env {
+		key, value, _ := strings.Cut(entry, "=")
+		if got, ok := actualEnv[key]; !ok || got != value {
+			return false, nil
+		}
+	}
+	actual.Spec.Env, wanted.Spec.Env = nil, nil
+	// An omitted working directory inherits the image's WORKDIR. Docker's
+	// inspection returns that resolved default, so it is not desired drift.
+	if wanted.Spec.WorkingDir == "" {
+		actual.Spec.WorkingDir = ""
+	}
+	return reflect.DeepEqual(actual.Spec, wanted.Spec), nil
 }

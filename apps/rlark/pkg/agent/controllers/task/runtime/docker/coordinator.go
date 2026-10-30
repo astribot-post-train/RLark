@@ -57,7 +57,7 @@ func NewCoordinator(ctx context.Context, provider *Provider, adapters []workload
 		return nil, err
 	}
 	return &coordinator.Coordinator{
-		Runtimes:  []coordinator.RuntimeRegistration{{Info: info, Provider: provider}},
+		Runtimes:  []coordinator.RuntimeRegistration{{Info: info, Provider: provider, Comparator: provider}},
 		Workloads: registrations,
 		Resolver:  dockerEnvironmentResolver{},
 		Binder: binding.BindingPlanBinder{

@@ -50,6 +50,9 @@ func TestAdapterUsesResolvedHeadAddressAndStablePortKey(t *testing.T) {
 	if head.CompiledHash == worker.CompiledHash {
 		t.Fatal("head and worker plans unexpectedly identical")
 	}
+	if strings.Contains(string(head.Objects[0].Manifest.Object), "--ray-client-server-port=0") {
+		t.Fatal("Ray rejects zero as a client server port")
+	}
 	var workerManifest map[string]any
 	if err := json.Unmarshal(worker.Objects[0].Manifest.Object, &workerManifest); err != nil {
 		t.Fatal(err)

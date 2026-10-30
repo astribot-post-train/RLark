@@ -331,6 +331,9 @@ func (s *Server) handleKubernetesProxy(ctx *gin.Context) {
 	// 如果证书中 "kubernetes-impersonation" 的值为 "-"，则表示不进行任何 impersonation
 
 	certMeta := GetCertMetaFromContext(ctx)
+	if s.handleAgentOwnerRead(ctx, certMeta) {
+		return
+	}
 	isAdmin := auth.PermissionChecker.IsAdmin(certMeta)
 	if certMeta[apis.MetaKubernetesImpersonation] == "" {
 		if isAdmin {

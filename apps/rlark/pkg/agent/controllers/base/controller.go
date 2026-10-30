@@ -178,6 +178,12 @@ func (c *Controller) SetupPushController(mgr any) error {
 	if mgr == nil {
 		return fmt.Errorf("manager is nil")
 	}
+	// A runtime may intentionally have no push-side reconciler yet. In that
+	// case there is no local watch to install, so startup must not require a
+	// manager implementation for an unsupported provider API. Once a runtime
+	// declares a reconciler, the matching manager is still required below.
+	dockerReconcilers := c.C.AsDockerPushReconcilers()
+	rawReconcilers := c.C.AsRawPushReconcilers()
 
 	if kubeMgr, ok := mgr.(ctrl.Manager); ok {
 		if c.LocalKubeClient == nil {
@@ -225,7 +231,7 @@ func (c *Controller) SetupPushController(mgr any) error {
 		if c.LocalDockerClient == nil {
 			return fmt.Errorf("controller is not running in a Docker environment")
 		}
-		for dockerResource, reconciler := range c.C.AsDockerPushReconcilers() {
+		for dockerResource, reconciler := range dockerReconcilers {
 			err := dockerMgr.SetupReconciler(reconciler)
 			if err != nil {
 				return fmt.Errorf("failed to setup push controller for %s: %w", dockerResource, err)
@@ -237,12 +243,15 @@ func (c *Controller) SetupPushController(mgr any) error {
 		if c.LocalRawClient == nil {
 			return fmt.Errorf("controller is not running in a raw environment")
 		}
-		for rawResource, reconciler := range c.C.AsRawPushReconcilers() {
+		for rawResource, reconciler := range rawReconcilers {
 			err := rawMgr.SetupReconciler(reconciler)
 			if err != nil {
 				return fmt.Errorf("failed to setup push controller for %s: %w", rawResource, err)
 			}
 		}
+		return nil
+	}
+	if c.AgentType == "Docker" && c.LocalDockerClient != nil && len(dockerReconcilers) == 0 || c.AgentType == "Raw" && c.LocalRawClient != nil && len(rawReconcilers) == 0 {
 		return nil
 	}
 	return fmt.Errorf("unknown manager type: %T", mgr)

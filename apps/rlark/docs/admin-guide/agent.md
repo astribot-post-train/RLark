@@ -51,6 +51,8 @@ Do not combine cluster and node modes in one Deployment for a multi-node Kuberne
 
 `rlarkadm` assigns the node Agent a dedicated `rlark-agent-node` ServiceAccount. Its local-cluster RBAC is limited to reading the current Node and listing/watching Node events; it does not inherit the cluster Agent's resource-management permissions.
 
+Docker and Raw agents use the Server's scoped Kubernetes proxy for their final admission read of the owning Cluster and Job. The agent ServiceAccount does not receive cluster-wide `jobs` or `clusters` RBAC; the proxy returns only the single Cluster assigned to that agent namespace and a Job with a controller-owned, matching Task binding. This read-only check is repeated immediately before an external workload effect.
+
 ### Verification
 
 ```bash
@@ -140,6 +142,8 @@ See [Configuration Reference](../reference/configuration.md#rlark-agent) for the
 ### Docker Agent requirements
 
 A Docker Agent runs as root on each fixed Docker host with `--agent-type=Docker --mode=cluster`, access to `/var/run/docker.sock`, and a unique `--node-name`. Multiple Docker Agents may share one logical Cluster and management namespace. The control plane expands each replica into one Task, reserves CPU, memory, and whole GPUs on an eligible Node, and writes the head Node private address into Ray workers. Docker containers use host networking and therefore require direct private-network reachability between hosts. The current `rlarkadm` installer does not generate a Docker Agent systemd unit; install and upgrade the root Agent service with the host's systemd tooling.
+
+The bundled Docker SDK supports Engine API 1.44 and negotiates the version with the daemon; Docker Engine 29 requires API 1.44 or newer. The Agent reports Engine capacity, private address, and incarnation into Node status; Lease connectivity and the Online/Offline phase remain control-plane observations. A Task is admitted only when its Job, Cluster, Node UID, Engine incarnation, and durable reservation all match. Each Docker host is reserved for one RLark Docker Task at a time, including CPU-only Tasks. GPU requests are whole-card; device UUID selection and partial GPU sharing are not supported. Container logs and stats exist in the provider, but Gateway Task log/metrics routes are not connected yet.
 
 The Runtime/Workload coordinator is the production writer for Deployment, DaemonSet, and StatefulSet Tasks. It executes ordered Runtime operations. Runtime push controllers only enqueue reconciliation hints; verified targeted observation and Task Status updates run through the pull controller.
 

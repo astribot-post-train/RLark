@@ -12,7 +12,6 @@ import (
 	api "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
 	"github.com/rlinf/rlark/apps/rlark/pkg/tenant"
 	corev1 "k8s.io/api/core/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/labels"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -58,18 +57,31 @@ func (m Manager) Reserve(ctx context.Context, req Request) (api.DockerTaskBindin
 	}
 	selector := labels.SelectorFromSet(req.NodeSelector)
 	sort.Slice(nodes.Items, func(i, j int) bool { return nodes.Items[i].Name < nodes.Items[j].Name })
+	// Recover before considering any free node. A crash may leave the durable
+	// reservation without a Task binding, including on an offline node.
+	var recovered *api.DockerTaskBinding
 	for i := range nodes.Items {
 		node := &nodes.Items[i]
-		if !selector.Matches(labels.Set(node.Labels)) || node.Spec.AgentType != api.AgentTypeDocker || node.Spec.Unschedulable || node.Status.Phase != api.NodeOnline || node.UID == "" || !node.DeletionTimestamp.IsZero() {
-			continue
-		}
-		if tenant.IDOf(node) != req.TenantID || node.Status.NodeInfo.Incarnation == "" {
-			continue
-		}
 		for _, current := range node.Status.DockerReservations {
 			if current.TaskUID == req.TaskUID {
-				return bindingFor(node, current), nil
+				if recovered != nil || len(node.Status.DockerReservations) != 1 || current.JobUID != req.JobUID || current.TenantID != req.TenantID || tenant.IDOf(node) != req.TenantID || current.ClusterUID != string(cluster.UID) || current.NodeUID != string(node.UID) || current.Incarnation != node.Status.NodeInfo.Incarnation || current.CPUMilli != req.CPUMilli || current.MemoryBytes != req.MemoryBytes || current.GPUCount != req.GPUCount {
+					return api.DockerTaskBinding{}, errors.New("Docker reservation recovery identity conflict")
+				}
+				if !selector.Matches(labels.Set(node.Labels)) || node.Spec.AgentType != api.AgentTypeDocker || node.Spec.Unschedulable || node.Status.Phase != api.NodeOnline || node.UID == "" || node.Status.NodeInfo.Incarnation == "" || !node.DeletionTimestamp.IsZero() {
+					return api.DockerTaskBinding{}, fmt.Errorf("%w: reserved Node is not eligible", ErrUnavailable)
+				}
+				binding := bindingFor(node, current)
+				recovered = &binding
 			}
+		}
+	}
+	if recovered != nil {
+		return *recovered, nil
+	}
+	for i := range nodes.Items {
+		node := &nodes.Items[i]
+		if !selector.Matches(labels.Set(node.Labels)) || node.Spec.AgentType != api.AgentTypeDocker || node.Spec.Unschedulable || node.Status.Phase != api.NodeOnline || node.UID == "" || !node.DeletionTimestamp.IsZero() || tenant.IDOf(node) != req.TenantID || node.Status.NodeInfo.Incarnation == "" {
+			continue
 		}
 		if !fits(node, req.CPUMilli, req.MemoryBytes, req.GPUCount) {
 			continue
@@ -78,10 +90,9 @@ func (m Manager) Reserve(ctx context.Context, req Request) (api.DockerTaskBindin
 		before := node.DeepCopy()
 		node.Status.DockerReservations = append(node.Status.DockerReservations, reservation)
 		if err := m.Client.Status().Patch(ctx, node, client.MergeFromWithOptions(before, client.MergeFromWithOptimisticLock{})); err != nil {
-			if apierrors.IsConflict(err) {
-				continue
-			}
-			return api.DockerTaskBinding{}, err
+			// A concurrent writer may already have reserved this Task. Retry
+			// from a fresh snapshot rather than selecting another stale node.
+			return api.DockerTaskBinding{}, fmt.Errorf("persist Docker reservation: %w", err)
 		}
 		return bindingFor(node, reservation), nil
 	}
@@ -89,11 +100,11 @@ func (m Manager) Reserve(ctx context.Context, req Request) (api.DockerTaskBindin
 }
 
 func fits(node *api.Node, cpu, memory, gpu int64) bool {
-	usedCPU, usedMemory, usedGPU := int64(0), int64(0), int64(0)
-	for _, r := range node.Status.DockerReservations {
-		usedCPU += r.CPUMilli
-		usedMemory += r.MemoryBytes
-		usedGPU += r.GPUCount
+	// The preview has neither a durable reservation of all Ray ports nor
+	// device UUID bindings. Serialize every Docker Task per host, including
+	// CPU-only Tasks, until those contracts can safely support sharing.
+	if len(node.Status.DockerReservations) != 0 {
+		return false
 	}
 	cpuQuantity := node.Status.Allocatable[corev1.ResourceCPU]
 	memoryQuantity := node.Status.Allocatable[corev1.ResourceMemory]
@@ -101,7 +112,7 @@ func fits(node *api.Node, cpu, memory, gpu int64) bool {
 	capCPU := cpuQuantity.MilliValue()
 	capMemory := memoryQuantity.Value()
 	capGPU := gpuQuantity.Value()
-	return cpu >= 0 && memory >= 0 && gpu >= 0 && usedCPU+cpu <= capCPU && usedMemory+memory <= capMemory && usedGPU+gpu <= capGPU
+	return cpu >= 0 && memory >= 0 && gpu >= 0 && cpu <= capCPU && memory <= capMemory && gpu <= capGPU
 }
 
 func bindingFor(node *api.Node, r api.DockerNodeReservation) api.DockerTaskBinding {
@@ -135,7 +146,7 @@ func (m Manager) releaseNode(ctx context.Context, node *api.Node, binding api.Do
 }
 
 func ValidateBinding(node *api.Node, binding *api.DockerTaskBinding, tenantID string) error {
-	if node == nil || binding == nil || tenantID == "" || string(node.UID) != binding.NodeUID || node.Spec.AgentType != api.AgentTypeDocker || node.Status.Phase != api.NodeOnline || tenant.IDOf(node) != tenantID || node.Status.NodeInfo.Incarnation != binding.Incarnation {
+	if node == nil || binding == nil || tenantID == "" || string(node.UID) != binding.NodeUID || node.Spec.AgentType != api.AgentTypeDocker || node.Status.Phase != api.NodeOnline || tenant.IDOf(node) != tenantID || node.Status.NodeInfo.Incarnation != binding.Incarnation || len(node.Status.DockerReservations) != 1 {
 		return errors.New("Docker binding does not match node")
 	}
 	for _, r := range node.Status.DockerReservations {

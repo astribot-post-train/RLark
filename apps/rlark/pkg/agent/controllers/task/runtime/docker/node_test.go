@@ -70,7 +70,7 @@ func TestNodeObserverPreservesReservationsAndProjectsCapacity(t *testing.T) {
 	node := &api.Node{
 		ObjectMeta: metav1.ObjectMeta{Name: "docker-1", Namespace: "agents", UID: "node-uid", Labels: map[string]string{api.LabelAgentType: string(api.AgentTypeDocker)}},
 		Spec:       api.NodeSpec{AgentType: api.AgentTypeDocker},
-		Status:     api.NodeStatus{DockerReservations: []api.DockerNodeReservation{{TaskUID: "task-1", CPUMilli: 500, GPUCount: 1}}},
+		Status:     api.NodeStatus{Phase: api.NodeOffline, Reason: "AgentLeaseExpired", DockerReservations: []api.DockerNodeReservation{{TaskUID: "task-1", CPUMilli: 500, GPUCount: 1}}},
 	}
 	c := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(&api.Node{}).WithObjects(node).Build()
 	o := &NodeObserver{Client: c, Engine: observerEngine{info: types.Info{ID: "engine-1", Name: "host-1", NCPU: 8, MemTotal: 16 << 30}, version: types.Version{Version: "24.0"}}, Node: client.ObjectKeyFromObject(node), NodeUID: "node-uid", NodeIP: "10.0.0.7", GPUDiscoverer: func(context.Context) (int64, error) { return 2, nil }}
@@ -84,7 +84,7 @@ func TestNodeObserverPreservesReservationsAndProjectsCapacity(t *testing.T) {
 	if len(current.Status.DockerReservations) != 1 || current.Status.DockerReservations[0].TaskUID != "task-1" {
 		t.Fatalf("reservations were overwritten: %#v", current.Status.DockerReservations)
 	}
-	if current.Status.Phase != api.NodeOnline || current.Status.NodeInfo.Incarnation != "engine-1" {
+	if current.Status.Phase != api.NodeOffline || current.Status.Reason != "AgentLeaseExpired" || current.Status.NodeInfo.Incarnation != "engine-1" {
 		t.Fatalf("unexpected status: %#v", current.Status)
 	}
 	cpu := current.Status.Capacity[corev1.ResourceCPU]

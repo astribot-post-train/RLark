@@ -150,3 +150,9 @@ Actual cloud-container acceptance: the newly built supervisor ran the process-tr
 Only canonical executable paths are currently accepted. Resolving a Python venv symlink can lose the venv `sys.prefix` and package search path; the probe explicitly supplied `PYTHONPATH` and `PATH` for the prepared environment. It does not prove that passing the venv symlink directly works. Production environment adaptation must still validate the Python prefix and dependency resolution.
 
 Additional failure tests cover socket reconnection during execution, escalation after the full 30-second SIGTERM grace period, and result persistence failure. A failed result write returns Unknown with `cleaned=false`; repeated Stop after storage recovery cannot release the node. Restart reads the original durable intent and remains blocked.
+
+## Docker Agent validation
+
+The Docker preview path has been exercised with a root Agent using the host Docker socket and Docker Engine API 1.44+. The validation covers Agent startup, Node capacity/incarnation observation, durable allocation checks, container ownership, and retryable cleanup. A real multi-host GPU Ray training run, Gateway log/stats routes, systemd package generation, and provider-specific device UUID allocation remain outside the completed contract.
+
+The single-host Ray smoke Job `docker-validation-20261030` exited successfully (exit code 0), with `RLARK_DOCKER_SMOKE_OK` in its logs. After Job deletion, its Task, Docker container, and Node reservation were confirmed absent. Each Docker host currently accepts only one RLark Docker Task, including CPU-only Tasks.
