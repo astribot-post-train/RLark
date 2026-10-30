@@ -99,3 +99,20 @@ rlarkadm 生成配置和前台启动包，可接已有 supervisor，不假设容
 ### 本地验证证据
 
 内部组件通过定向竞态测试和仓库 `make test-go` 测试，supervisor 二进制构建成功，API/client/UI 生成模型已重新生成，中英文文档通过严格 MkDocs 构建。尚未完成真实 GPU、委派 cgroup 或双容器 Ray/RLinf 验收。仓库 Go lint 仍报告网络包中三个已有的未检查 channel 接收；新增 Raw 包未报告 lint 问题。这些证据仅验证实验基础组件，不代表上述交付清单完成。
+
+### 金山云容器预检（2026-10-30）
+
+通过已有 SSH 连接检查了此前确认的开发容器。仅运行短时 CPU 进程及能力探针，没有 GPU 计算、安装依赖、修改平台任务、写父级 cgroup 或重新挂载文件系统。
+
+| 检查项 | 实测结果 | 影响 |
+| --- | --- | --- |
+| 内核与 cgroup | Linux 5.15；cgroup v2 为只读挂载 | 创建子 cgroup 返回 `EROFS`，当前 supervisor 无法在此容器运行；仅存在 `cgroup.kill` 不足以满足要求。 |
+| CPU 与内存边界 | CPU affinity 为 192；`cpu.max` 为 `12000000 100000`；`memory.max` 为 `1523639648256` | 仅按 affinity 会高估 CPU 容量，实际 quota 相当于 120 个 CPU。 |
+| GPU 可见性 | `nvidia-smi` 列出六张 H100 80GB | 可以枚举设备，但不代表已获分配授权；没有执行 GPU 任务。 |
+| 默认 Python | 所检查解释器中没有 `ray`、`torch`、`rlinf` 发行包；PATH 无 `ray` | 此解释器不是已准备好的训练环境；尚未穷尽检查其他自定义环境。 |
+| CPU 子进程 | 短时 Python 子进程正常退出 | 普通进程执行可用。 |
+| user/PID namespace | `unshare --user --map-root-user --pid --fork` 成功 | 存在替代隔离边界的可能性，但当前 supervisor 未实现。 |
+| namespace 后代清理 | namespace PID 1 退出，其子进程创建新 session，父进程按 PID/start time 验证无存活的非僵尸进程 | 内核清理了本次 `setsid` CPU 后代；仅为可行性探针，不代表 Ray/GPU 验收通过，也不是生产所有权/恢复实现。 |
+| 私有 proc 挂载 | user/mount/PID namespace 结合 `--mount-proc` 在更改挂载传播属性时返回 `EPERM` | 不能假定允许挂载私有 `/proc`；namespace 实现需要单独设计和验证。 |
+
+当前可查询的开发任务列表没有匹配该 SSH 端点，平台 GPU 分配授权仍未确认，不能用六个可见 UUID 推导授权白名单。当前 cgroup supervisor 在该目标上存在阻塞；需先实现并验证兼容真实容器的执行边界，再继续生产接入。不得静默降级为仅按进程组清理，也不得改成 privileged 模式或重新挂载宿主机 cgroup。
