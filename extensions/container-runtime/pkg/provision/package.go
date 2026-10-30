@@ -195,8 +195,14 @@ func (s Service) ExportPackage(ctx context.Context, req PackageRequest) (*Packag
 			return nil, errors.New("raw package requires supervisor, state, workload paths and log bound")
 		}
 	case "Docker":
-		if req.EnableExecution || req.EnableLogReads || req.EnableUpgrades || req.SupervisorBinary != "" || req.StateDirectory != "" || len(req.Executables) != 0 || len(req.WorkDirectories) != 0 || req.LogBytes != 0 {
-			return nil, errors.New("docker package supports observation only and cannot include Raw supervisor options")
+		if req.EnableLogReads || req.EnableUpgrades || req.SupervisorBinary != "" || len(req.Executables) != 0 || len(req.WorkDirectories) != 0 || req.LogBytes != 0 {
+			return nil, errors.New("docker package cannot include Raw supervisor, log or upgrade options")
+		}
+		if req.EnableExecution && (!targetPath(req.StateDirectory) || within(req.InstallDirectory, req.StateDirectory) || within(req.StateDirectory, req.InstallDirectory)) {
+			return nil, errors.New("docker execution requires a private state directory")
+		}
+		if !req.EnableExecution && req.StateDirectory != "" {
+			return nil, errors.New("docker state directory requires task execution")
 		}
 		if req.DockerHost == "" {
 			req.DockerHost = dockerruntime.DefaultLocalHost
@@ -292,6 +298,9 @@ func (s Service) ExportPackage(ctx context.Context, req PackageRequest) (*Packag
 		argv = append(argv, "--supervisor-socket="+req.StateDirectory+"/supervisor.sock")
 	} else {
 		argv = append(argv, "--docker-host="+req.DockerHost)
+		if req.EnableExecution {
+			argv = append(argv, "--state-directory="+req.StateDirectory)
+		}
 	}
 	if req.EnableExecution {
 		argv = append(argv, "--enable-task-execution=true")

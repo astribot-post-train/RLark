@@ -24,9 +24,11 @@ import (
 // Provider owns only containers whose full Task identity is present in labels.
 // It never shells out to Docker and never exposes the daemon socket to a task.
 type Provider struct {
-	ID        rt.ID
-	Client    EngineClient
-	Admission interface {
+	ID           rt.ID
+	Client       EngineClient
+	beforeCreate func(context.Context) error
+	beforeStart  func(context.Context, string) error
+	Admission    interface {
 		Authorize(context.Context, rt.TaskIdentity) error
 	}
 }
@@ -128,6 +130,14 @@ func (p *Provider) object(task rt.TaskIdentity, c types.ContainerJSON) (rt.Objec
 	spec := ContainerSpec{HostNetwork: c.HostConfig != nil && c.HostConfig.NetworkMode.IsHost()}
 	if c.Config != nil {
 		spec.Image, spec.Env, spec.WorkingDir = c.Config.Image, append([]string(nil), c.Config.Env...), c.Config.WorkingDir
+		for key, value := range c.Config.Labels {
+			if !strings.HasPrefix(key, "rlark.io/") && !strings.HasPrefix(key, "containers.rlark.io/") {
+				if spec.Labels == nil {
+					spec.Labels = map[string]string{}
+				}
+				spec.Labels[key] = value
+			}
+		}
 		spec.Entrypoint = append([]string(nil), c.Config.Entrypoint...)
 		spec.Command = append([]string(nil), c.Config.Cmd...)
 	}
@@ -136,6 +146,7 @@ func (p *Provider) object(task rt.TaskIdentity, c types.ContainerJSON) (rt.Objec
 		spec.MemoryBytes = c.HostConfig.Memory
 		for _, request := range c.HostConfig.DeviceRequests {
 			spec.GPUCount += int64(request.Count)
+			spec.GPUUUIDs = append(spec.GPUUUIDs, request.DeviceIDs...)
 		}
 	}
 	for _, value := range spec.Env {
@@ -261,6 +272,11 @@ func (p *Provider) Apply(ctx context.Context, req rt.ApplyRequest) (rt.ApplyResu
 			return rt.ApplyResult{}, fault.New(fault.Conflict, "Docker container configuration is immutable")
 		}
 		if c.State != nil && c.State.Status == "created" {
+			if p.beforeStart != nil {
+				if err := p.beforeStart(ctx, c.ID); err != nil {
+					return rt.ApplyResult{}, err
+				}
+			}
 			if err := p.Client.ContainerStart(ctx, c.ID, types.ContainerStartOptions{}); err != nil {
 				return rt.ApplyResult{}, fault.Wrap(fault.Unavailable, "start Docker container", err)
 			}
@@ -286,9 +302,20 @@ func (p *Provider) Apply(ctx context.Context, req rt.ApplyRequest) (rt.ApplyResu
 		if pullErr != nil {
 			return rt.ApplyResult{}, fault.Wrap(fault.Unavailable, "pull Docker image", pullErr)
 		}
-		if reader != nil {
-			_, _ = io.Copy(io.Discard, reader)
-			_ = reader.Close()
+		if reader == nil {
+			return rt.ApplyResult{}, fault.New(fault.Unavailable, "Docker image pull returned no stream")
+		}
+		_, copyErr := io.Copy(io.Discard, reader)
+		if err := errors.Join(copyErr, reader.Close()); err != nil {
+			return rt.ApplyResult{}, fault.Wrap(fault.Unavailable, "read Docker image pull", err)
+		}
+		if _, _, err := p.Client.ImageInspectWithRaw(ctx, m.Spec.Image); err != nil {
+			return rt.ApplyResult{}, fault.Wrap(fault.Unavailable, "verify pulled Docker image", err)
+		}
+	}
+	if p.beforeCreate != nil {
+		if err := p.beforeCreate(ctx); err != nil {
+			return rt.ApplyResult{}, err
 		}
 	}
 	cfg, host := dockerConfig(m.Spec, req.Task)
@@ -298,6 +325,11 @@ func (p *Provider) Apply(ctx context.Context, req rt.ApplyRequest) (rt.ApplyResu
 	}
 	if created.ID == "" {
 		return rt.ApplyResult{}, fault.New(fault.Internal, "Docker returned an empty container ID")
+	}
+	if p.beforeStart != nil {
+		if err := p.beforeStart(ctx, created.ID); err != nil {
+			return rt.ApplyResult{}, err
+		}
 	}
 	if err := p.Client.ContainerStart(ctx, created.ID, types.ContainerStartOptions{}); err != nil {
 		return rt.ApplyResult{}, fault.Wrap(fault.Unavailable, "start Docker container", err)
@@ -322,6 +354,8 @@ func dockerConfig(spec ContainerSpec, task rt.TaskIdentity) (*container.Config, 
 	host := &container.HostConfig{NetworkMode: container.NetworkMode("host"), Resources: container.Resources{NanoCPUs: spec.CPU * 1_000_000, Memory: spec.MemoryBytes}}
 	if spec.GPUCount > 0 {
 		host.DeviceRequests = []container.DeviceRequest{{Count: int(spec.GPUCount), Capabilities: [][]string{{"gpu"}}}}
+	} else if len(spec.GPUUUIDs) != 0 {
+		host.DeviceRequests = []container.DeviceRequest{{Driver: "nvidia", DeviceIDs: append([]string(nil), spec.GPUUUIDs...), Capabilities: [][]string{{"gpu"}}}}
 	}
 	return cfg, host
 }
@@ -413,6 +447,19 @@ func (p *Provider) Equal(current rt.TypedManifest, desired rt.DesiredObject) (bo
 		}
 	}
 	actual.Spec.Env, wanted.Spec.Env = nil, nil
+	if len(wanted.Spec.Entrypoint) == 0 {
+		actual.Spec.Entrypoint = nil
+	}
+	if len(wanted.Spec.Command) == 0 {
+		actual.Spec.Command = nil
+	}
+	// Image-supplied labels are defaults, while explicitly requested labels are immutable.
+	for key, value := range wanted.Spec.Labels {
+		if actual.Spec.Labels[key] != value {
+			return false, nil
+		}
+	}
+	actual.Spec.Labels, wanted.Spec.Labels = nil, nil
 	// An omitted working directory inherits the image's WORKDIR. Docker's
 	// inspection returns that resolved default, so it is not desired drift.
 	if wanted.Spec.WorkingDir == "" {

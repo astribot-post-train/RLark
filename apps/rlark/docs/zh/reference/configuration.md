@@ -343,6 +343,11 @@ Gateway 使用的对象存储后端配置。
 !!! tip "镜像优先级"
     `gateway-image` 等组件专用镜像优先于 `image`。
 
+独立构建的伴生 Agent 使用单独参数：`--runtime=docker`、`--docker-host`、
+`--enable-task-execution`（默认 false）和执行时必需的 `--state-directory`。
+它通过扩展 API 支持单个不可变容器 Task，尚不支持 Ray 组。见
+[Docker Agent](../developer-guide/docker-agent-observation.md)。
+
 ### DockerEnv
 
 !!! warning "预览"

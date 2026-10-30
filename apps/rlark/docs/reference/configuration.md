@@ -343,6 +343,11 @@ These names are the exact YAML keys accepted by `rlarkadm`.
 !!! tip "Image priority"
     A component-specific image such as `gateway-image` takes priority over `image`.
 
+The independently built companion Agent has separate flags: `--runtime=docker`,
+`--docker-host`, `--enable-task-execution` (default false), and `--state-directory`
+(required for execution). It uses the extension API and supports one immutable
+container Task, not Ray groups. See [Docker Agent](../developer-guide/docker-agent-observation.md).
+
 ### DockerEnv
 
 !!! warning "Preview"

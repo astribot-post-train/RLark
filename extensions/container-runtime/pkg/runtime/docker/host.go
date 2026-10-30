@@ -28,7 +28,17 @@ func NewHost(ctx context.Context, management client.Client, admission NodeAdmiss
 	}
 	local := *provider
 	local.Admission = admission
-	execution, err := NewCoordinator(ctx, &local, adapters)
+	return NewScopedHost(ctx, management, host.KubernetesStatusWriter{Client: management}, admission.Node.Namespace+"/Docker/"+admission.NodeUID, nodeEligibility{admission: admission, runtimeID: local.runtimeID()}, host.TaskDecoderFunc(decodeTask), &local, adapters)
+}
+
+// NewScopedHost assembles the Docker Host with the restricted Task transport
+// used by a node Agent. It has no Kubernetes API side effects and requires the
+// provider admission callback to revalidate every start.
+func NewScopedHost(ctx context.Context, tasks host.TaskClient, status host.StatusWriter, claimant string, eligibility host.Eligibility, decoder host.TaskDecoder, provider RuntimeProvider, adapters []workload.Adapter) (*host.Host, error) {
+	if tasks == nil || status == nil || claimant == "" || provider == nil {
+		return nil, errors.New("scoped Docker tasks, status and provider are required")
+	}
+	execution, err := NewCoordinator(ctx, provider, adapters)
 	if err != nil {
 		return nil, err
 	}
@@ -40,18 +50,16 @@ func NewHost(ctx context.Context, management client.Client, admission NodeAdmiss
 	if err != nil {
 		return nil, err
 	}
-	selector := coordination.RuntimeSelector{ID: local.runtimeID(), Kind: RuntimeKind}
-	result := &host.Host{
-		Tasks: management, Status: host.KubernetesStatusWriter{Client: management},
-		Claimant:    admission.Node.Namespace + "/Docker/" + admission.NodeUID,
-		Eligibility: nodeEligibility{admission: admission, runtimeID: local.runtimeID()},
-		Bundle:      host.Bundle{RuntimeSelector: selector, Decoder: host.TaskDecoderFunc(decodeTask), Executor: host.CoordinatorExecutor{Coordinator: execution, Selector: selector}, Implementations: implementations, Lifecycle: dockerLifecycle{}, StatusFromReconcile: dockerStatus},
-	}
+	selector := coordination.RuntimeSelector{ID: provider.runtimeID(), Kind: RuntimeKind}
+	result := &host.Host{Tasks: tasks, Status: status, Claimant: claimant, Eligibility: eligibility, Bundle: host.Bundle{RuntimeSelector: selector, Decoder: decoder, Executor: host.CoordinatorExecutor{Coordinator: execution, Selector: selector}, Implementations: implementations, Lifecycle: dockerLifecycle{}, StatusFromReconcile: dockerStatus}}
 	if err := result.Validate(); err != nil {
 		return nil, err
 	}
 	return result, nil
 }
+
+// DecodeTask returns a validated Docker Task snapshot without external effects.
+func DecodeTask(task *api.Task) (coordination.TaskSnapshot, error) { return decodeTask(task) }
 
 type nodeEligibility struct {
 	admission NodeAdmission
@@ -115,8 +123,7 @@ func dockerStatus(result coordinator.ReconcileResult, snapshot coordination.Task
 		phase, known = api.TaskPhasePending, metav1.ConditionFalse
 	}
 	cleaned := metav1.ConditionFalse
-	if phase == api.TaskPhaseSucceeded || phase == api.TaskPhaseFailed || phase == api.TaskPhaseStopped {
-		cleaned = metav1.ConditionTrue
-	}
+	// Terminal state does not prove container removal. The scoped Agent writes
+	// ExecutionCleaned only after its durable cancellation/removal handshake.
 	return &host.StatusIntent{TaskUID: snapshot.Identity.ObjectUID, Generation: snapshot.Identity.Generation, Phase: string(phase), MessageSet: true, Message: result.Evaluation.Observation.Message, Priority: host.StatusPriorityWorkload, Conditions: []host.ConditionMutation{{Condition: metav1.Condition{Type: "ExecutionCleaned", Status: cleaned, Reason: dockerStatusReason, ObservedGeneration: snapshot.Identity.Generation}}, {Condition: metav1.Condition{Type: "ExecutionKnown", Status: known, Reason: dockerStatusReason, Message: result.Evaluation.Observation.Message, ObservedGeneration: snapshot.Identity.Generation}}}}
 }
