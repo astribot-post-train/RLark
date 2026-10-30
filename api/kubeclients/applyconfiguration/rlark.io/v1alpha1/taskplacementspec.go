@@ -23,6 +23,9 @@ package v1alpha1
 // TaskPlacementSpec describes scheduling constraints for the workload.
 type TaskPlacementSpecApplyConfiguration struct {
 	NodeSelector map[string]string `json:"nodeSelector,omitempty"`
+	// Binding is a controller-owned, UID-fenced Raw execution assignment.
+	// It does not authorize execution without a matching Node reservation.
+	Binding *RawTaskBindingApplyConfiguration `json:"binding,omitempty"`
 }
 
 // TaskPlacementSpecApplyConfiguration constructs a declarative configuration of the TaskPlacementSpec type for use with
@@ -42,5 +45,13 @@ func (b *TaskPlacementSpecApplyConfiguration) WithNodeSelector(entries map[strin
 	for k, v := range entries {
 		b.NodeSelector[k] = v
 	}
+	return b
+}
+
+// WithBinding sets the Binding field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the Binding field is set to the value of the last call.
+func (b *TaskPlacementSpecApplyConfiguration) WithBinding(value *RawTaskBindingApplyConfiguration) *TaskPlacementSpecApplyConfiguration {
+	b.Binding = value
 	return b
 }

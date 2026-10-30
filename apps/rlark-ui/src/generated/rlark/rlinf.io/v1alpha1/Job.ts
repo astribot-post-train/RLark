@@ -46,6 +46,21 @@ export interface IJob {
        * TaskPlacementSpec describes scheduling constraints for the workload.
        */
       "placement": {
+        /**
+         * Binding is a controller-owned, UID-fenced Raw execution assignment.
+         * It does not authorize execution without a matching Node reservation.
+         */
+        "binding"?: {
+          "allocationID": string;
+          "clusterUID": string;
+          "executionID": string;
+          "groupDigest": string;
+          "incarnation": string;
+          "jobUID": string;
+          "nodeName": string;
+          "nodeUID": string;
+          "taskUID"?: string;
+        };
         "nodeSelector"?: {
           [key: string]: string;
         };
