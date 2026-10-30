@@ -100,5 +100,37 @@ claim/status、精确 GPU UUID 注入、私有 journal/索引与取消屏障、r
 
 测试覆盖模拟 daemon 故障/恢复、并发取消、跨进程锁争抢、记录丢失检测、官方 SDK
 Unix socket，以及 mTLS 下的成功/失败/暂停和精确分配清理。它们不代表真实 Docker
-GPU 验收。限定 Docker 日志/stats、端口/gang 编排、滚动升级和控制台 Docker Job
-提交仍为后续步骤；已有 Raw 测试及云验收范围保持原有含义。
+GPU 验收。有界 Docker 诊断已实现为单独显式启用的预览；端口/gang 编排、滚动升级和控制台
+Docker Job 提交仍为后续步骤。已有 Raw 测试及云验收范围保持原有含义。
+
+## 有界诊断契约
+
+Docker 诊断使用独立有界 broker 和私有 `/v1/docker-diagnostics` mTLS
+poll/complete 传输，显式指定 `logs` 或 `stats` 类型。Raw 保留现有
+`/v1/logs` 协议。
+Docker 节点必须同时开启执行和 `--enable-docker-diagnostics=true`，并上报
+`docker-diagnostics-v1`。仅观测 Agent 不可读取工作负载输出。安装包对应字段为
+`enableDockerDiagnostics`。
+
+管理员 GET 路由为 `/api/v1/container-runtime/logs` 与
+`/api/v1/container-runtime/stats`，均只接受 `namespace`、`allocation`、
+`allocationUID`、`taskUID` 四个参数。现有回环读取监听器和控制台 origin
+仅服务这两个固定路由。每 Docker 节点同时一个请求，全局最多 32 个 Docker 请求，最多等待 20 秒；
+返回前重新校验管理员凭据及精确 allocation/Task/Job/集群/节点/租户/credential
+所有权。API 重启丢弃请求，可安全重试。已释放或 cleanup-confirmed 的分配、
+Task generation 变化、凭据撤销和能力关闭均拒绝读取。禁止调度和暂停本身不撤销
+保留所有权，但本地取消记录会停止 Docker 诊断。
+
+本地读取前后均校验 journal 记录的精确容器 ID、Task generation、Engine
+incarnation 和 labels；读取 Engine 响应正文时不持有执行锁。独立诊断 worker
+每步最多 10 秒，不阻碍 reconcile。日志按 Engine 顺序合并 stdout/stderr，不
+follow、不添加流标签，最多返回解码后 64 KiB，并限制 multiplex 帧处理量。
+它是当前可用 Engine 日志预览，不是历史归档或 tail API；所有权不明、缺少记录
+和响应格式错误都返回不可用。
+
+资源快照提供 UTC 采样时间及可选的规范无符号 64 位十进制字符串：CPU 累计
+纳秒、内存使用/上限字节、当前 PID 数、块设备读/写字节。缺失字段保持缺失，
+不能补成零。stats JSON 正文最多 1 MiB。单次采样不提供 CPU 百分比；GPU
+利用率和 host network 流量归属不可用。日志和快照均为临时数据，不写入资源
+Status 或持久化指标。控制台提供手动读取，转义显示输出，并在切换选择或退出
+登录后丢弃在途结果。

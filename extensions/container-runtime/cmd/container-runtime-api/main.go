@@ -41,7 +41,7 @@ func run(ctx context.Context, args []string) error {
 	// controller-runtime dependencies register kubeconfig on flag.CommandLine
 	// during init. Keep this executable's flags private to avoid a startup panic.
 	fs := flag.NewFlagSet("container-runtime-api", flag.ContinueOnError)
-	fs.BoolVar(&enableTasks, "enable-task-execution", false, "enable preview node-scoped Raw Task transport")
+	fs.BoolVar(&enableTasks, "enable-task-execution", false, "enable preview node-scoped Raw/Docker Task transport")
 	fs.BoolVar(&enableUpgrades, "enable-agent-upgrades", false, "enable preview node-scoped Agent upgrade grant/completion transport")
 	fs.StringVar(&addr, "addr", ":9444", "HTTPS listen address")
 	fs.StringVar(&kubeconfig, "kubeconfig", "", "Management API kubeconfig (empty uses in-cluster config)")
@@ -49,7 +49,7 @@ func run(ctx context.Context, args []string) error {
 	fs.StringVar(&key, "tls-key", "", "HTTPS server private key path")
 	fs.StringVar(&agentCA, "agent-ca", "", "Dedicated container Agent client CA path")
 	fs.StringVar(&artifactDirectory, "artifact-directory", "", "Read-only verified Agent artifact directory (optional)")
-	fs.StringVar(&logAddr, "log-read-addr", "", "optional explicit loopback HTTP administrator log read address")
+	fs.StringVar(&logAddr, "log-read-addr", "", "optional explicit loopback HTTP administrator logs/stats read address")
 	fs.StringVar(&jwtKey, "gateway-jwt-key-file", "", "Gateway administrator JWT signing key; required with log-read-addr")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -100,6 +100,7 @@ func run(ctx context.Context, args []string) error {
 	}
 	reporter := agent.Reporter{Client: management, ReleaseStore: store}
 	var broker *agent.LogBroker
+	var dockerBroker *agent.DockerDiagnosticBroker
 	var logServer *http.Server
 	if logAddr != "" {
 		keyBytes, err := os.ReadFile(jwtKey)
@@ -111,9 +112,15 @@ func run(ctx context.Context, args []string) error {
 			return err
 		}
 		broker = &agent.LogBroker{}
-		logServer = &http.Server{Addr: logAddr, Handler: console.LogReadAPI{Auth: auth, Reader: agent.LogService{Tasks: agent.TaskService{Reporter: reporter}, Broker: broker}}, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 5 * time.Second, WriteTimeout: 25 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 32 << 10}
+		dockerBroker = &agent.DockerDiagnosticBroker{}
+		dockerReads := agent.DockerDiagnosticsService{Tasks: agent.TaskService{Reporter: reporter}, Broker: dockerBroker}
+		reads := agent.RuntimeLogService{Raw: agent.LogService{Tasks: agent.TaskService{Reporter: reporter}, Broker: broker}, Docker: dockerReads}
+		readMux := http.NewServeMux()
+		readMux.Handle(console.LogPath, console.LogReadAPI{Auth: auth, Reader: reads})
+		readMux.Handle(console.StatsPath, console.StatsReadAPI{Auth: auth, Reader: dockerReads})
+		logServer = &http.Server{Addr: logAddr, Handler: readMux, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 5 * time.Second, WriteTimeout: 25 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 32 << 10}
 	}
-	server := &http.Server{Addr: addr, Handler: agent.Handler{Reporter: reporter, EnableTasks: enableTasks, EnableUpgrades: enableUpgrades, Logs: broker},
+	server := &http.Server{Addr: addr, Handler: agent.Handler{Reporter: reporter, EnableTasks: enableTasks, EnableUpgrades: enableUpgrades, Logs: broker, DockerDiagnostics: dockerBroker},
 		ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 30 * time.Second,
 		TLSConfig: &tls.Config{MinVersion: tls.VersionTLS13, ClientAuth: tls.RequireAndVerifyClientCert, ClientCAs: pool, Certificates: []tls.Certificate{tlsCert}}}
 	g, groupCtx := errgroup.WithContext(ctx)

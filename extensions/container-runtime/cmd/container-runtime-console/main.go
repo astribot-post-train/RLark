@@ -95,6 +95,10 @@ func run(ctx context.Context, args []string) error {
 		api.Jobs = submission.Service{Client: management}
 	}
 	if logOrigin != "" {
+		api.Stats, err = console.NewStatsProxy(logOrigin)
+		if err != nil {
+			return err
+		}
 		api.Logs, err = console.NewLogProxy(logOrigin)
 		if err != nil {
 			return err

@@ -277,8 +277,10 @@ Cordon, suspension and stale readiness do not revoke exact diagnostic access;
 credential revocation, object replacement, allocation release and ambiguous
 ownership do. The listener never accepts a path, stores log bytes in Status,
 forwards cookies or follows redirects. Workload output is rendered as escaped
-plain text; historical archives, follow/tail, stats and terminal/exec are not
-part of this preview.
+plain text; historical archives, follow/tail and terminal/exec are not part of this preview.
+Docker diagnostics are available separately when the node advertises both
+`docker-diagnostics-v1` and `docker-container-execution-v1`; the stats route returns
+one bounded Linux sample and does not provide GPU utilization or CPU percentages.
 
 The private-cloud acceptance on 2026-10-31 exercised this route through the
 console proxy on the dedicated `regular-training` H100 notebook. The test
@@ -461,3 +463,23 @@ examples in the [delivery plan](raw-container-runtime-plan.md). Partial admissio
 is allowed; this is not Ray/RLinf distributed training or a gang scheduler.
 
 A two-template Job may execute sequentially on one eligible node; a cleaned, released sibling does not block the next member. Starts still require the member's exact current allocation, and whole-set retirement still blocks new starts.
+
+## Docker diagnostic reads (preview)
+
+Docker allocation rows now provide manual logs and resource snapshots when the
+node advertises `docker-diagnostics-v1` and `docker-container-execution-v1` and
+cleanup is not confirmed. The `/api/v1/container-runtime/stats` GET route uses the
+same four exact identity parameters and Gateway administrator JWT as logs. The
+fixed loopback proxy uses the existing `--log-api-origin`. No new browser
+credential, arbitrary upstream route or remote Docker socket is exposed.
+
+Snapshots show sample time, cumulative CPU nanoseconds, memory usage/limit, PIDs,
+and block read/write bytes. uint64 values stay decimal strings; missing data is
+unavailable. They do not imply CPU percentages, GPU utilization or attributed
+host-network traffic. Only manual reads are provided. Selection/logout and
+observed allocation replacement/cleanup or capability revocation cancel pending
+reads and clear displayed data. Reads are transient, bounded and revalidated at
+return; API restart requires a manual retry. See [Docker Agent](docker-agent-observation.md)
+for enablement, ownership, limits and failure/recovery. The underlying Engine
+transport is tested with a simulated daemon; real Docker GPU acceptance remains
+outstanding. Browser Docker registration/Job submission and upgrades remain separate work.

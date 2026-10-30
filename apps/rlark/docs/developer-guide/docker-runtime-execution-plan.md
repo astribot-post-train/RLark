@@ -102,7 +102,7 @@ allocation injects GPU UUIDs independently through NVIDIA DeviceIDs.
 
 1. Wire Docker admission into the scoped Agent Task loop and add provider
    lifecycle/status tests.
-2. Add exact Docker logs/stats API actions and bounded console routes.
+2. Add exact Docker logs/stats API actions, bounded console routes and failure/recovery tests.
 3. Add scheduler port reservations and reject incomplete Ray groups.
 4. Add Docker Agent release rollout selection and a real-host acceptance test.
 5. Add the Docker cluster management UI for runtime, Engine identity, node
@@ -122,7 +122,45 @@ API execution and Agent execution must all be enabled explicitly. See the
 The tests include fake daemon failure/recovery, concurrent cancellation,
 interprocess lock contention, missing record detection, the official SDK over a
 Unix socket and mTLS through success/failure/suspension plus exact allocation
-cleanup. They do not establish real Docker GPU acceptance. Scoped Docker
-logs/stats, port/gang coordination, rolling upgrades and the Docker console Job
-submission flow remain the subsequent implementation steps. Existing Raw tests
+cleanup. They do not establish real Docker GPU acceptance. Bounded Docker diagnostics are now implemented as a separate opt-in preview.
+Port/gang coordination, rolling upgrades and the Docker console Job submission
+flow remain subsequent implementation steps. Existing Raw tests
 and cloud acceptance retain their original scope.
+
+## Bounded diagnostics contract
+
+Docker diagnostics use a dedicated bounded broker and the private
+`/v1/docker-diagnostics` mTLS poll/complete transport, with explicit `logs` or
+`stats` kinds. Raw retains its existing `/v1/logs` protocol.
+Docker nodes must explicitly enable `--enable-docker-diagnostics=true` together
+with execution and advertise `docker-diagnostics-v1`. Observation-only Agents
+cannot read workload output. The package field is `enableDockerDiagnostics`.
+
+Administrator GET routes are `/api/v1/container-runtime/logs` and
+`/api/v1/container-runtime/stats`. Both accept exactly `namespace`, `allocation`,
+`allocationUID` and `taskUID`. The existing loopback read listener and console
+origin serve only these fixed routes. Each request permits one pending read
+per Docker node and 32 Docker reads globally, waits at most 20 seconds, and rechecks administrator
+credentials and exact allocation/Task/Job/cluster/node/tenant/credential ownership
+before returning. Requests disappear on API restart and may safely be retried.
+Released or cleanup-confirmed allocations, changed Task generation, revoked
+credentials and disabled capability deny reads. Cordon and suspension alone do
+not revoke retained ownership; local cancellation does stop Docker diagnostics.
+
+The local reader pins the journal's exact container ID, Task generation,
+Engine incarnation and labels before and after a read. It must not hold the
+execution gate while reading the Engine response body. Each diagnostic worker
+step has a ten-second context bound and runs independently from reconciliation.
+Logs combine stdout/stderr in Engine order, without follow or stream labels,
+return at most 64 KiB of decoded bytes, and bound multiplex framing work. They
+are a preview of available Engine logs, not a historical archive or tail API.
+Unknown ownership, missing records and malformed responses return unavailable.
+
+Resource snapshots expose a UTC sample timestamp and optional canonical unsigned
+64-bit decimal strings: CPU cumulative nanoseconds, memory usage/limit bytes,
+current PID count, and block read/write bytes. Missing fields remain absent,
+never synthesized as zero. The stats JSON body is limited to 1 MiB. A single
+sample does not imply CPU percentage; GPU utilization and host-network traffic
+attribution are unavailable. Logs and snapshots are transient, never resource
+Status or persistent metrics. The console provides manual reads, escaping
+output and discarding in-flight results after selection changes or logout.

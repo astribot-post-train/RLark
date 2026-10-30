@@ -19,6 +19,7 @@ import {
   type Node,
   type NodeRegistration,
   type RegisteredNode,
+  type StatsSnapshot,
 } from "./api";
 import {
   clusterState,
@@ -28,6 +29,8 @@ import {
   logText as decodeLogText,
   rawJobIntent,
   nodeRegistrationIntent,
+  canReadDiagnostic,
+  diagnosticInventory,
 } from "./models";
 import { JobsPanel } from "./JobsPanel";
 import { NodeRegistrationPanel } from "./NodeRegistrationPanel";
@@ -35,7 +38,7 @@ import "./style.css";
 const labels = {
   zh: {
     title: "容器集群",
-    subtitle: "独立扩展管理面 · 单节点 Raw 预览",
+    subtitle: "独立扩展管理面 · Raw 与 Docker 节点预览",
     refresh: "刷新",
     loading: "加载中…",
     unavailable: "数据不可用",
@@ -96,8 +99,21 @@ const labels = {
     targetHint:
       "目标是持续期望状态。清空目标只暂停新升级，不取消正在应用的操作。",
     onboarding:
-      "节点登记入口需管理员显式启用；安装包导出请使用 container-runtime-admin。Raw 日志需单独启用。Ray/RLinf 多节点和 Docker Engine 执行尚未验收。",
+      "节点登记和诊断需单独启用；安装包通过管理员 CLI 导出。Docker 单容器执行和诊断为预览，尚无真实 GPU 主机验收。Ray/RLinf 多节点待实现。",
     logs: "读取日志",
+    stats: "读取资源快照",
+    statsLoading: "读取中…",
+    statsUnavailable: "资源快照不可用",
+    statsAt: "采样时间",
+    cpuUsage: "CPU 累计纳秒",
+    memory: "内存",
+    pids: "PID 数",
+    blockIO: "块设备 I/O",
+    read: "读",
+    write: "写",
+    bytes: "字节",
+    gpuStatsHint: "单次采样不提供 CPU 百分比、GPU 利用率和 host network 流量归属。",
+    unavailableValue: "不可用",
     logLoading: "读取中…",
     logUnavailable: "日志不可用",
     logClose: "关闭日志",
@@ -129,7 +145,7 @@ const labels = {
   },
   en: {
     title: "Container clusters",
-    subtitle: "Independent extension · single-node Raw preview",
+    subtitle: "Independent extension · Raw and Docker node preview",
     refresh: "Refresh",
     loading: "Loading…",
     unavailable: "Data unavailable",
@@ -191,8 +207,21 @@ const labels = {
     targetHint:
       "The target is durable intent. Clearing it pauses new upgrades; it does not cancel an applying operation.",
     onboarding:
-      "Node registration requires administrator enablement. Use container-runtime-admin for package export. Raw logs require separate enablement. Multi-node Ray/RLinf and Docker Engine execution are not accepted yet.",
+      "Registration and diagnostics require explicit enablement. Export packages with the administrator CLI. Docker single-container execution and diagnostics are preview, without real GPU-host acceptance. Multi-node Ray/RLinf remains incomplete.",
     logs: "Read logs",
+    stats: "Read resource snapshot",
+    statsLoading: "Reading…",
+    statsUnavailable: "Resource snapshot unavailable",
+    statsAt: "Sample time",
+    cpuUsage: "Cumulative CPU ns",
+    memory: "Memory",
+    pids: "PIDs",
+    blockIO: "Block I/O",
+    read: "read",
+    write: "write",
+    bytes: "bytes",
+    gpuStatsHint: "One sample does not provide CPU percentage, GPU utilization or host-network traffic attribution.",
+    unavailableValue: "Unavailable",
     logLoading: "Reading…",
     logUnavailable: "Logs unavailable",
     logClose: "Close logs",
@@ -276,6 +305,9 @@ function App() {
     note: string;
   }>();
   const [logLoading, setLogLoading] = useState(false);
+  const [stats, setStats] = useState<{ key: string; value: StatsSnapshot }>();
+  const [statsLoading, setStatsLoading] = useState(false);
+  const statsRequest = useRef<AbortController | undefined>(undefined);
   const [showJob, setShowJob] = useState(false);
   const [jobIntent, setJobIntent] = useState<RawJobRequest>();
   const [showNodeRegistration, setShowNodeRegistration] = useState(false);
@@ -320,6 +352,9 @@ function App() {
     logRequest.current?.abort();
     setLogText(undefined);
     setLogLoading(false);
+    statsRequest.current?.abort();
+    setStats(undefined);
+    setStatsLoading(false);
     setError("");
   };
   useEffect(
@@ -429,10 +464,11 @@ function App() {
     }
   }
   const readLogs = async (allocation: Detail["allocations"][number]) => {
-    if (!client || !selection || !allocation.taskUID) return;
+    if (!client || !selection || !detail || !canReadDiagnostic(detail,allocation)) return;
     const controller = new AbortController();
     logRequest.current?.abort();
     logRequest.current = controller;
+    setLogText(undefined);
     pending.current.add(controller);
     setLogLoading(true);
     try {
@@ -461,11 +497,47 @@ function App() {
       if (!controller.signal.aborted) setLogLoading(false);
     }
   };
+  const readStats = async (allocation: Detail["allocations"][number]) => {
+    if (!client || !selection || !detail || !canReadDiagnostic(detail,allocation)) return;
+    const node = detail?.nodes.find((n) => n.name === allocation.nodeName);
+    if (
+      detail?.cluster.runtime !== "Docker" ||
+      !node?.capabilities?.includes("docker-diagnostics-v1") ||
+      allocation.deleting ||
+      allocation.cleanupConfirmed
+    )
+      return;
+    const controller = new AbortController();
+    statsRequest.current?.abort();
+    statsRequest.current = controller;
+    setStats(undefined);
+    setStatsLoading(true);
+    try {
+      const value = await client.stats(
+        selection.namespace,
+        allocation,
+        controller.signal,
+      );
+      if (!controller.signal.aborted) setStats({ key: allocation.uid, value });
+    } catch (e) {
+      if (!controller.signal.aborted) {
+        setStats(undefined);
+        report(e);
+      }
+    } finally {
+      if (!controller.signal.aborted) setStatsLoading(false);
+    }
+  };
+  const diagnosticScope = diagnosticInventory(detail);
   useEffect(() => {
+    logRequest.current?.abort();
+    statsRequest.current?.abort();
     setLogText(undefined);
+    setStats(undefined);
     setLogLoading(false);
-    return () => logRequest.current?.abort();
-  }, [client, selection]);
+    setStatsLoading(false);
+    return () => { logRequest.current?.abort(); statsRequest.current?.abort(); };
+  }, [client, selection, diagnosticScope]);
   useEffect(() => {
     if (!client || writing) return;
     const timer = setInterval(() => setRevision((v) => v + 1), 15000);
@@ -953,15 +1025,45 @@ function App() {
                             </small>
                             <button
                               type="button"
-                              disabled={logLoading || !a.taskUID || a.deleting}
+                              disabled={logLoading || statsLoading || !canReadDiagnostic(detail,a)}
                               onClick={() => void readLogs(a)}
                             >
                               {logLoading ? t.logLoading : t.logs}
                             </button>
+                            {detail.cluster.runtime === "Docker" && (
+                              <button type="button" disabled={statsLoading || logLoading || !canReadDiagnostic(detail,a)} onClick={() => void readStats(a)}>
+                                {statsLoading ? t.statsLoading : t.stats}
+                              </button>
+                            )}
                           </td>
                         </tr>
                       ))}
                     />
+                    {stats && (
+                      <div className="log-viewer">
+                        <div className="actions">
+                          <strong>{stats.key}</strong>
+                          <button
+                            type="button"
+                            onClick={() => setStats(undefined)}
+                          >
+                            {t.close}
+                          </button>
+                        </div>
+                        <small>
+                          {t.statsAt}: {stats.value.sampledAt}
+                        </small>
+                        <pre>
+                          {[
+                            `${t.cpuUsage}: ${stats.value.cpuUsageNS ?? t.unavailableValue}`,
+                            `${t.memory}: ${stats.value.memoryUsageBytes ?? t.unavailableValue} / ${stats.value.memoryLimitBytes ?? t.unavailableValue} ${t.bytes}`,
+                            `${t.pids}: ${stats.value.pids ?? t.unavailableValue}`,
+                            `${t.blockIO}: ${stats.value.blockReadBytes ?? t.unavailableValue} ${t.read} / ${stats.value.blockWriteBytes ?? t.unavailableValue} ${t.write} ${t.bytes}`,
+                          ].join("\n")}
+                        </pre>
+                        <small>{t.gpuStatsHint}</small>
+                      </div>
+                    )}
                     {logText && (
                       <div className="log-viewer">
                         <div className="actions">

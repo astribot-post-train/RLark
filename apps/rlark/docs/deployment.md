@@ -562,3 +562,13 @@ kubectl get pods -n rlark-system
 ## 14. Physical Device Onboarding
 
 For the complete workflow for onboarding GPU nodes, robots, cameras, and other physical devices, configuring the Embodied Runtime, and submitting device workloads, see [Embodied Device Onboarding](admin-guide/embodied-runtime.md).
+
+## Independent container diagnostics preview
+
+The extension Docker Agent can optionally read allocation-bound logs and Linux
+resource snapshots. Configure `enableExecution` and `enableDockerDiagnostics` in
+the exported package. Keep the administrator read listener on a literal loopback
+address; point the console proxy and Agent polling at the same API process.
+This adds no native Agent deployment fields or Docker GPU acceptance claim.
+See [Docker Agent diagnostics](developer-guide/docker-agent-observation.md#bounded-logs-and-resource-snapshots)
+and [configuration](reference/configuration.md) for complete settings and limits.

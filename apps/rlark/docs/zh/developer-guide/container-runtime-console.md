@@ -222,7 +222,7 @@ stdout/stderr 的开头 64 KiB，并附带截断信息。请求最长等待 20 �
 全局 32 个；API 重启后请求丢弃。禁止调度、暂停和就绪过期不会撤销精确诊断访问，
 但凭据撤销、对象替换、allocation 释放和含糊所有权会拒绝。监听器不接受路径、
 不把日志写入 Status、不转发 Cookie、不跟随重定向。工作负载输出按转义纯文本显示；
-历史归档、follow/tail、stats 和 terminal/exec 不在此预览范围。
+历史归档、follow/tail 和 terminal/exec 不在此预览范围；Docker 的有界资源快照见下文。
 
 2026-10-31，私有云验收通过控制台代理在专用 `regular-training` H100 开发机上
 实际验证了该路径。测试使用短期 Gateway token，拒绝未认证、非法 path 和错误
@@ -369,3 +369,19 @@ JWT 和严格 JSON 请求体：
 和示例。允许部分成员先行运行；这还不是 Ray/RLinf 分布式训练或整组准入调度器。
 
 两个模板可以在一个合格节点上依次执行；已清理并释放的兄弟成员不阻止下一个成员运行。启动仍需自身精确且当前有效的 allocation，整组退役仍阻止新启动。
+
+## Docker 诊断读取（预览）
+
+Docker allocation 行现在可手动读取日志和资源快照，要求节点同时声明
+`docker-diagnostics-v1`、`docker-container-execution-v1`，且尚未确认清理。
+`/api/v1/container-runtime/stats` GET 路由与日志使用相同四个确切身份参数和
+Gateway 管理员 JWT；固定回环代理复用 `--log-api-origin`。不向浏览器暴露新凭据、
+任意上游路由或远程 Docker socket。
+
+快照显示采样时间、CPU 累计纳秒、内存使用/上限、PID 数、块设备读/写字节。
+uint64 保持十进制字符串，缺失数据显示不可用；不提供 CPU 百分比、GPU 利用率或
+host network 流量归属。仅支持手动读取；切换/退出、观测到 allocation 替换/清理
+或能力撤销都会取消在途请求并清除显示。读取临时、有界且在返回前重验；API 重启
+后需手动重试。启用、所有权、限额和故障恢复见 [Docker Agent](docker-agent-observation.md)。
+底层 Engine 传输通过模拟 daemon 测试，真实 Docker GPU 验收仍未完成。浏览器
+Docker 登记/Job 提交和升级为后续工作。

@@ -57,13 +57,18 @@ func requestIdentity(r *http.Request, now time.Time) (Identity, error) {
 // Handler exposes heartbeat and opt-in node-scoped Task transport. Identity comes from a verified
 // mTLS peer, not headers or JSON. Construction performs no external effects.
 type Handler struct {
-	Reporter       Reporter
-	EnableTasks    bool
-	EnableUpgrades bool
-	Logs           *LogBroker
+	Reporter          Reporter
+	EnableTasks       bool
+	EnableUpgrades    bool
+	Logs              *LogBroker
+	DockerDiagnostics *DockerDiagnosticBroker
 }
 
 func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path == "/v1/docker-diagnostics" && h.EnableTasks && h.DockerDiagnostics != nil {
+		h.serveDockerDiagnostics(w, r)
+		return
+	}
 	if r.URL.Path == "/v1/logs" && h.EnableTasks && h.Logs != nil {
 		h.serveLogs(w, r)
 		return

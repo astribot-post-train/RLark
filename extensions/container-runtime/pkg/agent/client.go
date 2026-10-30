@@ -72,3 +72,38 @@ func (c *Client) Heartbeat(ctx context.Context, observation Observation) error {
 	}
 	return nil
 }
+
+// DockerDiagnostic exchanges the bounded Docker logs/stats protocol.
+func (c *Client) DockerDiagnostic(ctx context.Context, req DockerDiagnosticRequest) (*DockerDiagnosticWork, error) {
+	if c == nil || c.HTTPClient == nil || c.Endpoint == "" {
+		return nil, errors.New("configured Agent client required")
+	}
+	data, err := json.Marshal(req)
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > 1<<20 {
+		return nil, ErrCapability
+	}
+	r, err := http.NewRequestWithContext(ctx, http.MethodPost, c.Endpoint+"/v1/docker-diagnostics", bytes.NewReader(data))
+	if err != nil {
+		return nil, err
+	}
+	r.Header.Set("Content-Type", "application/json")
+	res, err := c.HTTPClient.Do(r)
+	if err != nil {
+		return nil, fmt.Errorf("send Docker diagnostic request: %w", err)
+	}
+	defer func() { _ = res.Body.Close() }()
+	if res.StatusCode != http.StatusOK {
+		_, _ = io.Copy(io.Discard, io.LimitReader(res.Body, 4096))
+		return nil, fmt.Errorf("docker diagnostic request returned HTTP %d", res.StatusCode)
+	}
+	var work *DockerDiagnosticWork
+	d := json.NewDecoder(io.LimitReader(res.Body, 32<<10))
+	d.DisallowUnknownFields()
+	if err := d.Decode(&work); err != nil || d.Decode(new(any)) != io.EOF {
+		return nil, errors.New("invalid Docker diagnostic response")
+	}
+	return work, nil
+}

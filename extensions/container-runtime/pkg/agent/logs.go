@@ -113,7 +113,7 @@ type LogService struct {
 
 func (s LogService) resolve(ctx context.Context, target LogTarget) (Identity, *Assignment, error) {
 	c := s.Tasks.Reporter.Client
-	if c == nil || s.Broker == nil || target.Allocation.Namespace == "" || target.Allocation.Name == "" || target.Allocation.UID == "" || target.TaskUID == "" {
+	if c == nil || target.Allocation.Namespace == "" || target.Allocation.Name == "" || target.Allocation.UID == "" || target.TaskUID == "" {
 		return Identity{}, nil, ErrIdentity
 	}
 	var a ext.ContainerAllocation
@@ -172,7 +172,7 @@ func (s LogService) forIdentity(ctx context.Context, id Identity, target LogTarg
 			continue
 		}
 		count++
-		if string(b.UID) != a.Allocation.Spec.JobBindingUID || b.Namespace != a.Task.Namespace || ownership.JobBindingMatches(b, &job, id.TenantID) != nil || tenant.IDOf(b) != id.TenantID || b.Spec.Runtime != "Raw" || b.Spec.Cluster != a.Allocation.Spec.Cluster {
+		if string(b.UID) != a.Allocation.Spec.JobBindingUID || b.Namespace != a.Task.Namespace || ownership.JobBindingMatches(b, &job, id.TenantID) != nil || tenant.IDOf(b) != id.TenantID || string(b.Spec.Runtime) != string(a.Task.Spec.Runtime.Kind) || b.Spec.Cluster != a.Allocation.Spec.Cluster {
 			return nil, ErrIdentity
 		}
 	}
@@ -189,7 +189,7 @@ func (s LogService) forIdentity(ctx context.Context, id Identity, target LogTarg
 			continue
 		}
 		count++
-		if cc.UID == "" || cc.Namespace != id.Namespace || cc.Spec.Cluster != a.Allocation.Spec.Cluster || cc.Spec.AgentNamespace != id.Namespace || cc.Spec.Runtime != "Raw" || tenant.IDOf(&cc) != id.TenantID {
+		if cc.UID == "" || cc.Namespace != id.Namespace || cc.Spec.Cluster != a.Allocation.Spec.Cluster || cc.Spec.AgentNamespace != id.Namespace || string(cc.Spec.Runtime) != string(a.Task.Spec.Runtime.Kind) || tenant.IDOf(&cc) != id.TenantID {
 			return nil, ErrIdentity
 		}
 	}
@@ -210,7 +210,13 @@ func (s LogService) forIdentity(ctx context.Context, id Identity, target LogTarg
 
 // Read waits at most twenty seconds and revalidates before releasing any bytes.
 func (s LogService) Read(ctx context.Context, target LogTarget) (raw.LogSnapshot, error) {
+	if s.Broker == nil {
+		return raw.LogSnapshot{}, ErrUnavailable
+	}
 	id, a, err := s.resolve(ctx, target)
+	if err == nil && a.Task.Spec.Runtime.Kind != "Raw" {
+		err = ErrIdentity
+	}
 	if err != nil {
 		return raw.LogSnapshot{}, err
 	}
@@ -262,16 +268,20 @@ func (s LogService) Handle(ctx context.Context, id Identity, req LogRequest) (*L
 		if w == nil {
 			return nil, nil
 		}
-		if _, err := s.forIdentity(ctx, id, w.Target); err != nil {
+		if a, err := s.forIdentity(ctx, id, w.Target); err != nil {
 			return nil, err
+		} else if a.Task.Spec.Runtime.Kind != "Raw" {
+			return nil, ErrIdentity
 		}
 		return w, nil
 	case "complete":
 		if req.Work == nil || req.Work.ID == "" || (req.Snapshot == nil) == !req.Unavailable || req.Snapshot != nil && len(req.Snapshot.Data) > raw.MaxLogBytes {
 			return nil, ErrCapability
 		}
-		if _, err := s.forIdentity(ctx, id, req.Work.Target); err != nil {
+		if a, err := s.forIdentity(ctx, id, req.Work.Target); err != nil {
 			return nil, err
+		} else if a.Task.Spec.Runtime.Kind != "Raw" {
+			return nil, ErrIdentity
 		}
 		result := logResult{unavailable: req.Unavailable}
 		if req.Snapshot != nil {

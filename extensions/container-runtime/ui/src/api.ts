@@ -72,6 +72,15 @@ export type Allocation = {
   deleting: boolean;
   cleanupConfirmed: boolean;
 };
+export type StatsSnapshot = {
+  sampledAt: string;
+  cpuUsageNS?: string;
+  memoryUsageBytes?: string;
+  memoryLimitBytes?: string;
+  pids?: string;
+  blockReadBytes?: string;
+  blockWriteBytes?: string;
+};
 export type LogSnapshot = {
   data: string;
   truncated: boolean;
@@ -169,6 +178,28 @@ function conditions(value: unknown): boolean {
             typeof c.observedGeneration === "number"),
       ))
   );
+}
+const uint64 = (value: unknown): value is string => {
+  if (typeof value !== "string" || value.length > 20 || !/^(0|[1-9][0-9]*)$/.test(value))
+    return false;
+  try {
+    return BigInt(value) <= 18446744073709551615n;
+  } catch {
+    return false;
+  }
+};
+function statsSnapshot(value: unknown): value is StatsSnapshot {
+  if (!record(value) || typeof value.sampledAt !== "string" ||
+      !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?Z$/.test(value.sampledAt) ||
+      !Number.isFinite(Date.parse(value.sampledAt)) || Date.parse(value.sampledAt) > Date.now()+60000) return false;
+  return [
+    "cpuUsageNS",
+    "memoryUsageBytes",
+    "memoryLimitBytes",
+    "pids",
+    "blockReadBytes",
+    "blockWriteBytes",
+  ].every((k) => value[k] === undefined || uint64(value[k]));
 }
 function stringArray(value: unknown): boolean {
   return (
@@ -514,6 +545,26 @@ export class Client {
     )
       throw malformed();
     return body as LogSnapshot;
+  }
+  async stats(
+    namespace: string,
+    allocation: Allocation,
+    signal?: AbortSignal,
+  ): Promise<StatsSnapshot> {
+    const query = new URLSearchParams({
+      namespace,
+      allocation: allocation.name,
+      allocationUID: allocation.uid,
+      taskUID: allocation.taskUID,
+    });
+    const body = await request(
+      `/api/v1/container-runtime/stats?${query}`,
+      this.token,
+      {},
+      signal,
+    );
+    if (!statsSnapshot(body)) throw malformed();
+    return body;
   }
   async jobs(
     namespace: string,

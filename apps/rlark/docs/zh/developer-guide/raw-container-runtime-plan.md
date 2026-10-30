@@ -139,7 +139,7 @@ CPU 观测取进程 affinity 与当前 cgroup 到 cgroup-v2 挂载点之间所�
 
 导出包要求精确 ContainerNode UID，重新校验原生及附属 Cluster/Node 实例和租户，并由管理员独立 Agent CA 签发有期限、仅 client-auth 的证书。不修改或轮换当前凭据。仅写入全新的私有目录，包含节点证书/私钥、API 服务端 CA、不可变身份清单、Agent 启动器、独立 supervisor 启动器及可选 systemd 单元，不含 CA 签名私钥、管理 kubeconfig 或复制的用户环境。导出重试可为同一当前凭据签发另一张证书；旧/替换凭据必须拒绝。管理员私下传输并分别启动 supervisor；停止或更新 Agent 不得停止 supervisor。自动注册/续签仍属后续工作；空闲节点滚动选择为下文单独启用的预览功能。
 
-首个安装包支持已选定的 Linux 可信 root process-tree Raw 模式，要求明确的规范可执行/工作/状态/安装路径、Linux Agent/supervisor 文件及 SHA-256 验证，不从可见性推断 GPU 授权，也不安装 Python 依赖。故障测试覆盖外来资源、跨租户/namespace、替换 UID、部分创建/响应丢失、无效 CA/期限、输出私有权限和启动参数转义。真实 mTLS 测试验证签发证书可认证登记节点、凭据轮换后被拒绝。此管理员路径不代表云端已部署接入。Docker 安装包模式支持连接本地 Unix socket 的主机观测及按需开启的单容器执行；日志/stats、Ray 组、自动续签和安装编排仍属后续工作。
+首个安装包支持已选定的 Linux 可信 root process-tree Raw 模式，要求明确的规范可执行/工作/状态/安装路径、Linux Agent/supervisor 文件及 SHA-256 验证，不从可见性推断 GPU 授权，也不安装 Python 依赖。故障测试覆盖外来资源、跨租户/namespace、替换 UID、部分创建/响应丢失、无效 CA/期限、输出私有权限和启动参数转义。真实 mTLS 测试验证签发证书可认证登记节点、凭据轮换后被拒绝。此管理员路径不代表云端已部署接入。Docker 安装包模式支持连接本地 Unix socket 的主机观测及按需开启的单容器执行；有界日志/stats 需显式开启；历史归档、Ray 组、自动续签和安装编排仍属后续工作。
 
 执行前先安装扩展 CRD、启动独立校验控制器/API，并准备专用 Agent 签名 CA，以及 SAN 匹配私网 API origin 的 HTTPS 服务端证书。接入身份需要原生 Cluster/Node 和附属资源的 list/get/create 权限及 namespace 的 get/create 权限。这是可信管理员路径，不是租户自助 API。签名私钥必须是无 group/other 权限的普通文件。证书期限为 1–720 小时，不能超过签发 CA 的有效期。开发机必须能访问该私网 API，Agent 无需公网地址。
 
@@ -254,7 +254,7 @@ Linux Agent 设置 `--enable-agent-upgrades=true` 后，会在串行心跳循环
 
 ### 真实单节点 Raw 验收（显式启用）
 
-2026-10-31，私网 H100 开发机已显式登记到独立 `ksyun-containers` Cluster（`ksyun-container-agents` namespace、`team-a` 租户），并启动导出的 root supervisor/Agent 包。新鲜 mTLS 心跳显示 Ready、可调度、20 CPU、236 GiB 和一张授权 GPU。对真实 KCP 管理 API 运行 `TestCloudRawLifecycle`，四个用例全部通过，总耗时 170 秒：CUDA 成功（`42.0`）、第二个 Job 复用同一 GPU、退出码 7 失败、停止运行中的进程。各用例确认 allocation 不存在，删除自身 Job/binding 并验证 Task 消失；最终节点恢复空闲可调度，allocation 无残留。真实部署还暴露并修复 API 重复注册 `--kubeconfig` 的 panic、选主 Event RBAC 缺失和控制器 logger 未初始化。测试入口依赖 SSH 反向隧道和短期凭据。这证明单节点单进程预览验收，不代表 Ray/RLinf 整组、历史 logs/stats、原生 UI 集成或真实 exec 失败回滚已完成；后文分别记录任务清理后的 checkpoint 保留、有界远程日志和空闲 Agent 滚动升级验收。原生 Cluster/Node 汇总 UI 仍使用自身基于 Lease 的状态；companion Ready 观测不等同于原生 Node Lease，不得据此宣称 UI 集成完成。
+2026-10-31，私网 H100 开发机已显式登记到独立 `ksyun-containers` Cluster（`ksyun-container-agents` namespace、`team-a` 租户），并启动导出的 root supervisor/Agent 包。新鲜 mTLS 心跳显示 Ready、可调度、20 CPU、236 GiB 和一张授权 GPU。对真实 KCP 管理 API 运行 `TestCloudRawLifecycle`，四个用例全部通过，总耗时 170 秒：CUDA 成功（`42.0`）、第二个 Job 复用同一 GPU、退出码 7 失败、停止运行中的进程。各用例确认 allocation 不存在，删除自身 Job/binding 并验证 Task 消失；最终节点恢复空闲可调度，allocation 无残留。真实部署还暴露并修复 API 重复注册 `--kubeconfig` 的 panic、选主 Event RBAC 缺失和控制器 logger 未初始化。测试入口依赖 SSH 反向隧道和短期凭据。这证明单节点单进程预览验收，不代表 Ray/RLinf 整组、历史日志归档、原生 UI 集成或真实 exec 失败回滚已完成；后文分别记录任务清理后的 checkpoint 保留、有界远程日志和空闲 Agent 滚动升级验收。原生 Cluster/Node 汇总 UI 仍使用自身基于 Lease 的状态；companion Ready 观测不等同于原生 Node Lease，不得据此宣称 UI 集成完成。
 
 启用独立扩展控制器前，必须将部署中的原生 Job/Task/Node CRD **以及**原生 controller-manager 更新到仓库当前版本。旧 Job schema 会拒绝 `placement.environment`；旧原生控制器仍可能用旧 Raw 策略处理扩展 Job，写入冲突的 condition。当前通用 `rlark.io/controller-owner` 所有权边界是必要前提。不要通过删除所有权注解或关闭校验绕过版本不匹配。扩展控制器会初始化 RLark 结构化 logger，以保留调谐和依赖错误。
 
@@ -498,7 +498,7 @@ root 进程测试覆盖脱离会话后代清理、无关进程保护、重复启
 
 ## Docker Agent 验证
 
-Docker 预览路径已用 root Agent、宿主机 Docker socket 和 Docker Engine API 1.44+ 验证。验证覆盖 Agent 启动、Node 容量与 incarnation 观测、持久化预留校验、容器所有权及可重试清理。真实多主机 GPU Ray 训练、Gateway 日志/stats 路由、按设备 UUID 分配及限定作用域端到端执行仍不属于独立扩展的已完成契约。本段是原生代码中早期实验记录，不代表新 Docker Agent 路径已接通；当前限定作用域单容器执行及 systemd 包见 [Docker Agent 与执行](docker-agent-observation.md)，上述历史运行不代表该实现已验收。
+Docker 预览路径已用 root Agent、宿主机 Docker socket 和 Docker Engine API 1.44+ 验证。验证覆盖 Agent 启动、Node 容量与 incarnation 观测、持久化预留校验、容器所有权及可重试清理。真实多主机 GPU Ray 训练、Gateway 历史日志归档、按设备 UUID 分配及限定作用域端到端执行仍不属于独立扩展的已完成契约；有界诊断路由属于显式启用的扩展预览。本段是原生代码中早期实验记录，不代表新 Docker Agent 路径已接通；当前限定作用域单容器执行及 systemd 包见 [Docker Agent 与执行](docker-agent-observation.md)，上述历史运行不代表该实现已验收。
 
 单主机 Ray 冒烟 Job `docker-validation-20261030` 已成功退出（exit code 0），日志包含 `RLARK_DOCKER_SMOKE_OK`。删除 Job 后确认对应 Task、Docker 容器和 Node reservation 均已清理。当前每台 Docker 主机只接收一个 RLark Docker Task，纯 CPU Task 也遵循此约束。
 

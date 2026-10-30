@@ -481,6 +481,7 @@ func TestDockerExecutionPackageCarriesPersistentJournalAndNoSupervisor(t *testin
 	req.WorkDirectories = nil
 	req.LogBytes = 0
 	req.EnableExecution = true
+	req.EnableDockerDiagnostics = true
 	if _, err := s.ExportPackage(context.Background(), req); err != nil {
 		t.Fatal(err)
 	}
@@ -488,10 +489,28 @@ func TestDockerExecutionPackageCarriesPersistentJournalAndNoSupervisor(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(launcher), "--state-directory=/var/lib/rlark-docker") || !strings.Contains(string(launcher), "--enable-task-execution=true") || strings.Contains(string(launcher), "supervisor") {
+	if !strings.Contains(string(launcher), "--state-directory=/var/lib/rlark-docker") || !strings.Contains(string(launcher), "--enable-task-execution=true") || !strings.Contains(string(launcher), "--enable-docker-diagnostics=true") || strings.Contains(string(launcher), "supervisor") {
 		t.Fatalf("wrong launch arguments: %s", launcher)
 	}
 	if _, err := os.Stat(filepath.Join(req.OutputDirectory, "raw-supervisor")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatal("Raw supervisor exported")
+	}
+}
+
+func TestPackageRejectsDockerDiagnosticsWithoutDockerExecution(t *testing.T) {
+	for _, runtime := range []string{"Raw", "Docker"} {
+		t.Run(runtime, func(t *testing.T) {
+			s, cn := registeredRuntime(t, ext.Runtime(runtime))
+			req := packageRequest(t, nodeID(cn))
+			req.Runtime = ext.Runtime(runtime)
+			req.EnableDockerDiagnostics = true
+			req.EnableExecution = false
+			if _, err := s.ExportPackage(context.Background(), req); err == nil {
+				t.Fatal("unsupported diagnostics package exported")
+			}
+			if _, err := os.Stat(req.OutputDirectory); !errors.Is(err, os.ErrNotExist) {
+				t.Fatal("rejected export wrote output")
+			}
+		})
 	}
 }

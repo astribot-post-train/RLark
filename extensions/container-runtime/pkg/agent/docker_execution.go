@@ -29,19 +29,26 @@ import (
 // observation Agent. The assignment endpoint remains the only source of Task
 // identity and allocation; this process never receives a management kubeconfig.
 type DockerExecutionObserver struct {
-	Observer Observer
-	Client   *Client
-	Engine   dockerruntime.EngineClient
-	Journal  *dockerruntime.Journal
-	EngineID string
-	GPUUUIDs []string
+	Observer          Observer
+	Client            *Client
+	Engine            dockerruntime.EngineClient
+	Journal           *dockerruntime.Journal
+	EngineID          string
+	GPUUUIDs          []string
+	EnableDiagnostics bool
 }
 
 // RunDockerExecution runs the opt-in lifecycle loop while preserving cleanup
-// attempts when a local observation fails. It starts no independent workers.
+// attempts when a local observation fails. Optional diagnostics run independently.
 func RunDockerExecution(ctx context.Context, o DockerExecutionObserver, interval, retryMax time.Duration, logger *slog.Logger) error {
 	if o.Observer == nil || o.Client == nil || o.Engine == nil || o.Journal == nil || o.EngineID == "" {
 		return errors.New("docker observer, client, Engine, journal and identity required")
+	}
+	if o.EnableDiagnostics {
+		diagnosticCtx, cancel := context.WithCancel(ctx)
+		done := make(chan struct{})
+		go func() { defer close(done); RunDockerDiagnostics(diagnosticCtx, o.Client, o.diagnosticProvider) }()
+		defer func() { cancel(); <-done }()
 	}
 	return run(ctx, o.Observer, o, interval, retryMax, logger, func(ctx context.Context) error { return o.reconcile(ctx, false) })
 }
@@ -52,6 +59,9 @@ func (o DockerExecutionObserver) Heartbeat(ctx context.Context, observation Obse
 		return errors.Join(err, o.reconcile(ctx, false))
 	}
 	observation.Capabilities = append(slices.Clone(observation.Capabilities), DockerExecutionCapability)
+	if o.EnableDiagnostics {
+		observation.Capabilities = append(observation.Capabilities, DockerDiagnosticsCapability)
+	}
 	err := o.Client.Heartbeat(ctx, observation)
 	return errors.Join(err, o.reconcile(ctx, err == nil))
 }
@@ -138,4 +148,15 @@ func (e dockerEligibility) decode(t *api.Task) (coordination.TaskSnapshot, error
 	}
 	snapshot.Configuration.Parameters, err = json.Marshal(spec)
 	return snapshot, err
+}
+
+func (o DockerExecutionObserver) diagnosticProvider(ctx context.Context, task rt.TaskIdentity) (*dockerruntime.ScopedProvider, error) {
+	a, err := o.Client.Task(ctx, TaskRequest{Action: "assignment"})
+	if err != nil {
+		return nil, err
+	}
+	if a == nil || string(a.Task.UID) != task.ObjectUID || a.Task.Generation != task.Generation || a.Task.Namespace != task.Logical.Namespace || a.Task.Name != task.Logical.Name || a.Task.Spec.Runtime.Kind != "Docker" || a.Allocation.Spec.NodeInstanceID != o.EngineID || a.Allocation.Status.CleanupConfirmed {
+		return nil, ErrIdentity
+	}
+	return &dockerruntime.ScopedProvider{Provider: &dockerruntime.Provider{ID: dockerruntime.DefaultID, Client: o.Engine}, Journal: o.Journal, EngineID: o.EngineID, GPUUUIDs: slices.Clone(a.Allocation.Spec.GPUUUIDs)}, nil
 }

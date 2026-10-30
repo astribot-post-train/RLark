@@ -19,6 +19,7 @@
   "outputDirectory": "/private/export/gpu-host-1",
   "installDirectory": "/opt/rlark-docker",
   "enableExecution": false,
+  "enableDockerDiagnostics": false,
   "enableLogReads": false,
   "enableUpgrades": false
 }
