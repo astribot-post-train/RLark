@@ -62,9 +62,11 @@ task payloads. A direct end-user request without an administrator JWT receives
 401; an authenticated non-administrator receives 403.
 
 The browser receives typed summaries only. It never receives raw Secret data,
-certificate paths, private keys, or management kubeconfig data. The initial
-node join and package export remain administrator CLI operations; the UI can
-show the resulting node state without becoming an enrollment channel.
+certificate paths, private keys, or management kubeconfig data. When
+`--enable-node-registration=true` and the additive registration RBAC are
+installed, an administrator may declare an existing Raw node from the selected
+cluster page. Certificate/package export remains on the administrator CLI and
+the browser never becomes an enrollment or signing channel.
 
 ## UI behavior and failure handling
 
