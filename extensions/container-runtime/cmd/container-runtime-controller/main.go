@@ -14,6 +14,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	containerapi "github.com/astribot-post-train/rlark/extensions/container-runtime/api/v1alpha1"
+	"github.com/astribot-post-train/rlark/extensions/container-runtime/pkg/artifact"
 	containercontroller "github.com/astribot-post-train/rlark/extensions/container-runtime/pkg/controller"
 	nativeapi "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
 )
@@ -22,9 +23,18 @@ func main() {
 	enableReservations := flag.Bool("enable-job-reservations", false, "Opt in to preview Raw process Task reservation and single-process lifecycle aggregation")
 	leaderElect := flag.Bool("leader-elect", true, "Use a Kubernetes Lease for controller leadership")
 	leaderNamespace := flag.String("leader-election-namespace", "rlark-system", "Namespace for the controller leadership Lease")
+	artifactDirectory := flag.String("artifact-directory", "", "Read-only verified Agent artifact directory (optional)")
 	flag.Parse()
 	if *leaderNamespace == "" {
 		fail(fmt.Errorf("leader-election-namespace is required"))
+	}
+	var store artifact.Store
+	if *artifactDirectory != "" {
+		var err error
+		store, err = artifact.NewDirectoryStore(*artifactDirectory)
+		if err != nil {
+			fail(err)
+		}
 	}
 	scheme := runtime.NewScheme()
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
@@ -45,7 +55,7 @@ func main() {
 	if err := (&containercontroller.ContainerJobReconciler{Client: mgr.GetClient()}).SetupWithManager(mgr); err != nil {
 		fail(err)
 	}
-	if err := (&containercontroller.AgentReleaseReconciler{Client: mgr.GetClient()}).SetupWithManager(mgr); err != nil {
+	if err := (&containercontroller.AgentReleaseReconciler{Client: mgr.GetClient(), Store: store}).SetupWithManager(mgr); err != nil {
 		fail(err)
 	}
 	if *enableReservations {

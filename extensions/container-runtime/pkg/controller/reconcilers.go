@@ -7,10 +7,10 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
-	"regexp"
 	"time"
 
 	ext "github.com/astribot-post-train/rlark/extensions/container-runtime/api/v1alpha1"
+	"github.com/astribot-post-train/rlark/extensions/container-runtime/pkg/artifact"
 	"github.com/astribot-post-train/rlark/extensions/container-runtime/pkg/ownership"
 	"github.com/astribot-post-train/rlark/extensions/container-runtime/pkg/rawnode"
 	native "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
@@ -33,8 +33,6 @@ const repairInterval = 30 * time.Second
 var errInvalidBinding = errors.New("invalid companion binding")
 
 func invalidBinding(message string) error { return fmt.Errorf("%w: %s", errInvalidBinding, message) }
-
-var sha256Pattern = regexp.MustCompile(`^[a-f0-9]{64}$`)
 
 func condition(items *[]metav1.Condition, generation int64, kind string, ok bool, reason, message string) {
 	status := metav1.ConditionFalse
@@ -338,9 +336,12 @@ func (r ContainerJobReconciler) validateJob(ctx context.Context, v *ext.Containe
 	return nil
 }
 
-// AgentReleaseReconciler separates metadata validation from availability. No
-// artifact is advertised available before authenticated publication is wired.
-type AgentReleaseReconciler struct{ Client client.Client }
+// AgentReleaseReconciler separates metadata validation from byte verification.
+// Availability requires a configured store and a current verified artifact.
+type AgentReleaseReconciler struct {
+	Client client.Client
+	Store  artifact.Store
+}
 
 func (r *AgentReleaseReconciler) SetupWithManager(m ctrl.Manager) error {
 	return builder.ControllerManagedBy(m).For(&ext.AgentRelease{}, builder.WithPredicates(predicate.GenerationChangedPredicate{})).Complete(r)
@@ -351,14 +352,42 @@ func (r AgentReleaseReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 	before := v.DeepCopy()
-	valid := v.Spec.Version != "" && v.Spec.OS == "linux" && (v.Spec.Architecture == "amd64" || v.Spec.Architecture == "arm64") && sha256Pattern.MatchString(v.Spec.SHA256) && v.Spec.ArtifactPath != "" && v.Spec.Protocol == "v1"
-	reason, message := "MetadataValidated", "Release metadata is valid; artifact publication is not enabled"
+	valid := artifact.ValidateSpec(v.Spec) == nil
+	reason, message := "MetadataValidated", "Release metadata is valid"
 	if !valid {
 		reason, message = "InvalidArtifact", "A supported platform/protocol, version, path and lowercase SHA-256 are required"
 	}
 	v.Status.ObservedGeneration = v.Generation
 	v.Status.Available = false
 	condition(&v.Status.Conditions, v.Generation, "Validated", valid, reason, message)
-	condition(&v.Status.Conditions, v.Generation, "Available", false, "NotPublished", "Authenticated artifact publication is not enabled")
-	return persist(ctx, r.Client, before, &v)
+	availableReason, availableMessage := "NotPublished", "No artifact store is configured"
+	var loadErr error
+	switch {
+	case !v.DeletionTimestamp.IsZero():
+		availableReason, availableMessage = "ReleaseDeleting", "Deleting releases are unavailable"
+	case !valid:
+		availableReason, availableMessage = "InvalidArtifact", "Release metadata is invalid"
+	case r.Store != nil:
+		var data []byte
+		data, loadErr = r.Store.Load(ctx, v.Spec)
+		if loadErr == nil {
+			loadErr = artifact.Verify(v.Spec, data)
+		}
+		v.Status.Available = loadErr == nil
+		availableReason, availableMessage = "ArtifactVerified", "Artifact digest, platform and protocol are verified"
+		if loadErr != nil {
+			availableReason, availableMessage = "ArtifactUnavailable", "Artifact is missing, unreadable or does not match its immutable release"
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return ctrl.Result{}, err
+	}
+	condition(&v.Status.Conditions, v.Generation, "Available", v.Status.Available, availableReason, availableMessage)
+	result, err := persist(ctx, r.Client, before, &v)
+	if err != nil {
+		return result, err
+	}
+	// Periodic inspection repairs local publication without a CR watch event.
+	// Invalid or absent files remain a visible, stable condition until repaired.
+	return result, nil
 }

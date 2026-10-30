@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -83,6 +84,62 @@ func TestValidateExistingNeverCreatesOrRepairs(t *testing.T) {
 	}
 	if task.ResourceVersion != before || task.Annotations[TargetAnnotation] != "" {
 		t.Fatal("validation repaired controller-owned target")
+	}
+}
+
+func TestTargetReleaseFenceRejectsForeignAndInvalidAvailableRelease(t *testing.T) {
+	for _, mode := range []string{"valid", "foreign tenant", "invalid protocol", "stale generation", "missing UID"} {
+		t.Run(mode, func(t *testing.T) {
+			ctx := context.Background()
+			m, req := fixture(t)
+			var cc ext.ContainerCluster
+			if err := m.Client.Get(ctx, client.ObjectKey{Namespace: "agents", Name: "gpu"}, &cc); err != nil {
+				t.Fatal(err)
+			}
+			cc.Spec.TargetAgentRelease = "v1"
+			if err := m.Client.Update(ctx, &cc); err != nil {
+				t.Fatal(err)
+			}
+			var node ext.ContainerNode
+			if err := m.Client.Get(ctx, req.Node, &node); err != nil {
+				t.Fatal(err)
+			}
+			node.Status.AgentVersion = "v1"
+			if err := m.Client.Status().Update(ctx, &node); err != nil {
+				t.Fatal(err)
+			}
+			release := &ext.AgentRelease{ObjectMeta: metav1.ObjectMeta{Name: "v1", Namespace: "agents", UID: "release-uid", Generation: 1, Labels: map[string]string{tenant.IDLabel: tenant.DefaultID}}, Spec: ext.AgentReleaseSpec{Version: "v1", OS: "linux", Architecture: "amd64", Protocol: "v1", ArtifactPath: "agent", SHA256: strings.Repeat("0", 64)}, Status: ext.AgentReleaseStatus{Available: true, ObservedGeneration: 1}}
+			switch mode {
+			case "foreign tenant":
+				release.Labels[tenant.IDLabel] = "other"
+			case "invalid protocol":
+				release.Spec.Protocol = "v2"
+			case "stale generation":
+				release.Generation = 2
+			case "missing UID":
+				release.UID = ""
+			}
+			if err := m.Client.Create(ctx, release); err != nil {
+				t.Fatal(err)
+			}
+			_, err := m.Acquire(ctx, req)
+			if mode == "valid" {
+				if err != nil {
+					t.Fatal(err)
+				}
+				return
+			}
+			if !errors.Is(err, ErrUnavailable) {
+				t.Fatalf("invalid release accepted: %v", err)
+			}
+			var allocations ext.ContainerAllocationList
+			if err := m.Client.List(ctx, &allocations); err != nil {
+				t.Fatal(err)
+			}
+			if len(allocations.Items) != 0 {
+				t.Fatal("fenced release acquired capacity")
+			}
+		})
 	}
 }
 func TestExclusiveAcquireRecoveryAndConfirmedRelease(t *testing.T) {

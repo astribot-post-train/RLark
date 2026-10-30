@@ -147,6 +147,18 @@ CPU 观测取进程 affinity 与当前 cgroup 到 cgroup-v2 挂载点之间所�
 
 本增量本地验证：仓库 `make test-go`、接入/CLI 定向竞态测试、独立模块 `vet`/构建、定向 golangci-lint（零问题）及严格双语 MkDocs 构建通过。仓库 `make lint-go` 仍被原生 Docker/网络及相关预览代码中 30 个已有问题阻塞。本接入增量未执行云端登记或 GPU Job。
 
+### 认证 Agent 制品（预览）
+
+独立模块为 API 和控制器提供可选的 `--artifact-directory`。二者必须挂载同一份由运维管理、只读的制品目录，使用规范绝对路径。AgentRelease Spec 保持不可变；`spec.artifactPath` 是目录内的规范相对路径。拒绝绝对路径、目录逃逸、符号链接、非普通文件、不兼容平台/协议、超过 256 MiB 的文件和 SHA-256 不匹配。控制器周期检查实际字节后才能设置当前 generation 的 `Available=True`；文件丢失或损坏撤销可用性，但不释放 allocation。未配置制品目录的控制器保持不可用。
+
+预览 `POST /v1/release` 仅在配置制品目录时提供。经过验证的节点证书从权威 ContainerCluster 选择当前目标，body 不能指定其他 namespace、租户、版本记录或文件路径。严格 JSON 接受携带 Agent OS/architecture 的 `action: manifest`，或额外携带此前返回的 release UID 与 SHA-256 的 `action: download`。清单仅返回版本身份、版本号、平台、协议、摘要和字节数，不泄漏服务端文件路径。没有目标时返回 HTTP 204；下载只返回经过核验的精确字节。制品 I/O 后重新读取节点凭据、原生/附属绑定及目标身份；凭据轮换、删除、目标替换、租户不符或平台不兼容均拒绝。心跳过期或工作负载占用不阻止下载，但不能授权安装或释放预留。
+
+Agent client 复用 TLS 1.3 通道，拒绝重定向并限制下载大小；返回给后续 updater 前再次验证清单、字节数、SHA-256 和可执行平台。本步骤不执行下载文件、不选择升级节点、不暂存/切换版本、不回滚、不续签凭据，也不重启 supervisor；空闲滚动升级仍是单独的必需门槛。制品和 AgentRelease 由可信管理员发布，不新增无认证静态文件服务或上传端点。测试覆盖真实 mTLS、跨租户/凭据拒绝、目标/UID 替换、摘要损坏、文件丢失和恢复、路径逃逸、取消及下载边界。
+
+发布由管理员操作。两个组件均使用 `--artifact-directory=/private/agent-artifacts`，并只读挂载同一份目录树。复制 `extensions/container-runtime/config/examples/agent-release.yaml`，将占位符替换为 ContainerCluster 的 namespace、租户、实际版本和小写 SHA-256，并选择匹配的 `amd64` 或 `arm64` 架构。创建 AgentRelease 前，将构建出的 Linux `container-runtime-agent` 二进制放到该目录下的 `releases/agent-v1`。现有 API RBAC 已允许读取版本；控制器 RBAC 允许读取及修补版本 status。Agent 不获得 Kubernetes 权限；不要通过公共静态服务暴露目录。
+
+等待 `status.available: true` 且 `status.observedGeneration == metadata.generation`，再由管理员将目标 ContainerCluster 的 `spec.targetAgentRelease` 设为 `agent-v1`。新版本使用新的记录和路径，不覆盖不可变字节。本变更未提供 CLI/UI 发布器或 Agent 自动轮询器；`TargetRelease` 和 `DownloadRelease` 是供后续 updater 使用的客户端库方法。改变目标后，在运维安装该版本并由新观测确认就绪前，调度可能被阻止；它不会切换二进制、停止运行中的 Task 或释放容量。文件缺失/损坏会产生 `Available=False` 和有界 API 错误；恢复精确字节或发布新版本，由周期检查恢复。不要修改 status 绕过验证。重新指向目标属于期望配置，不等于自动回滚。运维手动更新 Agent 时也应保持独立 supervisor 持续运行。
+
 ### 交付门槛
 
 - [x] 中英文文档记录独立扩展、指定队列和验收范围。

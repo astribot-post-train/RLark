@@ -16,6 +16,7 @@ import (
 	"time"
 
 	ext "github.com/astribot-post-train/rlark/extensions/container-runtime/api/v1alpha1"
+	"github.com/astribot-post-train/rlark/extensions/container-runtime/pkg/artifact"
 	"github.com/astribot-post-train/rlark/extensions/container-runtime/pkg/ownership"
 	native "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
 	nativejob "github.com/rlinf/rlark/apps/rlark/pkg/controllermanager/job"
@@ -216,7 +217,7 @@ func (m Manager) acquire(ctx context.Context, req Request, existingOnly bool) (*
 				if err := m.Client.Get(ctx, client.ObjectKey{Namespace: cc.Namespace, Name: cc.Spec.TargetAgentRelease}, &release); err != nil {
 					return nil, err
 				}
-				if !release.Status.Available || release.Status.ObservedGeneration != release.Generation || node.Status.AgentVersion != release.Spec.Version {
+				if release.UID == "" || !release.DeletionTimestamp.IsZero() || tenant.IDOf(&release) != tenant.IDOf(&node) || artifact.ValidateSpec(release.Spec) != nil || !release.Status.Available || release.Status.ObservedGeneration != release.Generation || node.Status.AgentVersion != release.Spec.Version {
 					return nil, fmt.Errorf("%w: node is fenced for target release", ErrUnavailable)
 				}
 			}

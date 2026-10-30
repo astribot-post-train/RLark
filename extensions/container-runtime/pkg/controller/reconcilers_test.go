@@ -2,10 +2,15 @@ package controller
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"os"
+	goruntime "runtime"
 	"testing"
 	"time"
 
 	containerapi "github.com/astribot-post-train/rlark/extensions/container-runtime/api/v1alpha1"
+	"github.com/astribot-post-train/rlark/extensions/container-runtime/pkg/artifact"
 	native "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
 	"github.com/rlinf/rlark/apps/rlark/pkg/tenant"
 	meta "k8s.io/apimachinery/pkg/api/meta"
@@ -171,5 +176,86 @@ func TestAgentReleaseDigestMustBeSHA256(t *testing.T) {
 	}
 	if got.Status.Available || got.Status.Conditions[0].Reason != "InvalidArtifact" {
 		t.Fatalf("invalid artifact became available: %#v", got.Status)
+	}
+}
+
+func TestAgentReleaseAvailabilityTracksVerifiedArtifactBytes(t *testing.T) {
+	ctx := context.Background()
+	if goruntime.GOOS != "linux" || goruntime.GOARCH != "amd64" && goruntime.GOARCH != "arm64" {
+		t.Skip("Linux ELF artifact")
+	}
+	binaryPath, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(binaryPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest := sha256.Sum256(data)
+	root := t.TempDir()
+	if err := os.WriteFile(root+"/agent", data, 0700); err != nil {
+		t.Fatal(err)
+	}
+	store, err := artifact.NewDirectoryStore(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	release := &containerapi.AgentRelease{ObjectMeta: metav1.ObjectMeta{Name: "v1", Namespace: "control", UID: "release-uid", Generation: 1}, Spec: containerapi.AgentReleaseSpec{Version: "v1", OS: "linux", Architecture: goruntime.GOARCH, SHA256: hex.EncodeToString(digest[:]), ArtifactPath: "agent", Protocol: "v1"}}
+	c := fake.NewClientBuilder().WithScheme(testScheme(t)).WithStatusSubresource(release).WithObjects(release).Build()
+	r := AgentReleaseReconciler{Client: c, Store: store}
+	key := reconcile.Request{NamespacedName: types.NamespacedName{Name: release.Name, Namespace: release.Namespace}}
+	if _, err := r.Reconcile(context.Background(), key); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Get(context.Background(), types.NamespacedName{Name: release.Name, Namespace: release.Namespace}, release); err != nil {
+		t.Fatal(err)
+	}
+	if !release.Status.Available || !meta.IsStatusConditionTrue(release.Status.Conditions, "Available") {
+		t.Fatalf("verified artifact was not available: %#v", release.Status)
+	}
+	if err := os.WriteFile(root+"/agent", []byte("corrupt"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Reconcile(context.Background(), key); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Get(context.Background(), types.NamespacedName{Name: release.Name, Namespace: release.Namespace}, release); err != nil {
+		t.Fatal(err)
+	}
+	if release.Status.Available || meta.IsStatusConditionTrue(release.Status.Conditions, "Available") {
+		t.Fatalf("corrupt artifact remained available: %#v", release.Status)
+	}
+	if err := os.Remove(root + "/agent"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Reconcile(ctx, key); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(root+"/agent", data, 0700); err != nil {
+		t.Fatal(err)
+	}
+	// Reconstruct the controller to prove repair does not depend on event history.
+	r = AgentReleaseReconciler{Client: c, Store: store}
+	result, err := r.Reconcile(ctx, key)
+	if err != nil || result.RequeueAfter <= 0 {
+		t.Fatalf("periodic repair result=%#v err=%v", result, err)
+	}
+	if err := c.Get(ctx, key.NamespacedName, release); err != nil {
+		t.Fatal(err)
+	}
+	if !release.Status.Available || release.Status.ObservedGeneration != release.Generation {
+		t.Fatalf("restored artifact not available: %#v", release.Status)
+	}
+	// Removing the store must revoke previously advertised availability.
+	r = AgentReleaseReconciler{Client: c}
+	if _, err := r.Reconcile(ctx, key); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Get(ctx, key.NamespacedName, release); err != nil {
+		t.Fatal(err)
+	}
+	if release.Status.Available {
+		t.Fatal("unconfigured store retained availability")
 	}
 }
