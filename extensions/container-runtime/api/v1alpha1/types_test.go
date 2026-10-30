@@ -59,11 +59,12 @@ func TestUpgradeRegistrationAndAllocationCompatibility(t *testing.T) {
 	if restored.Upgrade != nil || restored.Task.UID != "task-uid" || restored.Generation != 1 {
 		t.Fatalf("legacy workload misclassified: %#v", restored)
 	}
-	op := &AgentUpgrade{Status: AgentUpgradeStatus{Allocation: &NativeObjectReference{UID: "allocation"}, StartedAt: &metav1.Time{}}}
+	op := &AgentUpgrade{Status: AgentUpgradeStatus{Allocation: &NativeObjectReference{UID: "allocation"}, StartedAt: &metav1.Time{}, Completion: &AgentUpgradeCompletion{AttemptID: "original"}}}
 	other := op.DeepCopy()
 	other.Status.Allocation.UID = "foreign"
 	other.Status.StartedAt.Time = metav1.Now().Time
-	if op.Status.Allocation.UID != "allocation" || !op.Status.StartedAt.IsZero() {
+	other.Status.Completion.AttemptID = "other"
+	if op.Status.Allocation.UID != "allocation" || !op.Status.StartedAt.IsZero() || op.Status.Completion.AttemptID != "original" {
 		t.Fatal("upgrade status aliases copy")
 	}
 }

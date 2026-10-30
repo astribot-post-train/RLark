@@ -15,8 +15,8 @@ import (
 )
 
 // AgentUpgradeReconciler reserves an explicit operation's shared node lock and
-// cancels it safely on deletion. It owns reservation/cancellation status only;
-// no Agent application grant or binary installation is performed here.
+// cancels it safely on deletion and consumes authenticated completion receipts.
+// The API owns application grants/reports; this controller owns lock cleanup.
 type AgentUpgradeReconciler struct {
 	Client client.Client
 	Now    func() time.Time
@@ -37,6 +37,9 @@ func (r AgentUpgradeReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	}
 	manager := companion.Manager{Client: r.Client, Now: r.Now}
 	request := companion.UpgradeRequest{Operation: client.ObjectKeyFromObject(&op)}
+	if op.Status.Completion != nil {
+		return r.complete(ctx, &op, manager, request)
+	}
 	if !op.DeletionTimestamp.IsZero() {
 		return r.cancel(ctx, &op, manager, request)
 	}
@@ -85,6 +88,62 @@ func (r AgentUpgradeReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	op.Status.Allocation = &ref
 	condition(&op.Status.Conditions, op.Generation, "Reserved", true, "NodeLockReserved", "The shared node lock is reserved; a separate scoped grant is required before installation")
 	return r.persist(ctx, before, &op)
+}
+
+func (r AgentUpgradeReconciler) complete(ctx context.Context, op *ext.AgentUpgrade, manager companion.Manager, req companion.UpgradeRequest) (ctrl.Result, error) {
+	if !companion.ValidUpgradeCompletion(op) || !controllerutil.ContainsFinalizer(op, companion.UpgradeFinalizer) || op.Status.Phase != "Applying" && op.Status.Phase != op.Status.Completion.Result {
+		return ctrl.Result{}, companion.ErrIdentity
+	}
+	// ObserveUpgrade deliberately returns a nil allocation for a replacement at
+	// the deterministic name. That is safe for Agent reads, but a controller
+	// must never treat a replacement as deletion of its witnessed lock.
+	if op.Status.Allocation != nil {
+		var witnessed ext.ContainerAllocation
+		err := r.Client.Get(ctx, client.ObjectKey{Namespace: op.Status.Allocation.Namespace, Name: op.Status.Allocation.Name}, &witnessed)
+		if err == nil {
+			if string(witnessed.UID) != op.Status.Allocation.UID {
+				return ctrl.Result{}, companion.ErrIdentity
+			}
+		} else if !apierrors.IsNotFound(err) {
+			return ctrl.Result{}, err
+		}
+	}
+	current, _, allocation, err := manager.ObserveUpgrade(ctx, req)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if current.ResourceVersion != op.ResourceVersion {
+		return ctrl.Result{RequeueAfter: time.Second}, nil
+	}
+	if allocation != nil {
+		before := allocation.DeepCopy()
+		allocation.Status.ObservedGeneration = allocation.Generation
+		allocation.Status.CleanupConfirmed = true
+		allocation.Status.Phase = op.Status.Completion.Result
+		condition(&allocation.Status.Conditions, allocation.Generation, "CleanupConfirmed", true, "UpgradeCompletionConfirmed", "The exact granted updater reported a fresh idle result for the pinned version")
+		if !reflect.DeepEqual(before.Status, allocation.Status) {
+			if err := r.Client.Status().Patch(ctx, allocation, client.MergeFromWithOptions(before, client.MergeFromWithOptimisticLock{})); err != nil {
+				return ctrl.Result{}, err
+			}
+		}
+		if err := manager.ReleaseUpgrade(ctx, client.ObjectKeyFromObject(allocation), string(allocation.UID), string(op.UID)); err != nil {
+			if errors.Is(err, companion.ErrUnavailable) {
+				return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+			}
+			return ctrl.Result{}, err
+		}
+	}
+	before := op.DeepCopy()
+	op.Status.Phase = op.Status.Completion.Result
+	op.Status.ObservedGeneration = op.Generation
+	condition(&op.Status.Conditions, op.Generation, "AllocationReleased", true, "UpgradeAllocationDeleted", "Deletion of the exact upgrade allocation was observed; the operation is retained for administrator review")
+	if !reflect.DeepEqual(before.Status, op.Status) {
+		return r.persist(ctx, before, op)
+	}
+	if !op.DeletionTimestamp.IsZero() {
+		return r.removeFinalizer(ctx, op)
+	}
+	return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 }
 
 func (r AgentUpgradeReconciler) persist(ctx context.Context, before, after *ext.AgentUpgrade) (ctrl.Result, error) {

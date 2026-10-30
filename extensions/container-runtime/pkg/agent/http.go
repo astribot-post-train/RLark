@@ -57,11 +57,16 @@ func requestIdentity(r *http.Request, now time.Time) (Identity, error) {
 // Handler exposes heartbeat and opt-in node-scoped Task transport. Identity comes from a verified
 // mTLS peer, not headers or JSON. Construction performs no external effects.
 type Handler struct {
-	Reporter    Reporter
-	EnableTasks bool
+	Reporter       Reporter
+	EnableTasks    bool
+	EnableUpgrades bool
 }
 
 func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path == "/v1/upgrade" && h.EnableUpgrades {
+		h.serveUpgrade(w, r)
+		return
+	}
 	if r.URL.Path == "/v1/release" && h.Reporter.ReleaseStore != nil {
 		h.serveRelease(w, r)
 		return

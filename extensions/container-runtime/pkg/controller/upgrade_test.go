@@ -224,3 +224,153 @@ func TestUpgradeIntentProtectsNodeAndClusterBeforeAllocation(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func completedUpgradeFixture(t *testing.T, result string) (AgentUpgradeReconciler, ctrl.Request) {
+	t.Helper()
+	r, req := upgradeControllerFixture(t)
+	reconcileUpgrade(t, r, req, 1)
+	op := readUpgrade(t, r, req)
+	start := metav1.NewTime(r.Now().Add(-2 * time.Second))
+	heartbeat := metav1.NewTime(r.Now().Add(-time.Second))
+	done := metav1.NewTime(r.Now())
+	version := op.Spec.ReleaseSpec.Version
+	if result == "RolledBack" {
+		version = op.Spec.FromVersion
+	}
+	op.Status.Phase = "Applying"
+	op.Status.AttemptID = "77777777-7777-7777-7777-777777777777"
+	op.Status.StartedAt = &start
+	op.Status.Completion = &ext.AgentUpgradeCompletion{AttemptID: op.Status.AttemptID, Result: result, Version: version, HeartbeatAt: heartbeat, CompletedAt: done}
+	condition(&op.Status.Conditions, op.Generation, "ApplicationGranted", true, "ScopedUpgradeClaimed", "Exact grant")
+	condition(&op.Status.Conditions, op.Generation, "ApplicationComplete", true, result, "Exact completion")
+	checkUpgrade(t, r.Client.Status().Update(context.Background(), op))
+	return r, req
+}
+
+func TestUpgradeCompletionWaitsForDeletionAndRetainsTerminalOperation(t *testing.T) {
+	for _, result := range []string{"Succeeded", "RolledBack"} {
+		t.Run(result, func(t *testing.T) {
+			r, req := completedUpgradeFixture(t, result)
+			ctx := context.Background()
+			op := readUpgrade(t, r, req)
+			var a ext.ContainerAllocation
+			key := client.ObjectKey{Namespace: op.Status.Allocation.Namespace, Name: op.Status.Allocation.Name}
+			checkUpgrade(t, r.Client.Get(ctx, key, &a))
+			a.Finalizers = append(a.Finalizers, "example.com/delay")
+			checkUpgrade(t, r.Client.Update(ctx, &a))
+			reconcileUpgrade(t, r, req, 2)
+			op = readUpgrade(t, r, req)
+			if op.Status.Phase != "Applying" {
+				t.Fatal("terminal before allocation deletion")
+			}
+			checkUpgrade(t, r.Client.Get(ctx, key, &a))
+			if !a.Status.CleanupConfirmed || a.DeletionTimestamp.IsZero() {
+				t.Fatal("completion cleanup not initiated")
+			}
+			a.Finalizers = nil
+			checkUpgrade(t, r.Client.Update(ctx, &a))
+			// Reconstruct the controller after deletion; the durable receipt suffices.
+			r = AgentUpgradeReconciler{Client: r.Client, Now: r.Now}
+			reconcileUpgrade(t, r, req, 2)
+			op = readUpgrade(t, r, req)
+			if op.Status.Phase != result || !controllerutil.ContainsFinalizer(op, companion.UpgradeFinalizer) {
+				t.Fatal("terminal operation not retained")
+			}
+			checkUpgrade(t, r.Client.Delete(ctx, op))
+			reconcileUpgrade(t, r, req, 1)
+			if err := r.Client.Get(ctx, req.NamespacedName, &ext.AgentUpgrade{}); !apierrors.IsNotFound(err) {
+				t.Fatalf("explicit terminal deletion blocked: %v", err)
+			}
+		})
+	}
+}
+
+func TestUpgradeCompletionRecoversLostEffects(t *testing.T) {
+	for _, stage := range []string{"allocation-status", "delete", "finalizer", "operation-status"} {
+		t.Run(stage, func(t *testing.T) {
+			r, req := completedUpgradeFixture(t, "Succeeded")
+			base := r.Client
+			failed := false
+			lost := func(err error) error {
+				if err != nil {
+					return err
+				}
+				failed = true
+				return errors.New("committed response lost")
+			}
+			r.Client = interceptor.NewClient(base.(client.WithWatch), interceptor.Funcs{
+				SubResourcePatch: func(ctx context.Context, c client.Client, name string, obj client.Object, patch client.Patch, opts ...client.SubResourcePatchOption) error {
+					_, isAllocation := obj.(*ext.ContainerAllocation)
+					_, isOperation := obj.(*ext.AgentUpgrade)
+					if !failed && name == "status" && (stage == "allocation-status" && isAllocation || stage == "operation-status" && isOperation) {
+						return lost(c.SubResource(name).Patch(ctx, obj, patch, opts...))
+					}
+					return c.SubResource(name).Patch(ctx, obj, patch, opts...)
+				},
+				Delete: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.DeleteOption) error {
+					if _, ok := obj.(*ext.ContainerAllocation); ok && !failed && stage == "delete" {
+						return lost(c.Delete(ctx, obj, opts...))
+					}
+					return c.Delete(ctx, obj, opts...)
+				},
+				Patch: func(ctx context.Context, c client.WithWatch, obj client.Object, patch client.Patch, opts ...client.PatchOption) error {
+					if _, ok := obj.(*ext.ContainerAllocation); ok && !failed && stage == "finalizer" {
+						return lost(c.Patch(ctx, obj, patch, opts...))
+					}
+					return c.Patch(ctx, obj, patch, opts...)
+				},
+			})
+			if _, err := r.Reconcile(context.Background(), req); err == nil || !failed {
+				t.Fatal("lost effect not injected")
+			}
+			r.Client = base
+			reconcileUpgrade(t, r, req, 3)
+			op := readUpgrade(t, r, req)
+			if op.Status.Phase != "Succeeded" {
+				t.Fatal("committed effect did not recover")
+			}
+		})
+	}
+}
+
+func TestUpgradeCompletionNeverTouchesReplacementOrInvalidProof(t *testing.T) {
+	for _, scenario := range []string{"replacement", "wrong-attempt", "stale-heartbeat"} {
+		t.Run(scenario, func(t *testing.T) {
+			r, req := completedUpgradeFixture(t, "Succeeded")
+			ctx := context.Background()
+			op := readUpgrade(t, r, req)
+			key := client.ObjectKey{Namespace: op.Status.Allocation.Namespace, Name: op.Status.Allocation.Name}
+			var a ext.ContainerAllocation
+			checkUpgrade(t, r.Client.Get(ctx, key, &a))
+			if scenario == "replacement" {
+				a.Finalizers = nil
+				checkUpgrade(t, r.Client.Update(ctx, &a))
+				checkUpgrade(t, r.Client.Delete(ctx, &a))
+				a.ResourceVersion = ""
+				a.UID = "replacement"
+				a.DeletionTimestamp = nil
+				a.Status = ext.ContainerAllocationStatus{}
+				a.Finalizers = []string{"example.com/foreign"}
+				checkUpgrade(t, r.Client.Create(ctx, &a))
+				// The fixture assigns UIDs on Create; simulate the API's next UID.
+				a.UID = "replacement"
+				checkUpgrade(t, r.Client.Update(ctx, &a))
+			} else {
+				if scenario == "wrong-attempt" {
+					op.Status.Completion.AttemptID = "other"
+				} else {
+					op.Status.Completion.HeartbeatAt = *op.Status.StartedAt
+				}
+				checkUpgrade(t, r.Client.Status().Update(ctx, op))
+			}
+			_, err := r.Reconcile(ctx, req)
+			if scenario != "replacement" && !errors.Is(err, companion.ErrIdentity) {
+				t.Fatalf("invalid proof accepted: %v", err)
+			}
+			checkUpgrade(t, r.Client.Get(ctx, key, &a))
+			if a.Status.CleanupConfirmed || !a.DeletionTimestamp.IsZero() {
+				t.Fatal("replacement/invalid proof released allocation")
+			}
+		})
+	}
+}

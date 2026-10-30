@@ -180,6 +180,35 @@ spec:
                 x-kubernetes-validations:
                 - message: referenced object instance is immutable
                   rule: self == oldSelf
+              attemptID:
+                type: string
+              completion:
+                description: |-
+                  AgentUpgradeCompletion is a bounded receipt from the node-scoped updater.
+                  The controller still owns allocation cleanup and terminal observation.
+                properties:
+                  attemptID:
+                    type: string
+                  completedAt:
+                    format: date-time
+                    type: string
+                  heartbeatAt:
+                    format: date-time
+                    type: string
+                  result:
+                    enum:
+                    - Succeeded
+                    - RolledBack
+                    type: string
+                  version:
+                    type: string
+                required:
+                - attemptID
+                - completedAt
+                - heartbeatAt
+                - result
+                - version
+                type: object
               conditions:
                 items:
                   description: Condition contains details for one aspect of the current
