@@ -9,13 +9,26 @@ import (
 	"github.com/rlinf/rlark/apps/rlark/pkg/agent/execution/environment"
 	"github.com/rlinf/rlark/apps/rlark/pkg/agent/execution/fault"
 	executionplan "github.com/rlinf/rlark/apps/rlark/pkg/agent/execution/plan"
+	rt "github.com/rlinf/rlark/apps/rlark/pkg/agent/execution/runtime"
 	"github.com/rlinf/rlark/apps/rlark/pkg/agent/execution/workload"
 )
+
+// RuntimeProvider is the concrete Docker execution surface used by the
+// Coordinator. Both the legacy provider and journal-protected provider satisfy
+// it; only the latter is installed in the scoped Agent.
+type RuntimeProvider interface {
+	rt.Provider
+	rt.InventoryProvider
+	rt.UnitLowerer
+	ValidateDesired(rt.DesiredObject) error
+	Equal(rt.TypedManifest, rt.DesiredObject) (bool, error)
+	runtimeID() rt.ID
+}
 
 // NewCoordinator assembles the Docker provider and explicitly registered
 // workload adapters. Docker workers are launched by the host daemon; no
 // Docker-in-Docker or Kubernetes object is involved.
-func NewCoordinator(ctx context.Context, provider *Provider, adapters []workload.Adapter) (*coordinator.Coordinator, error) {
+func NewCoordinator(ctx context.Context, provider RuntimeProvider, adapters []workload.Adapter) (*coordinator.Coordinator, error) {
 	if provider == nil || len(adapters) == 0 {
 		return nil, errors.New("Docker provider and workload adapters are required")
 	}

@@ -105,10 +105,10 @@ func (r JobReservationReconciler) binding(ctx context.Context, job *native.Job) 
 }
 
 func processTemplate(job *native.Job, binding *ext.ContainerJob) error {
-	if binding.Spec.Runtime != "Raw" {
+	if binding.Spec.Runtime != "Raw" && binding.Spec.Runtime != "Docker" {
 		return invalidBinding("only Raw process templates are supported")
 	}
-	if err := taskcontract.ValidateRawJob(job); err != nil {
+	if err := taskcontract.ValidateJob(job); err != nil {
 		return invalidBinding("invalid Raw process templates")
 	}
 	return nil

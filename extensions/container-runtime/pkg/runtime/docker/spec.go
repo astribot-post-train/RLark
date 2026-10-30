@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 
 	rt "github.com/rlinf/rlark/apps/rlark/pkg/agent/execution/runtime"
@@ -31,6 +32,7 @@ type ContainerSpec struct {
 	WorkingDir  string            `json:"workingDir,omitempty"`
 	Labels      map[string]string `json:"labels,omitempty"`
 	GPUCount    int64             `json:"gpuCount,omitempty"`
+	GPUUUIDs    []string          `json:"gpuUUIDs,omitempty"`
 	CPU         int64             `json:"cpuMilli,omitempty"`
 	MemoryBytes int64             `json:"memoryBytes,omitempty"`
 	HostNetwork bool              `json:"hostNetwork"`
@@ -75,8 +77,28 @@ func (s ContainerSpec) Validate() error {
 	if !s.HostNetwork {
 		return errors.New("Docker workloads require host network mode")
 	}
-	if s.GPUCount < 0 || s.CPU < 0 || s.MemoryBytes < 0 {
-		return errors.New("Docker resource requests must not be negative")
+	if s.GPUCount < 0 || s.CPU < 0 || s.CPU > math.MaxInt64/1_000_000 || s.MemoryBytes < 0 {
+		return errors.New("docker resource requests must be nonnegative and CPU must fit NanoCPUs")
+	}
+	if len(s.GPUUUIDs) != 0 && s.GPUCount != 0 {
+		return errors.New("docker GPU count and device UUIDs are mutually exclusive")
+	}
+	gpus := map[string]bool{}
+	for _, id := range s.GPUUUIDs {
+		if !strings.HasPrefix(id, "GPU-") || strings.ContainsAny(id, ", \t\r\n\x00") || gpus[id] {
+			return errors.New("docker GPU UUIDs must be unique whole devices")
+		}
+		gpus[id] = true
+	}
+	for key := range s.Labels {
+		if strings.HasPrefix(key, "rlark.io/") || strings.HasPrefix(key, "containers.rlark.io/") {
+			return errors.New("docker ownership labels are reserved")
+		}
+	}
+	for _, arg := range append(append(append([]string{s.Image, s.WorkingDir}, s.Entrypoint...), s.Command...), s.Env...) {
+		if strings.ContainsRune(arg, 0) {
+			return errors.New("NUL in Docker configuration")
+		}
 	}
 	seen := map[string]struct{}{}
 	for _, env := range s.Env {

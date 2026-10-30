@@ -1,0 +1,16 @@
+apiVersion: containers.rlark.io/v1alpha1
+kind: ContainerJob
+metadata:
+  name: docker-single-container
+  namespace: REPLACE_DOCKER_AGENT_NAMESPACE
+  labels:
+    rlark.io/tenant-id: team-a
+spec:
+  cluster:
+    name: REPLACE_NATIVE_CLUSTER_NAME
+    uid: REPLACE_NATIVE_CLUSTER_UID
+  job:
+    name: docker-single-container
+    uid: REPLACE_PERSISTED_JOB_UID
+  tenantID: team-a
+  runtime: Docker

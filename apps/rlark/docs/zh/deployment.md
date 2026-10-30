@@ -229,6 +229,10 @@ rlark 支持三种部署环境模式，在 DeployConfig YAML 中配置：
 
 配置文件中需指定且仅指定 `kubernetes`、`docker`、`raw` 中的一个环境块。
 
+独立伴生实现见 [Docker Agent 指南](developer-guide/docker-agent-observation.md)。
+它支持按需开启的单容器 Task、精确 GPU UUID 和持久化取消 journal；Ray/RLinf 组及
+端口预留尚未完成。
+
 ### 5.6 Agent 运行模式
 
 Agent 通过 `--mode` 支持三种运行模式：

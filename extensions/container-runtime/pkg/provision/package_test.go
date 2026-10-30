@@ -470,3 +470,28 @@ func TestRawPackageRejectsDockerHost(t *testing.T) {
 		t.Fatalf("invalid Raw request wrote output: %v", err)
 	}
 }
+
+func TestDockerExecutionPackageCarriesPersistentJournalAndNoSupervisor(t *testing.T) {
+	s, cn := registeredRuntime(t, "Docker")
+	req := packageRequest(t, nodeID(cn))
+	req.Runtime = "Docker"
+	req.SupervisorBinary = ""
+	req.StateDirectory = "/var/lib/rlark-docker"
+	req.Executables = nil
+	req.WorkDirectories = nil
+	req.LogBytes = 0
+	req.EnableExecution = true
+	if _, err := s.ExportPackage(context.Background(), req); err != nil {
+		t.Fatal(err)
+	}
+	launcher, err := os.ReadFile(filepath.Join(req.OutputDirectory, "start-agent"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(launcher), "--state-directory=/var/lib/rlark-docker") || !strings.Contains(string(launcher), "--enable-task-execution=true") || strings.Contains(string(launcher), "supervisor") {
+		t.Fatalf("wrong launch arguments: %s", launcher)
+	}
+	if _, err := os.Stat(filepath.Join(req.OutputDirectory, "raw-supervisor")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("Raw supervisor exported")
+	}
+}

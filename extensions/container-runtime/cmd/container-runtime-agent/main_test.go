@@ -115,3 +115,25 @@ func TestDockerModeHasNoSupervisorOrExecutionCapabilities(t *testing.T) {
 		t.Fatal("Raw mode accepted Docker host")
 	}
 }
+
+func TestDockerExecutionRequiresSeparateCanonicalState(t *testing.T) {
+	cfg := configured()
+	cfg.Runtime = "docker"
+	cfg.SupervisorSocket = ""
+	cfg.EnableExecution = true
+	for _, path := range []string{"", "relative", "/", "/var/../state"} {
+		cfg.StateDirectory = path
+		if cfg.Validate() == nil {
+			t.Fatalf("unsafe state accepted %q", path)
+		}
+	}
+	cfg.StateDirectory = "/var/lib/rlark-docker"
+	if err := cfg.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	cfg.Runtime = "raw"
+	cfg.SupervisorSocket = "/private/supervisor.sock"
+	if cfg.Validate() == nil {
+		t.Fatal("Raw accepted Docker state")
+	}
+}

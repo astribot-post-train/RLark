@@ -233,6 +233,11 @@ In the config file, specify exactly one of `kubernetes`, `docker`, or `raw` env 
 
 Install one root `rlark-agent` process per Docker host with `--agent-type=Docker --mode=cluster --docker-host=unix:///var/run/docker.sock --docker-node-ip=<private-ip>`. Hosts in one logical Cluster must be mutually reachable on their private network. The agent creates containers through the mounted host socket, so Docker-in-Docker is not used. The controller schedules one Task/container per replica and reserves whole GPUs by count. `rlarkadm` currently does not create the systemd unit for these fixed hosts; manage that service with the host operating system.
 
+For the independent companion implementation, use the separate
+[Docker Agent guide](developer-guide/docker-agent-observation.md). It supports
+opt-in single-container Tasks with exact GPU UUIDs and a persistent cancellation
+journal; Ray/RLinf groups and port reservations remain incomplete.
+
 ### 5.6 Agent Modes
 
 Agent supports three running modes via `--mode`:

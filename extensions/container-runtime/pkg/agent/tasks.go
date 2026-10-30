@@ -63,7 +63,7 @@ func (s TaskService) nodeForCleanup(ctx context.Context, id Identity) (*ext.Cont
 	if err := r.Client.Get(ctx, client.ObjectKey{Namespace: id.Namespace, Name: id.Name}, &n); err != nil {
 		return nil, err
 	}
-	if string(n.UID) != id.UID || tenant.IDOf(&n) != id.TenantID || n.Annotations[CredentialAnnotation] != id.CredentialID || n.Spec.InstanceID != id.InstanceID || n.Spec.Cluster.UID != id.ClusterUID || n.Spec.Runtime != "Raw" {
+	if string(n.UID) != id.UID || tenant.IDOf(&n) != id.TenantID || n.Annotations[CredentialAnnotation] != id.CredentialID || n.Spec.InstanceID != id.InstanceID || n.Spec.Cluster.UID != id.ClusterUID || n.Spec.Runtime != "Raw" && n.Spec.Runtime != "Docker" {
 		return nil, ErrIdentity
 	}
 	var cluster native.Cluster
@@ -74,7 +74,7 @@ func (s TaskService) nodeForCleanup(ctx context.Context, id Identity) (*ext.Cont
 	if err := r.Client.Get(ctx, client.ObjectKey{Namespace: n.Spec.Node.Namespace, Name: n.Spec.Node.Name}, &nn); err != nil {
 		return nil, err
 	}
-	if ownership.MatchesNative(n.Spec.Cluster, &cluster) != nil || ownership.MatchesNative(n.Spec.Node, &nn) != nil || cluster.Spec.AgentNamespace != n.Namespace || nn.Namespace != n.Namespace || tenant.IDOf(&cluster) != id.TenantID || tenant.IDOf(&nn) != id.TenantID || nn.Spec.AgentType != native.AgentTypeRaw || nn.Status.Reservation != nil || len(nn.Status.DockerReservations) != 0 {
+	if ownership.MatchesNative(n.Spec.Cluster, &cluster) != nil || ownership.MatchesNative(n.Spec.Node, &nn) != nil || cluster.Spec.AgentNamespace != n.Namespace || nn.Namespace != n.Namespace || tenant.IDOf(&cluster) != id.TenantID || tenant.IDOf(&nn) != id.TenantID || string(nn.Spec.AgentType) != string(n.Spec.Runtime) || nn.Status.Reservation != nil || len(nn.Status.DockerReservations) != 0 {
 		return nil, ErrIdentity
 	}
 	return &n, nil
@@ -114,7 +114,7 @@ func (s TaskService) assignment(ctx context.Context, id Identity) (*Assignment, 
 		return nil, ErrIdentity
 	}
 	claimant := task.Annotations[host.TaskClaimantAnnotation]
-	if claimant != "" && claimant != n.Namespace+"/Raw/"+n.Spec.Node.UID {
+	if claimant != "" && claimant != n.Namespace+"/"+string(n.Spec.Runtime)+"/"+n.Spec.Node.UID {
 		return nil, ErrIdentity
 	}
 	return &Assignment{Allocation: a, Task: task}, nil
@@ -143,14 +143,23 @@ func (s TaskService) authorize(ctx context.Context, id Identity, a *Assignment) 
 	if !a.Allocation.DeletionTimestamp.IsZero() || a.Allocation.Status.CleanupConfirmed || !t.DeletionTimestamp.IsZero() || t.Spec.Suspended || t.Generation != a.Allocation.Spec.Generation || taskcontract.HasResult(t) {
 		return ErrUnavailable
 	}
-	if _, err := (allocatedEligibility{assignment: a}).decode(t); err != nil {
+	if t.Spec.Runtime.Kind == "Docker" {
+		if n.Spec.Runtime != "Docker" || !slices.Contains(n.Status.Capabilities, DockerExecutionCapability) {
+			return ErrCapability
+		}
+		if _, err := (dockerEligibility{task: a.Task, allocation: a.Allocation}).decode(t); err != nil {
+			return err
+		}
+	} else if n.Spec.Runtime != "Raw" {
+		return ErrCapability
+	} else if _, err := (allocatedEligibility{assignment: a}).decode(t); err != nil {
 		return err
 	}
 	var job native.Job
 	if err := r.Client.Get(ctx, client.ObjectKey{Namespace: a.Allocation.Spec.Job.Namespace, Name: a.Allocation.Spec.Job.Name}, &job); err != nil {
 		return err
 	}
-	if objectRef(&job) != a.Allocation.Spec.Job || taskcontract.ValidateRawJob(&job) != nil {
+	if objectRef(&job) != a.Allocation.Spec.Job || taskcontract.ValidateJob(&job) != nil {
 		return ErrIdentity
 	}
 	if meta.IsStatusConditionTrue(job.Status.Conditions, taskcontract.TaskSetRetiringCondition) {
@@ -266,7 +275,7 @@ func (s TaskService) Handle(ctx context.Context, id Identity, req TaskRequest) (
 		if !validStatus(t, req.Status) {
 			return nil, ErrCapability
 		}
-		if taskcontract.Completed(t) {
+		if taskcontract.Completed(t) || t.Spec.Runtime.Kind == "Docker" && taskcontract.Observed(t) && taskcontract.HasResult(t) && req.Status.Phase != string(t.Status.Phase) {
 			// Freeze the observed result until the controller replaces this Task.
 			// A late running/pending observation cannot erase a cleanup trigger.
 			return nil, ErrUnavailable
@@ -315,7 +324,7 @@ func (s TaskService) claim(ctx context.Context, _ Identity, a *Assignment, data 
 	if expected.Annotations == nil {
 		expected.Annotations = map[string]string{}
 	}
-	values := []string{t.Namespace + "/Raw/" + a.Allocation.Spec.Node.UID, string(t.Spec.Workload.Kind), t.Spec.Workload.Version, t.Spec.Workload.Carrier.Type, t.Spec.Workload.Carrier.Version}
+	values := []string{t.Namespace + "/" + string(t.Spec.Runtime.Kind) + "/" + a.Allocation.Spec.Node.UID, string(t.Spec.Workload.Kind), t.Spec.Workload.Version, t.Spec.Workload.Carrier.Type, t.Spec.Workload.Carrier.Version}
 	for i, key := range claimAnnotations {
 		if old := expected.Annotations[key]; old != "" && old != values[i] {
 			return ErrIdentity
@@ -364,7 +373,7 @@ func validStatus(t *native.Task, intent *host.StatusIntent) bool {
 				meta.SetStatusCondition(&candidate.Status.Conditions, m.Condition)
 			}
 		}
-		return taskcontract.Completed(candidate)
+		return taskcontract.Completed(candidate) || t.Spec.Runtime.Kind == "Docker" && taskcontract.Observed(candidate)
 	}
 	return true
 }
@@ -389,7 +398,7 @@ func (s TaskService) cleanup(ctx context.Context, a *Assignment) error {
 	allocation.Status.CleanupConfirmed = true
 	allocation.Status.ObservedGeneration = allocation.Generation
 	allocation.Status.Phase = "Cleaned"
-	meta.SetStatusCondition(&allocation.Status.Conditions, metav1.Condition{Type: "CleanupConfirmed", Status: metav1.ConditionTrue, Reason: "SupervisorCancellationConfirmed", Message: "Owning Agent confirmed durable cancellation and process-tree cleanup", ObservedGeneration: allocation.Generation, LastTransitionTime: metav1.NewTime(s.Reporter.now())})
+	meta.SetStatusCondition(&allocation.Status.Conditions, metav1.Condition{Type: "CleanupConfirmed", Status: metav1.ConditionTrue, Reason: "SupervisorCancellationConfirmed", Message: "Owning Agent confirmed durable cancellation and runtime cleanup", ObservedGeneration: allocation.Generation, LastTransitionTime: metav1.NewTime(s.Reporter.now())})
 	if reflect.DeepEqual(previous.Status, allocation.Status) {
 		return nil
 	}

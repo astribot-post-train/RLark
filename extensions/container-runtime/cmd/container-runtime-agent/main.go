@@ -25,11 +25,11 @@ import (
 )
 
 type Config struct {
-	Runtime, DockerHost                                                                                    string
-	Endpoint, TLSCert, TLSKey, ServerCA, Version, PrivateAddress, NvidiaSMI, CgroupMount, SupervisorSocket string
-	Interval, RetryMax                                                                                     time.Duration
-	EnableExecution, EnableUpgrades, EnableLogReads                                                        bool
-	InstallPath, UpgradeStateDirectory                                                                     string
+	Runtime, DockerHost                                                                                                    string
+	Endpoint, TLSCert, TLSKey, ServerCA, Version, PrivateAddress, NvidiaSMI, CgroupMount, SupervisorSocket, StateDirectory string
+	Interval, RetryMax                                                                                                     time.Duration
+	EnableExecution, EnableUpgrades, EnableLogReads                                                                        bool
+	InstallPath, UpgradeStateDirectory                                                                                     string
 }
 
 func DefaultConfig() Config {
@@ -38,12 +38,18 @@ func DefaultConfig() Config {
 func (c Config) Validate() error {
 	switch c.Runtime {
 	case "raw":
-		if c.SupervisorSocket == "" || c.DockerHost != "" {
+		if c.SupervisorSocket == "" || c.DockerHost != "" || c.StateDirectory != "" {
 			return errors.New("raw mode requires a supervisor socket and does not accept docker-host")
 		}
 	case "docker":
-		if c.SupervisorSocket != "" || c.EnableExecution || c.EnableLogReads || c.EnableUpgrades || c.InstallPath != "" || c.UpgradeStateDirectory != "" {
-			return errors.New("docker mode supports observation only; Raw supervisor, execution, logs and upgrades are unsupported")
+		if c.SupervisorSocket != "" || c.EnableLogReads || c.EnableUpgrades || c.InstallPath != "" || c.UpgradeStateDirectory != "" {
+			return errors.New("docker mode does not support Raw supervisor, logs or upgrades")
+		}
+		if c.EnableExecution && (!filepath.IsAbs(c.StateDirectory) || filepath.Clean(c.StateDirectory) != c.StateDirectory || c.StateDirectory == "/") {
+			return errors.New("docker execution requires a private state directory")
+		}
+		if !c.EnableExecution && c.StateDirectory != "" {
+			return errors.New("docker state directory requires execution")
 		}
 		if err := dockerruntime.ValidateLocalHost(c.dockerHost()); err != nil {
 			return err
@@ -77,12 +83,12 @@ func (c Config) dockerHost() string {
 	return c.DockerHost
 }
 func (c *Config) SetupFlags(fs *flag.FlagSet) {
-	fs.StringVar(&c.Runtime, "runtime", c.Runtime, "runtime: raw (default) or docker (observation only)")
+	fs.StringVar(&c.Runtime, "runtime", c.Runtime, "runtime: raw (default) or docker")
 	fs.StringVar(&c.DockerHost, "docker-host", c.DockerHost, "Docker mode local Unix socket (default unix:///var/run/docker.sock)")
 	fs.BoolVar(&c.EnableUpgrades, "enable-agent-upgrades", c.EnableUpgrades, "enable preview idle Agent binary updates")
 	fs.StringVar(&c.InstallPath, "agent-install-path", c.InstallPath, "absolute installed Agent executable path")
 	fs.StringVar(&c.UpgradeStateDirectory, "upgrade-state-directory", c.UpgradeStateDirectory, "private existing upgrade journal directory")
-	fs.BoolVar(&c.EnableExecution, "enable-task-execution", c.EnableExecution, "enable preview scoped Raw process execution")
+	fs.BoolVar(&c.EnableExecution, "enable-task-execution", c.EnableExecution, "enable preview scoped runtime execution")
 	fs.BoolVar(&c.EnableLogReads, "enable-log-reads", c.EnableLogReads, "enable on-demand scoped Raw log snapshots")
 	fs.StringVar(&c.Endpoint, "endpoint", c.Endpoint, "extension API HTTPS origin")
 	fs.StringVar(&c.TLSCert, "tls-cert", c.TLSCert, "node Agent client certificate")
@@ -93,6 +99,7 @@ func (c *Config) SetupFlags(fs *flag.FlagSet) {
 	fs.StringVar(&c.NvidiaSMI, "nvidia-smi", c.NvidiaSMI, "GPU visibility executable")
 	fs.StringVar(&c.CgroupMount, "cgroup-mount", c.CgroupMount, "cgroup v2 mount")
 	fs.StringVar(&c.SupervisorSocket, "supervisor-socket", c.SupervisorSocket, "local Raw supervisor socket")
+	fs.StringVar(&c.StateDirectory, "state-directory", c.StateDirectory, "private existing Docker execution journal directory")
 	fs.DurationVar(&c.Interval, "interval", c.Interval, "successful heartbeat interval")
 	fs.DurationVar(&c.RetryMax, "retry-max", c.RetryMax, "maximum outage retry delay")
 }
@@ -159,6 +166,27 @@ func run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 			}
 		}()
 		observer := agent.DockerObserver{Version: cfg.Version, PrivateAddress: cfg.PrivateAddress, NvidiaSMI: cfg.NvidiaSMI, Engine: engine}
+		if cfg.EnableExecution {
+			journal, err := dockerruntime.OpenJournal(cfg.StateDirectory)
+			if err != nil {
+				return fmt.Errorf("open Docker execution journal: %w", err)
+			}
+			defer func() {
+				if err := journal.Close(); err != nil {
+					logger.Warn("close Docker execution journal", "error", err)
+				}
+			}()
+			info, err := engine.Info(ctx)
+			if err != nil {
+				return fmt.Errorf("read Docker Engine identity: %w", err)
+			}
+			gpus, err := agent.VisibleGPUUUIDs(ctx, cfg.NvidiaSMI)
+			if err != nil {
+				return fmt.Errorf("read Docker GPU identity: %w", err)
+			}
+			execution := agent.DockerExecutionObserver{Observer: observer, Client: client, Engine: engine, Journal: journal, EngineID: info.ID, GPUUUIDs: gpus}
+			return agent.RunDockerExecution(ctx, execution, cfg.Interval, cfg.RetryMax, logger)
+		}
 		return agent.Run(ctx, observer, client, cfg.Interval, cfg.RetryMax, logger)
 	}
 	observer := agent.LocalObserver{Version: cfg.Version, PrivateAddress: cfg.PrivateAddress, NvidiaSMI: cfg.NvidiaSMI, CgroupMount: cfg.CgroupMount, SupervisorSocket: cfg.SupervisorSocket, EnableUpgrades: cfg.EnableUpgrades}

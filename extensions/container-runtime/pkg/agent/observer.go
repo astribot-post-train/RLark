@@ -67,6 +67,9 @@ type Observation struct {
 // authenticated updater. The scheduler never infers it from a Raw runtime.
 const UpgradeCapability = ext.AgentUpgradeCapability
 
+// DockerExecutionCapability is advertised only with the persistent local journal.
+const DockerExecutionCapability = "docker-container-execution-v1"
+
 // Reporter writes Agent-owned status using an uncached client. It never edits
 // Spec, native Nodes, allocations, or another Agent's identity.
 type Reporter struct {
@@ -119,13 +122,17 @@ func (r Reporter) Report(ctx context.Context, id Identity, obs Observation) erro
 	node.Status.Capacity["nvidia.com/gpu"] = strconv.Itoa(len(node.Spec.AuthorizedGPUUUIDs))
 	node.Status.Capabilities = slices.Clone(obs.Capabilities)
 	node.Status.AuthorizedGPUUUIDs = slices.Clone(node.Spec.AuthorizedGPUUUIDs)
-	node.Status.Schedulable = node.Spec.Runtime == "Raw" && releaseReady && !obs.Busy
+	node.Status.Schedulable = (node.Spec.Runtime == "Raw" || slices.Contains(obs.Capabilities, DockerExecutionCapability)) && releaseReady && !obs.Busy
 	node.Status.Busy = obs.Busy
 	now := metav1.NewTime(r.now())
 	node.Status.LastHeartbeatTime = &now
 	meta.SetStatusCondition(&node.Status.Conditions, metav1.Condition{Type: "Ready", Status: metav1.ConditionTrue, Reason: "AgentObserved", Message: "Authenticated Agent reported an authorized capability", ObservedGeneration: node.Generation, LastTransitionTime: now})
 	if node.Spec.Runtime == "Docker" {
-		meta.SetStatusCondition(&node.Status.Conditions, metav1.Condition{Type: "ExecutionReady", Status: metav1.ConditionFalse, Reason: "DockerObservationOnly", Message: "Docker host observation is available; scoped Docker Task execution is not enabled", ObservedGeneration: node.Generation, LastTransitionTime: now})
+		executionStatus, executionReason := metav1.ConditionFalse, "DockerObservationOnly"
+		if slices.Contains(obs.Capabilities, DockerExecutionCapability) {
+			executionStatus, executionReason = metav1.ConditionTrue, "DockerExecutionEnabled"
+		}
+		meta.SetStatusCondition(&node.Status.Conditions, metav1.Condition{Type: "ExecutionReady", Status: executionStatus, Reason: executionReason, Message: "Docker container execution requires the explicit Agent execution flag and durable journal", ObservedGeneration: node.Generation, LastTransitionTime: now})
 	}
 	releaseStatus, releaseReason := metav1.ConditionTrue, "AgentReleaseObserved"
 	if !releaseReady {

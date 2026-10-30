@@ -1,74 +1,54 @@
-# Docker host Agent observation (preview)
+# Docker host Agent and execution (preview)
 
-This increment adds explicit, read-only Docker host registration and heartbeat
-observation to the independent `extensions/container-runtime` module. It does
-not dispatch Docker Jobs. Raw execution and its existing packages remain the
-default. The Kingsoft Cloud notebook has no Docker socket and therefore only
-validates Raw; it cannot validate this Docker Engine path.
+The independent `extensions/container-runtime` module provides Docker host
+observation and opt-in single-container execution. Default Docker packages still
+observe only. The Kingsoft Cloud notebook has no Docker socket: its successful
+Raw GPU tests do not establish Docker Engine acceptance. No Docker-in-Docker is
+used, and the host socket is never mounted into workload containers.
 
-## Implementation plan and acceptance boundary
+## Prerequisites and ownership
 
-1. Register a dedicated Docker Cluster and exact native/companion Node through
-   the administrator CLI. Set `instanceID` to the host Engine's `docker info
-   --format '{{.ID}}'` result. Keep tenant, private network scope, environment,
-   and an explicit authorized GPU UUID allowlist. GPU visibility is not entitlement.
-2. Export a private, observation-only Agent package. It contains an mTLS
-   certificate, Agent, checksum launcher and root systemd unit; it contains no
-   Raw supervisor, workload paths, issuer private key or management kubeconfig.
-3. Run `--runtime=docker` against a local host Unix socket. The Agent reads Engine
-   info/version, managed-container occupancy, and local NVIDIA UUID visibility.
-   Its ten-second observation deadline bounds daemon/GPU outages. It never
-   starts a daemon, creates a container or mounts a socket into a workload.
-4. Bind the observation to the registered runtime and Engine ID server-side.
-   Replacement, credential mismatch, incomplete info, or failed inventory cannot
-   produce a fresh Ready heartbeat. Raw legacy heartbeats remain readable.
-5. Test failed/recovered daemon calls, canceled contexts, retained containers,
-   Engine replacement, wrong runtime, certificate revocation and package export.
-   Test the official Docker SDK over a local Unix socket as well as a fake
-   Engine. Build the module and both documentation languages before review.
+Use a dedicated Linux Docker host with root, Docker Engine API 1.42+ within major
+version 1, NVIDIA Container Toolkit/runtime, private IPv4 reachability and an
+operator-authorized whole-GPU UUID allowlist. Register a separate Docker Cluster
+with the independent administrator CLI. Each host is one ContainerNode, pinned
+to native Cluster/Node UIDs, tenant, private address/network scope, environment,
+credential and Engine ID (`docker info --format '{{.ID}}'`).
 
-`Ready=True` means a current authenticated observation, while `Schedulable=False`
-is retained for every Docker observation in this increment. No workload or
-upgrade capability is advertised. Container creation/start/stop/removal, scoped
-logs/stats, Docker Job scheduling, GPU device assignment, Ray readiness/port
-barriers and Docker Agent upgrades require subsequent implementation and
-separate Docker host acceptance. Existing provider unit tests are not cloud
-Docker Engine acceptance.
+Agent capacity comes from Engine CPU/memory totals and the authorized UUID list,
+not free capacity. Visible GPUs never enlarge entitlement. Host networking and
+root Agent access require a trusted dedicated host. Foreign containers are never
+adopted or deleted; their GPU/port usage is not reserved by RLark.
 
-## Operator workflow
+## Package and startup
 
-Build with `make -C extensions/container-runtime build`. Use the existing
-`container-runtime-admin cluster-create`, `node-register` and `node-package`
-commands with `--kubeconfig` and strict `--config` JSON inputs. Start from
-`config/examples/provision-cluster.json` and `provision-node.json` in the
-extension directory. Set the cluster `runtime` to `Docker`; use new operation
-UUIDs and the returned exact Cluster UID. Run on a dedicated Linux Docker host
-as root, with a working NVIDIA runtime and operator-verified GPU entitlement.
-Do not run Docker-in-Docker or modify the cloud notebook to pretend it is a host.
+Build with `make -C extensions/container-runtime build`. Use
+`container-runtime-admin cluster-create`, `node-register`, and `node-package`
+with administrator `--kubeconfig` and strict JSON `--config`. Start from the
+extension's `config/examples/provision-cluster.json`, `provision-node.json` and
+`provision-docker-package.json`. Set runtime to `Docker`, preserve operation UUIDs
+on retry, and use the returned exact object UIDs.
 
-Use `extensions/container-runtime/config/examples/provision-docker-package.json`
-as the Docker package template. Set `runtime` explicitly to `Docker` (omitted
-runtime defaults to `Raw`), retain the common certificate/artifact/identity fields,
-and set `dockerHost` to
-`unix:///var/run/docker.sock` (the default), and omit `supervisorBinary`,
-`stateDirectory`, `executables`, `workDirectories`, and `logBytes`. Do not enable
-execution, logs or upgrades; unsupported options are rejected before any package
-directory is created. Use a new private output/install directory. Export stays
-on the administrator machine, copy its entire directory securely to the exact
-host install path, and protect it from workload writes. The signer and kubeconfig
-never leave the administrator machine. Automatic enrollment/renewal is incomplete.
+The package contains the Agent, node mTLS credentials, public API CA, checksums,
+foreground launcher and root systemd unit ordered after `docker.service`. It
+contains no issuer private key, management kubeconfig or Raw supervisor. Copy
+it privately to the exact install directory. Automatic enrollment/renewal and
+Docker Agent upgrades remain incomplete. Canonical local `unix:///...` sockets
+are supported; remote TCP/TLS Engines are not supported by this Agent.
 
-The generated `start-agent` runs in the foreground. If systemd is available,
-install its `rlark-container-agent.service` under `/etc/systemd/system/`, then
-run `systemctl daemon-reload` and `systemctl enable --now
-rlark-container-agent.service`. Its unit orders after `docker.service`; it does
-not install or start Docker. A custom local socket is supported only as a
-canonical absolute `unix:///...` path. Remote TCP/TLS daemon transport is not
-part of this Agent contract.
+For observation only, keep `enableExecution: false` and omit `stateDirectory`.
+For execution, set `enableExecution: true` and
+`stateDirectory: /var/lib/rlark-docker`, separate from the install directory.
+Before first startup, provision that persistent directory as root with mode
+0700. Keep `enableLogReads` and `enableUpgrades` false; omit `supervisorBinary`,
+`executables`, `workDirectories` and `logBytes`. Invalid combinations fail before
+package output is written.
 
-The manual equivalent, using the exported credentials, is:
+Manual execution startup with exported credentials:
 
 ```bash
+# First installation only. Preserve this directory and its records thereafter.
+install -d -m 0700 -o root -g root /var/lib/rlark-docker
 /opt/rlark-docker/container-runtime-agent \
   --runtime=docker \
   --docker-host=unix:///var/run/docker.sock \
@@ -77,34 +57,85 @@ The manual equivalent, using the exported credentials, is:
   --tls-key=/opt/rlark-docker/agent.key \
   --server-ca=/opt/rlark-docker/server-ca.crt \
   --version=preview-v1 \
-  --private-address=10.0.3.85
+  --private-address=10.0.3.85 \
+  --enable-task-execution=true \
+  --state-directory=/var/lib/rlark-docker
 ```
 
-No supervisor socket is needed in Docker mode. Raw remains `--runtime=raw`
-(default) and requires `--supervisor-socket`. Mixing runtime-specific flags or
-enabling unsupported Docker operations fails configuration validation.
+For systemd, install the generated `rlark-container-agent.service`, run
+`systemctl daemon-reload` and enable/start the unit. It does not install or start
+Docker. Raw remains a separate default mode requiring `--supervisor-socket`.
 
-## Observation and recovery semantics
+## Scheduling and lifecycle
 
-Capacity is the Docker daemon's total CPU/memory and the administrator-authorized
-GPU allowlist, not free resources or per-task utilization. Docker Engine API
-1.42 or newer within major version 1 is required. NVIDIA runtime presence is a
-configuration check; it does not prove a GPU container can launch. All authorized UUIDs
-must be visible and a configured NVIDIA runtime must be present. Unknown or
-incomplete runtime/version information fails observation. Raw heartbeat fields
-may be omitted by older Agents; Docker observations require `runtime: Docker`
-and the exact `instanceID`. Extra visible devices do not enlarge entitlement.
+Install the companion CRDs and controller/API RBAC. Enable controller
+`--enable-job-reservations=true` and API `--enable-task-execution=true` in addition
+to the Agent flag. Use `config/examples/docker-container-job.yaml` and its
+ContainerJob binding, replacing tenant, Cluster UID, namespace and prepared
+environment before unsuspending the Job. The independent console's Job submit
+form continues to accept Raw only.
 
-Any managed container retained on the daemon, including exited/dead containers,
-keeps `Busy=True` until removed by its proven owner. This inventory is a
-conservative local observation, not an allocation lock or permission to adopt
-or delete it. Foreign, unlabeled containers are not modified; operators must
-dedicate the host because this observation does not reserve their ports or GPUs.
+The controller creates one Task and an exclusive whole-host ContainerAllocation,
+then pins the canonical Task target annotation. It does not write legacy
+DockerBinding or count-based GPU reservations. The Job must contain exactly one
+`docker.rlark.io/container` v1 template/carrier. Explicit image, entrypoint,
+command, environment, working directory and CPU/memory limits are supported;
+Pod templates, volumes, Secrets, environment injection, user GPU assignments and
+Ray-specific fields are rejected. The allocation's complete GPU UUID set is
+injected as NVIDIA DeviceIDs. One host runs at most one RLark Task at a time.
 
-A failed Docker info/version/list or NVIDIA query sends no heartbeat. The Agent
-retries with bounded exponential backoff, re-reading current state rather than
-replaying a stale successful observation. The controller expires readiness after
-45 seconds, with status repair every 30 seconds. Recovery of the same daemon resumes observations. A different
-Engine ID is rejected; cordon and retire the exact old Node through normal
-cleanup, register a new instance and issue new credentials. Do not edit the old
-binding, reuse its credentials or force-delete uncertain allocations.
+`Ready=True` means a fresh authenticated observation. Only an explicitly enabled
+execution Agent advertises `docker-container-execution-v1`; an observation-only
+node remains unschedulable. New allocation also requires current identity,
+release readiness, uncordoned resources and an idle observation. Existing
+allocations remain protected while busy or unavailable. The API revalidates the
+exact Job/Task/allocation/Node, tenant, credential, generations and ownership
+before claim and immediately before create/start. Agents receive no Kubernetes
+credentials and cannot create allocations through the Task protocol.
+
+`ExecutionKnown` records current bounded container phase. Natural exit first
+records Succeeded/Failed with `ExecutionCleaned=False`, retaining its result and
+allocation. The next cleanup step durably cancels, stops/removes and verifies
+absence by ID, deterministic name and inventory; only then can
+`ExecutionCleaned=True` and allocation `CleanupConfirmed=True` be published.
+Suspension/deletion uses the same cleanup barrier without requiring readiness.
+Terminal Task identities stay retained to prevent reruns after allocation release.
+
+## Failure and recovery
+
+The Agent holds an exclusive process lock on the private journal directory,
+with context-aware serialization of Engine effects. It fsyncs cancellation before
+stop/remove, and create intent immediately before ContainerCreate. An append-only
+index detects missing individual records. A late request cannot restart a
+cancelled Task UID, including after Agent restart or stop-before-create.
+
+Inspect before create and recover an uncertain successful response using the
+exact local creation record and ownership labels. Registry/pre-create failures
+remain retryable. A create timeout with no container ID remains uncertain even
+when Docker currently reports absence: retain the allocation. If the exact
+container later appears, cleanup can remove it. No automatic timeout clears the
+reservation. Corrupt/missing records, changed directory permissions, replacement
+locks and Engine identity changes fail closed. Preserve the whole journal,
+including cancellation records after release. Do not erase/recreate it to recover
+an old node; loss of the entire directory requires operator fencing and exact
+node retirement before registering a replacement.
+
+Info/version/inventory/NVIDIA observation failures send no heartbeat; retry uses
+bounded backoff and fresh reads. The controller expires readiness after 45
+seconds, with periodic status repair. An Engine outage still permits a local
+cancellation write but cannot produce cleanup proof. A replaced Engine requires
+new registration/credentials after exact old-node retirement. Never force-delete
+uncertain allocations or reuse an old credential.
+
+## Validation and remaining scope
+
+Tests exercise fake Engine response loss, immutable configuration, ownership,
+whole-GPU IDs, cancellation, process locking, restart, outage/recovery, and real
+mTLS plus official SDK Unix-socket transport through Running, success, failure,
+suspension and cleanup. The daemon in these transport tests is simulated; no
+real Docker GPU run is claimed.
+
+Scoped Docker logs/stats, utilization, port reservations, Ray/RLinf group barriers,
+Docker rolling upgrades, and real GPU-host lifecycle acceptance remain separate
+work. Host networking alone does not establish a multi-host Ray contract. See
+[Docker execution plan](docker-runtime-execution-plan.md) for the ordered gates.

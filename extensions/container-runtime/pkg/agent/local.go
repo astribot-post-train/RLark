@@ -75,6 +75,12 @@ func visibleGPUs(ctx context.Context, executable string) ([]string, error) {
 	return parseGPUs(string(output.data))
 }
 
+// VisibleGPUUUIDs reads the current host GPU UUIDs for Docker allocation
+// binding. The server still authorizes the final set through ContainerNode.
+func VisibleGPUUUIDs(ctx context.Context, executable string) ([]string, error) {
+	return visibleGPUs(ctx, executable)
+}
+
 func parseGPUs(output string) ([]string, error) {
 	seen := map[string]bool{}
 	var result []string
