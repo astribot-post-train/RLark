@@ -266,36 +266,84 @@ test("Docker stats reads preserve exact identity, cancellation and canonical uin
   const allocation = { name: "lock", uid: "allocation", taskUID: "task" };
   globalThis.fetch = async (path, init) => {
     captured = { path, init };
-    return new Response(JSON.stringify({sampledAt: new Date().toISOString(),cpuUsageNS: "18446744073709551615",memoryUsageBytes: "0"}));
+    return new Response(
+      JSON.stringify({
+        sampledAt: new Date().toISOString(),
+        cpuUsageNS: "18446744073709551615",
+        memoryUsageBytes: "0",
+      }),
+    );
   };
   const client = new Client("admin");
-  const snapshot = await client.stats("agents", allocation,controller.signal);
+  const snapshot = await client.stats("agents", allocation, controller.signal);
   assert.equal(snapshot.cpuUsageNS, "18446744073709551615");
   assert.equal(snapshot.memoryUsageBytes, "0");
   assert.equal(snapshot.pids, undefined);
   const url = new URL(captured.path, "http://localhost");
   assert.equal(url.pathname, "/api/v1/container-runtime/stats");
-  assert.deepEqual(Object.fromEntries(url.searchParams),{namespace:"agents",allocation:"lock",allocationUID:"allocation",taskUID:"task"});
-  assert.equal(captured.init.signal,controller.signal);
-  assert.equal(captured.init.headers.Authorization,"Bearer admin");
+  assert.deepEqual(Object.fromEntries(url.searchParams), {
+    namespace: "agents",
+    allocation: "lock",
+    allocationUID: "allocation",
+    taskUID: "task",
+  });
+  assert.equal(captured.init.signal, controller.signal);
+  assert.equal(captured.init.headers.Authorization, "Bearer admin");
   for (const value of ["01", "-1", "18446744073709551616", 1]) {
-    globalThis.fetch = async () => new Response(JSON.stringify({ sampledAt: new Date().toISOString(), pids:value }));
+    globalThis.fetch = async () =>
+      new Response(
+        JSON.stringify({ sampledAt: new Date().toISOString(), pids: value }),
+      );
     await assert.rejects(client.stats("agents", allocation), APIError);
   }
   for (const sampledAt of ["invalid", "2099-01-01T00:00:00Z", ""]) {
-    globalThis.fetch = async () => new Response(JSON.stringify({sampledAt}));
-    await assert.rejects(client.stats("agents",allocation),APIError);
+    globalThis.fetch = async () => new Response(JSON.stringify({ sampledAt }));
+    await assert.rejects(client.stats("agents", allocation), APIError);
   }
 });
 
 test("diagnostic scope changes on allocation replacement, cleanup and capability revocation", async () => {
-  const {canReadDiagnostic,diagnosticInventory} = await import("../.test-build/models.js");
-  const allocation = {uid:"allocation",taskUID:"task",nodeName:"node",deleting:false,cleanupConfirmed:false};
-  const detail={cluster:{uid:"cluster",runtime:"Docker"},nodes:[{name:"node",capabilities:["docker-diagnostics-v1","docker-container-execution-v1"]}],allocations:[allocation]};
-  const scope=diagnosticInventory(detail);
-  assert.equal(canReadDiagnostic(detail,allocation),true);
-  assert.notEqual(diagnosticInventory({...detail,allocations:[{...allocation,taskUID:"replacement"}]}),scope);
-  assert.equal(canReadDiagnostic(detail,{...allocation,cleanupConfirmed:true}),false);
-  assert.notEqual(diagnosticInventory({...detail,nodes:[{name:"node",capabilities:[]}]}),scope);
-  assert.notEqual(diagnosticInventory(undefined),scope);
+  const { canReadDiagnostic, diagnosticInventory } =
+    await import("../.test-build/models.js");
+  const allocation = {
+    uid: "allocation",
+    taskUID: "task",
+    nodeName: "node",
+    deleting: false,
+    cleanupConfirmed: false,
+  };
+  const detail = {
+    cluster: { uid: "cluster", runtime: "Docker" },
+    nodes: [
+      {
+        name: "node",
+        capabilities: [
+          "docker-diagnostics-v1",
+          "docker-container-execution-v1",
+        ],
+      },
+    ],
+    allocations: [allocation],
+  };
+  const scope = diagnosticInventory(detail);
+  assert.equal(canReadDiagnostic(detail, allocation), true);
+  assert.notEqual(
+    diagnosticInventory({
+      ...detail,
+      allocations: [{ ...allocation, taskUID: "replacement" }],
+    }),
+    scope,
+  );
+  assert.equal(
+    canReadDiagnostic(detail, { ...allocation, cleanupConfirmed: true }),
+    false,
+  );
+  assert.notEqual(
+    diagnosticInventory({
+      ...detail,
+      nodes: [{ name: "node", capabilities: [] }],
+    }),
+    scope,
+  );
+  assert.notEqual(diagnosticInventory(undefined), scope);
 });

@@ -1,4 +1,11 @@
-import type { Cluster, Node, RawJobRequest, NodeRegistration, Detail, Allocation } from "./api";
+import type {
+  Cluster,
+  Node,
+  RawJobRequest,
+  NodeRegistration,
+  Detail,
+  Allocation,
+} from "./api";
 
 // Explicit arrays preserve whitespace and empty arguments without shell parsing
 // or inheriting the browser/Agent environment. Server validation is authoritative.
@@ -158,15 +165,34 @@ export function nodeRegistrationIntent(
 }
 
 // UI visibility is advisory; the API independently revalidates each read.
-export function canReadDiagnostic(detail: Detail, allocation: Allocation): boolean {
- if (!allocation.taskUID || allocation.deleting) return false;
- if (detail.cluster.runtime === "Raw") return true;
- const node = detail.nodes.find((n) => n.name === allocation.nodeName);
- return !allocation.cleanupConfirmed && !!node?.capabilities?.includes("docker-diagnostics-v1") && !!node?.capabilities?.includes("docker-container-execution-v1");
+export function canReadDiagnostic(
+  detail: Detail,
+  allocation: Allocation,
+): boolean {
+  if (!allocation.taskUID || allocation.deleting) return false;
+  if (detail.cluster.runtime === "Raw") return true;
+  const node = detail.nodes.find((n) => n.name === allocation.nodeName);
+  return (
+    !allocation.cleanupConfirmed &&
+    !!node?.capabilities?.includes("docker-diagnostics-v1") &&
+    !!node?.capabilities?.includes("docker-container-execution-v1")
+  );
 }
 // A changed identity/capability set fences both displayed and in-flight results.
 export function diagnosticInventory(detail: Detail | undefined): string {
- if (!detail) return "";
- return JSON.stringify([detail.cluster.uid, detail.cluster.runtime,
-   detail.allocations.filter((a) => canReadDiagnostic(detail,a)).map((a) => [a.uid,a.taskUID,a.nodeName,detail.nodes.find((n)=>n.name===a.nodeName)?.uid ?? "",detail.nodes.find((n)=>n.name===a.nodeName)?.instanceID ?? ""]).sort((a,b) => a[0].localeCompare(b[0]))]);
+  if (!detail) return "";
+  return JSON.stringify([
+    detail.cluster.uid,
+    detail.cluster.runtime,
+    detail.allocations
+      .filter((a) => canReadDiagnostic(detail, a))
+      .map((a) => [
+        a.uid,
+        a.taskUID,
+        a.nodeName,
+        detail.nodes.find((n) => n.name === a.nodeName)?.uid ?? "",
+        detail.nodes.find((n) => n.name === a.nodeName)?.instanceID ?? "",
+      ])
+      .sort((a, b) => a[0].localeCompare(b[0])),
+  ]);
 }
