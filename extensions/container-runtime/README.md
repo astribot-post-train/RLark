@@ -79,3 +79,9 @@ The console now provides explicitly enabled Raw node registration with retained
 operation IDs and exact Cluster UID preconditions. Certificate/package export
 stays on the administrator machine; see the paired console documents for the
 contract and cloud acceptance boundaries.
+
+Independent Raw templates may execute sequentially when fewer nodes than templates
+are available. Each member starts with its own exact allocation; sibling allocation
+absence or prior release is not a start barrier. Whole-set retirement still fences
+new starts. Ray/RLinf requires a separate whole-group readiness/port contract and
+remains unsupported by this independent-process path.
