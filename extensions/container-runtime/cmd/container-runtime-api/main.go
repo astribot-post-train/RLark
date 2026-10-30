@@ -34,8 +34,9 @@ func main() {
 
 func run(ctx context.Context) error {
 	var addr, kubeconfig, certificate, key, agentCA, artifactDirectory string
-	var enableTasks bool
+	var enableTasks, enableUpgrades bool
 	flag.BoolVar(&enableTasks, "enable-task-execution", false, "enable preview node-scoped Raw Task transport")
+	flag.BoolVar(&enableUpgrades, "enable-agent-upgrades", false, "enable preview node-scoped Agent upgrade grant/completion transport")
 	flag.StringVar(&addr, "addr", ":9444", "HTTPS listen address")
 	flag.StringVar(&kubeconfig, "kubeconfig", "", "Management API kubeconfig (empty uses in-cluster config)")
 	flag.StringVar(&certificate, "tls-cert", "", "HTTPS server certificate path")
@@ -81,7 +82,7 @@ func run(ctx context.Context) error {
 			return err
 		}
 	}
-	server := &http.Server{Addr: addr, Handler: agent.Handler{Reporter: agent.Reporter{Client: management, ReleaseStore: store}, EnableTasks: enableTasks},
+	server := &http.Server{Addr: addr, Handler: agent.Handler{Reporter: agent.Reporter{Client: management, ReleaseStore: store}, EnableTasks: enableTasks, EnableUpgrades: enableUpgrades},
 		ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 30 * time.Second,
 		TLSConfig: &tls.Config{MinVersion: tls.VersionTLS13, ClientAuth: tls.RequireAndVerifyClientCert, ClientCAs: pool, Certificates: []tls.Certificate{tlsCert}}}
 	stopped := make(chan struct{})

@@ -125,7 +125,7 @@ type UpgradeAllocation struct {
 	Operation NativeObjectReference `json:"operation"`
 	Release   NativeObjectReference `json:"release"`
 	// +kubebuilder:validation:Pattern="^[a-f0-9]{64}$"
-	SHA256    string                `json:"sha256"`
+	SHA256 string `json:"sha256"`
 }
 type ContainerAllocationStatus struct {
 	ObservedGeneration int64              `json:"observedGeneration,omitempty"`
@@ -240,10 +240,23 @@ type AgentUpgradeSpec struct {
 type AgentUpgradeStatus struct {
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
 	// +kubebuilder:validation:Enum=Pending;Reserved;Applying;Succeeded;RolledBack;Failed;Cancelled
-	Phase      string                 `json:"phase,omitempty"`
-	Allocation *NativeObjectReference `json:"allocation,omitempty"`
-	StartedAt  *metav1.Time           `json:"startedAt,omitempty"`
-	Conditions []metav1.Condition     `json:"conditions,omitempty"`
+	Phase      string                  `json:"phase,omitempty"`
+	Allocation *NativeObjectReference  `json:"allocation,omitempty"`
+	StartedAt  *metav1.Time            `json:"startedAt,omitempty"`
+	AttemptID  string                  `json:"attemptID,omitempty"`
+	Completion *AgentUpgradeCompletion `json:"completion,omitempty"`
+	Conditions []metav1.Condition      `json:"conditions,omitempty"`
+}
+
+// AgentUpgradeCompletion is a bounded receipt from the node-scoped updater.
+// The controller still owns allocation cleanup and terminal observation.
+type AgentUpgradeCompletion struct {
+	AttemptID string `json:"attemptID"`
+	// +kubebuilder:validation:Enum=Succeeded;RolledBack
+	Result      string      `json:"result"`
+	Version     string      `json:"version"`
+	HeartbeatAt metav1.Time `json:"heartbeatAt"`
+	CompletedAt metav1.Time `json:"completedAt"`
 }
 
 // +kubebuilder:object:root=true

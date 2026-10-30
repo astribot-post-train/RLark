@@ -180,17 +180,29 @@ kubectl --kubeconfig=/private/admin/kubeconfig -n REPLACE_AGENT_NAMESPACE \
   get agentupgrades.containers.rlark.io -o yaml
 ```
 
-`upgrade-create` 仅记录意图，只有按需启用的控制器才能将其推进到 `Reserved`。检查 `status.phase`、`status.allocation` 和 `Reserved` condition。锁不可用时保持 Pending 并重试。目标/凭据/身份变化会拒绝新预留，同时保留已有见证的锁。删除精确观测到的 Pending/Reserved 对象可请求取消；控制器先持久化取消，再证明 allocation 清理并确认删除后移除保护。阻塞或 Applying 操作需要持有者 updater 恢复，不能通过移除 finalizer 或修改 status 绕过。自动选择操作、应用授权和安装尚未实现。测试覆盖工作负载/升级竞争、创建/状态响应丢失、过期与外来身份、延迟删除、删除保护及拒绝任务路径清理升级锁。
+`upgrade-create` 仅记录意图，只有按需启用的控制器才能将其推进到 `Reserved`。检查 `status.phase`、`status.allocation` 和 `Reserved` condition。锁不可用时保持 Pending 并重试。目标/凭据/身份变化会拒绝新预留，同时保留已有见证的锁。删除精确观测到的 Pending/Reserved 对象可请求取消；控制器先持久化取消，再证明 allocation 清理并确认删除后移除保护。阻塞或 Applying 操作需要持有者 updater 恢复，不能通过移除 finalizer 或修改 status 绕过。自动选择操作和二进制安装尚未实现；按需启用的应用授权协议见下文。测试覆盖工作负载/升级竞争、创建/状态响应丢失、过期与外来身份、延迟删除、删除保护及拒绝任务路径清理升级锁。
 
 在批准的私网测试机替换镜像后，重新核对确认 `/root/RLinf/.venv-pi05` 仍可导入 RLinf 源码，报告 Ray 2.56.1/PyTorch 2.11.0+cu126，且在一张 H100 上执行 CUDA 张量返回 `42.0`。默认 conda Python 不含 Ray/RLinf，需显式选择预置环境。这是直接环境检查，不是已登记 RLark GPU Job 或升级验收。
 
 ### 交付门槛
 
+#### 节点限定升级应用协议（预览）
+
+专用 mTLS API 已实现按需启用的 `POST /v1/upgrade`，包含 `assignment`、`get`、`claim` 和 `complete` 操作。身份只来自已验证节点证书。发现接口只返回该节点的当前操作、精确 allocation UID 和不含服务端路径的版本身份，不授权安装。其他操作必须回传操作和 allocation 引用；claim 还需调用者保留的尝试 UUID。API 不创建升级操作或 allocation，也不提供通用 Kubernetes 访问。
+
+claim 通过乐观并发将 Reserved 转为 Applying，记录尝试 UUID 和服务端开始时间。重新验证原生/附属成员关系、租户、凭据、容器实例、allocation 所有权、最新空闲原版本心跳、当前可用目标及文件完整性。其他尝试不能接管 Applying。已提交但响应丢失时只有同一尝试可恢复；目标变更或凭据撤销拒绝新授权，并保留不确定状态和两个锁。取消和 claim 竞争同一操作 resourceVersion；GET/发现不会授权或重做切换。
+
+完成只接受固定目标版本的 Succeeded 或记录原版本的 RolledBack，并要求可信本地 updater 显式证明空闲。必须有授权开始时间之后、经过当前认证、空闲且版本匹配的心跳。API 在操作 status 保存有界完成凭据，不能移除 allocation finalizer。完成以保留身份单独验证所有权，不依赖目标就绪，因此删除或目标变化不会阻止仍获授权的精确持有者报告恢复；撤销凭据仍会拒绝报告。冲突结果和尝试被拒绝，失败、超时、未知状态及心跳丢失都不代表回滚或清理完成。
+
+控制器消费该精确完成凭据，写 allocation 清理证明并确认删除后，才将操作设为终态。完成、状态、删除或 finalizer 响应丢失后会收敛，不能再次安装。完成操作在管理员显式删除前保留；没有完成凭据的 Applying 操作继续受保护。预览 API 使用 `--enable-agent-upgrades` 开关和 `config/rbac/container-runtime-api-upgrades.yaml`，与 Task 执行独立。当前仍不包含二进制安装/切换、自动滚动选择或 UI。测试覆盖真实 mTLS、错误节点/租户/UID/尝试、claim/取消竞争、已提交响应丢失、过期/忙碌/版本不匹配心跳、目标/凭据变化、精确成功/回滚凭据、延迟删除和控制器重建。
+
+API 使用 `--enable-agent-upgrades=true` 启用，并在基础 API 角色之外应用额外升级 RBAC。启用组件前先安装重新生成的 AgentUpgrade CRD。Agent CLI 尚不轮询此端点：类型化客户端是后续 updater 的集成边界。`Client.Upgrade` 接受严格的、最多 16 KiB 的请求并校验有界响应。`assignment` 不接受身份字段；`get` 要求两个精确引用；`claim` 还要求发现结果的 resourceVersion 和规范的非零尝试 UUID，调用方应在发送前持久化。完成响应在锁删除前仍为 Applying；`get` 响应可省略已删除的 allocation，但请求必须保留原记录引用。HTTP 400 表示无效输入，403 表示身份拒绝，409 表示竞争或过期操作，503 表示前提暂不可用。请求不能覆盖证书身份。
+
 - [x] 中英文文档记录独立扩展、指定队列和验收范围。
 - [x] 独立模块/构建，迁移 Provider/supervision/测试；加入原生可选集成接口和所有权校验。
 - [ ] 类型化附属 schema、授权/准入和迁移。通用 Job fail-closed 声明已实现，但还没有生产调度器接管 Job。
 - [ ] 显式容器集群接入、节点限定身份、整卡分配和授权日志。
-- [ ] 认证版本托管、空闲节点滚动升级及不重启 supervisor 的回滚。
+- [ ] 认证版本托管、二进制安装、空闲节点滚动升级及不重启 supervisor 的回滚；预约和认证完成协议已作为预览基础设施实现。
 - [ ] 容器集群 UI、能力门控 Job 提交及中英文 API/运维示例。
 - [ ] 已授权私网 1 GPU 开发机和完整 Raw GPU Job/升级证据。
 - [ ] 恢复/竞态测试、仓库 Go/Web 检查、生成验证和严格双语文档构建。
