@@ -1,0 +1,12 @@
+{
+  "operationID": "530dbb60-13d0-4a2e-af70-d40bffb80f20",
+  "cluster": "ksyun-containers",
+  "clusterUID": "REPLACE_WITH_NATIVE_CLUSTER_UID",
+  "tenantID": "team-a",
+  "name": "ksyun-test-1",
+  "instanceID": "REPLACE_WITH_CURRENT_PLATFORM_CONTAINER_INCARNATION",
+  "privateAddress": "10.0.3.85",
+  "environment": "pi05",
+  "networkScope": "ksyun-private",
+  "authorizedGPUUUIDs": ["REPLACE_WITH_PLATFORM_AUTHORIZED_GPU_UUID"]
+}
