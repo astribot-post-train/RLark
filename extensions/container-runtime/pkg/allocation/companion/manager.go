@@ -23,6 +23,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	meta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 )
@@ -125,6 +126,13 @@ func (m Manager) Acquire(ctx context.Context, req Request) (*ext.ContainerAlloca
 	if !job.DeletionTimestamp.IsZero() || job.Spec.Suspended || task.Spec.Suspended {
 		return nil, ErrUnavailable
 	}
+	selector, err := labels.ValidatedSelectorFromSet(task.Spec.Placement.NodeSelector)
+	if err != nil {
+		return nil, fmt.Errorf("%w: invalid node selector", ErrIdentity)
+	}
+	if !selector.Matches(labels.Set(nativeNode.Labels)) {
+		return nil, ErrUnavailable
+	}
 	if nativeNode.Status.Reservation != nil || len(nativeNode.Status.DockerReservations) != 0 || task.Spec.Placement.Binding != nil || task.Spec.Placement.DockerBinding != nil {
 		return nil, fmt.Errorf("%w: legacy reservation/binding requires explicit migration", ErrIdentity)
 	}
@@ -147,9 +155,16 @@ func (m Manager) Acquire(ctx context.Context, req Request) (*ext.ContainerAlloca
 	wanted.OwnerReferences = []metav1.OwnerReference{*metav1.NewControllerRef(&task, native.GroupVersion.WithKind("Task"))}
 	var current ext.ContainerAllocation
 	key := client.ObjectKeyFromObject(wanted)
-	err := m.Client.Get(ctx, key, &current)
+	err = m.Client.Get(ctx, key, &current)
 	if err == nil {
-		return sameReservation(&current, wanted)
+		matched, err := sameReservation(&current, wanted)
+		if err != nil {
+			return nil, err
+		}
+		if err := m.pinTarget(ctx, &task, wanted.Spec); err != nil {
+			return nil, err
+		}
+		return matched, nil
 	}
 	if !apierrors.IsNotFound(err) {
 		return nil, err
@@ -204,6 +219,9 @@ func (m Manager) Acquire(ctx context.Context, req Request) (*ext.ContainerAlloca
 		return nil, err
 	}
 	for _, a := range held.Items {
+		if a.Spec.Task == reference(&task) {
+			return nil, fmt.Errorf("%w: Task already has an allocation", ErrIdentity)
+		}
 		if a.Spec.Node.UID == string(nativeNode.UID) || a.Spec.NetworkScope == node.Spec.NetworkScope && a.Spec.PrivateAddress == node.Spec.PrivateAddress {
 			return nil, ErrUnavailable
 		}
@@ -234,6 +252,9 @@ func (m Manager) Acquire(ctx context.Context, req Request) (*ext.ContainerAlloca
 				return nil, ErrIdentity
 			}
 		}
+	}
+	if err := m.pinTarget(ctx, &task, wanted.Spec); err != nil {
+		return nil, err
 	}
 	if err := m.Client.Create(ctx, wanted); err != nil {
 		if !apierrors.IsAlreadyExists(err) {

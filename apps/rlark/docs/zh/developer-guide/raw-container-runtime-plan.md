@@ -14,7 +14,15 @@
 
 `Cluster.spec.agentNamespace` 仍是成员关系权威来源。租户独立于 namespace 验证，并继承到附属资源。标签/注解只能检索，不能证明所有权。派发前验证类型化绑定、精确 Job UID 和租户；活动 Job 在 Task 或清理完成前不得换控制器。直接 Kubernetes API 和扩展 REST 使用同等准入校验。预览版拒绝 Kubernetes/容器混合 Job，原生 Kubernetes Job 行为保持不变。
 
-控制器拥有分配意图和派发，Agent 拥有运行时观测与清理证据。派发前用乐观并发持久化预留，重启从当前状态恢复，心跳丢失不释放。每个 Raw 容器或 Docker 主机一次只接收一个 Task，纯 CPU 也独占。GPU 只使用已授权整卡 UUID，可见性不等于授权。清理未知阻止复用，日志/遥测/审计不写入资源 Status。
+对于每个由扩展拥有的原生 Task，扩展会在创建 `ContainerAllocation` 之前把一个规范化调度目标持久化到 `containers.rlark.io/allocation-target` 注解。注解包含 Task UID、原生 Node UID、ContainerNode UID、Cluster UID 和节点实例标识。它是持久化的调度意图，不是预留证明；真正的所有权锁仍由 allocation 提供。重试或第二个控制器只能复用完全相同的目标，在创建或派发结果不确定时绝不能换节点。只有在 allocation 具有匹配的清理证明且 Task 正在以新 UID 替换时，才能清除目标。Task 删除、暂停和配置替换在 Agent 报告清理前都保留目标及 allocation 身份。生命周期从当前状态持续维护：`suspended` 和删除会阻止新启动，心跳和 Agent 结果只是观测，不能单独释放锁。
+
+Raw supervisor 即使尚未启动该 Task，也会在停止时持久化一个仅含身份的取消墓碑。同一 Task UID 的延迟启动必须被拒绝，包括 supervisor 重启后。已有但不确定的进程不能走“未启动”路径，必须在确认清理前保留分配。取消记录持久化失败会返回错误，不能上报清理完成。此预览版保留墓碑，不自动回收。
+
+需显式启用的预览 Job 预留控制器为每个 Job 创建并预留一个 `raw.rlark.io/process` v1 模板。在各自派发契约实现前，拒绝 Ray、多模板、旧版绑定、显式运行时实例名称、SSH 注入、用户指定的 GPU 可见性环境变量、环境处理器和 Pod 模板。原生 Task 名称确定，严格校验 owner reference、父 UID、模板身份和租户，不接管旧格式数据。节点选择器先校验，再匹配原生 Node 标签。工作负载或重启变更在确认清理后以新 UID 替换 Task，不就地修改运行中的执行。暂停/删除保留 Job 和 Task finalizer，直到每个精确 allocation 清理完成且观察到删除。目标已固定但 allocation 不存在时，除非控制器已保存精确清理回执，否则继续阻塞：仅凭不存在不能排除仍在进行的创建或启动。释放前，控制器在 Task 的 `containers.rlark.io/allocation-cleanup-receipt` 中持久化 allocation UID 和完整目标身份，以便从删除响应丢失中恢复。孤儿 allocation 阻止 Job 删除；含糊数据需要运维显式恢复。调度决策使用非缓存 API client 和乐观并发。Job phase 保持 Pending，`Scheduled` 原因为 `ReservedAwaitingDispatch`；停止的 Job 只在清理后变为 Stopped。此控制器仅预留容量；认证的任务领取和清理报告实现前，不得对活动节点启用。现有仅上报心跳的 Agent 无法执行这些预留。
+
+独立控制器默认在 `rlark-system` 中启用 Kubernetes Lease 选主（`--leader-elect`、`--leader-election-namespace`）。使用 `config/rbac/container-runtime-controller.yaml`，并配置对应 namespace 和管理 API kubeconfig；namespace 必须事先存在。默认 `--enable-job-reservations=false` 仅安装校验控制器；隔离的预览测试可通过 `--enable-job-reservations=true` 启用预留。请用 `Job.spec.suspended` 暂停整个 Job；此阶段拒绝单独暂停的模板。可选进程内 `ControllerExtension()` 仍仅执行校验。同一节点不能运行旧预览分配写入者。撤销权限或关闭控制器不会清理或释放持久化预留；重新启动后继续调谐。预留测试覆盖恢复、容量不可用、配置变更、删除、租户冲突和 API 响应丢失，不代表 Agent 执行或端到端训练已支持。
+
+控制器拥有分配意图和派发，Agent 拥有运行时观测与清理证据。派发前用乐观并发持久化预留，重启从当前状态恢复，心跳丢失不释放。每个 Raw 容器或 Docker 主机一次只接收一个 Task，当前分配契约要求显式的授权 GPU 白名单。GPU 只使用已授权整卡 UUID，可见性不等于授权。清理未知阻止复用，日志/遥测/审计不写入资源 Status。
 
 ### 独立服务与运维界面
 
@@ -57,6 +65,8 @@
 实际 cgroup 配额为 20 CPU（`cpu.max = 2000000 100000`）和 236 GiB（`memory.max = 253403070464`）。虽然存在 `cgroup.kill`，cgroup v2 文件系统为只读，不能使用 cgroup supervisor 后端。没有 Docker socket 或可用 systemd。状态/工作目录尚未安装，父目录可写。可信 root 进程树后端必须通过自身预检与生命周期测试后再使用，它不提供任务隔离。`/ks3-regular` 在平台本地目录上覆盖了实际读写 `fuse.ks3fs` 挂载，`/kpfs-regular` 为读写 `kingstorage` NAS 挂载；尚未测试跨重启 checkpoint 保留。
 
 资源池清单显示分配一张 GM402，但容器内 `nvidia-smi` 显示一张 H100 80GB；在把 GPU UUID 作为授权容量前需确认平台型号映射。已通过私有跳转路径在该开发机上以 root 运行可选 Agent 观测测试：process-tree supervisor socket、cgroup v2 限制（`20000m`、`253403070464` 字节）和一个 GPU UUID 均成功读到；关闭 supervisor 后观测会 fail closed。这只验证本地观测边界。该开发机尚未登记为扩展 Agent。证书/接入、Job 派发、授权日志和 Agent 升级/回滚仍需实现并完成端到端测试。本轮未启动 RLinf 训练。
+
+2026-10-30 稍后查询发现开发机已停止，自动保存成功。本轮重新启动时未变更队列、资源规格或公网配置。私网 Pod IP 仍为 `10.0.3.85`，宿主 Node IP 变为 `10.0.2.72`，因此旧宿主地址不能标识执行身份。重启后预装 pi05 Python 仍报告 Ray 2.56.1、PyTorch 2.11.0+cu126。以 root 运行的 supervisor 定向测试通过：启动前取消、取消持久化失败及重试、无效/取消请求，以及真实 supervisor close/open 后恢复取消记录。已移除临时测试二进制。这些测试未启动训练进程，不证明 checkpoint 保留，也未注册 Agent 或派发 Job。
 
 ### 前台 Raw 观测 Agent（preview）
 
@@ -138,7 +148,7 @@ rlarkadm 生成配置和前台启动包，可接已有 supervisor，不假设容
 - [x] 中英文设计与交付计划。
 - [x] 预览契约的类型 API、schema/deepcopy 生成、兼容及所有权测试。
 - [x] 一个 Task 独占一个 Node 的持久化预留、回滚和恢复。
-- [x] 通过 Host/Coordinator 和轮询 Agent 完成单节点 supervisor 执行。
+- [x] 历史原生预览路径通过 Host/Coordinator 和轮询 Agent 完成单节点 supervisor 执行。
 - [ ] 多节点 Ray 屏障及整组生命周期。
 - [x] 预览路径的节点注册、限定凭证、GPU 授权和环境校验。
 - [ ] rlarkadm 启动包、授权日志、Gateway 和 UI。
@@ -151,7 +161,7 @@ rlarkadm 生成配置和前台启动包，可接已有 supervisor，不假设容
 
 ## 当前实现证据与剩余接线
 
-本分支已接入实验性 Raw Agent 轮询、受限心跳、受限 API、Job 分发和 Host/Coordinator 路径。它只支持预置 Node 上一个可信 root 进程 Task，不代表生产 Ray/RLinf 或多节点 Job 支持。group barrier、端口分配和 GPU/平台验收完成前不要提交 Ray/RLinf 训练。生成的 `status.raw`、`status.reservation`、`spec.placement.binding` 和 `spec.placement.environment` 是预览契约。
+历史原生预览路径接入了实验性 Raw Agent 轮询、受限心跳、受限 API、Job 派发和 Host/Coordinator，用于预置 Node 上一个可信 root 进程 Task，不代表生产 Ray/RLinf 或多节点 Job 支持。上文的独立附属路径现在具有单独的仅预留 Job 控制器，仍在 Agent 领取前停止。认证派发、group barrier、端口分配和 GPU/平台验收完成前不要提交 Ray/RLinf 训练。生成的 `status.raw`、`status.reservation`、`spec.placement.binding` 和 `spec.placement.environment` 仍是历史预览契约，新附属预留路径不使用它们。
 
 已实现的边界：
 

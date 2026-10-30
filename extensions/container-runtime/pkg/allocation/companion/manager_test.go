@@ -102,6 +102,131 @@ func TestExclusiveAcquireRecoveryAndConfirmedRelease(t *testing.T) {
 	if err := m.Client.Get(ctx, client.ObjectKeyFromObject(first), &ext.ContainerAllocation{}); !apierrors.IsNotFound(err) {
 		t.Fatalf("lock remains after confirmed cleanup: %v", err)
 	}
+	var pinned native.Task
+	if err := m.Client.Get(ctx, req.Task, &pinned); err != nil {
+		t.Fatal(err)
+	}
+	target, err := Target(&pinned)
+	if err != nil || target == nil || target.ExecutionID != string(pinned.UID) || target.NodeRecordUID == "" {
+		t.Fatalf("allocation target was not durably pinned: %#v %v", target, err)
+	}
+}
+
+func TestMalformedOrConflictingTargetFailsClosed(t *testing.T) {
+	ctx := context.Background()
+	m, req := fixture(t)
+	var task native.Task
+	mustGet(t, m, req.Task, &task)
+	task.Annotations = map[string]string{TargetAnnotation: `{"task":{"name":"wrong"}}`}
+	if err := m.Client.Update(ctx, &task); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Acquire(ctx, req); !errors.Is(err, ErrIdentity) {
+		t.Fatalf("malformed target was accepted: %v", err)
+	}
+}
+
+func addSecondNode(t *testing.T, m Manager, req Request) Request {
+	t.Helper()
+	ctx := context.Background()
+	var node ext.ContainerNode
+	mustGet(t, m, req.Node, &node)
+	var nativeNode native.Node
+	mustGet(t, m, client.ObjectKey{Namespace: "agents", Name: "worker"}, &nativeNode)
+	nativeNode.Name, nativeNode.UID, nativeNode.ResourceVersion = "other", "other-native", ""
+	if err := m.Client.Create(ctx, &nativeNode); err != nil {
+		t.Fatal(err)
+	}
+	node.Name, node.UID, node.ResourceVersion = "other", "other-companion", ""
+	node.Spec.Node = reference(&nativeNode)
+	node.Spec.PrivateAddress = "10.0.3.86"
+	node.Spec.AuthorizedGPUUUIDs = []string{"GPU-b"}
+	if err := m.Client.Create(ctx, &node); err != nil {
+		t.Fatal(err)
+	}
+	other := req
+	other.Node = client.ObjectKeyFromObject(&node)
+	return other
+}
+
+func TestConcurrentSameTaskDifferentNodesHasOneTarget(t *testing.T) {
+	ctx := context.Background()
+	m, first := fixture(t)
+	second := addSecondNode(t, m, first)
+	// Both requests finish eligibility reads before either target CAS. This is
+	// the cross-node race a per-node lock alone cannot prevent.
+	var mu sync.Mutex
+	arrivals := 0
+	proceed := make(chan struct{})
+	base := m.Client
+	m.Client = interceptor.NewClient(base.(client.WithWatch), interceptor.Funcs{Patch: func(ctx context.Context, c client.WithWatch, obj client.Object, patch client.Patch, opts ...client.PatchOption) error {
+		if _, ok := obj.(*native.Task); ok {
+			mu.Lock()
+			arrivals++
+			if arrivals == 2 {
+				close(proceed)
+			}
+			mu.Unlock()
+			select {
+			case <-proceed:
+			case <-time.After(5 * time.Second):
+				return errors.New("target CAS barrier timed out")
+			}
+		}
+		return c.Patch(ctx, obj, patch, opts...)
+	}})
+	out := make(chan error, 2)
+	for _, req := range []Request{first, second} {
+		go func(r Request) { _, err := m.Acquire(ctx, r); out <- err }(req)
+	}
+	wins := 0
+	for range 2 {
+		if err := <-out; err == nil {
+			wins++
+		} else if !apierrors.IsConflict(err) {
+			t.Errorf("unexpected loser error: %v", err)
+		}
+	}
+	var locks ext.ContainerAllocationList
+	if err := base.List(ctx, &locks); err != nil {
+		t.Fatal(err)
+	}
+	if wins != 1 || len(locks.Items) != 1 {
+		t.Fatalf("one Task reserved multiple nodes: wins=%d locks=%d", wins, len(locks.Items))
+	}
+	var task native.Task
+	mustGet(t, m, first.Task, &task)
+	target, err := Target(&task)
+	if err != nil || target == nil || target.Node != locks.Items[0].Spec.Node {
+		t.Fatalf("lock does not match persisted target: %+v %v", target, err)
+	}
+}
+
+func TestLostTargetPatchCannotAllocateOrRetarget(t *testing.T) {
+	ctx := context.Background()
+	m, req := fixture(t)
+	other := addSecondNode(t, m, req)
+	base := m.Client
+	m.Client = interceptor.NewClient(base.(client.WithWatch), interceptor.Funcs{Patch: func(ctx context.Context, c client.WithWatch, obj client.Object, patch client.Patch, opts ...client.PatchOption) error {
+		if err := c.Patch(ctx, obj, patch, opts...); err != nil {
+			return err
+		}
+		return errors.New("target persisted but response lost")
+	}})
+	if _, err := m.Acquire(ctx, req); err == nil {
+		t.Fatal("expected lost target patch response")
+	}
+	var locks ext.ContainerAllocationList
+	if err := base.List(ctx, &locks); err != nil || len(locks.Items) != 0 {
+		t.Fatalf("uncertain target patch was followed by allocation: %d %v", len(locks.Items), err)
+	}
+	m.Client = base
+	if _, err := m.Acquire(ctx, other); !errors.Is(err, ErrIdentity) {
+		t.Fatalf("uncertain target was reassigned: %v", err)
+	}
+	if _, err := m.Acquire(ctx, req); err != nil {
+		t.Fatalf("persisted target could not recover: %v", err)
+	}
 }
 func TestUnavailableAndConflictingInputsNeverCreateAllocation(t *testing.T) {
 	tests := map[string]func(*testing.T, Manager, Request){

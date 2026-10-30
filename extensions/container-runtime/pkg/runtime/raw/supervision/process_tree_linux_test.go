@@ -88,6 +88,33 @@ func treeFixture(t *testing.T) (*Service, rt.TaskIdentity, string) {
 	return s, rt.TaskIdentity{Logical: rt.LogicalTaskID{Namespace: "agents", Name: "root"}, ObjectUID: "root-task", Generation: 1}, work
 }
 
+func TestTreeCancellationSurvivesSupervisorRestart(t *testing.T) {
+	s, task, work := treeFixture(t)
+	if result, err := s.Stop(context.Background(), task); err != nil || !result.Cleaned || !result.Deleted {
+		t.Fatalf("cancel absent Task: %+v %v", result, err)
+	}
+	config := s.config
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := Open(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := reopened.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+	spec := raw.ProcessSpec{Argv: []string{config.Executables[0], "-c", "exit 0"}, Directory: work}
+	if _, err := reopened.Ensure(context.Background(), task, spec); !fault.Is(err, fault.Conflict) {
+		t.Fatalf("restart forgot cancellation: %v", err)
+	}
+	if status, err := reopened.Status(context.Background()); err != nil || status.Busy {
+		t.Fatalf("cancelled absence became occupied after restart: %+v %v", status, err)
+	}
+}
+
 func waitTree(t *testing.T, s *Service, task rt.TaskIdentity) raw.Record {
 	t.Helper()
 	select {
