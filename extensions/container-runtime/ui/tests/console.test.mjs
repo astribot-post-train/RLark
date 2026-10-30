@@ -101,3 +101,40 @@ test("create recovery retains operation identity and login requires admin contra
     new Response(JSON.stringify({ ok: true, role: "user", token: "ignored" }));
   await assert.rejects(login("u", "p"), APIError);
 });
+
+test("node scheduling sends an explicit intent with the companion UID and native resourceVersion", async () => {
+  const calls = [];
+  globalThis.fetch = async (path, init) => {
+    calls.push({ path, init });
+    return new Response("{}");
+  };
+  const client = new Client("admin");
+  const node = {
+    name: "node-1",
+    uid: "companion-uid",
+    nativeUID: "native-uid",
+    resourceVersion: "123",
+  };
+  await client.nodeScheduling(
+    { namespace: "agents", name: "cloud" },
+    node,
+    true,
+  );
+  await client.nodeScheduling(
+    { namespace: "agents", name: "cloud" },
+    node,
+    false,
+  );
+  assert.deepEqual(
+    calls.map((c) => JSON.parse(c.init.body)),
+    [
+      { uid: "companion-uid", resourceVersion: "123", unschedulable: true },
+      { uid: "companion-uid", resourceVersion: "123", unschedulable: false },
+    ],
+  );
+  assert.equal(
+    calls[0].path,
+    "/api/v1/container-runtime/clusters/agents/cloud/nodes/node-1",
+  );
+  assert.equal(calls[0].init.headers.Authorization, "Bearer admin");
+});

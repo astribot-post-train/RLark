@@ -30,6 +30,9 @@ export type Cluster = {
   };
 };
 export type Node = {
+  resourceVersion: string;
+  nativeUID: string;
+  unschedulable: boolean;
   name: string;
   uid: string;
   instanceID: string;
@@ -186,8 +189,17 @@ function detail(value: unknown): value is Detail {
           "environment",
           "networkScope",
           "agentVersion",
+          "resourceVersion",
+          "nativeUID",
         ]) &&
-        booleans(n, ["ready", "schedulable", "busy", "held", "bindingValid"]) &&
+        booleans(n, [
+          "ready",
+          "schedulable",
+          "busy",
+          "held",
+          "bindingValid",
+          "unschedulable",
+        ]) &&
         stringArray(n.authorizedGPUUUIDs) &&
         stringArray(n.capabilities) &&
         conditions(n.conditions) &&
@@ -344,6 +356,26 @@ export class Client {
           resourceVersion: cluster.resourceVersion,
           targetAgentRelease,
           releaseUID,
+        }),
+      },
+      signal,
+    );
+  }
+  async nodeScheduling(
+    cluster: Cluster,
+    node: Node,
+    unschedulable: boolean,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    await request(
+      `${this.path(cluster.namespace, cluster.name)}/nodes/${encodeURIComponent(node.name)}`,
+      this.token,
+      {
+        method: "PATCH",
+        body: JSON.stringify({
+          uid: node.uid,
+          resourceVersion: node.resourceVersion,
+          unschedulable,
         }),
       },
       signal,

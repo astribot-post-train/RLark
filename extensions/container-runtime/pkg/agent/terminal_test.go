@@ -144,3 +144,39 @@ func TestScopedTerminalStatusRequiresCurrentCleanupConditions(t *testing.T) {
 		})
 	}
 }
+
+// Cordon is a start fence, not desired stop. Existing processes retain their
+// exact assignment, continue reporting results and can prove cleanup.
+func TestCordonKeepsRunningObservationAndTerminalCleanup(t *testing.T) {
+	ctx := context.Background()
+	s, id, a := taskFixture(t)
+	supervisor := &memorySupervisor{}
+	c := transport(t, s, id)
+	must(t, (ExecutionObserver{Client: c, Supervisor: supervisor}).Reconcile(ctx))
+	var nn native.Node
+	must(t, s.Reporter.Client.Get(ctx, client.ObjectKey{Namespace: a.Allocation.Spec.Node.Namespace, Name: a.Allocation.Spec.Node.Name}, &nn))
+	nn.Spec.Unschedulable = true
+	must(t, s.Reporter.Client.Update(ctx, &nn))
+	if _, err := s.Handle(ctx, id, requestFor(a, "authorize")); !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("cordoned start authorized: %v", err)
+	}
+	must(t, (ExecutionObserver{Client: c, Supervisor: supervisor}).Reconcile(ctx))
+	if supervisor.record.Deleted || supervisor.ensures != 1 {
+		t.Fatal("cordon stopped or restarted an owned process")
+	}
+	var task native.Task
+	must(t, s.Reporter.Client.Get(ctx, client.ObjectKeyFromObject(&a.Task), &task))
+	if task.Status.Phase != native.TaskPhaseRunning {
+		t.Fatalf("running observation lost: %v", task.Status.Phase)
+	}
+	supervisor.record.Phase = rt.InstancePhase("Succeeded")
+	supervisor.record.Cleaned = true
+	for range 3 {
+		must(t, (ExecutionObserver{Client: c, Supervisor: supervisor}).Reconcile(ctx))
+	}
+	var allocation ext.ContainerAllocation
+	must(t, s.Reporter.Client.Get(ctx, client.ObjectKeyFromObject(&a.Allocation), &allocation))
+	if !allocation.Status.CleanupConfirmed || !supervisor.record.Deleted || supervisor.ensures != 1 {
+		t.Fatal("cordoned terminal process did not retain exact cleanup ownership")
+	}
+}

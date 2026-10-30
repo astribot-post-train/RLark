@@ -42,6 +42,10 @@ const labels = {
     deleting: "删除中",
     schedulable: "可调度",
     busy: "忙",
+    cordon: "禁止新任务",
+    uncordon: "允许新任务",
+    cordoned: "已禁止新任务",
+    schedulingHint: "只调整调度意图，不停止现有任务。有预留时不能恢复调度。",
     yes: "是",
     no: "否",
     gpu: "授权 GPU",
@@ -96,6 +100,11 @@ const labels = {
     deleting: "Deleting",
     schedulable: "Schedulable",
     busy: "Busy",
+    cordon: "Cordon",
+    uncordon: "Uncordon",
+    cordoned: "Cordoned",
+    schedulingHint:
+      "Changes scheduling intent only. Existing workloads continue; held reservations block uncordon.",
     yes: "Yes",
     no: "No",
     gpu: "Authorized GPUs",
@@ -165,6 +174,9 @@ function App() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [writing, setWriting] = useState(false);
+  const [expandedNodes, setExpandedNodes] = useState<Set<string>>(
+    () => new Set(),
+  );
   const [target, setTarget] = useState("");
   const observedTarget = useRef<string | undefined>(undefined);
   const [showCreate, setShowCreate] = useState(false);
@@ -193,6 +205,7 @@ function App() {
     listGate.current.cancel();
     detailGate.current.cancel();
     setWriting(false);
+    setExpandedNodes(new Set());
     setToken("");
     setClusters(undefined);
     setDetail(undefined);
@@ -549,7 +562,37 @@ function App() {
                       <p className="muted">{t.noRecords}</p>
                     ) : (
                       detail.nodes.map((n) => (
-                        <NodeCard key={n.uid} node={n} t={t} />
+                        <NodeCard
+                          key={n.uid}
+                          node={n}
+                          expanded={expandedNodes.has(n.uid)}
+                          onExpand={(open) =>
+                            setExpandedNodes((current) => {
+                              if (current.has(n.uid) === open) return current;
+                              const next = new Set(current);
+                              if (open) next.add(n.uid);
+                              else next.delete(n.uid);
+                              return next;
+                            })
+                          }
+                          t={t}
+                          disabled={
+                            writing ||
+                            detail.cluster.deleting ||
+                            !detail.cluster.bindingValid
+                          }
+                          onScheduling={() => {
+                            if (client)
+                              void mutate((signal) =>
+                                client.nodeScheduling(
+                                  detail.cluster,
+                                  n,
+                                  !n.unschedulable,
+                                  signal,
+                                ),
+                              );
+                          }}
+                        />
                       ))
                     )}
                   </section>
@@ -691,9 +734,27 @@ function Login({
     </form>
   );
 }
-function NodeCard({ node: n, t }: { node: Node; t: typeof labels.en }) {
+function NodeCard({
+  node: n,
+  t,
+  disabled,
+  onScheduling,
+  expanded,
+  onExpand,
+}: {
+  node: Node;
+  t: typeof labels.en;
+  disabled: boolean;
+  onScheduling: () => void;
+  expanded: boolean;
+  onExpand: (open: boolean) => void;
+}) {
   return (
-    <details className="node">
+    <details
+      className="node"
+      open={expanded}
+      onToggle={(event) => onExpand(event.currentTarget.open)}
+    >
       <summary>
         <strong>{n.name}</strong>
         <span>
@@ -708,6 +769,19 @@ function NodeCard({ node: n, t }: { node: Node; t: typeof labels.en }) {
         </span>
       </summary>
       <div className="node-details">
+        <p>{n.unschedulable ? t.cordoned : t.schedulable}</p>
+        <button
+          disabled={
+            disabled ||
+            !n.bindingValid ||
+            !n.resourceVersion ||
+            (n.unschedulable && n.held)
+          }
+          onClick={onScheduling}
+        >
+          {n.unschedulable ? t.uncordon : t.cordon}
+        </button>
+        <p className="muted">{t.schedulingHint}</p>
         <p>
           {t.busy}: {n.busy ? t.yes : t.no} · {n.environment} · {n.networkScope}
         </p>

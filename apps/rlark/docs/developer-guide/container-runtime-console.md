@@ -15,9 +15,9 @@ container clusters. It provides:
   authorized GPU UUIDs, heartbeat age, readiness, schedulability, and busy
   state;
 - available Agent releases and the currently selected target release;
-- operation-safe cluster creation and target-release selection.
+- operation-safe cluster creation, target-release selection and node cordon/uncordon.
 
-Allocations, Jobs, and Agent upgrades are displayed as separate dimensions.
+Allocations, their Job references, and Agent upgrades are displayed as separate dimensions.
 The console never derives utilization from a missing observation and never
 turns a stale heartbeat into a Ready or schedulable state. Ray/RLinf group
 submission, remote logs, terminal/exec, automatic enrollment, Docker Engine
@@ -118,7 +118,9 @@ folder. The example ServiceAccount lives in `rlark-system`; change all three
 references together for a different deployment namespace. It can read inventory,
 create native Clusters and dedicated namespaces, and create/patch companion
 Clusters. It cannot read Secrets, dispatch Tasks, patch observed status, delete
-resources or release allocations. Keep the signing key out of that kubeconfig.
+resources or release allocations. Native Node patches are limited by the API
+to `spec.unschedulable`; Kubernetes RBAC cannot restrict a patch permission by
+field, so the console remains a trusted administrator service. Keep the signing key out of that kubeconfig.
 
 The HS256 key must be the exact raw bytes used by the configured Gateway (at
 least 32 bytes), mounted read-only into this trusted control-plane service.
@@ -148,7 +150,7 @@ separate `container-runtime-api` service. The UI build requires Node.js
 
 The preview UI creates Raw clusters. API/CLI provisioning can also create
 Docker inventory records, but that does not enable Docker Engine registration
-or execution. Join/package export, artifact publication and node cordon/drain
+or execution. Join/package export, artifact publication and node drain
 remain CLI/operator workflows. Job names in the console come from allocation
 references; the console is not a Job submission or history interface.
 
@@ -183,3 +185,49 @@ target-release publication, English/Chinese switching and logout. The browser
 reported no JavaScript exceptions. Temporary fixture resources were removed
 through normal lifecycle cleanup; the existing cloud Cluster target was not
 changed. This does not validate multi-node training or production deployment.
+
+## Node scheduling management
+
+The console adds administrator cordon/uncordon for existing Raw
+nodes. It patches only native `Node.spec.unschedulable`, with the companion UID,
+native UID reference, and native resourceVersion checked on every request. The
+console displays the native scheduling intent separately from observed Ready,
+busy state and held allocations. Cordon blocks subsequent start authorizations; it does not stop a
+running process, release its allocation, or request an Agent upgrade. Cordon
+does not pause the configured Agent rollout; upgrades still wait for their
+independent idle proof and lock. It cannot revoke a start authorized concurrently
+just before the cordon was observed. Uncordon
+clears the intent only after all known locks and legacy reservations are gone;
+it does not grant readiness or bypass placement/upgrade checks. A stale or
+unknown lock, including one being deleted, blocks uncordon. Failure to read
+reservations also blocks it.
+
+Use `PATCH /api/v1/container-runtime/clusters/{namespace}/{cluster}/nodes/{node}`
+with `uid` (companion Node UID), `resourceVersion` (native Node version) and an
+explicit boolean `unschedulable`. Re-read after a conflict or uncertain response;
+never retry a toggle against a new object. Node writes require the same
+platform-administrator authentication as cluster writes. Additional console
+RBAC grants only native Node `patch`, never Node status writes.
+
+Drain is a separate future operation: stopping Jobs, proving cleanup and
+retiring allocations must be recoverable. No drain or force-unlock button is
+provided by this scheduling-intent endpoint.
+
+## Recovery after a notebook restart
+
+A platform stop/start can replace the existing-container incarnation even if the
+notebook ID, private address and GPU UUID stay the same. Compare the current PID
+namespace, PID 1 start evidence and boot identity with the registered `instanceID`.
+Do not reuse old credentials or mutate the immutable binding to adopt a replacement.
+After proving the old instance stopped and its Tasks, allocations and upgrade
+operations absent, retire the exact old native/companion Nodes using
+UID/resourceVersion preconditions, register the replacement and export a new
+package into separate install/state directories. The Cluster remains separate
+from local Kubernetes inventory. Automatic enrollment and startup recovery are
+not implemented; a temporary reverse tunnel must also be re-established.
+
+On 2026-10-31 the test notebook was observed stopped and explicitly restarted
+without changing its queue, resources or public-network settings. Its PID 1 start
+evidence changed. Python/PyTorch/Ray and CUDA `42.0` remained available; the old
+node was normally retired and a new exact registration/package created. This
+operator recovery is separate from Agent binary rollout and is not automatic.
