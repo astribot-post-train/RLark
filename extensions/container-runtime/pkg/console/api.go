@@ -45,6 +45,7 @@ type API struct {
 	Creator ClusterCreator
 	Auth    Authenticator
 	UI      http.Handler
+	Logs    http.Handler
 	Now     func() time.Time
 }
 
@@ -98,6 +99,12 @@ func (a *API) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	parts := strings.Split(strings.TrimPrefix(r.URL.Path, prefix), "/")
 	switch {
+	case r.URL.Path == LogPath && r.Method == http.MethodGet:
+		if a.Logs == nil {
+			writeError(w, 503, "unavailable", "remote log reads are disabled")
+			return
+		}
+		a.Logs.ServeHTTP(w, r)
 	case len(parts) == 1 && parts[0] == "clusters" && r.Method == http.MethodGet:
 		a.listClusters(w, r)
 	case len(parts) == 1 && parts[0] == "clusters" && r.Method == http.MethodPost:
@@ -169,6 +176,7 @@ type allocationSummary struct {
 	NodeName         string `json:"nodeName"`
 	JobName          string `json:"jobName"`
 	TaskName         string `json:"taskName"`
+	TaskUID          string `json:"taskUID"`
 	Kind             string `json:"kind"`
 	Phase            string `json:"phase"`
 	Deleting         bool   `json:"deleting"`
@@ -252,7 +260,7 @@ func (a *API) detail(ctx context.Context, cc *ext.ContainerCluster) (*clusterDet
 		if v.Spec.Upgrade != nil {
 			kind = "upgrade"
 		}
-		result.Allocations = append(result.Allocations, allocationSummary{Name: v.Name, UID: string(v.UID), NodeName: v.Spec.Node.Name, JobName: v.Spec.Job.Name, TaskName: v.Spec.Task.Name, Kind: kind, Phase: v.Status.Phase, Deleting: !v.DeletionTimestamp.IsZero(), CleanupConfirmed: v.Status.CleanupConfirmed && v.Status.ObservedGeneration == v.Generation})
+		result.Allocations = append(result.Allocations, allocationSummary{Name: v.Name, UID: string(v.UID), NodeName: v.Spec.Node.Name, JobName: v.Spec.Job.Name, TaskName: v.Spec.Task.Name, TaskUID: v.Spec.Task.UID, Kind: kind, Phase: v.Status.Phase, Deleting: !v.DeletionTimestamp.IsZero(), CleanupConfirmed: v.Status.CleanupConfirmed && v.Status.ObservedGeneration == v.Generation})
 	}
 	var nodes ext.ContainerNodeList
 	if err := a.Client.List(ctx, &nodes, client.InNamespace(cc.Namespace)); err != nil {

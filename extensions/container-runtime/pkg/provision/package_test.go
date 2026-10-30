@@ -100,6 +100,7 @@ func TestPackageIsPrivateScopedAndDoesNotCarryIssuer(t *testing.T) {
 	}
 	s, cn := registered(t)
 	req := packageRequest(t, nodeID(cn))
+	req.EnableExecution, req.EnableLogReads = true, true
 	manifest, err := s.ExportPackage(context.Background(), req)
 	must(t, err)
 	var installed PackageManifest
@@ -140,8 +141,25 @@ func TestPackageIsPrivateScopedAndDoesNotCarryIssuer(t *testing.T) {
 			t.Fatalf("launcher syntax: %s %v", out, err)
 		}
 	}
+	launcher, err := os.ReadFile(filepath.Join(req.OutputDirectory, "start-agent"))
+	must(t, err)
+	if !strings.Contains(string(launcher), "--enable-log-reads=true") || !strings.Contains(string(launcher), "--enable-task-execution=true") {
+		t.Fatal("scoped log execution flags missing from exported launcher")
+	}
 	if _, err := s.ExportPackage(context.Background(), req); err == nil {
 		t.Fatal("existing package overwritten")
+	}
+}
+
+func TestPackageRejectsLogsWithoutExecutionBeforeWriting(t *testing.T) {
+	s, cn := registered(t)
+	req := packageRequest(t, nodeID(cn))
+	req.EnableLogReads = true
+	if _, err := s.ExportPackage(context.Background(), req); err == nil {
+		t.Fatal("accepted logs without scoped execution")
+	}
+	if _, err := os.Stat(req.OutputDirectory); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("invalid package request wrote output: %v", err)
 	}
 }
 

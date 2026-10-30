@@ -16,7 +16,13 @@ import {
   type Detail,
   type Node,
 } from "./api";
-import { clusterState, heartbeatAge, LoadGate, nodeState } from "./models";
+import {
+  clusterState,
+  heartbeatAge,
+  LoadGate,
+  nodeState,
+  logText as decodeLogText,
+} from "./models";
 import "./style.css";
 const labels = {
   zh: {
@@ -68,7 +74,12 @@ const labels = {
     targetHint:
       "目标是持续期望状态。清空目标只暂停新升级，不取消正在应用的操作。",
     onboarding:
-      "节点加入与安装包导出请使用 container-runtime-admin；Ray/RLinf 多节点、远程日志和 Docker Engine 执行尚未验收。",
+      "节点加入与安装包导出请使用 container-runtime-admin；Raw 日志需单独启用。Ray/RLinf 多节点和 Docker Engine 执行尚未验收。",
+    logs: "读取日志",
+    logLoading: "读取中…",
+    logUnavailable: "日志不可用",
+    logClose: "关闭日志",
+    logBounded: "输出已达到读取或保留上限",
     createHint:
       "创建时自动生成操作 UUID。提交后保留相同请求，响应丢失可安全重试。",
     remembered:
@@ -127,7 +138,12 @@ const labels = {
     targetHint:
       "The target is durable intent. Clearing it pauses new upgrades; it does not cancel an applying operation.",
     onboarding:
-      "Use container-runtime-admin for node join and package export. Multi-node Ray/RLinf, remote logs and Docker Engine execution are not accepted yet.",
+      "Use container-runtime-admin for node join and package export. Raw logs require separate enablement. Multi-node Ray/RLinf and Docker Engine execution are not accepted yet.",
+    logs: "Read logs",
+    logLoading: "Reading…",
+    logUnavailable: "Logs unavailable",
+    logClose: "Close logs",
+    logBounded: "Output reached the read or retention limit",
     createHint:
       "An operation UUID is generated at submission. Retain the identical request to recover a lost response.",
     remembered:
@@ -181,6 +197,13 @@ function App() {
   const observedTarget = useRef<string | undefined>(undefined);
   const [showCreate, setShowCreate] = useState(false);
   const [intent, setIntent] = useState<ClusterIntent | undefined>(readIntent);
+  const [logText, setLogText] = useState<{
+    key: string;
+    text: string;
+    note: string;
+  }>();
+  const [logLoading, setLogLoading] = useState(false);
+  const logRequest = useRef<AbortController | undefined>(undefined);
   const pending = useRef(new Set<AbortController>());
   const listGate = useRef(new LoadGate());
   const detailGate = useRef(new LoadGate());
@@ -210,6 +233,9 @@ function App() {
     setClusters(undefined);
     setDetail(undefined);
     setSelection(undefined);
+    logRequest.current?.abort();
+    setLogText(undefined);
+    setLogLoading(false);
     setError("");
   };
   useEffect(
@@ -285,6 +311,44 @@ function App() {
       if (!controller.signal.aborted) setWriting(false);
     }
   }
+  const readLogs = async (allocation: Detail["allocations"][number]) => {
+    if (!client || !selection || !allocation.taskUID) return;
+    const controller = new AbortController();
+    logRequest.current?.abort();
+    logRequest.current = controller;
+    pending.current.add(controller);
+    setLogLoading(true);
+    try {
+      const snapshot = await client.logs(
+        selection.namespace,
+        allocation,
+        controller.signal,
+      );
+      if (controller.signal.aborted) return;
+      const text = decodeLogText(snapshot.data);
+      setLogText({
+        key: allocation.uid,
+        text,
+        note:
+          snapshot.truncated || snapshot.retentionLimitReached
+            ? t.logBounded
+            : "",
+      });
+    } catch (e) {
+      if (!controller.signal.aborted) {
+        setLogText(undefined);
+        report(e);
+      }
+    } finally {
+      pending.current.delete(controller);
+      if (!controller.signal.aborted) setLogLoading(false);
+    }
+  };
+  useEffect(() => {
+    setLogText(undefined);
+    setLogLoading(false);
+    return () => logRequest.current?.abort();
+  }, [client, selection]);
   useEffect(() => {
     if (!client || writing) return;
     const timer = setInterval(() => setRevision((v) => v + 1), 15000);
@@ -643,10 +707,32 @@ function App() {
                             <small>
                               cleanup: {a.cleanupConfirmed ? t.yes : t.no}
                             </small>
+                            <button
+                              type="button"
+                              disabled={logLoading || !a.taskUID || a.deleting}
+                              onClick={() => void readLogs(a)}
+                            >
+                              {logLoading ? t.logLoading : t.logs}
+                            </button>
                           </td>
                         </tr>
                       ))}
                     />
+                    {logText && (
+                      <div className="log-viewer">
+                        <div className="actions">
+                          <strong>{logText.key}</strong>
+                          <button
+                            type="button"
+                            onClick={() => setLogText(undefined)}
+                          >
+                            {t.logClose}
+                          </button>
+                        </div>
+                        <pre>{logText.text}</pre>
+                        {logText.note && <small>{logText.note}</small>}
+                      </div>
+                    )}
                   </section>
                   <section className="panel">
                     <h3>{t.upgrades}</h3>

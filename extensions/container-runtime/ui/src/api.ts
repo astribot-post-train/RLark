@@ -66,10 +66,16 @@ export type Allocation = {
   nodeName: string;
   jobName: string;
   taskName: string;
+  taskUID: string;
   kind: string;
   phase: string;
   deleting: boolean;
   cleanupConfirmed: boolean;
+};
+export type LogSnapshot = {
+  data: string;
+  truncated: boolean;
+  retentionLimitReached: boolean;
 };
 export type Upgrade = {
   name: string;
@@ -234,6 +240,7 @@ function detail(value: unknown): value is Detail {
           "nodeName",
           "jobName",
           "taskName",
+          "taskUID",
           "kind",
           "phase",
         ]) &&
@@ -380,6 +387,32 @@ export class Client {
       },
       signal,
     );
+  }
+  async logs(
+    namespace: string,
+    allocation: Allocation,
+    signal?: AbortSignal,
+  ): Promise<LogSnapshot> {
+    const query = new URLSearchParams({
+      namespace,
+      allocation: allocation.name,
+      allocationUID: allocation.uid,
+      taskUID: allocation.taskUID,
+    });
+    const body = await request(
+      `/api/v1/container-runtime/logs?${query}`,
+      this.token,
+      {},
+      signal,
+    );
+    if (
+      !record(body) ||
+      typeof body.data !== "string" ||
+      typeof body.truncated !== "boolean" ||
+      typeof body.retentionLimitReached !== "boolean"
+    )
+      throw malformed();
+    return body as LogSnapshot;
   }
   async create(
     intent: ClusterIntent,

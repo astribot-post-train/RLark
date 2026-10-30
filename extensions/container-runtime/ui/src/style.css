@@ -258,6 +258,23 @@ table {
   border-collapse: collapse;
   font-size: 13px;
 }
+.log-viewer {
+  margin-top: 14px;
+  border: 1px solid #d8deea;
+  border-radius: 10px;
+  padding: 12px;
+}
+.log-viewer pre {
+  max-height: 360px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: #101522;
+  color: #eef2ff;
+  padding: 12px;
+  border-radius: 8px;
+  font-size: 12px;
+}
 td {
   padding: 14px 8px;
   border-top: 1px solid #e5eaf3;

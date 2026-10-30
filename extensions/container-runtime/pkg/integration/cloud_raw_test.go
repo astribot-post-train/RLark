@@ -47,6 +47,7 @@ func TestCloudRawLifecycle(t *testing.T) {
 	tenantID := required("RLARK_TEST_RAW_TENANT")
 	executable := required("RLARK_TEST_RAW_EXECUTABLE")
 	directory := required("RLARK_TEST_RAW_DIRECTORY")
+	logs := cloudLogAcceptance(t)
 	cfg, err := clientcmd.BuildConfigFromFlags("", kubeconfig)
 	if err != nil {
 		t.Fatal(err)
@@ -100,6 +101,9 @@ func TestCloudRawLifecycle(t *testing.T) {
 	}
 	for _, test := range cases {
 		if !t.Run(test.name, func(t *testing.T) {
+			if test.stop && logs != nil {
+				test.code = gpu + `; print("X"*70000,flush=True); import time; time.sleep(600)`
+			}
 			name := "raw-accept-" + test.name + "-" + uuid.NewString()[:8]
 			params, err := json.Marshal(map[string]any{"argv": []string{executable, "-u", "-c", test.code}, "directory": directory, "env": []string{"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", "HOME=/root"}})
 			if err != nil {
@@ -130,11 +134,22 @@ func TestCloudRawLifecycle(t *testing.T) {
 				}
 				return nil
 			}
+			var logTarget string
 			if test.stop {
 				poll("running before stop", func(ctx context.Context) (bool, error) {
 					err := readJob(ctx)
 					return job.Status.Phase == native.JobPhaseRunning && job.Status.ObservedGeneration == job.Generation, err
 				})
+				if logs != nil {
+					var a ext.ContainerAllocation
+					if err := c.Get(ctx, client.ObjectKey{Namespace: namespace, Name: companion.Name(node.Spec.Node.UID)}, &a); err != nil {
+						t.Fatal(err)
+					}
+					if a.Spec.Job.UID != string(job.UID) || a.Spec.Task.UID == "" {
+						t.Fatal("log acceptance requires the exact current Job/Task allocation")
+					}
+					logTarget = logs.checkRunning(t, namespace, &a)
+				}
 				before := job.DeepCopy()
 				job.Spec.Suspended = true
 				if err := c.Patch(ctx, job, client.MergeFromWithOptions(before, client.MergeFromWithOptimisticLock{})); err != nil {
@@ -152,6 +167,9 @@ func TestCloudRawLifecycle(t *testing.T) {
 				err := c.Get(ctx, client.ObjectKey{Namespace: namespace, Name: companion.Name(node.Spec.Node.UID)}, &allocation)
 				return apierrors.IsNotFound(err), client.IgnoreNotFound(err)
 			})
+			if logTarget != "" {
+				logs.checkReleased(t, logTarget)
+			}
 			if err := c.Delete(ctx, job, client.Preconditions{UID: &job.UID, ResourceVersion: &job.ResourceVersion}); err != nil {
 				t.Fatal(err)
 			}

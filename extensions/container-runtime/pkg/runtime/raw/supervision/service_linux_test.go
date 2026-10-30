@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"golang.org/x/sys/unix"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -162,6 +163,114 @@ func TestLogsBoundedAndFullyDrained(t *testing.T) {
 	data, err := os.ReadFile(f.Name())
 	if err != nil || string(data) != "firstsec" {
 		t.Fatalf("log bound: %q %v", data, err)
+	}
+}
+
+func TestScopedLogReadIsBoundedAndRequiresRecordedTask(t *testing.T) {
+	s, task := serviceFixture(t)
+	s.records[key(task)] = raw.Record{Task: task, Phase: "Running"}
+	if err := os.WriteFile(filepath.Join(s.config.StateDirectory, key(task)+".log"), []byte("0123456789abcdef"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	logs, err := s.Logs(context.Background(), task, 8)
+	if err != nil || string(logs.Data) != "01234567" || !logs.Truncated {
+		t.Fatalf("bounded log read: %+v %v", logs, err)
+	}
+	if _, err := s.Logs(context.Background(), task, raw.MaxLogBytes+1); !fault.Is(err, fault.InvalidArgument) {
+		t.Fatalf("oversized log request accepted: %v", err)
+	}
+	foreign := task
+	foreign.ObjectUID = "replacement"
+	if _, err := s.Logs(context.Background(), foreign, 8); !fault.Is(err, fault.NotFound) {
+		t.Fatalf("foreign task log was readable: %v", err)
+	}
+}
+
+func TestTransportLogReadDoesNotAcceptPaths(t *testing.T) {
+	s, task := serviceFixture(t)
+	s.records[key(task)] = raw.Record{Task: task, Phase: "Running"}
+	if err := os.WriteFile(filepath.Join(s.config.StateDirectory, key(task)+".log"), []byte("hello"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	body, err := json.Marshal(request{Task: task, MaxBytes: 5})
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := httptest.NewRecorder()
+	s.handle(w, httptest.NewRequest(http.MethodPost, "/v1/logs", bytes.NewReader(body)))
+	if w.Code != http.StatusOK {
+		t.Fatalf("log status: %d", w.Code)
+	}
+	var result response
+	if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil || result.Logs == nil || string(result.Logs.Data) != "hello" {
+		t.Fatalf("log response: %+v %v", result, err)
+	}
+	for _, body := range []string{`{"task":{"logical":{"namespace":"agents","name":"worker"},"objectUID":"uid"},"maxBytes":1,"path":"/etc/passwd"}`, `{"task":{"logical":{"namespace":"agents","name":"worker"},"objectUID":"uid"},"maxBytes":0}`} {
+		w := httptest.NewRecorder()
+		s.handle(w, httptest.NewRequest(http.MethodPost, "/v1/logs", strings.NewReader(body)))
+		if strings.Contains(body, `"path"`) {
+			if w.Code != http.StatusBadRequest {
+				t.Fatalf("path log request status: %d", w.Code)
+			}
+			continue
+		}
+		if w.Code != http.StatusOK {
+			t.Fatalf("invalid log request status: %d", w.Code)
+		}
+		var got response
+		if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil || got.Error == "" {
+			t.Fatalf("malformed log request was accepted: %+v %v", got, err)
+		}
+	}
+}
+
+func TestLogReadRejectsUnsafeFilesAndHonorsCancellation(t *testing.T) {
+	for _, mode := range []string{"symlink", "hardlink", "fifo", "directory", "public", "oversized", "missing", "cancelled"} {
+		t.Run(mode, func(t *testing.T) {
+			s, task := serviceFixture(t)
+			s.records[key(task)] = raw.Record{Task: task, Phase: "Unknown"}
+			path := filepath.Join(s.config.StateDirectory, key(task)+".log")
+			ctx := context.Background()
+			switch mode {
+			case "symlink", "hardlink":
+				outside := filepath.Join(t.TempDir(), "secret")
+				if err := os.WriteFile(outside, []byte("secret"), 0600); err != nil {
+					t.Fatal(err)
+				}
+				var err error
+				if mode == "symlink" {
+					err = os.Symlink(outside, path)
+				} else {
+					err = os.Link(outside, path)
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+			case "fifo":
+				if err := unix.Mkfifo(path, 0600); err != nil {
+					t.Fatal(err)
+				}
+			case "directory":
+				if err := os.Mkdir(path, 0700); err != nil {
+					t.Fatal(err)
+				}
+			case "public":
+				if err := os.WriteFile(path, []byte("secret"), 0644); err != nil {
+					t.Fatal(err)
+				}
+			case "oversized":
+				if err := os.WriteFile(path, make([]byte, 17), 0600); err != nil {
+					t.Fatal(err)
+				}
+			case "cancelled":
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithCancel(ctx)
+				cancel()
+			}
+			if v, err := s.Logs(ctx, task, raw.MaxLogBytes); err == nil || len(v.Data) != 0 {
+				t.Fatalf("unsafe log read: %+v %v", v, err)
+			}
+		})
 	}
 }
 
