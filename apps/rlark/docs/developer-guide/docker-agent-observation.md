@@ -200,3 +200,14 @@ GPU utilization, port reservations, Ray/RLinf group barriers,
 Docker rolling upgrades, and real GPU-host lifecycle acceptance remain separate
 work. Host networking alone does not establish a multi-host Ray contract. See
 [Docker execution plan](docker-runtime-execution-plan.md) for the ordered gates.
+
+
+## Ray runtime foundation scope
+
+The extension contains a tested internal Ray 2.56.1 compiler/launcher and
+create-without-start provider primitive. They do **not** enable group dispatch:
+the scoped Agent still installs only the single-container adapter. `rayPorts`
+and resolved membership/GPU fields are internal allocation material and are
+rejected in public container Task input. See the [Ray implementation contract](docker-runtime-execution-plan.md)
+for the port block, prepare/start barriers, required image, failure/recovery tests
+and remaining real-host acceptance. No new operator flag enables partial groups.

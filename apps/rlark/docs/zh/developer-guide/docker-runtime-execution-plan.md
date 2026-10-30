@@ -134,3 +134,135 @@ follow、不添加流标签，最多返回解码后 64 KiB，并限制 multiplex
 利用率和 host network 流量归属不可用。日志和快照均为临时数据，不写入资源
 Status 或持久化指标。控制台提供手动读取，转义显示输出，并在切换选择或退出
 登录后丢弃在途结果。
+
+
+## Ray/RLinf 实施契约（2026-10-31）
+
+本节是后续实施计划，**不代表已开启 Ray 调度**。只有以下整组准入、故障和恢复
+验收全部通过后，scoped Agent 才会安装 Ray 适配器；当前仍只安装单容器适配器。
+不能直接启用旧的非 scoped Ray 适配器来绕过屏障。改动保留在独立扩展内，
+不修改原生 Cluster/Node/Job/Task API。
+
+### 端口与主机所有权
+
+每个成员独占一台主机及其授权整卡集合。一台主机同时最多运行一个 RLark 成员，
+同一个逻辑 Cluster 则可以让多个 Job 使用互不重叠的主机并行运行。host network
+不意味着整个逻辑集群只能运行一个 Job；同主机混部和 GPU 切分不在本契约内。
+
+用显式、版本化的端口块替换 head 名称哈希。每次执行只选择一次，并将同一计划
+复制到所有成员的不可变 allocation 中。首版端口块包含九个服务端口和 1..256 个 worker
+端口，覆盖 GCS、node manager、object manager、Ray client、dashboard HTTP、
+dashboard agent HTTP/gRPC、runtime-environment agent 与 metrics；launcher 显式
+固定所有服务及 worker 范围。非 Ray 的训练流量（如 NCCL 和用户 rendezvous 端口）
+需要管理员配置私网策略；Ray 端口块不能当成完整的训练防火墙白名单。
+
+Docker provider 在 create 前，以及启动已有 `created` 容器前，检查声明的全部
+TCP 端口。端口清单是不可变执行材料，inspect/恢复时必须保留。检查 IPv4 和 IPv6
+通配监听冲突，发现冲突即拒绝，不能终止或接管占用进程。检查 socket 必须在 Docker
+启动前释放，因此它是预检查，**不是防止外部进程竞态的内核级端口预留**。专用主机
+和管理员保留的端口块仍是前提；持久化整机 allocation 只保证 RLark 工作负载之间
+互斥。恢复已运行的自有容器时，不能因其占用自身端口而失败。
+
+### 副本展开与持久化组身份
+
+Job 控制器消费 Docker carrier 中的模板副本数，每个副本生成一个原生 Task，且
+head 只能有一个副本。规范子名称包含模板及副本索引；rank 固定为 head 在前，再按
+模板名称和副本索引排序。创建 Task 前验证完整成员集合，首版最多 16 个成员。
+混合 runtime、多个 head、用户指定 head 地址/rank/GPU/端口、未支持字段和所有权
+歧义均在派发前拒绝。
+
+持久化带独立身份的执行 operation，绑定精确 binding UID、原生 Job UID/generation
+和重启身份，包含不可变成员 Task UID、节点/端口计划，不能用边沿触发的 `start`
+布尔值代替。ContainerAllocation 继续作为与升级共享的每主机独占锁，Task target
+同时保留 operation、成员和端口身份。API 没有跨对象事务，因此必须允许部分预留，
+并在重启后重建。竞争 Job 不能无限累积部分锁；不完整尝试先持久化取消，所有已
+暴露成员确认未执行/清理后才能释放。allocation create 响应丢失仍属不确定结果，
+不能换主机重试。首版不承诺公平性、抢占或原子同时启动。
+
+### 准备、启动与训练屏障
+
+1. **已分配：** 每个精确成员都有当前 Job generation 的 allocation，租户、逻辑
+   Cluster、network scope 一致，主机/IP/GPU 不重复，Agent 能力和认证心跳有效。
+2. **已准备：** Agent 拉取/验证镜像、检查端口、创建容器但不启动。每个有界回执
+   绑定 operation、Task UID/generation、allocation UID、Engine ID、容器 ID 和
+   manifest digest；发布前先写入私有 journal。崩溃/响应丢失只恢复精确容器，不能
+   接管同名容器或重建结果不确定的 create。
+3. **允许启动：** 全体当前准备回执匹配后，API 才允许成员分别启动。每次 create/
+   start 边界重新验证完整组及本地持久化取消状态。这是协调启动，不是分布式原子
+   启动。Job 变更/暂停/删除或组所有权丢失会撤销后续启动授权。
+4. **Ray 就绪：** head/worker 在工作负载镜像内运行可信 launcher。Ray 启动不能
+   用前置 `--block` 阻断用户脚本；等待精确的预期私网节点地址集合后，head 才执行
+   训练。worker 持续受监管，成员缺失或超时使启动失败。容器 `Running` 不等于 Ray
+   就绪。
+
+首版内部 launcher 要求 Ray CLI/SDK **2.56.1**、Python 3，以及运行显式用户脚本所需的 POSIX shell。
+生成的命令使用 argv，保留参数字面量；只有 prepare/run 脚本进入 shell。不能意外
+执行镜像默认命令。清理仅针对本容器进程树，不调用主机级 `ray stop`。prepare 在
+子 shell 中执行，不能向 launcher 反向导出环境变量。run 与容器 command 互斥；
+首版只在 head 执行训练。
+
+### 失败、完成与恢复
+
+停止兄弟成员前，先持久化整组 stopping/failure 观测。任何成员意外退出（包括
+worker 以零退出）、无效回执、启动失败或显式停止都阻止后续启动。短暂 API/Engine
+故障保留锁；心跳过期不能证明进程已停止或 GPU 已空闲。head 成功作为训练结果，
+仍需有序停止 worker 并证明所有精确容器删除后，才能释放整组 allocation。保留
+终态执行和 Task 身份，普通 reconcile 不能静默重跑已完成/失败的组。重启使用
+显式新执行身份，必须等待旧成员清理证明齐全且 allocation 已观测不存在。
+
+所有协议操作由 mTLS 节点身份及精确 operation/allocation/Task UID 限定；Agent
+不持有管理 Kubernetes 凭据。Status 观测不能授权接管替换资源。Engine/节点/凭据
+替换、journal 丢失、成员身份缺失或 create 不确定时，需要显式恢复，不能自动强制
+释放。
+
+### 交付与验收顺序
+
+1. 替换未启用 Ray 编译器的哈希端口/shell launcher：增加显式类型化端口/分配输入、
+   完整端口参数、受监管的就绪等待及字面 argv；实现 provider 预检查和恢复。测试
+   冲突/占用端口、非法输入、取消、worker 失败与重启。这层运行时基础不声明 Ray
+   派发能力。
+2. 实现副本展开、不可变执行 operation、部分预留取消、精确准备回执和启动授权。
+   测试两组竞争、过期 generation、create/回执响应丢失、控制器/Agent 重启、越权
+   节点及容量复用前的清理。
+3. 接入组失败传播、终态保留和 head/worker 就绪；增加完整成员 mTLS 集成测试，
+   覆盖资源不足和外部端口监听。独立 Raw 语义保持不变。
+4. 使用相同 Ray 版本和镜像，在两台真实私网 Docker GPU 主机验收：分布式 CUDA/
+   RLinf 冒烟、logs/stats、停止、worker 丢失、Agent 重启、清理和第二个 Job 容量
+   复用。Raw Notebook 和本地 CPU Ray 测试不能替代此门槛。
+5. 在独立控制台展示类型化组阶段、成员落点、预留端口和阻塞原因，再增加提交/注册
+   流程。Docker 空闲升级仍是单独验收门槛。
+
+
+### 已交付的运行时基础
+
+内部编译器现在要求可信类型化 Assignment：精确 Task UID/generation、有序私网
+成员地址/rank、GPU UUID 和 PortPlan。空分配或身份不匹配直接拒绝，没有哈希/
+名称/hostname 回退。只接受显式支持的 PodTemplate/container 子集；CPU 必须为
+整数（已核对的 Ray CLI 只接受整数），GPU 请求必须匹配完整分配集合。脚本和
+command 互斥、仅 head 运行训练，绝不继承镜像默认 entrypoint/command。
+
+九个连续服务端口和 worker 范围写入不可变 manifest 的 `rayPorts`，由扩展专用
+容器 label 保留，并受 journal digest 保护。公开单容器 Task 校验器拒绝该内部
+字段。当前没有扩展 allocation CRD、Agent 协议或公开 capability；operation
+固定的分配材料以及准备/启动回执仍是下一交付门槛。
+
+`ScopedProvider.Prepare` 记录/恢复精确 created 容器而不启动。后续 `Apply` 在
+start 前重新检查端口和当前 admission。准备和清理共用取消 journal/锁；create
+响应丢失、已取消身份和不可变端口漂移保持已有失败语义。恢复已运行容器时不检查
+其自身占用的端口。create 前端口失败不产生创建结果不确定状态。双协议族检查
+要求 IPv6 socket 支持；协议族不可用时拒绝继续。
+
+Python launcher 将 `ray start --block` 作为受监管子进程启动，自身继续执行就绪
+等待和训练。使用绑定版本的 GCS protobuf API，每次最多两秒、响应最多 1 MiB，
+最多等待 120 秒，验证完整 alive 私网地址集合；就绪检查不创建 Ray driver。
+可信私网仍需限制 Ray 访问，该地址检查不提供认证或网络隔离。launcher 保留
+prepare/训练退出码，把任何 worker 自发退出视为失败，只向自身子进程组发送
+TERM 再 KILL。Docker PID-1 退出会终止更改进程组的后代。此 launcher 用于
+Docker PID namespace，不可当作宿主进程后端。
+
+测试覆盖真实 IPv4/IPv6 监听冲突、prepare/重启/start/撤销、create 响应丢失、
+取消、端口 label 漂移、严格分配/模板/资源校验，以及十个 Python 进程用例。
+进程用例用 fake Ray/GCS 模块驱动真实子进程、信号、字面 argv、成员等待、超时
+与清理，不代表真实 Ray 集群/GPU 验收。另在隔离 Python 环境核对了 Ray 2.56.1
+CLI help 与全部生成参数。普通 Go 测试在有 `python3` 时调用进程套件，无解释器
+时显式跳过该套件。其他 Ray 版本与真实多机训练仍未验收。

@@ -37,7 +37,7 @@ func ValidateDockerTask(t native.TaskSpec) error {
 	if err != nil {
 		return err
 	}
-	if len(spec.GPUUUIDs) != 0 || spec.GPUCount != 0 || spec.RayPort != 0 {
+	if len(spec.GPUUUIDs) != 0 || spec.GPUCount != 0 || spec.RayPort != 0 || len(spec.RayPorts) != 0 {
 		return errors.New("docker devices and ports are allocation-owned; Ray dispatch is unsupported")
 	}
 	for _, env := range spec.Env {
