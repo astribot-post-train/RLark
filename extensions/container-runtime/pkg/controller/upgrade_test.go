@@ -333,6 +333,49 @@ func TestUpgradeCompletionRecoversLostEffects(t *testing.T) {
 	}
 }
 
+// KCP increments generation on DELETE. The fake API does not, so reproduce
+// that metadata transition after a complete operation has released its lock.
+func TestCompletedUpgradeDeletionGenerationRecovery(t *testing.T) {
+	for _, scenario := range []string{"succeeded", "rolled-back", "wrong-attempt", "missing-release-proof", "unexpected-generation"} {
+		t.Run(scenario, func(t *testing.T) {
+			result := "Succeeded"
+			if scenario == "rolled-back" {
+				result = "RolledBack"
+			}
+			r, req := completedUpgradeFixture(t, result)
+			ctx := context.Background()
+			reconcileUpgrade(t, r, req, 3)
+			op := readUpgrade(t, r, req)
+			if scenario == "wrong-attempt" {
+				op.Status.Completion.AttemptID = "other"
+			}
+			if scenario == "missing-release-proof" {
+				condition(&op.Status.Conditions, op.Generation, "AllocationReleased", false, "Unproven", "No durable proof")
+			}
+			checkUpgrade(t, r.Client.Status().Update(ctx, op))
+			checkUpgrade(t, r.Client.Delete(ctx, op))
+			op = readUpgrade(t, r, req)
+			op.Generation++
+			if scenario == "unexpected-generation" {
+				op.Generation++
+			}
+			checkUpgrade(t, r.Client.Update(ctx, op))
+			// Reconstruct to ensure no process-local remembered success is needed.
+			r = AgentUpgradeReconciler{Client: r.Client, Now: r.Now}
+			_, err := r.Reconcile(ctx, req)
+			var remaining ext.AgentUpgrade
+			readErr := r.Client.Get(ctx, req.NamespacedName, &remaining)
+			if scenario == "succeeded" || scenario == "rolled-back" {
+				if err != nil || !apierrors.IsNotFound(readErr) {
+					t.Fatalf("durable completed operation did not finalize: reconcile=%v get=%v", err, readErr)
+				}
+			} else if !errors.Is(err, companion.ErrIdentity) || readErr != nil || !controllerutil.ContainsFinalizer(&remaining, companion.UpgradeFinalizer) {
+				t.Fatalf("uncertain proof lost protection: reconcile=%v get=%v", err, readErr)
+			}
+		})
+	}
+}
+
 func TestUpgradeCompletionNeverTouchesReplacementOrInvalidProof(t *testing.T) {
 	for _, scenario := range []string{"replacement", "wrong-attempt", "stale-heartbeat"} {
 		t.Run(scenario, func(t *testing.T) {

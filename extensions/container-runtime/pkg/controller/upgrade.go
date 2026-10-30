@@ -91,6 +91,20 @@ func (r AgentUpgradeReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 }
 
 func (r AgentUpgradeReconciler) complete(ctx context.Context, op *ext.AgentUpgrade, manager companion.Manager, req companion.UpgradeRequest) (ctrl.Result, error) {
+	// Deletion can advance a CR generation in some Kubernetes-compatible API
+	// servers after the terminal status was durably written. Once the controller
+	// has recorded the authenticated completion and exact allocation release,
+	// finalizer removal must remain recoverable even when that deletion-time
+	// generation no longer matches the receipt's observed generation.
+	if !op.DeletionTimestamp.IsZero() && op.Status.ObservedGeneration > 0 && op.Generation == op.Status.ObservedGeneration+1 && controllerutil.ContainsFinalizer(op, companion.UpgradeFinalizer) {
+		// Spec is immutable by admission. Validate the full saved receipt at its
+		// original generation without rewriting either Spec or observed status.
+		completed := op.DeepCopy()
+		completed.Generation = completed.Status.ObservedGeneration
+		if companion.ValidUpgradeCompletion(completed) && completed.Status.Phase == completed.Status.Completion.Result && currentCondition(completed.Status.Conditions, completed.Generation, "AllocationReleased") {
+			return r.removeFinalizer(ctx, op)
+		}
+	}
 	if !companion.ValidUpgradeCompletion(op) || !controllerutil.ContainsFinalizer(op, companion.UpgradeFinalizer) || op.Status.Phase != "Applying" && op.Status.Phase != op.Status.Completion.Result {
 		return ctrl.Result{}, companion.ErrIdentity
 	}
