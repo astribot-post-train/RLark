@@ -1,6 +1,6 @@
 # 容器集群扩展：设计与交付计划
 
-状态：预览能力迁移中。本文定义目标架构；后续历史证据不代表独立扩展已经部署。
+状态：单节点 Raw 预览已部署，并于 2026-10-31 通过 GPU 生命周期验收。本文同时定义目标架构；多节点 Ray/RLinf、远程日志、UI 和云端升级验收仍未完成。后续历史证据与当前扩展验收分开记录。
 
 ## 已确认架构与执行顺序
 
@@ -18,7 +18,7 @@
 
 Raw supervisor 即使尚未启动该 Task，也会在停止时持久化一个仅含身份的取消墓碑。同一 Task UID 的延迟启动必须被拒绝，包括 supervisor 重启后。已有但不确定的进程不能走“未启动”路径，必须在确认清理前保留分配。取消记录持久化失败会返回错误，不能上报清理完成。此预览版保留墓碑，不自动回收。
 
-需显式启用的预览 Job 预留控制器为每个 Job 创建并预留一个 `raw.rlark.io/process` v1 模板。在各自派发契约实现前，拒绝 Ray、多模板、旧版绑定、显式运行时实例名称、SSH 注入、用户指定的 GPU 可见性环境变量、环境处理器和 Pod 模板。原生 Task 名称确定，严格校验 owner reference、父 UID、模板身份和租户，不接管旧格式数据。节点选择器先校验，再匹配原生 Node 标签。工作负载或重启变更在确认清理后以新 UID 替换 Task，不就地修改运行中的执行。暂停/删除保留 Job 和 Task finalizer，直到每个精确 allocation 清理完成且观察到删除。目标已固定但 allocation 不存在时，除非控制器已保存精确清理回执，否则继续阻塞：仅凭不存在不能排除仍在进行的创建或启动。释放前，控制器在 Task 的 `containers.rlark.io/allocation-cleanup-receipt` 中持久化 allocation UID 和完整目标身份，以便从删除响应丢失中恢复。孤儿 allocation 阻止 Job 删除；含糊数据需要运维显式恢复。调度决策使用非缓存 API client 和乐观并发。控制器现在聚合受支持的单进程 Task：当前 `ExecutionKnown=True` 观测显示 Pending/Running，只有当前 Succeeded/Failed 且 `ExecutionCleaned=True`、精确清理证明和 allocation 删除均已观察到后，才发布 Job 终态。`ExecutionObserved` 和 `AllocationReleased` 条件分别展示观测和清理等待。完成的 Task 身份持续受保护，控制器或 Agent 重启不会重复运行；Job 暂停/删除、模板变更和显式重启才会通过既有清理流程退役它。Ray/RLinf 组、多副本派发、日志、接入、升级和 UI 仍未实现。
+需显式启用的预览 Job 预留控制器为每个 Job 创建并预留一个 `raw.rlark.io/process` v1 模板。在各自派发契约实现前，拒绝 Ray、多模板、旧版绑定、显式运行时实例名称、SSH 注入、用户指定的 GPU 可见性环境变量、环境处理器和 Pod 模板。原生 Task 名称确定，严格校验 owner reference、父 UID、模板身份和租户，不接管旧格式数据。节点选择器先校验，再匹配原生 Node 标签。工作负载或重启变更在确认清理后以新 UID 替换 Task，不就地修改运行中的执行。暂停/删除保留 Job 和 Task finalizer，直到每个精确 allocation 清理完成且观察到删除。目标已固定但 allocation 不存在时，除非控制器已保存精确清理回执，否则继续阻塞：仅凭不存在不能排除仍在进行的创建或启动。释放前，控制器在 Task 的 `containers.rlark.io/allocation-cleanup-receipt` 中持久化 allocation UID 和完整目标身份，以便从删除响应丢失中恢复。孤儿 allocation 阻止 Job 删除；含糊数据需要运维显式恢复。调度决策使用非缓存 API client 和乐观并发。控制器现在聚合受支持的单进程 Task：当前 `ExecutionKnown=True` 观测显示 Pending/Running，只有当前 Succeeded/Failed 且 `ExecutionCleaned=True`、精确清理证明和 allocation 删除均已观察到后，才发布 Job 终态。`ExecutionObserved` 和 `AllocationReleased` 条件分别展示观测和清理等待。完成的 Task 身份持续受保护，控制器或 Agent 重启不会重复运行；Job 暂停/删除、模板变更和显式重启才会通过既有清理流程退役它。Ray/RLinf 组、多副本派发、授权日志、自动注册/续签和 UI 仍未完成。下文说明已实现的管理员显式接入和按需 Agent 升级；云端升级验收仍待完成。
 
 独立控制器默认在 `rlark-system` 中启用 Kubernetes Lease 选主（`--leader-elect`、`--leader-election-namespace`）。使用 `config/rbac/container-runtime-controller.yaml`，并配置对应 namespace 和管理 API kubeconfig；namespace 必须事先存在。默认 `--enable-job-reservations=false` 仅安装校验控制器；隔离的预览测试可通过 `--enable-job-reservations=true` 启用预留。请用 `Job.spec.suspended` 暂停整个 Job；此阶段拒绝单独暂停的模板。可选进程内 `ControllerExtension()` 仍仅执行校验。同一节点不能运行旧预览分配写入者。撤销权限或关闭控制器不会清理或释放持久化预留；重新启动后继续调谐。预留测试覆盖恢复、容量不可用、配置变更、删除、租户冲突和 API 响应丢失，不代表 Agent 执行或端到端训练已支持。
 
@@ -28,7 +28,7 @@ Raw supervisor 即使尚未启动该 Task，也会在停止时持久化一个仅
 
 已实现的执行预览为独立扩展 API 增加需显式启用的节点限定 Task 通道。经过验证的 Agent 证书是唯一请求身份；读取、元数据认领、状态报告、启动授权和清理报告都重新校验当前凭据、companion/原生 UID 引用、独立租户身份和精确 allocation。Agent 只收到自己的 allocation 和 Task，不持有原生 kubeconfig，也不能执行 discovery、watch、Secret、代理或任意资源操作。Task 认领写入限定为 Host 拥有的注解/finalizer，并要求调用者观测的 resourceVersion；状态写入保留控制器字段，必须匹配当前 Task UID 和 generation。运行时副作用仍通过现有 Host/Coordinator/Raw Provider 和私有 supervisor。通用 Host 的元数据依赖已收窄到实际使用的 Get/Patch 方法，使扩展可注入真实的限定传输，不实现全功能 Kubernetes client。执行 API 仅校验已有 allocation，不创建锁或修复分配目标。Task spec 按 JSON 语义比较，保留精确数值并容忍 API 调整对象字段顺序。
 
-每次进程启动前，API 校验 Job/Task 当前未暂停、generation 与分配一致、唯一的类型化 Job/Cluster 绑定及有效凭据。节点替换、旧预留、禁止调度/排空、心跳过期、版本不匹配或选择器变更均阻止启动。decoder 仅从不可变 allocation 的授权 GPU UUID 注入 `CUDA_VISIBLE_DEVICES`，拒绝用户覆盖 GPU 可见性。清理使用独立身份路径：暂停、删除和心跳过期阻止启动，但不能阻止精确拥有节点的 Agent 报告清理。即使 Task 从未启动，也必须先由 supervisor 持久化取消，再接受清理证明。supervisor 不可用或后代未确认退出都不能推断清理完成。API 暂时故障会从当前状态重试，不因此停止运行中的可信工作负载或释放分配。这只是单进程执行阶段；Ray 整组、注册、日志、升级和 UI 保持各自验收门槛。
+每次进程启动前，API 校验 Job/Task 当前未暂停、generation 与分配一致、唯一的类型化 Job/Cluster 绑定及有效凭据。节点替换、旧预留、禁止调度/排空、心跳过期、版本不匹配或选择器变更均阻止启动。decoder 仅从不可变 allocation 的授权 GPU UUID 注入 `CUDA_VISIBLE_DEVICES`，拒绝用户覆盖 GPU 可见性。清理使用独立身份路径：暂停、删除和心跳过期阻止启动，但不能阻止精确拥有节点的 Agent 报告清理。即使 Task 从未启动，也必须先由 supervisor 持久化取消，再接受清理证明。supervisor 不可用或后代未确认退出都不能推断清理完成。API 暂时故障会从当前状态重试，不因此停止运行中的可信工作负载或释放分配。这只是单进程执行阶段；Ray 整组、自动注册/续签、日志、云端升级和 UI 保持各自验收门槛。
 
 构建独立扩展控制器/API、节点 Agent、supervisor 和管理工具。节点显式加入指定容器 Cluster，使用有限 bootstrap 凭证注册，再用节点级认证主动出站；不需要公网 IP 或控制面入站。Raw 在已有容器内执行可信 root 进程，Engine 使用宿主机 Docker socket，绝不 Docker-in-Docker；两类能力分别展示。
 
@@ -40,7 +40,7 @@ Raw supervisor 即使尚未启动该 Task，也会在停止时持久化一个仅
 
 首个独立控制面阶段使用通用 Job 控制器声明（`rlark.io/controller-owner`），并以类型化 ContainerJob 绑定校验。即使扩展不在线，原生控制器也会对声明外部主人的 Job 拒绝派发。校验控制器检查 UID 与权威 namespace 引用；它不授权工作负载副作用，也不把已登记节点标为可调度。AgentRelease 元数据通过校验不代表产物可用。等价准入安装前，扩展 CRD 仅允许可信管理员写入。在分配器、节点限定 Agent 通道和清理调谐完成前，不把活动工作负载切换到附属 API。
 
-扩展新增了基于 API 的 Node 独占分配原语。它用原生 Node UID 派生的确定性 ContainerAllocation 名称创建锁，并校验权威成员关系、租户、Node/Job/Task UID、Agent generation/就绪、心跳时效、GPU 白名单、私网地址、重复 GPU/地址范围以及原生旧 reservation 是否存在。重复 Acquire 只恢复完全相同 Task 的分配；并发竞争者在 API 创建冲突时失败。Release 必须有针对精确 allocation UID 的 Status 清理证明，并在观察到删除前保留 finalizer。独立 mTLS 服务的 `POST /v1/heartbeat` 仅接受已验证且携带容器 Agent 角色的证书；它会校验签名的 companion UID、租户、凭据、原生绑定、私网地址和授权 GPU 可见性，然后更新有界 ContainerNode 状态。Linux 前台 Agent 二进制现在观测当前 cgroup v2 边界、可见 GPU UUID 和私有 Raw supervisor 占用，并发送显式 `busy` 字段；观测或 API 暂时不可用时使用有界退避重试，supervisor 或 GPU 观测失败时拒绝上报，因此最终表现为心跳过期和调度屏蔽。周期修复保留新鲜 Agent 观测并屏蔽过期心跳；分配检查当前凭据身份和节点忙碌状态。API 二进制和最小权限 `config/rbac/container-runtime-api.yaml` 已提供。注册、证书签发、版本分发和完整 Job 生命周期仍未完成；单进程派发仅支持显式开启的预览。TLS 部署、CA 分发和证书签发/轮换仍由运维方管理。
+扩展新增了基于 API 的 Node 独占分配原语。它用原生 Node UID 派生的确定性 ContainerAllocation 名称创建锁，并校验权威成员关系、租户、Node/Job/Task UID、Agent generation/就绪、心跳时效、GPU 白名单、私网地址、重复 GPU/地址范围以及原生旧 reservation 是否存在。重复 Acquire 只恢复完全相同 Task 的分配；并发竞争者在 API 创建冲突时失败。Release 必须有针对精确 allocation UID 的 Status 清理证明，并在观察到删除前保留 finalizer。独立 mTLS 服务的 `POST /v1/heartbeat` 仅接受已验证且携带容器 Agent 角色的证书；它会校验签名的 companion UID、租户、凭据、原生绑定、私网地址和授权 GPU 可见性，然后更新有界 ContainerNode 状态。Linux 前台 Agent 二进制现在观测当前 cgroup v2 边界、可见 GPU UUID 和私有 Raw supervisor 占用，并发送显式 `busy` 字段；观测或 API 暂时不可用时使用有界退避重试，supervisor 或 GPU 观测失败时拒绝上报，因此最终表现为心跳过期和调度屏蔽。周期修复保留新鲜 Agent 观测并屏蔽过期心跳；分配检查当前凭据身份和节点忙碌状态。API 二进制和最小权限 `config/rbac/container-runtime-api.yaml` 已提供。管理员显式登记、离线证书/安装包导出、验证后的版本分发和单进程 Job 生命周期已作为显式启用的预览实现，详见下文。自动注册/续签和多节点 Job 生命周期仍未完成。TLS 部署、CA 分发和证书签发/轮换仍由运维方管理。
 
 先复制并测试现有 Docker/Raw Provider、分配、supervision 和测试到独立模块，再以附属资源替换预览绑定/预留，更新 decoder/准入并建立通用 Job 分派。新旧分配写入者不能同时运行。迁移时禁止旧节点调度，等待确认清理，按 UID 建立附属资源，验证后启用新主人；含糊活动数据保持阻塞并展示。
 
@@ -66,13 +66,15 @@ Raw supervisor 即使尚未启动该 Task，也会在停止时持久化一个仅
 
 `/root/RLinf` 下两个 venv 的 Python 入口均解析到 `/opt/conda/bin/python3.11`，接入时需保留并验证 venv prefix；supervisor 的规范可执行路径策略本身不能保留该 prefix。上述检查只证明导入和小规模计算，不代表 RLinf 训练或具体工作负载依赖兼容性通过。`/root/fleet/venv` 仍不存在，替代镜像也无法证明包含源机后续环境改动。
 
-实际 cgroup 配额为 20 CPU（`cpu.max = 2000000 100000`）和 236 GiB（`memory.max = 253403070464`）。虽然存在 `cgroup.kill`，cgroup v2 文件系统为只读，不能使用 cgroup supervisor 后端。没有 Docker socket 或可用 systemd。状态/工作目录尚未安装，父目录可写。可信 root 进程树后端必须通过自身预检与生命周期测试后再使用，它不提供任务隔离。`/ks3-regular` 在平台本地目录上覆盖了实际读写 `fuse.ks3fs` 挂载，`/kpfs-regular` 为读写 `kingstorage` NAS 挂载；尚未测试跨重启 checkpoint 保留。
+实际 cgroup 配额为 20 CPU（`cpu.max = 2000000 100000`）和 236 GiB（`memory.max = 253403070464`）。虽然存在 `cgroup.kill`，cgroup v2 文件系统为只读，不能使用 cgroup supervisor 后端。没有 Docker socket 或可用 systemd。初始预检时状态/工作目录尚未安装，父目录可写；下文验收部署已创建私有状态目录和工作目录。可信 root 进程树后端必须通过自身预检与生命周期测试后再使用，它不提供任务隔离。`/ks3-regular` 在平台本地目录上覆盖了实际读写 `fuse.ks3fs` 挂载，`/kpfs-regular` 为读写 `kingstorage` NAS 挂载；尚未测试跨重启 checkpoint 保留。
 
-资源池清单显示分配一张 GM402，但容器内 `nvidia-smi` 显示一张 H100 80GB；在把 GPU UUID 作为授权容量前需确认平台型号映射。已通过私有跳转路径在该开发机上以 root 运行可选 Agent 观测测试：process-tree supervisor socket、cgroup v2 限制（`20000m`、`253403070464` 字节）和一个 GPU UUID 均成功读到；关闭 supervisor 后观测会 fail closed。这只验证本地观测边界。该开发机尚未登记为扩展 Agent。证书/接入、Job 派发、授权日志和 Agent 升级/回滚仍需实现并完成端到端测试。本轮未启动 RLinf 训练。
+资源池清单显示分配一张 GM402，但容器内 `nvidia-smi` 显示一张 H100 80GB；在把 GPU UUID 作为授权容量前需确认平台型号映射。已通过私有跳转路径在该开发机上以 root 运行可选 Agent 观测测试：process-tree supervisor socket、cgroup v2 限制（`20000m`、`253403070464` 字节）和一个 GPU UUID 均成功读到；关闭 supervisor 后观测会 fail closed。这只验证本地观测边界。该预检阶段开发机尚未登记为扩展 Agent；下文后续单节点验收已覆盖显式登记和 GPU Job 派发，授权日志及真实 Agent 升级/回滚仍为独立门槛。本轮未启动 RLinf 训练。
 
 2026-10-30 稍后查询发现开发机已停止，自动保存成功。本轮重新启动时未变更队列、资源规格或公网配置。私网 Pod IP 仍为 `10.0.3.85`，宿主 Node IP 变为 `10.0.2.72`，因此旧宿主地址不能标识执行身份。重启后预装 pi05 Python 仍报告 Ray 2.56.1、PyTorch 2.11.0+cu126。以 root 运行的 supervisor 定向测试通过：启动前取消、取消持久化失败及重试、无效/取消请求，以及真实 supervisor close/open 后恢复取消记录。已移除临时测试二进制。这些测试未启动训练进程，不证明 checkpoint 保留，也未注册 Agent 或派发 Job。
 
 ### 前台 Raw 观测 Agent（preview）
+
+独立 API 使用自身的参数集，避免依赖包全局参数冲突；`--help` 无需 TLS 或管理凭据即可正常退出。未知参数和位置参数会被拒绝。应用 RBAC 前，先创建 `rlark-system`（或配置的选主命名空间）。控制器的命名空间 Role 允许访问 Lease，并创建或 patch 选主 Event；API 没有 Event 写权限。
 
 `make -C extensions/container-runtime build` 在 API/controller 和 `raw-supervisor` 之外构建仅支持 Linux 的 `container-runtime-agent`。该命令默认只上报观测，显式开关可启用下文的限定 Raw 进程执行。它不注册节点、不签发证书或传输日志；升级安装由独立的按需开关和流程控制。先创建并验证原生/companion 绑定，独立安装可信 root supervisor，并由运维配置专用 Agent 证书：签名元数据必须包含精确 ContainerNode namespace/name/UID、原生 Cluster UID、容器实例、租户及当前 `containers.rlark.io/agent-credential` 注解。禁止向 Agent 签发原生管理员证书。专用 CA 私钥保留在 API/Agent 之外，API listener 仅配置 CA 证书。这些步骤仍由运维管理；下文管理员工具可自动完成显式登记和离线安装包导出，尚无自动注册/续签。
 
@@ -107,7 +109,7 @@ CPU 观测取进程 affinity 与当前 cgroup 到 cgroup-v2 挂载点之间所�
 
 暂停/删除是持久化清理请求。Agent 先调用私有 supervisor 的幂等 Stop，包括尚未启动的情况，验证精确身份、持久化取消和后代清理后再报告。API 先移除 Host 拥有的认领元数据，再发布 allocation 清理证明；锁释放和 Task 分配保护归 Job 控制器。认领/清理响应丢失后从当前状态恢复。本地观测失败时只协调清理，不发送伪造心跳或启动任务。API 故障保留工作负载和 allocation。撤销/替换的凭据不能报告清理；需恢复精确所有者身份或走独立可审计的运维恢复，不能直接删除保护。
 
-测试通过真实 mTLS 传输搭配假管理面和 supervisor，覆盖跨节点/租户/UID、旧 generation/心跳/版本、伪造字段/状态、Host 重建、GPU 注入、认领提交后响应丢失、部分清理/响应丢失，以及观测失败时的清理。这些测试不代表已部署的云端 Job 验收。多副本/Ray 组、授权日志、接入、升级、UI 和完整 GPU 训练验收仍属后续工作。
+测试通过真实 mTLS 传输搭配假管理面和 supervisor，覆盖跨节点/租户/UID、旧 generation/心跳/版本、伪造字段/状态、Host 重建、GPU 注入、认领提交后响应丢失、部分清理/响应丢失，以及观测失败时的清理。这些组件测试不代表已部署的云端 Job 验收；下文后续真实集群测试覆盖显式登记和单 GPU 进程。多副本/Ray 组、授权日志、自动注册/续签、云端升级、UI 和完整 GPU 训练验收仍属后续工作。
 
 ### 已实现的执行生命周期增量
 
@@ -115,7 +117,7 @@ CPU 观测取进程 affinity 与当前 cgroup 到 cgroup-v2 挂载点之间所�
 
 控制器校验精确 allocation 目标/UID/所有者/租户，等待 Agent 清理认领，持久化已有清理回执，并观察 allocation 删除完成后才发布 Job 成功/失败。清理等待状态与观测到的 Task 结果分别展示。完成的原生 Task、目标及 allocation 保护 finalizer 保留为当前结果身份，即使有人请求删除该 Task；仅 Job 暂停/删除、模板变更或显式重启标记才退役它。控制器/API/Agent 重启后不能再次分配或运行同一个 Task。执行变更沿用已有清理流程退役旧 Task，并重置 Job 时间戳。时间戳代表控制面观测时刻，不代表精确进程启动/退出时间。不需要修改 CRD 或原生生命周期。
 
-测试覆盖成功/失败及运行聚合、过期/缺失条件、精确清理证明、延迟删除、回执/删除/状态响应丢失、控制器重建、不重跑/不重分配、完成后 Job 暂停/删除/重启，以及第二个 Job 获取已释放节点。真实 supervisor 测试证明终态清理会阻止释放后延迟到达的 Ensure。2026-10-30，私网金山云开发机通过 `TestScopedTerminalExecutionRealSupervisor`，使用 CPU 进程、真实 mTLS/Unix 传输和假管理面，观察到 Job 成功及 allocation 删除，再拒绝延迟 Ensure。这不代表已接入的云端 GPU Job 验收。这仍为单进程预览；已接入的云端 GPU 验收、日志、接入、滚动升级和 UI 仍为独立门槛。
+测试覆盖成功/失败及运行聚合、过期/缺失条件、精确清理证明、延迟删除、回执/删除/状态响应丢失、控制器重建、不重跑/不重分配、完成后 Job 暂停/删除/重启，以及第二个 Job 获取已释放节点。真实 supervisor 测试证明终态清理会阻止释放后延迟到达的 Ensure。2026-10-30，私网金山云开发机通过 `TestScopedTerminalExecutionRealSupervisor`，使用 CPU 进程、真实 mTLS/Unix 传输和假管理面，观察到 Job 成功及 allocation 删除，再拒绝延迟 Ensure。该组件测试本身不代表已接入的云端 GPU Job 验收，后续真实集群结果见下文。这仍为单进程预览；日志、自动注册/续签、云端滚动升级和 UI 仍为独立门槛。
 
 ### 管理员显式接入（预览）
 
@@ -158,7 +160,6 @@ Agent client 复用 TLS 1.3 通道，拒绝重定向并限制下载大小；返�
 发布由管理员操作。两个组件均使用 `--artifact-directory=/private/agent-artifacts`，并只读挂载同一份目录树。复制 `extensions/container-runtime/config/examples/agent-release.yaml`，将占位符替换为 ContainerCluster 的 namespace、租户、实际版本和小写 SHA-256，并选择匹配的 `amd64` 或 `arm64` 架构。创建 AgentRelease 前，将构建出的 Linux `container-runtime-agent` 二进制放到该目录下的 `releases/agent-v1`。现有 API RBAC 已允许读取版本；控制器 RBAC 允许读取及修补版本 status。Agent 不获得 Kubernetes 权限；不要通过公共静态服务暴露目录。
 
 等待 `status.available: true` 且 `status.observedGeneration == metadata.generation`，再由管理员将目标 ContainerCluster 的 `spec.targetAgentRelease` 设为 `agent-v1`。新版本使用新的记录和路径，不覆盖不可变字节。未提供 CLI/UI 发布器；按需启用的 Linux Agent updater 使用 `TargetRelease` 和 `DownloadRelease`，目标版本由管理员选择，空闲节点由独立启用的滚动控制器选择。改变目标后，在该版本完成安装并由新观测确认就绪前，调度可能被阻止；目标配置自身不授权安装二进制、不停止运行中的 Task，也不释放容量。安装必须有节点限定升级操作及 allocation。文件缺失/损坏会产生 `Available=False` 和有界 API 错误；恢复精确字节或发布新版本，由周期检查恢复。不要修改 status 绕过验证。重新指向目标属于期望配置，不等于自动回滚。运维手动更新 Agent 时也应保持独立 supervisor 持续运行。
-
 
 ### 升级预留（preview）
 
@@ -204,18 +205,20 @@ Linux Agent 设置 `--enable-agent-upgrades=true` 后，会在串行心跳循环
 
 更新器复用心跳的 mTLS 客户端和证书身份。它拒绝相对路径或共享的安装/state 路径、符号链接目标、并发尝试、变更的 release 身份、缺失 allocation、过期源心跳及无法证明精确性的响应。它不提供沙箱，也不安装 Python 等依赖。前台启动器和生成的 systemd 单元运行同一个 Agent 进程；systemd 可重启失败的替换，而无 systemd 的开发机依赖持久回执和运维重启。宿主机断电后的自动回滚在完成外部 supervisor 重启测试前不宣称支持。
 
-
 新导出包在 `provision-package.json` 设置 `enableUpgrades: true`。生成的 launcher 增加 `--agent-install-path=<installDirectory>/container-runtime-agent` 和 `--upgrade-state-directory=<stateDirectory>-agent-upgrades`。启动前以 root 创建独立 updater 目录并设置 0700；安装目录和 updater 目录均应保持私有且位于工作负载路径之外。已有包需重新导出，或在 Agent 启动时显式提供上述三个参数。`--version` 保留为初始版本：切换后通过持久回执将真实 `/proc/self/exe` 摘要映射到 release 版本，服务重启同样适用。正常运维不要删除 journal 或切换摘要文件。journal 绑定端点、客户端证书和安装路径；凭据轮转、目录迁移或未知二进制修改需要显式运维恢复，不会静默接管。
 
 按需启用的包 launcher 校验所有不可变导出文件，Agent 仅可匹配原始摘要或 updater 私有的源/目标摘要文件。更新器写入这些摘要前仍会校验 ELF、平台和完整摘要。备份和暂存各保留一个二进制；中断留下的临时文件只能在 Agent 停止且没有正在应用的操作时清理。claim 和 complete 响应丢失会复用持久 attempt；摘要/身份错误、文件系统失败及不确定状态保留 allocation 并重试。只有进程替换失败会自动恢复旧可执行文件。新二进制启动后无法心跳时尚无自动超时回滚；应保留备份和 journal，由管理员恢复。在宣称支持无人值守滚动升级前，仍须完成 systemd/前台及云端升级验收。
 
 - [x] 中英文文档记录独立扩展、指定队列和验收范围。
 - [x] 独立模块/构建，迁移 Provider/supervision/测试；加入原生可选集成接口和所有权校验。
-- [ ] 类型化附属 schema、授权/准入和迁移。通用 Job fail-closed 声明已实现，但还没有生产调度器接管 Job。
-- [ ] 显式容器集群接入、节点限定身份、整卡分配和授权日志。
+- [x] 类型化附属 schema、单节点预览的 mTLS 授权和管理员接入；直接附属资源写入仍仅限管理员。通用 Job 所有权分派已实现。
+- [ ] 通用准入/迁移和自动注册/续签。
+- [x] 显式容器集群接入、节点限定身份和整卡分配，已在私网开发机验收。
+- [ ] 授权远程日志、通用准入/迁移和自动注册/续签。
 - [ ] 认证版本托管和目标驱动的空闲节点滚动选择已作为预览基础设施实现；云端滚动及外部 supervisor 断电恢复验收仍未完成。
 - [ ] 容器集群 UI、能力门控 Job 提交及中英文 API/运维示例。
-- [ ] 已授权私网 1 GPU 开发机和完整 Raw GPU Job/升级证据。
+- [x] 已授权私网 1 GPU 开发机和单进程 Raw GPU Job 成功/复用/失败/停止验收。
+- [ ] 完整云端升级/回滚与 checkpoint 保留证据。
 - [ ] 恢复/竞态测试、仓库 Go/Web 检查、生成验证和严格双语文档构建。
 
 测试并发预留、旧 UID/generation/实例、跨租户访问、重复注册、部分外部动作、重启、supervisor 丢失、清理失败、心跳丢失、摘要错误、升级竞争、回滚失败、迁移冲突、checkpoint 保留及 Kubernetes 行为不变。不能凭骨架或 mock 勾选门槛。
@@ -230,7 +233,33 @@ Linux Agent 设置 `--enable-agent-upgrades=true` 后，会在串行心跳循环
 
 认证成功完成后，等待升级控制器写入当前代 `AllocationReleased` 证明，以及持有该操作的 updater 发送 `acknowledge`。updater 先 fsync 终态 journal，再确认精确的操作/allocation/attempt/结果/版本；API 写入 `status.acknowledgedAttemptID`。完成响应丢失时保留操作供恢复；acknowledge 响应丢失可从已保存终态 journal 重试，即使 allocation 已消失。确认仍要求当前认证凭据和新鲜的结果版本空闲心跳。缺少此握手的旧 Agent 不会被自动回收操作。先升级 API，再启用新版 updater 和滚动控制器。先持久保存一个有界的 `status.lastAgentUpgrade` 凭据，绑定操作、节点、版本、摘要和完成时间，再携带 UID/resourceVersion 前提请求删除；确认删除后才能选择下一节点。升级控制器可完成已有终态证明的操作删除，不触碰同一节点键上后来的工作负载 allocation。finalizer 延迟、状态冲突、响应丢失或控制器重启不能跳过顺序。只保存最近一次成功凭据；需要完整历史时向外部归档。所有当前成员均有新鲜目标版本观测时才能设置 `AgentRolloutReady=True`；空集群是等待，不算完成。此预览仍需云端滚动及外部 supervisor 验收，不包含成功 exec 后的健康超时自动回滚或 UI。
 
-2026-10-31，从当前自动保存镜像重启现有私网开发机，未改变 `regular-training`、1 GPU、20 CPU、236 GiB 或公网设置。私网 SSH 再次确认一张 H100、PyTorch 2.11.0+cu126、Ray 2.56.1 及 CUDA 张量结果 `42.0`。`TestCloudRawObservation` 在真实 cgroup/GPU/Unix-supervisor 边界通过：`cpu=20000m`、`memory=253403070464`、一张可见 GPU、空闲状态。测试还验证默认不声明升级能力，仅启用 updater 时声明协议及平台。仍没有 Docker socket 或 systemd。这仅是环境/观测证据，尚未验收已接入的云端 GPU Job 或真实 Agent 滚动升级。
+2026-10-31，从当前自动保存镜像重启现有私网开发机，未改变 `regular-training`、1 GPU、20 CPU、236 GiB 或公网设置。私网 SSH 再次确认一张 H100、PyTorch 2.11.0+cu126、Ray 2.56.1 及 CUDA 张量结果 `42.0`。`TestCloudRawObservation` 在真实 cgroup/GPU/Unix-supervisor 边界通过：`cpu=20000m`、`memory=253403070464`、一张可见 GPU、空闲状态。测试还验证默认不声明升级能力，仅启用 updater 时声明协议及平台。仍没有 Docker socket 或 systemd。该观测运行本身未完成云端 GPU Job 或真实 Agent 滚动升级验收；后续生命周期结果见下文，覆盖单节点 GPU 路径。
+
+### 真实单节点 Raw 验收（显式启用）
+
+2026-10-31，私网 H100 开发机已显式登记到独立 `ksyun-containers` Cluster（`ksyun-container-agents` namespace、`team-a` 租户），并启动导出的 root supervisor/Agent 包。新鲜 mTLS 心跳显示 Ready、可调度、20 CPU、236 GiB 和一张授权 GPU。对真实 KCP 管理 API 运行 `TestCloudRawLifecycle`，四个用例全部通过，总耗时 170 秒：CUDA 成功（`42.0`）、第二个 Job 复用同一 GPU、退出码 7 失败、停止运行中的进程。各用例确认 allocation 不存在，删除自身 Job/binding 并验证 Task 消失；最终节点恢复空闲可调度，allocation 无残留。真实部署还暴露并修复 API 重复注册 `--kubeconfig` 的 panic、选主 Event RBAC 缺失和控制器 logger 未初始化。测试入口依赖 SSH 反向隧道和短期凭据。这证明单节点单进程预览验收，不代表 Ray/RLinf 整组、认证远程 logs/stats、UI、checkpoint 保留或真实 Agent 滚动升级/回滚已完成。原生 Cluster/Node 汇总 UI 仍使用自身基于 Lease 的状态；companion Ready 观测不等同于原生 Node Lease，不得据此宣称 UI 集成完成。
+
+启用独立扩展控制器前，必须将部署中的原生 Job/Task/Node CRD **以及**原生 controller-manager 更新到仓库当前版本。旧 Job schema 会拒绝 `placement.environment`；旧原生控制器仍可能用旧 Raw 策略处理扩展 Job，写入冲突的 condition。当前通用 `rlark.io/controller-owner` 所有权边界是必要前提。不要通过删除所有权注解或关闭校验绕过版本不匹配。扩展控制器会初始化 RLark 结构化 logger，以保留调谐和依赖错误。
+
+准备独立 Agent CA、服务端 TLS 证书和受限 API/controller ServiceAccount。签名私钥留在制包机上。用管理员 CLI 创建集群、登记节点并导出，只传输节点包。HTTPS 端点必须可达；隔离测试可使用只监听回环地址的 SSH 反向隧道承载 mTLS。该隧道是测试依赖，不代表稳定的生产入口。Agent 凭据和本地测试 ServiceAccount token 分别到期；本次使用 24 小时凭据，不会自动续期。
+
+节点上的实际可执行文件必须存在，且为无符号链接的规范路径。pi05 验收环境中的 venv `python` 链接到 Conda；直接解析链接会丢失 venv prefix。验收时在同一 venv 的 `bin` 中新建同一 Python 可执行文件的普通副本，验证 `sys.prefix`、PyTorch 导入与 CUDA 后，将 `/root/RLinf/.venv-pi05/bin/python-rlark` 加入白名单。这是验证过的测试环境适配，不是自动 Python 安装或通用 venv 迁移方案。路径变化时应向新的私有目录重新导出包，不得修改导出脚本/配置或绕过校验和。启动 supervisor 前须创建实际工作目录。
+
+以下命令只用于已接入、空闲、仅有一个节点和一张授权 GPU 的专用测试集群。API/Agent 执行开关和 controller reservation 都须启用。每个环境变量均应换成部署中的权威资源与路径。kubeconfig 只留在测试运行机，不会发送给 Agent。
+
+```bash
+cd extensions/container-runtime
+RLARK_TEST_RAW_KUBECONFIG=/private/management.kubeconfig \
+RLARK_TEST_RAW_NAMESPACE=ksyun-container-agents \
+RLARK_TEST_RAW_CLUSTER=ksyun-containers \
+RLARK_TEST_RAW_NODE=ksyun-test-1 \
+RLARK_TEST_RAW_TENANT=team-a \
+RLARK_TEST_RAW_EXECUTABLE=/root/RLinf/.venv-pi05/bin/python-rlark \
+RLARK_TEST_RAW_DIRECTORY=/root/rlark-smoke \
+GOWORK=off go test -v ./pkg/integration -run '^TestCloudRawLifecycle$' -count=1 -timeout=15m
+```
+
+未设置 kubeconfig 变量时测试跳过；设置后其余参数全部必填。测试在提交工作前验证精确 Raw Cluster/Node/tenant 绑定、新鲜空闲心跳和 allocation 为空。用例执行真实 CUDA tensor 计算、用第二个 Job 身份复用 GPU、以退出码 7 失败，以及暂停长时间运行的 GPU 进程。每个用例等待当前 Job 结果和 allocation 已不存在后，才使用精确 UID/resourceVersion 删除自身 Job 和 binding，并等待所属 Task 消失。失败时保留尚存对象供检查，不继续派发下一用例。如果 Job 仍存在，需要停止时应检查该精确实例并通过正常调谐暂停，不能强删不确定的 allocation/finalizer。supervisor 回执与日志保留供本地管理员查看；该测试没有实现远程日志或垃圾回收。
 
 ## 历史预览证据
 
@@ -333,7 +362,7 @@ rlarkadm 生成配置和前台启动包，可接已有 supervisor，不假设容
 
 ### 本地验证证据
 
-内部组件通过定向竞态测试和仓库 `make test-go` 测试，supervisor 二进制构建成功，API/client/UI 生成模型已重新生成，中英文文档通过严格 MkDocs 构建。尚未完成真实 GPU、委派 cgroup 或双容器 Ray/RLinf 验收。仓库 Go lint 仍报告网络包中三个已有的未检查 channel 接收；新增 Raw 包未报告 lint 问题。这些证据仅验证实验基础组件，不代表上述交付清单完成。
+内部组件通过定向竞态测试和仓库 `make test-go` 测试，supervisor 二进制构建成功，API/client/UI 生成模型已重新生成，中英文文档通过严格 MkDocs 构建。下方历史预检早于真实单节点 GPU 验收，当前验收结果已在上文记录。尚未完成委派 cgroup 或双容器 Ray/RLinf 验收。仓库 Go lint 仍报告原生代码基线问题；增量检查未发现扩展改动新增问题。这些证据与当前单节点结果仍不代表上方多节点交付清单全部完成。
 
 ### 金山云容器预检（2026-10-30）
 
