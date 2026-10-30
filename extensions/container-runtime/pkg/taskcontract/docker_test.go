@@ -12,7 +12,7 @@ func TestDockerContractRejectsUnsupportedInput(t *testing.T) {
 	if err := ValidateJob(valid); err != nil {
 		t.Fatal(err)
 	}
-	for _, input := range []string{`{"image":"image","hostNetwork":true,"gpuUUIDs":["GPU-a"]}`, `{"image":"image","hostNetwork":true,"gpuCount":1}`, `{"image":"image","hostNetwork":true,"labels":{"rlark.io/task-uid":"foreign"}}`, `{"image":"image","hostNetwork":true,"env":["NVIDIA_VISIBLE_DEVICES=all"]}`, `{"image":"image","hostNetwork":true,"env":["RLARK_RAY_PORT=30000"]}`, `{"image":"image","hostNetwork":true,"rayPort":30000}`, `{"image":"image","hostNetwork":true,"privileged":true}`, `{"image":"image","hostNetwork":false}`, `{"image":"image","hostNetwork":true} {}`, `{"image":"image","hostNetwork":true,"cpuMilli":9223372036854775807}`} {
+	for _, input := range []string{`{"image":"image","hostNetwork":true,"gpuUUIDs":["GPU-a"]}`, `{"image":"image","hostNetwork":true,"gpuCount":1}`, `{"image":"image","hostNetwork":true,"labels":{"rlark.io/task-uid":"foreign"}}`, `{"image":"image","hostNetwork":true,"env":["NVIDIA_VISIBLE_DEVICES=all"]}`, `{"image":"image","hostNetwork":true,"env":["RLARK_RAY_PORT=30000"]}`, `{"image":"image","hostNetwork":true,"rayPort":30000}`, `{"image":"image","hostNetwork":true,"rayPorts":[24000,24001]}`, `{"image":"image","hostNetwork":true,"privileged":true}`, `{"image":"image","hostNetwork":false}`, `{"image":"image","hostNetwork":true} {}`, `{"image":"image","hostNetwork":true,"cpuMilli":9223372036854775807}`} {
 		t.Run(input, func(t *testing.T) {
 			job := valid.DeepCopy()
 			job.Spec.Tasks[0].Workload.Parameters.Raw = []byte(input)

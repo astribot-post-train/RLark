@@ -107,3 +107,15 @@ execution gate while reading a response body. The UI provides manual snapshots
 with lossless uint64 decimal strings and explicit unavailable counters. GPU
 utilization, CPU percentage and host-network traffic attribution are unavailable.
 See the paired Docker Agent guides for limits, failure/recovery and enablement.
+
+
+The dormant Docker Ray compiler now requires exact trusted Assignment input,
+a complete explicit nine-service port block/worker range, and Ray 2.56.1. Its
+embedded launcher supervises Ray independently from head training and checks
+exact membership. The journalled Provider supports `Prepare` without starting,
+then rechecks local IPv4/IPv6 ports and authorization at start; ports are
+immutable private execution material, not public Task input. These are internal
+runtime foundations only: group operation/allocation/receipt admission is not
+connected, the scoped Agent does not install Ray, and no new dispatch capability
+is advertised. See the paired Docker execution plans for delivery gates, tests
+and the distinction between port preflight and kernel reservation.

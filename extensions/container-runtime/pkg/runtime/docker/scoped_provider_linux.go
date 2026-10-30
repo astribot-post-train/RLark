@@ -45,6 +45,17 @@ func (p *ScopedProvider) checkEngine(ctx context.Context) error {
 // uncertain create with no ID is recoverable only when its exact container is
 // observed; daemon absence alone cannot release that execution.
 func (p *ScopedProvider) Apply(ctx context.Context, req rt.ApplyRequest) (rt.ApplyResult, error) {
+	return p.ensureScoped(ctx, req, true)
+}
+
+// Prepare journals the same exact create identity as Apply, but leaves the
+// container stopped. It does not publish a group readiness receipt or grant
+// start permission; those remain separate admission responsibilities.
+func (p *ScopedProvider) Prepare(ctx context.Context, req rt.ApplyRequest) (rt.ApplyResult, error) {
+	return p.ensureScoped(ctx, req, false)
+}
+
+func (p *ScopedProvider) ensureScoped(ctx context.Context, req rt.ApplyRequest, start bool) (rt.ApplyResult, error) {
 	if p == nil || p.Journal == nil {
 		return rt.ApplyResult{}, errors.New("docker execution journal required")
 	}
@@ -120,17 +131,26 @@ func (p *ScopedProvider) Apply(ctx context.Context, req rt.ApplyRequest) (rt.App
 		record.Creating = true
 		return p.Journal.write(*record)
 	}
-	local.beforeStart = func(ctx context.Context, id string) error {
+	local.afterCreate = func(_ context.Context, id string) error {
 		if id == "" || record.ContainerID != "" && record.ContainerID != id {
 			return errors.New("docker start identity conflict")
 		}
 		record.ContainerID = id
-		if err := p.Journal.write(*record); err != nil {
-			return err
+		return p.Journal.write(*record)
+	}
+	local.beforeStart = func(ctx context.Context, id string) error {
+		if record.ContainerID == "" || record.ContainerID != id {
+			return errors.New("docker start identity conflict")
 		}
 		return p.Admission.Authorize(ctx, req.Task)
 	}
-	result, applyErr := local.Apply(ctx, req)
+	var result rt.ApplyResult
+	var applyErr error
+	if start {
+		result, applyErr = local.Apply(ctx, req)
+	} else {
+		result, applyErr = local.Prepare(ctx, req)
+	}
 	if applyErr != nil {
 		// A successful create/start response can be lost. Re-read using the caller's
 		// bounded context; if it too fails, preserve the uncertain intent.

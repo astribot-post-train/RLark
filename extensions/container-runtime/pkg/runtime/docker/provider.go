@@ -27,8 +27,12 @@ type Provider struct {
 	ID           rt.ID
 	Client       EngineClient
 	beforeCreate func(context.Context) error
+	afterCreate  func(context.Context, string) error
 	beforeStart  func(context.Context, string) error
-	Admission    interface {
+	// PortPreflight is an optional injected local socket probe. Nil selects the
+	// real host implementation. It is skipped for an already running container.
+	PortPreflight func(context.Context, []int32) error
+	Admission     interface {
 		Authorize(context.Context, rt.TaskIdentity) error
 	}
 }
@@ -129,6 +133,11 @@ func (p *Provider) object(task rt.TaskIdentity, c types.ContainerJSON) (rt.Objec
 	}
 	spec := ContainerSpec{HostNetwork: c.HostConfig != nil && c.HostConfig.NetworkMode.IsHost()}
 	if c.Config != nil {
+		if raw := c.Config.Labels[hostPortsLabel]; raw != "" {
+			if err := json.Unmarshal([]byte(raw), &spec.RayPorts); err != nil {
+				return rt.Object{}, fault.New(fault.Conflict, "invalid retained Docker port plan")
+			}
+		}
 		spec.Image, spec.Env, spec.WorkingDir = c.Config.Image, append([]string(nil), c.Config.Env...), c.Config.WorkingDir
 		for key, value := range c.Config.Labels {
 			if !strings.HasPrefix(key, "rlark.io/") && !strings.HasPrefix(key, "containers.rlark.io/") {
@@ -229,6 +238,31 @@ func (p *Provider) ListCandidates(ctx context.Context, q rt.ManagedObjectQuery) 
 }
 
 func (p *Provider) Apply(ctx context.Context, req rt.ApplyRequest) (rt.ApplyResult, error) {
+	return p.ensure(ctx, req, true)
+}
+
+// Prepare creates or recovers the exact immutable container without starting
+// it. Running/terminal containers are returned as observed, never restarted.
+// Group admission must independently authorize a later Apply to start it.
+func (p *Provider) Prepare(ctx context.Context, req rt.ApplyRequest) (rt.ApplyResult, error) {
+	return p.ensure(ctx, req, false)
+}
+
+func (p *Provider) checkPorts(ctx context.Context, ports []int32) error {
+	if len(ports) == 0 {
+		return ctx.Err()
+	}
+	probe := p.PortPreflight
+	if probe == nil {
+		probe = CheckHostPorts
+	}
+	if err := probe(ctx, append([]int32(nil), ports...)); err != nil {
+		return fault.Wrap(fault.Unavailable, "Docker port preflight", err)
+	}
+	return nil
+}
+
+func (p *Provider) ensure(ctx context.Context, req rt.ApplyRequest, start bool) (rt.ApplyResult, error) {
 	if _, err := p.Info(ctx); err != nil {
 		return rt.ApplyResult{}, err
 	}
@@ -272,6 +306,11 @@ func (p *Provider) Apply(ctx context.Context, req rt.ApplyRequest) (rt.ApplyResu
 			return rt.ApplyResult{}, fault.New(fault.Conflict, "Docker container configuration is immutable")
 		}
 		if c.State != nil && c.State.Status == "created" {
+			if err := p.checkPorts(ctx, m.Spec.RayPorts); err != nil {
+				return rt.ApplyResult{}, err
+			}
+		}
+		if c.State != nil && c.State.Status == "created" && start {
 			if p.beforeStart != nil {
 				if err := p.beforeStart(ctx, c.ID); err != nil {
 					return rt.ApplyResult{}, err
@@ -313,6 +352,9 @@ func (p *Provider) Apply(ctx context.Context, req rt.ApplyRequest) (rt.ApplyResu
 			return rt.ApplyResult{}, fault.Wrap(fault.Unavailable, "verify pulled Docker image", err)
 		}
 	}
+	if err := p.checkPorts(ctx, m.Spec.RayPorts); err != nil {
+		return rt.ApplyResult{}, err
+	}
 	if p.beforeCreate != nil {
 		if err := p.beforeCreate(ctx); err != nil {
 			return rt.ApplyResult{}, err
@@ -326,13 +368,23 @@ func (p *Provider) Apply(ctx context.Context, req rt.ApplyRequest) (rt.ApplyResu
 	if created.ID == "" {
 		return rt.ApplyResult{}, fault.New(fault.Internal, "Docker returned an empty container ID")
 	}
-	if p.beforeStart != nil {
-		if err := p.beforeStart(ctx, created.ID); err != nil {
+	if p.afterCreate != nil {
+		if err := p.afterCreate(ctx, created.ID); err != nil {
 			return rt.ApplyResult{}, err
 		}
 	}
-	if err := p.Client.ContainerStart(ctx, created.ID, types.ContainerStartOptions{}); err != nil {
-		return rt.ApplyResult{}, fault.Wrap(fault.Unavailable, "start Docker container", err)
+	if start {
+		if err := p.checkPorts(ctx, m.Spec.RayPorts); err != nil {
+			return rt.ApplyResult{}, err
+		}
+		if p.beforeStart != nil {
+			if err := p.beforeStart(ctx, created.ID); err != nil {
+				return rt.ApplyResult{}, err
+			}
+		}
+		if err := p.Client.ContainerStart(ctx, created.ID, types.ContainerStartOptions{}); err != nil { //nolint:staticcheck // EngineClient preserves the pinned SDK interface
+			return rt.ApplyResult{}, fault.Wrap(fault.Unavailable, "start Docker container", err)
+		}
 	}
 	c, err = p.Client.ContainerInspect(ctx, created.ID)
 	if err != nil {
@@ -347,6 +399,10 @@ func (p *Provider) Apply(ctx context.Context, req rt.ApplyRequest) (rt.ApplyResu
 
 func dockerConfig(spec ContainerSpec, task rt.TaskIdentity) (*container.Config, *container.HostConfig) {
 	labels := labels(task)
+	if len(spec.RayPorts) != 0 {
+		encoded, _ := json.Marshal(spec.RayPorts)
+		labels[hostPortsLabel] = string(encoded)
+	}
 	for k, v := range spec.Labels {
 		labels[k] = v
 	}

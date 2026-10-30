@@ -37,6 +37,9 @@ type ContainerSpec struct {
 	MemoryBytes int64             `json:"memoryBytes,omitempty"`
 	HostNetwork bool              `json:"hostNetwork"`
 	RayPort     int32             `json:"rayPort,omitempty"`
+	// RayPorts is internal compiled execution material. User task contracts
+	// cannot set it; a future group scheduler must inject the exact plan.
+	RayPorts []int32 `json:"rayPorts,omitempty"`
 }
 
 type Manifest struct {
@@ -79,6 +82,9 @@ func (s ContainerSpec) Validate() error {
 	}
 	if s.GPUCount < 0 || s.CPU < 0 || s.CPU > math.MaxInt64/1_000_000 || s.MemoryBytes < 0 {
 		return errors.New("docker resource requests must be nonnegative and CPU must fit NanoCPUs")
+	}
+	if err := ValidateHostPortPlan(s.RayPorts); err != nil {
+		return err
 	}
 	if len(s.GPUUUIDs) != 0 && s.GPUCount != 0 {
 		return errors.New("docker GPU count and device UUIDs are mutually exclusive")

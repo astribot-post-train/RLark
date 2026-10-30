@@ -162,3 +162,12 @@ SDK 读取、凭据和能力撤销、临时 broker 重启/重试，以及正文�
 GPU 利用率、端口预留、Ray/RLinf 集群屏障、Docker 滚动升级和
 真实 GPU 主机生命周期验收仍需单独推进。host network 本身不构成多主机 Ray 契约。
 有序门槛见 [Docker 执行计划](docker-runtime-execution-plan.md)。
+
+
+## Ray 运行时基础的范围
+
+扩展已包含经测试的内部 Ray 2.56.1 编译器/launcher，以及只创建不启动的 provider
+原语；它们**没有开启整组派发**，scoped Agent 仍只安装单容器适配器。`rayPorts`
+及已解析成员/GPU 字段是内部分配材料，公开容器 Task 输入会拒绝。端口块、
+prepare/start 屏障、镜像要求、失败/恢复测试和剩余真实主机验收见
+[Ray 实施契约](docker-runtime-execution-plan.md)。没有新增开关允许部分组启动。
