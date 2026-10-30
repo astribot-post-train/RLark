@@ -36,7 +36,7 @@ func main() {
 }
 func run(ctx context.Context, args []string) error {
 	var addr, kubeconfig, keyFile, certFile, tlsKey, uiDirectory, gateway, logOrigin string
-	var enableJobs bool
+	var enableJobs, enableRegistration bool
 	fs := flag.NewFlagSet("container-runtime-console", flag.ContinueOnError)
 	fs.StringVar(&addr, "addr", "127.0.0.1:9445", "listen address; HTTP is loopback only")
 	fs.StringVar(&kubeconfig, "kubeconfig", "", "restricted management kubeconfig; empty uses in-cluster config")
@@ -44,6 +44,7 @@ func run(ctx context.Context, args []string) error {
 	fs.StringVar(&gateway, "gateway-origin", "", "trusted Gateway HTTPS origin; loopback HTTP allowed for development")
 	fs.StringVar(&logOrigin, "log-api-origin", "", "optional loopback HTTP administrator log API origin")
 	fs.BoolVar(&enableJobs, "enable-job-submission", false, "enable preview single-process Raw Job submit/list/suspend; requires additive Job RBAC")
+	fs.BoolVar(&enableRegistration, "enable-node-registration", false, "enable administrator Raw node registration; requires additive registration RBAC")
 	fs.StringVar(&certFile, "tls-cert", "", "optional HTTPS certificate; required off loopback")
 	fs.StringVar(&tlsKey, "tls-key", "", "HTTPS private key")
 	fs.StringVar(&uiDirectory, "ui-directory", "", "built independent UI directory (optional)")
@@ -87,6 +88,9 @@ func run(ctx context.Context, args []string) error {
 		return fmt.Errorf("create management client: %w", err)
 	}
 	api := &console.API{Client: management, Creator: provision.Service{Client: management}, Auth: auth}
+	if enableRegistration {
+		api.Registrar = provision.Service{Client: management}
+	}
 	if enableJobs {
 		api.Jobs = submission.Service{Client: management}
 	}

@@ -39,6 +39,11 @@ type ClusterCreator interface {
 	CreateCluster(context.Context, provision.ClusterRequest) (*ext.ContainerCluster, error)
 }
 
+// NodeRegistrar resumes an explicit administrator node provisioning operation.
+type NodeRegistrar interface {
+	RegisterNode(context.Context, provision.NodeRequest) (*ext.ContainerNode, error)
+}
+
 // JobSubmission is the explicitly enabled administrator workload service.
 type JobSubmission interface {
 	Submit(context.Context, submission.ClusterTarget, submission.Request) (submission.Summary, error)
@@ -55,7 +60,9 @@ type API struct {
 	Logs    http.Handler
 	// Jobs is nil by default; workload submission requires explicit opt-in.
 	Jobs JobSubmission
-	Now  func() time.Time
+	// Registrar is nil by default; registration requires additive create RBAC.
+	Registrar NodeRegistrar
+	Now       func() time.Time
 }
 
 func (a *API) now() time.Time {
@@ -136,6 +143,12 @@ func (a *API) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		a.listClusters(w, r)
 	case len(parts) == 1 && parts[0] == "clusters" && r.Method == http.MethodPost:
 		a.createCluster(w, r, subject)
+	case len(parts) == 4 && parts[0] == "clusters" && parts[1] != "" && parts[2] != "" && parts[3] == "nodes" && r.Method == http.MethodPost:
+		if a.Registrar == nil {
+			writeError(w, http.StatusNotFound, "unsupported", "node registration is disabled")
+			return
+		}
+		a.registerNode(w, r, parts[1], parts[2], subject)
 	case len(parts) == 3 && parts[0] == "clusters" && parts[1] != "" && parts[2] != "" && r.Method == http.MethodGet:
 		a.clusterDetail(w, r, parts[1], parts[2])
 	case len(parts) == 3 && parts[0] == "clusters" && parts[1] != "" && parts[2] != "" && r.Method == http.MethodPatch:
@@ -218,12 +231,13 @@ type upgradeSummary struct {
 	Conditions  []metav1.Condition `json:"conditions"`
 }
 type clusterDetailResponse struct {
-	JobSubmissionEnabled bool                `json:"jobSubmissionEnabled"`
-	Cluster              clusterSummary      `json:"cluster"`
-	Nodes                []nodeSummary       `json:"nodes"`
-	Releases             []releaseSummary    `json:"releases"`
-	Allocations          []allocationSummary `json:"allocations"`
-	Upgrades             []upgradeSummary    `json:"upgrades"`
+	NodeRegistrationEnabled bool                `json:"nodeRegistrationEnabled"`
+	JobSubmissionEnabled    bool                `json:"jobSubmissionEnabled"`
+	Cluster                 clusterSummary      `json:"cluster"`
+	Nodes                   []nodeSummary       `json:"nodes"`
+	Releases                []releaseSummary    `json:"releases"`
+	Allocations             []allocationSummary `json:"allocations"`
+	Upgrades                []upgradeSummary    `json:"upgrades"`
 }
 
 func current(items []metav1.Condition, typ string, generation int64) bool {
@@ -273,6 +287,7 @@ func (a *API) detail(ctx context.Context, cc *ext.ContainerCluster) (*clusterDet
 	}
 	result := &clusterDetailResponse{Cluster: clusterSummary{Namespace: cc.Namespace, Name: cc.Name, UID: string(cc.UID), ResourceVersion: cc.ResourceVersion, TenantID: tenant.IDOf(cc), Runtime: cc.Spec.Runtime, TargetAgentRelease: cc.Spec.TargetAgentRelease, BindingValid: valid, Deleting: !cc.DeletionTimestamp.IsZero(), Conditions: cc.Status.Conditions, LastAgentUpgrade: cc.Status.LastAgentUpgrade}, Nodes: []nodeSummary{}, Releases: []releaseSummary{}, Allocations: []allocationSummary{}, Upgrades: []upgradeSummary{}}
 	result.JobSubmissionEnabled = a.Jobs != nil && cc.Spec.Runtime == "Raw" && valid && cc.DeletionTimestamp.IsZero()
+	result.NodeRegistrationEnabled = a.Registrar != nil && cc.Spec.Runtime == "Raw" && valid && cc.DeletionTimestamp.IsZero() && nc != nil && nc.DeletionTimestamp.IsZero()
 	var allocations ext.ContainerAllocationList
 	if err := a.Client.List(ctx, &allocations, client.InNamespace(cc.Namespace)); err != nil {
 		return nil, err

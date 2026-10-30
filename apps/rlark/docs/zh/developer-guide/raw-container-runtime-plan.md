@@ -478,3 +478,10 @@ root 进程测试覆盖脱离会话后代清理、无关进程保护、重复启
 Docker 预览路径已用 root Agent、宿主机 Docker socket 和 Docker Engine API 1.44+ 验证。验证覆盖 Agent 启动、Node 容量与 incarnation 观测、持久化预留校验、容器所有权及可重试清理。真实多主机 GPU Ray 训练、Gateway 日志/stats 路由、systemd 安装包生成和按设备 UUID 分配仍不属于已完成契约。
 
 单主机 Ray 冒烟 Job `docker-validation-20261030` 已成功退出（exit code 0），日志包含 `RLARK_DOCKER_SMOKE_OK`。删除 Job 后确认对应 Task、Docker 容器和 Node reservation 均已清理。当前每台 Docker 主机只接收一个 RLark Docker Task，纯 CPU Task 也遵循此约束。
+
+## 已完成增量：控制台节点登记
+
+独立控制台现在提供显式启用的管理员 Raw 节点登记，复用接入操作及精确原生/companion
+UID 所有权。证书/安装包导出留在管理员制包机。API/UI 测试已覆盖响应丢失/部分创建、
+外来身份、输入校验、能力禁用及鉴权。云端接入与安装包安装仍是独立运维门槛，详见
+[控制台约定](container-runtime-console.md)。

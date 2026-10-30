@@ -482,3 +482,12 @@ Additional failure tests cover socket reconnection during execution, escalation 
 The Docker preview path has been exercised with a root Agent using the host Docker socket and Docker Engine API 1.44+. The validation covers Agent startup, Node capacity/incarnation observation, durable allocation checks, container ownership, and retryable cleanup. A real multi-host GPU Ray training run, Gateway log/stats routes, systemd package generation, and provider-specific device UUID allocation remain outside the completed contract.
 
 The single-host Ray smoke Job `docker-validation-20261030` exited successfully (exit code 0), with `RLARK_DOCKER_SMOKE_OK` in its logs. After Job deletion, its Task, Docker container, and Node reservation were confirmed absent. Each Docker host currently accepts only one RLark Docker Task, including CPU-only Tasks.
+
+## Completed increment: console node registration
+
+The independent console now provides opt-in administrator Raw node registration,
+reusing provisioning operations and exact native/companion UID ownership. The
+certificate/package export remains on the administrator machine. API/UI tests
+cover lost/partial responses, foreign identities, validation, disabled capability
+and authorization. Cloud enrollment and package installation remain separate
+operational gates; see the [console contract](container-runtime-console.md#administrator-node-registration).

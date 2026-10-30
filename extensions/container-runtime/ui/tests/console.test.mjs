@@ -120,6 +120,7 @@ test("legacy console inventory loads with submission disabled and rejects invali
   assert.deepEqual(await client.detail("agents", "cloud"), {
     ...inventory,
     jobSubmissionEnabled: false,
+    nodeRegistrationEnabled: false,
   });
   for (const capability of [false, true]) {
     globalThis.fetch = async () =>
@@ -140,6 +141,11 @@ test("legacy console inventory loads with submission disabled and rejects invali
       client.detail("agents", "cloud"),
       (e) => e instanceof APIError && e.code === "invalid_response",
     );
+  }
+  for (const capability of [true, false, null, "false", 0]) {
+    globalThis.fetch = async () => new Response(JSON.stringify({ ...inventory, nodeRegistrationEnabled: capability }));
+    if (typeof capability === "boolean") assert.equal((await client.detail("agents", "cloud")).nodeRegistrationEnabled, capability);
+    else await assert.rejects(client.detail("agents", "cloud"), APIError);
   }
   globalThis.fetch = async () =>
     new Response(JSON.stringify({ ...inventory, nodes: null }));
