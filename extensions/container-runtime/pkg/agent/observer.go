@@ -13,6 +13,7 @@ import (
 	"time"
 
 	ext "github.com/astribot-post-train/rlark/extensions/container-runtime/api/v1alpha1"
+	"github.com/astribot-post-train/rlark/extensions/container-runtime/pkg/artifact"
 	"github.com/astribot-post-train/rlark/extensions/container-runtime/pkg/ownership"
 	"github.com/astribot-post-train/rlark/extensions/container-runtime/pkg/rawnode"
 	native "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
@@ -63,8 +64,9 @@ type Observation struct {
 // Reporter writes Agent-owned status using an uncached client. It never edits
 // Spec, native Nodes, allocations, or another Agent's identity.
 type Reporter struct {
-	Client client.Client
-	Now    func() time.Time
+	Client       client.Client
+	Now          func() time.Time
+	ReleaseStore artifact.Store
 }
 
 func (r Reporter) now() time.Time {
@@ -256,7 +258,7 @@ func (r Reporter) releaseFence(ctx context.Context, node *ext.ContainerNode, ver
 			}
 			return "", false, err
 		}
-		return release.Spec.Version, release.DeletionTimestamp.IsZero() && release.Status.Available && release.Status.ObservedGeneration == release.Generation && release.Spec.Version == version, nil
+		return release.Spec.Version, release.UID != "" && tenant.IDOf(&release) == tenant.IDOf(node) && artifact.ValidateSpec(release.Spec) == nil && release.DeletionTimestamp.IsZero() && release.Status.Available && release.Status.ObservedGeneration == release.Generation && release.Spec.Version == version, nil
 	}
 	return "", true, nil
 }

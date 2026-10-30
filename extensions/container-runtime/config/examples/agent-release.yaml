@@ -1,0 +1,17 @@
+# Template: replace namespace, tenant, version and SHA-256 before applying.
+# Publish the actual Linux Agent binary at <artifact-directory>/releases/agent-v1.
+# Mount the same tree read-only on the independent controller and API.
+apiVersion: containers.rlark.io/v1alpha1
+kind: AgentRelease
+metadata:
+  name: agent-v1
+  namespace: REPLACE_AGENT_NAMESPACE
+  labels:
+    rlark.io/tenant-id: REPLACE_TENANT_ID
+spec:
+  version: REPLACE_AGENT_VERSION
+  os: linux
+  architecture: amd64
+  protocol: v1
+  sha256: REPLACE_LOWERCASE_SHA256
+  artifactPath: releases/agent-v1

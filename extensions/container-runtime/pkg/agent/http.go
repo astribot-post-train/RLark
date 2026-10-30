@@ -6,8 +6,10 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strconv"
 	"time"
 
+	"github.com/astribot-post-train/rlark/extensions/container-runtime/pkg/artifact"
 	"github.com/rlinf/rlark/apps/rlark/pkg/auth/cert"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 )
@@ -60,6 +62,10 @@ type Handler struct {
 }
 
 func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path == "/v1/release" && h.Reporter.ReleaseStore != nil {
+		h.serveRelease(w, r)
+		return
+	}
 	if r.URL.Path == "/v1/task" && h.EnableTasks {
 		h.serveTask(w, r)
 		return
@@ -107,4 +113,55 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h Handler) serveRelease(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", http.MethodPost)
+		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+		return
+	}
+	id, err := requestIdentity(r, h.Reporter.now())
+	if err != nil {
+		http.Error(w, "authenticated container Agent required", http.StatusForbidden)
+		return
+	}
+	var request ReleaseRequest
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&request); err != nil {
+		http.Error(w, "invalid release request", http.StatusBadRequest)
+		return
+	}
+	if decoder.Decode(new(any)) != io.EOF {
+		http.Error(w, "exactly one release request required", http.StatusBadRequest)
+		return
+	}
+	manifest, data, err := h.Reporter.Release(r.Context(), id, request, h.Reporter.ReleaseStore)
+	if err != nil {
+		status, message := http.StatusServiceUnavailable, "Agent release unavailable"
+		switch {
+		case errors.Is(err, ErrIdentity), errors.Is(err, ErrReleaseIdentity):
+			status, message = http.StatusForbidden, "container Agent release identity is not current"
+		case errors.Is(err, ErrNoRelease):
+			w.WriteHeader(http.StatusNoContent)
+			return
+		case errors.Is(err, artifact.ErrInvalid), errors.Is(err, artifact.ErrDigest):
+			status, message = http.StatusBadRequest, "Agent release artifact is invalid"
+		case apierrors.IsNotFound(err), errors.Is(err, ErrReleaseUnavailable):
+			status, message = http.StatusNotFound, "target Agent release is unavailable"
+		}
+		http.Error(w, message, status)
+		return
+	}
+	if request.Action == "manifest" {
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode(manifest); err != nil {
+			return
+		}
+		return
+	}
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("Content-Length", strconv.FormatInt(int64(len(data)), 10))
+	_, _ = w.Write(data)
 }

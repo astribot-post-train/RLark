@@ -15,6 +15,7 @@ import (
 
 	ext "github.com/astribot-post-train/rlark/extensions/container-runtime/api/v1alpha1"
 	"github.com/astribot-post-train/rlark/extensions/container-runtime/pkg/agent"
+	"github.com/astribot-post-train/rlark/extensions/container-runtime/pkg/artifact"
 	native "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
 	"github.com/rlinf/rlark/apps/rlark/pkg/log"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -32,7 +33,7 @@ func main() {
 }
 
 func run(ctx context.Context) error {
-	var addr, kubeconfig, certificate, key, agentCA string
+	var addr, kubeconfig, certificate, key, agentCA, artifactDirectory string
 	var enableTasks bool
 	flag.BoolVar(&enableTasks, "enable-task-execution", false, "enable preview node-scoped Raw Task transport")
 	flag.StringVar(&addr, "addr", ":9444", "HTTPS listen address")
@@ -40,6 +41,7 @@ func run(ctx context.Context) error {
 	flag.StringVar(&certificate, "tls-cert", "", "HTTPS server certificate path")
 	flag.StringVar(&key, "tls-key", "", "HTTPS server private key path")
 	flag.StringVar(&agentCA, "agent-ca", "", "Dedicated container Agent client CA path")
+	flag.StringVar(&artifactDirectory, "artifact-directory", "", "Read-only verified Agent artifact directory (optional)")
 	flag.Parse()
 	if certificate == "" || key == "" || agentCA == "" {
 		return errors.New("tls-cert, tls-key and dedicated agent-ca are required")
@@ -72,7 +74,14 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("create uncached management client: %w", err)
 	}
-	server := &http.Server{Addr: addr, Handler: agent.Handler{Reporter: agent.Reporter{Client: management}, EnableTasks: enableTasks},
+	var store artifact.Store
+	if artifactDirectory != "" {
+		store, err = artifact.NewDirectoryStore(artifactDirectory)
+		if err != nil {
+			return err
+		}
+	}
+	server := &http.Server{Addr: addr, Handler: agent.Handler{Reporter: agent.Reporter{Client: management, ReleaseStore: store}, EnableTasks: enableTasks},
 		ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 30 * time.Second,
 		TLSConfig: &tls.Config{MinVersion: tls.VersionTLS13, ClientAuth: tls.RequireAndVerifyClientCert, ClientCAs: pool, Certificates: []tls.Certificate{tlsCert}}}
 	stopped := make(chan struct{})
