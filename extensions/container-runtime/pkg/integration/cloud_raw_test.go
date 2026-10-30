@@ -4,11 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"slices"
 	"testing"
 	"time"
 
 	ext "github.com/astribot-post-train/rlark/extensions/container-runtime/api/v1alpha1"
 	"github.com/astribot-post-train/rlark/extensions/container-runtime/pkg/allocation/companion"
+	"github.com/astribot-post-train/rlark/extensions/container-runtime/pkg/artifact"
 	"github.com/google/uuid"
 	native "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
 	nativejob "github.com/rlinf/rlark/apps/rlark/pkg/controllermanager/job"
@@ -183,4 +185,131 @@ func TestCloudRawLifecycle(t *testing.T) {
 			return // Never dispatch another Job after uncertain cleanup.
 		}
 	}
+}
+
+// TestCloudRawRollout is deliberately opt-in: it upgrades one already enrolled,
+// dedicated idle Raw node and leaves the target release configured for the
+// operator's follow-up workload acceptance. It never runs against a shared
+// cluster and does not force-delete uncertain upgrade state.
+func TestCloudRawRollout(t *testing.T) {
+	kubeconfig := os.Getenv("RLARK_TEST_RAW_KUBECONFIG")
+	if kubeconfig == "" {
+		t.Skip("set RLARK_TEST_RAW_KUBECONFIG and the documented dedicated cloud rollout inputs")
+	}
+	required := func(key string) string {
+		t.Helper()
+		value := os.Getenv(key)
+		if value == "" {
+			t.Fatalf("%s is required for real Agent rollout acceptance", key)
+		}
+		return value
+	}
+	namespace := required("RLARK_TEST_RAW_NAMESPACE")
+	clusterName := required("RLARK_TEST_RAW_CLUSTER")
+	nodeName := required("RLARK_TEST_RAW_NODE")
+	tenantID := required("RLARK_TEST_RAW_TENANT")
+	releaseName := required("RLARK_TEST_RAW_RELEASE")
+	cfg, err := clientcmd.BuildConfigFromFlags("", kubeconfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Timeout = 10 * time.Second
+	scheme := runtime.NewScheme()
+	for _, register := range []func(*runtime.Scheme) error{native.AddToScheme, ext.AddToScheme} {
+		if err := register(scheme); err != nil {
+			t.Fatal(err)
+		}
+	}
+	c, err := client.New(cfg, client.Options{Scheme: scheme})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	var cluster ext.ContainerCluster
+	if err := c.Get(ctx, client.ObjectKey{Namespace: namespace, Name: clusterName}, &cluster); err != nil {
+		t.Fatal(err)
+	}
+	if cluster.Spec.TargetAgentRelease != "" {
+		t.Fatalf("rollout acceptance requires no existing target, got %q", cluster.Spec.TargetAgentRelease)
+	}
+	var release ext.AgentRelease
+	if err := c.Get(ctx, client.ObjectKey{Namespace: namespace, Name: releaseName}, &release); err != nil {
+		t.Fatal(err)
+	}
+	if release.UID == "" || !release.DeletionTimestamp.IsZero() || release.Status.ObservedGeneration != release.Generation || !release.Status.Available || tenant.IDOf(&release) != tenantID || artifact.ValidateSpec(release.Spec) != nil {
+		t.Fatal("target AgentRelease is not current, available and tenant-bound")
+	}
+	var nodes ext.ContainerNodeList
+	if err := c.List(ctx, &nodes, client.InNamespace(namespace)); err != nil {
+		t.Fatal(err)
+	}
+	if len(nodes.Items) != 1 || nodes.Items[0].Name != nodeName {
+		t.Fatal("rollout acceptance requires exactly the requested dedicated node")
+	}
+	node := nodes.Items[0]
+	oldVersion := node.Status.AgentVersion
+	if cluster.UID == "" || cluster.Spec.Runtime != "Raw" || node.Spec.Runtime != "Raw" || node.Spec.Cluster != cluster.Spec.Cluster || tenant.IDOf(&cluster) != tenantID || tenant.IDOf(&node) != tenantID || len(node.Spec.AuthorizedGPUUUIDs) != 1 || !cluster.DeletionTimestamp.IsZero() || !node.DeletionTimestamp.IsZero() {
+		t.Fatal("exact live Raw cluster/node/tenant bindings and one authorized GPU are required")
+	}
+	currentCondition := func(conditions []metav1.Condition, generation int64, name string) bool {
+		condition := meta.FindStatusCondition(conditions, name)
+		return condition != nil && condition.Status == metav1.ConditionTrue && condition.ObservedGeneration == generation
+	}
+	if oldVersion == "" || oldVersion == release.Spec.Version || !node.Status.Schedulable || node.Status.Busy || node.Status.LastHeartbeatTime == nil || time.Since(node.Status.LastHeartbeatTime.Time) > 45*time.Second || node.Status.ObservedGeneration != node.Generation || !currentCondition(node.Status.Conditions, node.Generation, "Ready") || !currentCondition(node.Status.Conditions, node.Generation, "Validated") || !currentCondition(node.Status.Conditions, node.Generation, "AgentReleaseReady") || !slices.Contains(node.Status.Capabilities, ext.AgentUpgradeCapability) || !slices.Contains(node.Status.Capabilities, "agent-platform/"+release.Spec.OS+"/"+release.Spec.Architecture) {
+		t.Fatal("a fresh idle upgrade-capable node is required")
+	}
+	var allocations ext.ContainerAllocationList
+	if err := c.List(ctx, &allocations, client.InNamespace(namespace)); err != nil || len(allocations.Items) != 0 {
+		t.Fatalf("dedicated rollout namespace must have no allocations: %v", err)
+	}
+	var upgrades ext.AgentUpgradeList
+	if err := c.List(ctx, &upgrades, client.InNamespace(namespace)); err != nil || len(upgrades.Items) != 0 {
+		t.Fatalf("dedicated rollout namespace must have no prior upgrade operations: %v", err)
+	}
+	before := cluster.DeepCopy()
+	cluster.Spec.TargetAgentRelease = release.Name
+	if err := c.Patch(ctx, &cluster, client.MergeFromWithOptions(before, client.MergeFromWithOptimisticLock{})); err != nil {
+		t.Fatal(err)
+	}
+	poll := func(description string, check func(context.Context) (bool, error)) {
+		t.Helper()
+		if err := wait.PollUntilContextTimeout(ctx, 2*time.Second, 8*time.Minute, true, check); err != nil {
+			t.Fatalf("%s: %v; inspect retained rollout operation", description, err)
+		}
+	}
+	poll("target Agent version and fresh idle observation", func(ctx context.Context) (bool, error) {
+		var current ext.ContainerNode
+		if err := c.Get(ctx, client.ObjectKey{Namespace: namespace, Name: nodeName}, &current); err != nil {
+			return false, err
+		}
+		if current.UID != node.UID || current.Spec.InstanceID != node.Spec.InstanceID || current.Spec.Node != node.Spec.Node || current.Annotations[ext.AgentCredentialAnnotation] != node.Annotations[ext.AgentCredentialAnnotation] {
+			t.Fatal("ContainerNode identity replaced during rollout")
+		}
+		return current.Status.AgentVersion == release.Spec.Version && current.Status.Schedulable && !current.Status.Busy && current.Status.LastHeartbeatTime != nil && time.Since(current.Status.LastHeartbeatTime.Time) <= 45*time.Second && currentCondition(current.Status.Conditions, current.Generation, "AgentReleaseReady"), nil
+	})
+	poll("cluster rollout readiness and exact receipt", func(ctx context.Context) (bool, error) {
+		var current ext.ContainerCluster
+		if err := c.Get(ctx, client.ObjectKey{Namespace: namespace, Name: clusterName}, &current); err != nil {
+			return false, err
+		}
+		if current.UID != cluster.UID || current.Generation != cluster.Generation || current.Spec.TargetAgentRelease != release.Name {
+			t.Fatal("Cluster identity or desired target changed during rollout")
+		}
+		condition := meta.FindStatusCondition(current.Status.Conditions, "AgentRolloutReady")
+		ready := condition != nil && condition.Status == metav1.ConditionTrue && condition.ObservedGeneration == current.Generation
+		receipt := current.Status.LastAgentUpgrade
+		return ready && receipt != nil && receipt.Operation.UID != "" && receipt.Release.Name == release.Name && receipt.Release.Namespace == namespace && receipt.Release.UID == string(release.UID) && receipt.SHA256 == release.Spec.SHA256 && receipt.NodeRecord.Name == node.Name && receipt.NodeRecord.Namespace == namespace && receipt.NodeRecord.UID == string(node.UID), nil
+	})
+	poll("upgrade operation and allocation deletion", func(ctx context.Context) (bool, error) {
+		var current ext.AgentUpgradeList
+		if err := c.List(ctx, &current, client.InNamespace(namespace)); err != nil {
+			return false, err
+		}
+		var held ext.ContainerAllocationList
+		if err := c.List(ctx, &held, client.InNamespace(namespace)); err != nil {
+			return false, err
+		}
+		return len(current.Items) == 0 && len(held.Items) == 0, nil
+	})
+	t.Logf("rollout succeeded: %s -> %s; target remains configured", oldVersion, release.Spec.Version)
 }
