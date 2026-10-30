@@ -44,3 +44,25 @@ func TestAgentConfigAndFlags(t *testing.T) {
 		}
 	}
 }
+
+func TestUpgradeFlagsRequireIsolatedPaths(t *testing.T) {
+	cfg := configured()
+	fs := flag.NewFlagSet("upgrade", flag.ContinueOnError)
+	cfg.SetupFlags(fs)
+	if err := fs.Parse([]string{"--enable-agent-upgrades=true", "--agent-install-path=/opt/agent/container-runtime-agent", "--upgrade-state-directory=/var/lib/agent-upgrades"}); err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.EnableUpgrades {
+		t.Fatal("upgrade flag missing")
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{"", "relative", "/opt/agent/state", "/private", "/private/child"} {
+		bad := cfg
+		bad.UpgradeStateDirectory = path
+		if err := bad.Validate(); err == nil {
+			t.Fatalf("accepted shared/nonabsolute path %q", path)
+		}
+	}
+}

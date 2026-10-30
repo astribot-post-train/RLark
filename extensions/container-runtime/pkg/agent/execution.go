@@ -25,6 +25,7 @@ type ExecutionObserver struct {
 	Observer   Observer
 	Client     *Client
 	Supervisor rawruntime.Supervisor
+	Updater    *Updater
 }
 
 // RunExecution keeps cleanup available even when a local observation fails.
@@ -45,8 +46,12 @@ func (o ExecutionObserver) Observe(ctx context.Context) (Observation, error) {
 // cleanup attempts: stale readiness must block starts, never exact-owner stop.
 func (o ExecutionObserver) Heartbeat(ctx context.Context, obs Observation) error {
 	heartbeatErr := o.Client.Heartbeat(ctx, obs)
+	var upgradeErr error
+	if heartbeatErr == nil && o.Updater != nil {
+		upgradeErr = o.Updater.Step(ctx, obs)
+	}
 	executionErr := o.Reconcile(ctx)
-	return errors.Join(heartbeatErr, executionErr)
+	return errors.Join(heartbeatErr, upgradeErr, executionErr)
 }
 
 // Reconcile recovers the exact allocation, reuses Host/Coordinator for active

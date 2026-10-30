@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
@@ -297,5 +298,46 @@ func TestLauncherArgumentsPreserveLiteralShellCharacters(t *testing.T) {
 	must(t, err)
 	if string(out) != value {
 		t.Fatalf("argument was interpreted: %q", out)
+	}
+}
+
+func TestUpgradablePackageLauncherVerifiesNewDigest(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("Linux ELF")
+	}
+	s, cn := registered(t)
+	req := packageRequest(t, nodeID(cn))
+	req.EnableUpgrades = true
+	req.InstallDirectory = req.OutputDirectory
+	_, err := s.ExportPackage(context.Background(), req)
+	must(t, err)
+	launcherBytes, err := os.ReadFile(filepath.Join(req.OutputDirectory, "start-agent"))
+	must(t, err)
+	if !strings.Contains(string(launcherBytes), "--enable-agent-upgrades=true") || !strings.Contains(string(launcherBytes), "--upgrade-state-directory="+req.StateDirectory+"-agent-upgrades") {
+		t.Fatal("updater flags absent")
+	}
+	probe := t.TempDir()
+	must(t, os.WriteFile(filepath.Join(probe, "id"), []byte("#!/bin/sh\necho 0\n"), 0700))
+	run := func() ([]byte, error) {
+		command := exec.Command("sh", filepath.Join(req.OutputDirectory, "start-agent"))
+		command.Env = append(os.Environ(), "PATH="+probe+":"+os.Getenv("PATH"), "LC_ALL=C")
+		return command.CombinedOutput()
+	}
+	// The launcher must reject modified bytes before executing them.
+	target := []byte("#!/bin/sh\necho VERIFIED_UPGRADE_STARTED\n")
+	must(t, os.WriteFile(filepath.Join(req.OutputDirectory, "container-runtime-agent"), target, 0700))
+	if out, err := run(); err == nil || strings.Contains(string(out), "VERIFIED_UPGRADE_STARTED") {
+		t.Fatalf("unverified target executed: %s %v", out, err)
+	}
+	// A private checksum written by the updater bridges the immutable export
+	// manifest and the next verified binary. ELF validation belongs to the updater.
+	digest := sha256.Sum256(target)
+	must(t, os.WriteFile(filepath.Join(req.OutputDirectory, "container-runtime-agent.upgrade-target.sha256"), []byte(fmt.Sprintf("%x  container-runtime-agent\n", digest)), 0600))
+	if out, err := run(); err != nil || !strings.Contains(string(out), "VERIFIED_UPGRADE_STARTED") {
+		t.Fatalf("verified target failed: %s %v", out, err)
+	}
+	must(t, os.WriteFile(filepath.Join(req.OutputDirectory, "raw-supervisor"), []byte("corrupt"), 0700))
+	if out, err := run(); err == nil || strings.Contains(string(out), "VERIFIED_UPGRADE_STARTED") {
+		t.Fatalf("other package corruption bypassed: %s %v", out, err)
 	}
 }
