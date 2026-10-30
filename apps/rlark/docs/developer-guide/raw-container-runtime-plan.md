@@ -513,6 +513,19 @@ The Docker preview path has been exercised with a root Agent using the host Dock
 
 The single-host Ray smoke Job `docker-validation-20261030` exited successfully (exit code 0), with `RLARK_DOCKER_SMOKE_OK` in its logs. After Job deletion, its Task, Docker container, and Node reservation were confirmed absent. Each Docker host currently accepts only one RLark Docker Task, including CPU-only Tasks.
 
+## Cloud Raw lifecycle rerun on 2026-10-31
+
+After the notebook restart from its current autosave image, derived from the approved `rlinf-dashboard:1.1` replacement, the current container incarnation was registered with a new ContainerNode UID, credential and PID-namespace/start-time identity. The package for commit `4b8258c` was copied into a new private install/state directory. A temporary SSH reverse tunnel was re-established because the notebook has no public IP; this is an operator test path, not production ingress. The notebook remains in `regular-training` with one H100/authorized GPU UUID, 20 CPU, 236 GiB, and no Docker socket. The saved environment was preserved without resetting the base image or installing dependencies.
+
+`TestCloudRawLifecycle` passed in 165.10 seconds with the prepared `/root/RLinf/.venv-pi05/bin/python-rlark` environment (Python 3.11.11, PyTorch 2.11.0+cu126, Ray 2.56.1, RLinf source):
+
+1. CUDA tensor computation returned `42.0` and the Job succeeded.
+2. A distinct Job reused the released GPU and succeeded.
+3. A process exiting with code 7 produced a Failed Job and cleaned allocation.
+4. A running process was suspended, stopped and cleaned.
+
+The final node heartbeat was fresh with `Ready=True`, `Schedulable=True`, capacity `20000m` CPU / `253403070464` bytes memory / one GPU, and no remaining allocation, Task, ContainerJob or AgentUpgrade. This proves the current single-node, single-process Raw route after restart; it does not prove Docker Engine access, multi-node Ray/RLinf barriers, checkpoint persistence or production ingress.
+
 ## Completed increment: console node registration
 
 The independent console now provides opt-in administrator Raw node registration,

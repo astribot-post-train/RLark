@@ -502,6 +502,19 @@ Docker 预览路径已用 root Agent、宿主机 Docker socket 和 Docker Engine
 
 单主机 Ray 冒烟 Job `docker-validation-20261030` 已成功退出（exit code 0），日志包含 `RLARK_DOCKER_SMOKE_OK`。删除 Job 后确认对应 Task、Docker 容器和 Node reservation 均已清理。当前每台 Docker 主机只接收一个 RLark Docker Task，纯 CPU Task 也遵循此约束。
 
+## 2026-10-31 云端 Raw 生命周期复测
+
+开发机从当前 autosave 镜像重启，该镜像继承此前获准的 `rlinf-dashboard:1.1` 替代环境。使用新的 ContainerNode UID、credential 以及 PID namespace/start-time 实例身份重新登记，将 commit `4b8258c` 的 package 放入新的私有安装/状态目录。由于开发机没有公网 IP，重新建立了临时 SSH 反向隧道；这只是运维测试路径，不是生产入口。开发机仍位于 `regular-training`，报告一张 H100/授权 GPU UUID、20 CPU、236 GiB，且没有 Docker socket。保留了已保存环境，没有重置基础镜像或安装依赖。
+
+使用预置 `/root/RLinf/.venv-pi05/bin/python-rlark`（Python 3.11.11、PyTorch 2.11.0+cu126、Ray 2.56.1、RLinf 源码）运行 `TestCloudRawLifecycle`，165.10 秒内全部通过：
+
+1. CUDA 张量计算返回 `42.0`，Job 成功。
+2. 独立的第二个 Job 复用已释放 GPU 并成功。
+3. 进程以 exit code 7 退出，Job 正确失败且释放 allocation。
+4. 运行中进程被 suspend，Job 停止并完成清理。
+
+最终节点心跳新鲜，`Ready=True`、`Schedulable=True`，容量为 `20000m` CPU / `253403070464` 字节内存 / 1 GPU，且没有遗留 allocation、Task、ContainerJob 或 AgentUpgrade。这证明重启后的单节点、单进程 Raw 路径仍可用；不证明 Docker Engine 接入、多节点 Ray/RLinf 屏障、checkpoint 保留或生产入口。
+
 ## 已完成增量：控制台节点登记
 
 独立控制台现在提供显式启用的管理员 Raw 节点登记，复用接入操作及精确原生/companion

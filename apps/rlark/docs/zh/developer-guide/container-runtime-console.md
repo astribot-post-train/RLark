@@ -196,6 +196,12 @@ PID 1 启动证据发生变化；Python/PyTorch/Ray 和 CUDA `42.0` 仍可用。
 正常生命周期退役，随后创建新实例的精确注册和 package。这是人工运维恢复，
 与 Agent 二进制滚动升级是不同流程，不代表已实现自动恢复。
 
+随后将替换实例的 package 安装到独立私有目录，并恢复临时反向隧道。当前 Agent
+报告 `preview-4b8258c`、Ready、可调度和一张授权 GPU。真实
+`TestCloudRawLifecycle` 复测在 165.10 秒内通过成功、GPU 复用、exit code 7
+失败及暂停清理四项；测试 Task、binding 和 allocation 均正常删除。这仍是单节点
+Raw 验收，没有 Docker socket，也没有完成多节点 Ray/RLinf 验证。
+
 
 ## 有界 Raw 日志预览
 
