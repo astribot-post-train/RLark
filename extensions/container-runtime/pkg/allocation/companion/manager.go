@@ -18,6 +18,7 @@ import (
 	ext "github.com/astribot-post-train/rlark/extensions/container-runtime/api/v1alpha1"
 	"github.com/astribot-post-train/rlark/extensions/container-runtime/pkg/artifact"
 	"github.com/astribot-post-train/rlark/extensions/container-runtime/pkg/ownership"
+	raydocker "github.com/astribot-post-train/rlark/extensions/container-runtime/pkg/workload/ray/docker"
 	native "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
 	nativejob "github.com/rlinf/rlark/apps/rlark/pkg/controllermanager/job"
 	"github.com/rlinf/rlark/apps/rlark/pkg/tenant"
@@ -77,16 +78,22 @@ func (m Manager) timeout() time.Duration {
 // before dispatch. Repeating an uncertain successful Create recovers exactly the
 // same reservation; a different Task or object incarnation cannot adopt it.
 func (m Manager) Acquire(ctx context.Context, req Request) (*ext.ContainerAllocation, error) {
-	return m.acquire(ctx, req, false)
+	return m.acquire(ctx, req, false, false)
+}
+
+// Plan validates an eligible target without pinning metadata or creating a lock.
+// A group planner must persist the complete plan and revalidate with Acquire.
+func (m Manager) Plan(ctx context.Context, req Request) (*ext.ContainerAllocation, error) {
+	return m.acquire(ctx, req, false, true)
 }
 
 // ValidateExisting revalidates an exact lock without creating an allocation or
 // repairing Task metadata. The dispatch API must never become an allocator.
 func (m Manager) ValidateExisting(ctx context.Context, req Request) (*ext.ContainerAllocation, error) {
-	return m.acquire(ctx, req, true)
+	return m.acquire(ctx, req, true, false)
 }
 
-func (m Manager) acquire(ctx context.Context, req Request, existingOnly bool) (*ext.ContainerAllocation, error) {
+func (m Manager) acquire(ctx context.Context, req Request, existingOnly, planning bool) (*ext.ContainerAllocation, error) {
 	if m.Client == nil || m.timeout() <= 0 {
 		return nil, errors.New("uncached client and positive heartbeat timeout required")
 	}
@@ -162,12 +169,34 @@ func (m Manager) acquire(ctx context.Context, req Request, existingOnly bool) (*
 	}
 	wanted := &ext.ContainerAllocation{ObjectMeta: metav1.ObjectMeta{Name: Name(string(nativeNode.UID)), Namespace: node.Namespace, Finalizers: []string{Finalizer}}, Spec: ext.ContainerAllocationSpec{Cluster: reference(&cluster), Job: reference(&job), Task: reference(&task), Node: reference(&nativeNode), TenantID: binding.Spec.TenantID, Generation: task.Generation, JobGeneration: job.Generation, ExecutionID: string(task.UID), NodeInstanceID: node.Spec.InstanceID, PrivateAddress: node.Spec.PrivateAddress, NetworkScope: node.Spec.NetworkScope, NodeRecordUID: string(node.UID), JobBindingUID: string(binding.UID), GPUUUIDs: slices.Clone(node.Spec.AuthorizedGPUUUIDs)}}
 	sort.Strings(wanted.Spec.GPUUUIDs)
+	if raydocker.IsJob(&job) && !planning {
+		g := binding.Status.Group
+		if g == nil || g.Phase != "Allocating" && g.Phase != "Preparing" && g.Phase != "Starting" || !raydocker.MatchesTask(&job, binding.Namespace, &task) || g.Plan.JobGeneration != job.Generation || g.Plan.Restart != job.Annotations[nativejob.RestartedAtAnnotation] || g.Plan.Binding != reference(&binding) {
+			return nil, ErrIdentity
+		}
+		index := -1
+		for i, member := range g.Plan.Members {
+			if member.Task == reference(&task) {
+				index = i
+			}
+		}
+		if index < 0 {
+			return nil, ErrIdentity
+		}
+		wanted.Spec.Group = &ext.AllocationGroup{ID: g.ID, Digest: g.Digest, MemberIndex: int32(index), Plan: *g.Plan.DeepCopy()}
+		if !raydocker.AllocationMatches(wanted.Spec) || !slices.Contains(node.Status.Capabilities, raydocker.Capability) || node.Status.AgentCredentialID != g.Plan.Members[index].CredentialID {
+			return nil, ErrIdentity
+		}
+	}
 	tenant.Inherit(&job, wanted)
 	wanted.OwnerReferences = []metav1.OwnerReference{*metav1.NewControllerRef(&task, native.GroupVersion.WithKind("Task"))}
 	var current ext.ContainerAllocation
 	key := client.ObjectKeyFromObject(wanted)
 	err = m.Client.Get(ctx, key, &current)
 	if err == nil {
+		if planning {
+			return nil, ErrUnavailable
+		}
 		matched, err := sameReservation(&current, wanted)
 		if err != nil {
 			return nil, err
@@ -265,6 +294,9 @@ func (m Manager) acquire(ctx context.Context, req Request, existingOnly bool) (*
 		if other.Spec.Node == node.Spec.Node {
 			return nil, ErrIdentity
 		}
+		if node.Spec.Runtime == "Docker" && other.Spec.Runtime == "Docker" && other.Spec.InstanceID == node.Spec.InstanceID {
+			return nil, ErrIdentity
+		}
 		if other.Spec.NetworkScope == node.Spec.NetworkScope && other.Spec.PrivateAddress == node.Spec.PrivateAddress {
 			return nil, ErrIdentity
 		}
@@ -273,6 +305,9 @@ func (m Manager) acquire(ctx context.Context, req Request, existingOnly bool) (*
 				return nil, ErrIdentity
 			}
 		}
+	}
+	if planning {
+		return wanted, nil
 	}
 	if err := m.pinTarget(ctx, &task, wanted.Spec); err != nil {
 		return nil, err

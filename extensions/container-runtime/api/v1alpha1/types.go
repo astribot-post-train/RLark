@@ -119,7 +119,7 @@ type ContainerNodeList struct {
 }
 
 // +kubebuilder:validation:XValidation:rule="self == oldSelf",message="allocation identity is immutable"
-// +kubebuilder:validation:XValidation:rule="has(self.upgrade) ? (!has(self.job) && !has(self.task) && !has(self.executionID) && !has(self.jobBindingUID) && !has(self.generation) && !has(self.jobGeneration)) : (has(self.job) && has(self.task) && has(self.executionID) && has(self.jobBindingUID) && has(self.generation) && has(self.jobGeneration))",message="allocation must identify either an upgrade operation or a workload Task"
+// +kubebuilder:validation:XValidation:rule="has(self.upgrade) ? (!has(self.job) && !has(self.task) && !has(self.executionID) && !has(self.jobBindingUID) && !has(self.generation) && !has(self.jobGeneration) && !has(self.group)) : (has(self.job) && has(self.task) && has(self.executionID) && has(self.jobBindingUID) && has(self.generation) && has(self.jobGeneration))",message="allocation must identify either an upgrade operation or a workload Task"
 type ContainerAllocationSpec struct {
 	Cluster NativeObjectReference `json:"cluster"`
 	// Upgrade is absent for legacy and canonical workload allocations.
@@ -139,6 +139,65 @@ type ContainerAllocationSpec struct {
 	NodeRecordUID  string                `json:"nodeRecordUID"`
 	JobBindingUID  string                `json:"jobBindingUID,omitempty"`
 	GPUUUIDs       []string              `json:"gpuUUIDs,omitempty"`
+	// Group is immutable execution material for a Docker Ray gang. It is absent
+	// for single-container and Raw allocations. The controller owns this field;
+	// Agents only consume it after the exact Task and allocation identities pass
+	// authorization.
+	Group *AllocationGroup `json:"group,omitempty"`
+}
+
+// AllocationGroup binds one member to a durable, ordered Ray execution. The
+// member list is repeated in every allocation so a lost response can be
+// recovered without relying on controller memory.
+type AllocationGroup struct {
+	// +kubebuilder:validation:Pattern="^[a-f0-9]{64}$"
+	ID string `json:"id"`
+	// +kubebuilder:validation:Pattern="^[a-f0-9]{64}$"
+	Digest string `json:"digest"`
+	// +kubebuilder:validation:Minimum=0
+	MemberIndex int32        `json:"memberIndex"`
+	Plan        RayGroupPlan `json:"plan"`
+}
+
+// GroupMember is the trusted placement and rank for one group member.
+type GroupMember struct {
+	Task NativeObjectReference `json:"task"`
+	// +kubebuilder:validation:Minimum=1
+	Generation   int64                 `json:"generation"`
+	Node         NativeObjectReference `json:"node"`
+	NodeRecord   NativeObjectReference `json:"nodeRecord"`
+	InstanceID   string                `json:"instanceID"`
+	CredentialID string                `json:"credentialID"`
+	PrivateAddr  string                `json:"privateAddress"`
+	// +kubebuilder:validation:Minimum=0
+	Rank int32 `json:"rank"`
+	// +listType=set
+	GPUUUIDs []string `json:"gpuUUIDs,omitempty"`
+}
+
+// RayGroupPlan is the controller-owned complete placement decision. It is
+// persisted before any member allocation is exposed; ID/digest are recomputed
+// at every authorization boundary. Index zero is the only head.
+type RayGroupPlan struct {
+	Binding NativeObjectReference `json:"binding"`
+	Job     NativeObjectReference `json:"job"`
+	// +kubebuilder:validation:Minimum=1
+	JobGeneration int64                 `json:"jobGeneration"`
+	Restart       string                `json:"restart,omitempty"`
+	Cluster       NativeObjectReference `json:"cluster"`
+	TenantID      string                `json:"tenantID"`
+	NetworkScope  string                `json:"networkScope"`
+	Members       []GroupMember         `json:"members"`
+	Ports         RayPortPlan           `json:"ports"`
+}
+
+// RayPortPlan is an immutable host port block shared by all group members.
+type RayPortPlan struct {
+	// +kubebuilder:validation:Minimum=1024
+	// +kubebuilder:validation:Maximum=65535
+	Base int32 `json:"base"`
+	// +kubebuilder:validation:Minimum=1
+	WorkerCount int32 `json:"workerCount"`
 }
 
 // UpgradeAllocation pins a shared node lock to one exact upgrade operation.
@@ -153,6 +212,23 @@ type ContainerAllocationStatus struct {
 	Phase              string             `json:"phase,omitempty"`
 	CleanupConfirmed   bool               `json:"cleanupConfirmed,omitempty"`
 	Conditions         []metav1.Condition `json:"conditions,omitempty"`
+	// Prepared is written only by the certificate-bound owning Agent. It proves
+	// a journalled stopped container; it is never itself a start grant.
+	Prepared *ContainerPreparedReceipt `json:"prepared,omitempty"`
+}
+
+// ContainerPreparedReceipt pins the local creation journal to one allocation
+// and group manifest without publishing workload configuration.
+type ContainerPreparedReceipt struct {
+	GroupID       string `json:"groupID"`
+	GroupDigest   string `json:"groupDigest"`
+	AllocationUID string `json:"allocationUID"`
+	TaskUID       string `json:"taskUID"`
+	Generation    int64  `json:"generation"`
+	EngineID      string `json:"engineID"`
+	ContainerID   string `json:"containerID"`
+	// +kubebuilder:validation:Pattern="^[a-f0-9]{64}$"
+	ManifestDigest string `json:"manifestDigest"`
 }
 
 // +kubebuilder:object:root=true
@@ -185,6 +261,23 @@ type ContainerJobStatus struct {
 	ObservedGeneration int64              `json:"observedGeneration,omitempty"`
 	Phase              string             `json:"phase,omitempty"`
 	Conditions         []metav1.Condition `json:"conditions,omitempty"`
+	Group              *JobGroupStatus    `json:"group,omitempty"`
+}
+
+// JobGroupStatus reports durable group barriers without embedding logs or
+// unbounded member history.
+type JobGroupStatus struct {
+	ID     string       `json:"id"`
+	Digest string       `json:"digest"`
+	Plan   RayGroupPlan `json:"plan"`
+	// +kubebuilder:validation:Enum=Allocating;Preparing;Starting;Stopping;Succeeded;Failed
+	Phase string `json:"phase"`
+	// Result is retained before cleanup fan-out, including partial reservations.
+	// +kubebuilder:validation:Enum=Succeeded;Failed
+	Result     string             `json:"result,omitempty"`
+	Reason     string             `json:"reason,omitempty"`
+	StartedAt  metav1.Time        `json:"startedAt"`
+	Conditions []metav1.Condition `json:"conditions,omitempty"`
 }
 
 // +kubebuilder:object:root=true

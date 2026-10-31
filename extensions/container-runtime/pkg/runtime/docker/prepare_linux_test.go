@@ -212,3 +212,37 @@ func TestRealSocketPreflightDetectsForeignIPv4AndIPv6AndHonorsCancellation(t *te
 		})
 	}
 }
+
+func TestStartPreparedRequiresExactReceiptAndSeparateGrant(t *testing.T) {
+	p, e, req, _ := scopedFixture(t)
+	ctx := context.Background()
+	if _, err := p.StartPrepared(ctx, req); err == nil {
+		t.Fatal("start without independent grant accepted")
+	}
+	p.StartAdmission = admissionFunc(func(context.Context, rt.TaskIdentity) error { return nil })
+	if _, err := p.StartPrepared(ctx, req); err == nil || e.creates != 0 {
+		t.Fatal("start created unprepared container")
+	}
+	result, err := p.Prepare(ctx, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Current = &result.Ref
+	p.StartAdmission = admissionFunc(func(context.Context, rt.TaskIdentity) error { return errors.New("group revoked") })
+	if _, err := p.StartPrepared(ctx, req); err == nil || e.starts != 0 {
+		t.Fatal("create grant authorized start")
+	}
+	p.StartAdmission = admissionFunc(func(context.Context, rt.TaskIdentity) error { return nil })
+	wrong := *req.Current
+	wrong.ID = "replaced"
+	wrong.UID = wrong.ID
+	req.Current = &wrong
+	if _, err := p.StartPrepared(ctx, req); err == nil || e.starts != 0 {
+		t.Fatal("foreign receipt accepted")
+	}
+	req.Current = &result.Ref
+	e.current = nil
+	if _, err := p.StartPrepared(ctx, req); err == nil || e.creates != 1 {
+		t.Fatal("missing prepared container recreated")
+	}
+}

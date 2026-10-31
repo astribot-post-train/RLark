@@ -75,7 +75,7 @@ ContainerJob binding, replacing tenant, Cluster UID, namespace and prepared
 environment before unsuspending the Job. The independent console's Job submit
 form continues to accept Raw only.
 
-The controller creates one Task and an exclusive whole-host ContainerAllocation,
+For plain container Jobs, the controller creates one Task and an exclusive whole-host ContainerAllocation,
 then pins the canonical Task target annotation. It does not write legacy
 DockerBinding or count-based GPU reservations. The Job must contain exactly one
 `docker.rlark.io/container` v1 template/carrier. Explicit image, entrypoint,
@@ -196,18 +196,64 @@ multiplex decoding, absent/zero/overflow counters, exact-ID SDK reads, credentia
 and capability revocation, transient broker restart/retry, and cleanup while a
 response body is stalled.
 
-GPU utilization, port reservations, Ray/RLinf group barriers,
-Docker rolling upgrades, and real GPU-host lifecycle acceptance remain separate
-work. Host networking alone does not establish a multi-host Ray contract. See
+GPU utilization, kernel-level port reservation, Docker rolling upgrades and real
+GPU-host lifecycle acceptance remain separate work. Docker Ray group barriers are
+implemented as preview; Raw Ray orchestration remains unsupported. See
 [Docker execution plan](docker-runtime-execution-plan.md) for the ordered gates.
 
 
-## Ray runtime foundation scope
+## Docker Ray group preview
 
-The extension contains a tested internal Ray 2.56.1 compiler/launcher and
-create-without-start provider primitive. They do **not** enable group dispatch:
-the scoped Agent still installs only the single-container adapter. `rayPorts`
-and resolved membership/GPU fields are internal allocation material and are
-rejected in public container Task input. See the [Ray implementation contract](docker-runtime-execution-plan.md)
-for the port block, prepare/start barriers, required image, failure/recovery tests
-and remaining real-host acceptance. No new operator flag enables partial groups.
+Install the regenerated ContainerJob/ContainerAllocation CRDs before upgrading
+controller, API and execution Agents together. The existing controller reservation,
+API execution and Agent execution flags enable this preview; observation-only
+Agents never advertise `docker-ray-group-v1`. The console submission form remains
+Raw-only. Administrators submit a suspended native Job and exact-UID ContainerJob
+binding with runtime Docker, using `rlinf.io/ray` v1 workload templates and the
+`docker.rlark.io/container` v1 carrier. See the paired
+[execution contract](docker-runtime-execution-plan.md) and the example manifests.
+
+A group has exactly one head and up to 16 total replicas. Every member requires a
+distinct host with fresh authenticated observations, a matching prepared environment,
+the same private network scope, and its complete authorized exclusive GPU set.
+Only host networking is supported. Images require Python 3, Ray **2.56.1**, a POSIX
+shell and the declared training dependencies. Agents do not install dependencies.
+One host supports one RLark member at a time; separate Jobs can use disjoint hosts
+in the same Cluster. Raw process Jobs do not gain a Ray barrier from this feature.
+
+The controller owns `ContainerJob.status.group`: immutable run identity, exact
+Task/node/Engine/credential/member plan and digest plus phases `Allocating`,
+`Preparing`, `Starting`, `Stopping`, `Succeeded` and `Failed`. It computes a complete
+placement before taking locks. Allocation creates are individually atomic; a
+conflict cancels the attempt and requires cleanup of exposed allocations. There
+is no cross-object transaction, fairness or preemption guarantee. Unknown create
+responses retry the same identity and host. The API alone owns exact prepared
+receipts in allocation Status; the Agent's private journal records the local
+container identity before sending a receipt.
+
+The mTLS Task protocol adds `prepared` and `authorize-start`. All members must have
+matching receipts before the controller enters `Starting`; every container start
+then rechecks the current entire group. `StartPrepared` starts only the exact
+journalled container ID, never replacing a missing prepared instance. This is a
+coordinated barrier, not atomic simultaneous startup. Container Running is distinct
+from Ray readiness: the in-container launcher verifies the exact GCS address set
+before running head training. The initial container-start deadline is ten minutes;
+the launcher allows 120 seconds for Ray membership. Any spontaneous worker exit,
+including exit code zero, fails the group. Head success stops workers and waits for
+all exact cleanup proofs and observed allocation deletion before reporting success.
+Suspension, deletion or restart fences starts and retires the entire old set.
+Terminal identities remain retained so reconciliation cannot silently rerun them.
+
+The current controller-selected block is TCP **24000..24264**: nine service ports
+and 256 worker ports, persisted in all immutable allocations. `rayPorts`, resolved
+addresses, ranks and GPU UUIDs are internal material; public container Task input
+cannot set them. Local IPv4/IPv6 preflight rejects foreign listeners before create
+and start, but releases its sockets before Docker starts; it is not a kernel
+reservation. Administrators must reserve the block operationally and configure
+additional NCCL/training traffic separately.
+
+Tests exercise real mTLS with simulated Engines: full/partial preparation, two
+competing Jobs, worker exit, head completion, suspend/restart, lost allocation
+responses, credential/generation/digest/receipt changes and cleanup fencing. Real
+two-host Docker GPU/RLinf validation is still required. The Kingsoft Cloud notebook
+has no Docker socket and only establishes the separately documented Raw acceptance.

@@ -13,6 +13,7 @@ import (
 	"github.com/astribot-post-train/rlark/extensions/container-runtime/pkg/allocation/companion"
 	"github.com/astribot-post-train/rlark/extensions/container-runtime/pkg/scheduler"
 	"github.com/astribot-post-train/rlark/extensions/container-runtime/pkg/taskcontract"
+	raydocker "github.com/astribot-post-train/rlark/extensions/container-runtime/pkg/workload/ray/docker"
 	native "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
 	"github.com/rlinf/rlark/apps/rlark/pkg/agent/execution/host"
 	nativejob "github.com/rlinf/rlark/apps/rlark/pkg/controllermanager/job"
@@ -108,6 +109,12 @@ func processTemplate(job *native.Job, binding *ext.ContainerJob) error {
 	if binding.Spec.Runtime != "Raw" && binding.Spec.Runtime != "Docker" {
 		return invalidBinding("only Raw process templates are supported")
 	}
+	if binding.Spec.Runtime == "Docker" && raydocker.IsJob(job) {
+		if _, err := raydocker.Expand(job); err != nil {
+			return invalidBinding("invalid Docker Ray group: " + err.Error())
+		}
+		return nil
+	}
 	if err := taskcontract.ValidateJob(job); err != nil {
 		return invalidBinding("invalid Raw process templates")
 	}
@@ -115,6 +122,13 @@ func processTemplate(job *native.Job, binding *ext.ContainerJob) error {
 }
 
 func desiredTasks(job *native.Job, binding *ext.ContainerJob) []*native.Task {
+	if binding.Spec.Runtime == "Docker" && raydocker.IsJob(job) {
+		members, err := raydocker.Expand(job)
+		if err != nil {
+			return nil
+		}
+		return raydocker.Tasks(job, binding.Namespace, members)
+	}
 	result := make([]*native.Task, 0, len(job.Spec.Tasks))
 	for i := range job.Spec.Tasks {
 		template := &job.Spec.Tasks[i]
@@ -444,6 +458,15 @@ func (r JobReservationReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 				return ctrl.Result{}, err
 			}
 		}
+		if binding != nil && binding.Status.Group != nil {
+			g := binding.Status.Group.DeepCopy()
+			if g.Phase != "Stopping" && g.Phase != "Succeeded" && g.Phase != "Failed" {
+				return r.failRay(ctx, binding, g, "GroupRetired")
+			}
+			if g.Phase == "Stopping" {
+				return r.cleanupRay(ctx, &job, binding, g, children)
+			}
+		}
 		// Request stop for every member before waiting on the first cleanup.
 		// This is recoverable fan-out, not ordered by a volatile event queue.
 		allDone := true
@@ -462,6 +485,12 @@ func (r JobReservationReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		return ctrl.Result{RequeueAfter: time.Millisecond}, nil
 	}
 	if retirement != nil && retirement.Status == metav1.ConditionTrue {
+		if binding != nil && binding.Status.Group != nil {
+			if err := r.writeGroup(ctx, binding, nil); err != nil {
+				return ctrl.Result{}, err
+			}
+			return ctrl.Result{RequeueAfter: time.Millisecond}, nil
+		}
 		before := job.DeepCopy()
 		condition(&job.Status.Conditions, job.Generation, jobTaskSetRetiringCondition, false, "PreviousTasksAbsent", "All previous Task identities are absent")
 		return ctrl.Result{RequeueAfter: time.Millisecond}, r.Client.Status().Patch(ctx, &job, client.MergeFromWithOptions(before, client.MergeFromWithOptimisticLock{}))
@@ -510,6 +539,9 @@ func (r JobReservationReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	}
 	if len(children) != len(desired) {
 		return ctrl.Result{}, invalidBinding("ambiguous owned Tasks")
+	}
+	if raydocker.IsJob(&job) {
+		return r.reconcileRay(ctx, &job, binding, children)
 	}
 	if len(children) > 1 {
 		return r.reconcileProcesses(ctx, &job, binding, children)

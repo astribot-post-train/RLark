@@ -24,16 +24,23 @@ ContainerAllocation。Agent 只通过 mTLS 接收与 allocation 绑定的 Task �
 
 ## Task 与 Ray 派发
 
-现有控制器把 Job 展开为独立 Task。Docker 调度器复用每台主机的持久化独占锁，
-只选择 Docker 节点，并在 Agent 启动前写入规范的 Task target 注解和精确
-ContainerAllocation，不写旧版 DockerBinding。只有心跳新鲜、Engine ID 和 credential 匹配、目标 release
-可用且 allocation UID/Task UID 当前有效时才派发。
+控制器把 Job 展开为稳定 Task。普通 Docker Job 使用一个 Task 和一台主机的持久化
+独占锁；Docker Ray Job 为每个副本展开一个 Task（一个 head，最多 16 个成员），先
+计算完整落点再取得锁，并在 ContainerJob Status 持久化类型化整组计划。每个成员都有
+不可变 ContainerAllocation，携带同一组身份、摘要、network scope 和端口块。只选择
+Docker 节点，不写旧版 DockerBinding。
 
-Ray/RLinf 属于后续 gang 层。当前执行契约限定每个 Job 一个显式容器 Task，拒绝
-Ray 组、`rayPort`、用户 GPU 分配以及受保留的 `RLARK_*` 环境变量。后续 Ray 适配器
-必须在同一节点 allocation 中预留主机端口并拒绝冲突。多机 Ray Job 必须等待同一 Job generation 的所有成员
-报告当前私网地址后才能通过屏障；在屏障实现前，API 应拒绝 Ray 组派发，不能启动
-部分成员。
+只有心跳、Engine ID、credential、目标 release、租户、Job/Task generation 和精确
+allocation UID 均有效时才派发。组阶段为 `Allocating`、`Preparing`、`Starting`、
+`Stopping`、`Succeeded`、`Failed`。Agent 先创建停止状态容器并写精确回执；全部回执
+匹配前任何成员都不能启动。每次启动都会重新授权整组。准备容器消失后不能替换，
+该成员会使整组进入清理。容器 Running 不等于 Ray 就绪，内置 launcher 会在 head
+训练前验证精确私网地址集合。
+
+内部端口块为 TCP 24000..24264（9 个 Ray 服务端口和 256 个 worker 端口）。create/
+start 前检查 IPv4/IPv6 监听，但启动前释放检查 socket，因此不是内核级预留。NCCL/
+训练端口仍由管理员网络策略提供。一台主机独占一个 RLark 组成员，因此同一 Cluster
+中不同 Job 可在不重叠主机上并行。
 
 ## Agent 协议与所有权
 
@@ -67,7 +74,8 @@ socket 和节点 incarnation。目标 release 会阻止新分配；安装本身�
 3. 官方 SDK Unix socket 测试证明 Agent 连接本地 daemon。
 4. 真实私网 Docker GPU 主机需通过 image pull/create/start/inspect、logs/stats、
    stop/remove 和重启恢复。当前金山云 Raw 测试机没有 Docker socket，不能替代该门槛。
-5. 多机 Ray/RLinf、gang 屏障、端口预留和滚动升级在单 Task 生命周期稳定后单独验收。
+5. 真实双机 Docker GPU/RLinf、整组失败/恢复、端口块和滚动升级在预览组生命周期
+   稳定后单独验收。
 
 ## 本地主机取消屏障
 
@@ -77,14 +85,14 @@ stop/remove，开始清理前先 fsync 持久化取消记录。
 allocation 释放删除；记录损坏、丢失或目录权限变化时停止执行并由管理员恢复。整个
 目录丢失要求先隔离并退役旧节点，不能为旧凭据重新创建空 journal。
 首个 carrier 使用 `docker.rlark.io/container` v1 的显式参数，拒绝用户设置
-GPU UUID、受保留的所有权 labels、Pod 模板及未支持的 Ray 组；allocation 独立
-注入 GPU UUID，Docker 使用 NVIDIA DeviceIDs。
+GPU UUID、受保留的所有权 labels、Pod 模板及未支持的 Raw Ray 字段；Docker Ray
+整组契约单独携带内部组材料，allocation 独立注入 GPU UUID，Docker 使用 NVIDIA DeviceIDs。
 
-## 实施顺序
+## 交付顺序与剩余验收
 
 1. 把 Docker admission 接入 scoped Agent Task loop，并增加 provider 生命周期/状态测试。
 2. 增加精确 Docker logs/stats API action 和有界控制台路由。
-3. 增加调度端口预留，并拒绝不完整 Ray 组。
+3. 增加调度端口材料并拒绝不完整 Ray 组。整组屏障已在扩展实现；真实主机端口/GPU 验收仍未完成。
 4. 增加 Docker Agent release 滚动选择和真实主机验收测试。
 5. 增加 Docker 集群管理 UI，展示 runtime、Engine 身份、节点库存、占用、能力、
    heartbeat、rollout 和阻塞原因。
@@ -100,8 +108,8 @@ claim/status、精确 GPU UUID 注入、私有 journal/索引与取消屏障、r
 
 测试覆盖模拟 daemon 故障/恢复、并发取消、跨进程锁争抢、记录丢失检测、官方 SDK
 Unix socket，以及 mTLS 下的成功/失败/暂停和精确分配清理。它们不代表真实 Docker
-GPU 验收。有界 Docker 诊断已实现为单独显式启用的预览；端口/gang 编排、滚动升级和控制台
-Docker Job 提交仍为后续步骤。已有 Raw 测试及云验收范围保持原有含义。
+GPU 验收。有界 Docker 诊断和 Docker Ray 端口/整组编排已作为显式启用的预览实现；
+滚动升级和控制台 Docker Job 提交仍为后续步骤。已有 Raw 测试及云验收范围保持原有含义。
 
 ## 有界诊断契约
 
@@ -138,10 +146,9 @@ Status 或持久化指标。控制台提供手动读取，转义显示输出，�
 
 ## Ray/RLinf 实施契约（2026-10-31）
 
-本节是后续实施计划，**不代表已开启 Ray 调度**。只有以下整组准入、故障和恢复
-验收全部通过后，scoped Agent 才会安装 Ray 适配器；当前仍只安装单容器适配器。
-不能直接启用旧的非 scoped Ray 适配器来绕过屏障。改动保留在独立扩展内，
-不修改原生 Cluster/Node/Job/Task API。
+本节描述需显式开启的 Docker Ray 整组预览。scoped Agent 仅在 Docker 执行开启时
+声明整组能力；只观测 Agent 不能派发。真实双机 Docker GPU/RLinf 验收仍是独立
+门槛。改动保留在独立扩展内，不修改原生 Cluster/Node/Job/Task API。
 
 ### 端口与主机所有权
 
@@ -243,8 +250,8 @@ command 互斥、仅 head 运行训练，绝不继承镜像默认 entrypoint/com
 
 九个连续服务端口和 worker 范围写入不可变 manifest 的 `rayPorts`，由扩展专用
 容器 label 保留，并受 journal digest 保护。公开单容器 Task 校验器拒绝该内部
-字段。当前没有扩展 allocation CRD、Agent 协议或公开 capability；operation
-固定的分配材料以及准备/启动回执仍是下一交付门槛。
+字段。整组 allocation、Agent 协议和 `docker-ray-group-v1` capability 已接通；公开
+单容器 Task 仍拒绝这些内部材料。
 
 `ScopedProvider.Prepare` 记录/恢复精确 created 容器而不启动。后续 `Apply` 在
 start 前重新检查端口和当前 admission。准备和清理共用取消 journal/锁；create
@@ -266,3 +273,13 @@ Docker PID namespace，不可当作宿主进程后端。
 与清理，不代表真实 Ray 集群/GPU 验收。另在隔离 Python 环境核对了 Ray 2.56.1
 CLI help 与全部生成参数。普通 Go 测试在有 `python3` 时调用进程套件，无解释器
 时显式跳过该套件。其他 Ray 版本与真实多机训练仍未验收。
+
+
+### 已实现：持久化 Ray 整组契约
+
+扩展现在在 `ContainerJob.status.group` 持久化类型化整组快照，并在
+`ContainerAllocation.spec.group` 保存不可变成员材料。快照绑定 binding、Job UID/
+generation/重启标记、有序 Task UID/generation、节点/Engine/credential 身份、租户、
+私网作用域和一个端口计划。创建子对象前会严格校验完整 Job。摘要只覆盖不可变
+执行材料，可变观测保留在 Status 条件中。准备/启动准入、失败清理扇出和重启恢复已
+通过限定 mTLS 协议接通。该功能仍是预览；真实双机 Docker GPU/RLinf 验收门槛尚未完成。

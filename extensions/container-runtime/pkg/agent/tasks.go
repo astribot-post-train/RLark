@@ -12,6 +12,7 @@ import (
 	"github.com/astribot-post-train/rlark/extensions/container-runtime/pkg/allocation/companion"
 	"github.com/astribot-post-train/rlark/extensions/container-runtime/pkg/ownership"
 	"github.com/astribot-post-train/rlark/extensions/container-runtime/pkg/taskcontract"
+	ray "github.com/astribot-post-train/rlark/extensions/container-runtime/pkg/workload/ray/docker"
 	jsonpatch "github.com/evanphx/json-patch/v5"
 	native "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
 	"github.com/rlinf/rlark/apps/rlark/pkg/agent/execution/host"
@@ -31,17 +32,19 @@ import (
 type Assignment struct {
 	Allocation ext.ContainerAllocation `json:"allocation"`
 	Task       native.Task             `json:"task"`
+	GroupPhase string                  `json:"groupPhase,omitempty"`
 }
 
 // TaskRequest is the versioned node-scoped protocol. The certificate supplies
 // identity; no action accepts an arbitrary Kubernetes resource or namespace.
 type TaskRequest struct {
-	Action          string                    `json:"action"`
-	Allocation      ext.NativeObjectReference `json:"allocation,omitempty"`
-	TaskUID         string                    `json:"taskUID,omitempty"`
-	ResourceVersion string                    `json:"resourceVersion,omitempty"`
-	Patch           json.RawMessage           `json:"patch,omitempty"`
-	Status          *host.StatusIntent        `json:"status,omitempty"`
+	Action          string                        `json:"action"`
+	Allocation      ext.NativeObjectReference     `json:"allocation,omitempty"`
+	TaskUID         string                        `json:"taskUID,omitempty"`
+	ResourceVersion string                        `json:"resourceVersion,omitempty"`
+	Patch           json.RawMessage               `json:"patch,omitempty"`
+	Status          *host.StatusIntent            `json:"status,omitempty"`
+	Prepared        *ext.ContainerPreparedReceipt `json:"prepared,omitempty"`
 }
 
 // TaskService mediates native Host access with current, uncached state. It
@@ -117,7 +120,24 @@ func (s TaskService) assignment(ctx context.Context, id Identity) (*Assignment, 
 	if claimant != "" && claimant != n.Namespace+"/"+string(n.Spec.Runtime)+"/"+n.Spec.Node.UID {
 		return nil, ErrIdentity
 	}
-	return &Assignment{Allocation: a, Task: task}, nil
+	result := &Assignment{Allocation: a, Task: task}
+	if a.Spec.Group != nil {
+		if !ray.AllocationMatches(a.Spec) {
+			return nil, ErrIdentity
+		}
+		binding, err := s.groupBinding(ctx, &a)
+		if err != nil {
+			if apierrors.IsNotFound(err) || errors.Is(err, ErrIdentity) {
+				// A missing/replaced binding can revoke starts, but it cannot
+				// prevent the exact retained allocation owner from cleaning up.
+				result.GroupPhase = "Stopping"
+				return result, nil
+			}
+			return nil, err
+		}
+		result.GroupPhase = binding.Status.Group.Phase
+	}
+	return result, nil
 }
 
 func sameGPUSet(a, b []string) bool {
@@ -147,7 +167,11 @@ func (s TaskService) authorize(ctx context.Context, id Identity, a *Assignment) 
 		if n.Spec.Runtime != "Docker" || !slices.Contains(n.Status.Capabilities, DockerExecutionCapability) {
 			return ErrCapability
 		}
-		if _, err := (dockerEligibility{task: a.Task, allocation: a.Allocation}).decode(t); err != nil {
+		if a.Allocation.Spec.Group != nil {
+			if !slices.Contains(n.Status.Capabilities, ray.Capability) {
+				return ErrCapability
+			}
+		} else if _, err := (dockerEligibility{task: a.Task, allocation: a.Allocation}).decode(t); err != nil {
 			return err
 		}
 	} else if n.Spec.Runtime != "Raw" {
@@ -159,7 +183,7 @@ func (s TaskService) authorize(ctx context.Context, id Identity, a *Assignment) 
 	if err := r.Client.Get(ctx, client.ObjectKey{Namespace: a.Allocation.Spec.Job.Namespace, Name: a.Allocation.Spec.Job.Name}, &job); err != nil {
 		return err
 	}
-	if objectRef(&job) != a.Allocation.Spec.Job || taskcontract.ValidateJob(&job) != nil {
+	if objectRef(&job) != a.Allocation.Spec.Job || !ray.IsJob(&job) && taskcontract.ValidateJob(&job) != nil {
 		return ErrIdentity
 	}
 	if meta.IsStatusConditionTrue(job.Status.Conditions, taskcontract.TaskSetRetiringCondition) {
@@ -176,7 +200,14 @@ func (s TaskService) authorize(ctx context.Context, id Identity, a *Assignment) 
 	}
 	desired := template.TaskSpec.DeepCopy()
 	desired.Tags = append(slices.Clone(job.Spec.Tags), desired.Tags...)
-	if template.Head || template.Suspended || t.Name != utils.ChildName(job.Name, template.Name) || !taskcontract.EqualSpec(t.Spec, *desired) || t.Spec.DownstreamName != "" || t.Annotations[utils.ParentUIDAnnotation] != string(job.UID) || t.Annotations[utils.ChildTemplateAnnotation] != template.Name || t.Annotations[nativejob.RestartedAtAnnotation] != job.Annotations[nativejob.RestartedAtAnnotation] {
+	if a.Allocation.Spec.Group != nil {
+		if !ray.MatchesTask(&job, n.Namespace, t) {
+			return ErrIdentity
+		}
+		if err := s.authorizeGroup(ctx, a, false); err != nil {
+			return err
+		}
+	} else if template.Head || template.Suspended || t.Name != utils.ChildName(job.Name, template.Name) || !taskcontract.EqualSpec(t.Spec, *desired) || t.Spec.DownstreamName != "" || t.Annotations[utils.ParentUIDAnnotation] != string(job.UID) || t.Annotations[utils.ChildTemplateAnnotation] != template.Name || t.Annotations[nativejob.RestartedAtAnnotation] != job.Annotations[nativejob.RestartedAtAnnotation] {
 		return ErrIdentity
 	}
 	now := r.now()
@@ -237,7 +268,7 @@ func (s TaskService) Handle(ctx context.Context, id Identity, req TaskRequest) (
 		return nil, err
 	}
 	if req.Action == "assignment" {
-		if req.Allocation != (ext.NativeObjectReference{}) || req.TaskUID != "" || req.ResourceVersion != "" || len(req.Patch) != 0 || req.Status != nil {
+		if req.Allocation != (ext.NativeObjectReference{}) || req.TaskUID != "" || req.ResourceVersion != "" || len(req.Patch) != 0 || req.Status != nil || req.Prepared != nil {
 			return nil, ErrCapability
 		}
 		return a, nil
@@ -245,7 +276,7 @@ func (s TaskService) Handle(ctx context.Context, id Identity, req TaskRequest) (
 	if a == nil || req.Allocation != objectRef(&a.Allocation) || req.TaskUID != string(a.Task.UID) {
 		return nil, ErrIdentity
 	}
-	if req.Action != "claim" && len(req.Patch) != 0 || req.Action != "status" && req.Status != nil {
+	if req.Action != "claim" && len(req.Patch) != 0 || req.Action != "status" && req.Status != nil || req.Action != "prepared" && req.Prepared != nil {
 		return nil, ErrCapability
 	}
 	t := &a.Task
@@ -253,6 +284,26 @@ func (s TaskService) Handle(ctx context.Context, id Identity, req TaskRequest) (
 	case "get":
 	case "authorize":
 		if err := s.authorize(ctx, id, a); err != nil {
+			return nil, err
+		}
+	case "authorize-start":
+		if a.Allocation.Spec.Group == nil {
+			return nil, ErrCapability
+		}
+		if err := s.authorize(ctx, id, a); err != nil {
+			return nil, err
+		}
+		if err := s.authorizeGroup(ctx, a, true); err != nil {
+			return nil, err
+		}
+	case "prepared":
+		if req.Prepared == nil || a.Allocation.Spec.Group == nil || req.ResourceVersion == "" || req.ResourceVersion != t.ResourceVersion {
+			return nil, ErrCapability
+		}
+		if err := s.authorize(ctx, id, a); err != nil {
+			return nil, err
+		}
+		if err := s.prepared(ctx, a, req.Prepared); err != nil {
 			return nil, err
 		}
 	case "claim":
@@ -266,6 +317,11 @@ func (s TaskService) Handle(ctx context.Context, id Identity, req TaskRequest) (
 			return nil, err
 		}
 	case "status":
+		if a.Allocation.Spec.Group != nil {
+			if _, err := s.groupBinding(ctx, &a.Allocation); err != nil && a.GroupPhase != "Stopping" {
+				return nil, err
+			}
+		}
 		if t.Spec.Suspended || !t.DeletionTimestamp.IsZero() || t.Generation != a.Allocation.Spec.Generation || a.Allocation.Status.CleanupConfirmed {
 			return nil, ErrUnavailable
 		}
@@ -284,7 +340,8 @@ func (s TaskService) Handle(ctx context.Context, id Identity, req TaskRequest) (
 			return nil, err
 		}
 	case "cleanup":
-		if !t.Spec.Suspended && t.DeletionTimestamp.IsZero() && (!taskcontract.Completed(t) || t.Generation != a.Allocation.Spec.Generation) {
+		groupStopping := a.Allocation.Spec.Group != nil && (a.GroupPhase == "Stopping" || a.GroupPhase == "Succeeded" || a.GroupPhase == "Failed")
+		if !groupStopping && !t.Spec.Suspended && t.DeletionTimestamp.IsZero() && (!taskcontract.Completed(t) || t.Generation != a.Allocation.Spec.Generation) {
 			return nil, ErrUnavailable
 		}
 		if err := s.cleanup(ctx, a); err != nil {
