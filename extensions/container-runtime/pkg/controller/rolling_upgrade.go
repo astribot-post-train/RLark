@@ -71,8 +71,8 @@ func (r AgentRolloutReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	if !cc.DeletionTimestamp.IsZero() {
 		return ctrl.Result{}, nil
 	}
-	if cc.UID == "" || cc.Generation < 1 || cc.Spec.Runtime != "Raw" || cc.Spec.MaxUnavailable < 0 || cc.Spec.MaxUnavailable > 1 {
-		return r.report(ctx, &cc, false, "UnsupportedConfiguration", "Idle rollouts require a Raw Cluster and maxUnavailable of 0 (default one) or 1")
+	if cc.UID == "" || cc.Generation < 1 || cc.Spec.Runtime != "Raw" && cc.Spec.Runtime != "Docker" || cc.Spec.MaxUnavailable < 0 || cc.Spec.MaxUnavailable > 1 {
+		return r.report(ctx, &cc, false, "UnsupportedConfiguration", "Idle rollouts require a Raw or Docker Cluster and maxUnavailable of 0 (default one) or 1")
 	}
 	if err := (ContainerClusterReconciler{Client: r.Client}).validateCluster(ctx, &cc); err != nil {
 		if errors.Is(err, errInvalidBinding) || apierrors.IsNotFound(err) {
@@ -195,7 +195,7 @@ func (r AgentRolloutReconciler) selectNode(ctx context.Context, cc *ext.Containe
 			return nil, false, invalidBinding("foreign Cluster reference in authoritative namespace")
 		}
 		count++
-		if n.UID == "" || n.Spec.Runtime != "Raw" || !n.DeletionTimestamp.IsZero() || tenant.IDOf(n) != tenant.IDOf(cc) {
+		if n.UID == "" || n.Spec.Runtime != cc.Spec.Runtime || n.Spec.Runtime != "Raw" && n.Spec.Runtime != "Docker" || !n.DeletionTimestamp.IsZero() || tenant.IDOf(n) != tenant.IDOf(cc) {
 			return nil, false, errInvalidBinding
 		}
 		err := (ContainerNodeReconciler{Client: r.Client}).validateNode(ctx, n)

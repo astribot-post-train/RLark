@@ -42,8 +42,8 @@ func (c Config) Validate() error {
 			return errors.New("raw mode requires a supervisor socket and does not accept docker-host")
 		}
 	case "docker":
-		if c.SupervisorSocket != "" || c.EnableLogReads || c.EnableUpgrades || c.InstallPath != "" || c.UpgradeStateDirectory != "" {
-			return errors.New("docker mode does not support Raw supervisor, Raw log flag or upgrades")
+		if c.SupervisorSocket != "" || c.EnableLogReads {
+			return errors.New("docker mode does not support Raw supervisor or Raw log flag")
 		}
 		if c.EnableExecution && (!filepath.IsAbs(c.StateDirectory) || filepath.Clean(c.StateDirectory) != c.StateDirectory || c.StateDirectory == "/") {
 			return errors.New("docker execution requires a private state directory")
@@ -73,11 +73,20 @@ func (c Config) Validate() error {
 		if err := (agent.UpdaterPaths{InstallPath: c.InstallPath, StateDirectory: c.UpgradeStateDirectory}).Validate(); err != nil {
 			return err
 		}
-		if filepath.Dir(c.SupervisorSocket) == c.UpgradeStateDirectory || strings.HasPrefix(c.UpgradeStateDirectory, filepath.Dir(c.SupervisorSocket)+"/") || strings.HasPrefix(filepath.Dir(c.SupervisorSocket), c.UpgradeStateDirectory+"/") {
+		if c.Runtime == "raw" && pathsOverlap(filepath.Dir(c.SupervisorSocket), c.UpgradeStateDirectory) {
 			return errors.New("supervisor and updater state directories must be separate")
+		}
+		if c.Runtime == "docker" && c.EnableExecution && pathsOverlap(c.StateDirectory, c.UpgradeStateDirectory) {
+			return errors.New("docker execution and updater state directories must be separate")
 		}
 	}
 	return nil
+}
+
+func pathsOverlap(a, b string) bool {
+	a = filepath.Clean(a)
+	b = filepath.Clean(b)
+	return a == b || strings.HasPrefix(a, b+string(filepath.Separator)) || strings.HasPrefix(b, a+string(filepath.Separator))
 }
 func (c Config) dockerHost() string {
 	if c.DockerHost == "" {
@@ -169,7 +178,7 @@ func run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 				logger.Warn("close Docker Engine client", "error", err)
 			}
 		}()
-		observer := agent.DockerObserver{Version: cfg.Version, PrivateAddress: cfg.PrivateAddress, NvidiaSMI: cfg.NvidiaSMI, Engine: engine}
+		observer := agent.DockerObserver{Version: cfg.Version, PrivateAddress: cfg.PrivateAddress, NvidiaSMI: cfg.NvidiaSMI, Engine: engine, EnableUpgrades: cfg.EnableUpgrades}
 		if cfg.EnableExecution {
 			journal, err := dockerruntime.OpenJournal(cfg.StateDirectory)
 			if err != nil {
@@ -188,10 +197,14 @@ func run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 			if err != nil {
 				return fmt.Errorf("read Docker GPU identity: %w", err)
 			}
-			execution := agent.DockerExecutionObserver{Observer: observer, Client: client, Engine: engine, Journal: journal, EngineID: info.ID, GPUUUIDs: gpus, EnableDiagnostics: cfg.EnableDockerDiagnostics}
+			execution := agent.DockerExecutionObserver{Observer: observer, Client: client, Engine: engine, Journal: journal, EngineID: info.ID, GPUUUIDs: gpus, EnableDiagnostics: cfg.EnableDockerDiagnostics, Updater: updater}
 			return agent.RunDockerExecution(ctx, execution, cfg.Interval, cfg.RetryMax, logger)
 		}
-		return agent.Run(ctx, observer, client, cfg.Interval, cfg.RetryMax, logger)
+		var heartbeater agent.Heartbeater = client
+		if updater != nil {
+			heartbeater = agent.UpgradingHeartbeater{Client: client, Updater: updater}
+		}
+		return agent.Run(ctx, observer, heartbeater, cfg.Interval, cfg.RetryMax, logger)
 	}
 	observer := agent.LocalObserver{Version: cfg.Version, PrivateAddress: cfg.PrivateAddress, NvidiaSMI: cfg.NvidiaSMI, CgroupMount: cfg.CgroupMount, SupervisorSocket: cfg.SupervisorSocket, EnableUpgrades: cfg.EnableUpgrades}
 	if cfg.EnableExecution {

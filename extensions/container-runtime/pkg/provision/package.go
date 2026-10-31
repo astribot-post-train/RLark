@@ -187,6 +187,9 @@ func (s Service) ExportPackage(ctx context.Context, req PackageRequest) (*Packag
 	if !targetPath(req.InstallDirectory) {
 		return nil, errors.New("separate canonical install/state paths, workload paths and positive log bound required")
 	}
+	if req.EnableUpgrades && (!targetPath(req.StateDirectory) || req.StateDirectory == "/") {
+		return nil, errors.New("agent upgrades require a private canonical state directory")
+	}
 	switch req.Runtime {
 	case "Raw":
 		if req.EnableDockerDiagnostics {
@@ -199,8 +202,8 @@ func (s Service) ExportPackage(ctx context.Context, req PackageRequest) (*Packag
 			return nil, errors.New("raw package requires supervisor, state, workload paths and log bound")
 		}
 	case "Docker":
-		if req.EnableLogReads || req.EnableUpgrades || req.SupervisorBinary != "" || len(req.Executables) != 0 || len(req.WorkDirectories) != 0 || req.LogBytes != 0 {
-			return nil, errors.New("docker package cannot include Raw supervisor, log or upgrade options")
+		if req.EnableLogReads || req.SupervisorBinary != "" || len(req.Executables) != 0 || len(req.WorkDirectories) != 0 || req.LogBytes != 0 {
+			return nil, errors.New("docker package cannot include Raw supervisor or log options")
 		}
 		if req.EnableDockerDiagnostics && !req.EnableExecution {
 			return nil, errors.New("docker diagnostics require task execution")
@@ -208,8 +211,8 @@ func (s Service) ExportPackage(ctx context.Context, req PackageRequest) (*Packag
 		if req.EnableExecution && (!targetPath(req.StateDirectory) || within(req.InstallDirectory, req.StateDirectory) || within(req.StateDirectory, req.InstallDirectory)) {
 			return nil, errors.New("docker execution requires a private state directory")
 		}
-		if !req.EnableExecution && req.StateDirectory != "" {
-			return nil, errors.New("docker state directory requires task execution")
+		if !req.EnableExecution && req.StateDirectory != "" && !req.EnableUpgrades {
+			return nil, errors.New("docker state directory requires task execution or upgrades")
 		}
 		if req.DockerHost == "" {
 			req.DockerHost = dockerruntime.DefaultLocalHost

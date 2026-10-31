@@ -28,15 +28,18 @@ UUID，并使用返回的确切对象 UID。
 
 包内包含 Agent、节点 mTLS 凭据、公开 API CA、校验文件、前台启动脚本及排在
 `docker.service` 之后的 root systemd 单元，不含签发私钥、管理 kubeconfig 或 Raw
-supervisor。通过私密方式复制到确切安装目录。自动注册/续期及 Docker Agent 升级
-尚未完成。只支持规范的本地 `unix:///...` socket，不支持远程 TCP/TLS Engine。
+supervisor。通过私密方式复制到确切安装目录。自动注册/续期仍未完成。Docker Agent 升级已作为可选预览支持，使用 root 独立
+updater，并要求独立的升级状态目录。只支持规范的本地 `unix:///...` socket，不支持远程 TCP/TLS Engine。
 
 只观测时保持 `enableExecution: false`，省略 `stateDirectory`。执行时设置
 `enableExecution: true` 和独立于安装目录的
 `stateDirectory: /var/lib/rlark-docker`。首次启动前由 root 创建模式为 0700 的持久化
-目录。保持 `enableLogReads`、`enableUpgrades` 为 false，省略
+目录。基础安装包保持 `enableLogReads`、`enableUpgrades` 为 false，省略
 `supervisorBinary`、`executables`、`workDirectories`、`logBytes`。不合法组合在写出
-安装包前拒绝。
+安装包前拒绝。若需启用空闲 Agent 升级预览，设置 `enableUpgrades: true`，
+另行创建 root 所有、模式为 0700 的 `<stateDirectory>-agent-upgrades` 目录，
+并按[控制台指南](container-runtime-console.md)启用 API 和控制器的升级/rollout 开关。
+`enableLogReads` 仍只用于 Raw。
 
 使用导出凭据的手动启动命令：
 
@@ -159,7 +162,7 @@ daemon 不可用或已退出容器的 stats 不可用时需重新读取，不合
 SDK 读取、凭据和能力撤销、临时 broker 重启/重试，以及正文卡住时并发清理。
 传输测试中的 daemon 是模拟服务，不代表真实 Docker GPU 已运行。
 
-GPU 利用率、内核级端口预留、Docker 滚动升级和真实 GPU 主机生命周期验收仍需
+GPU 利用率、内核级端口预留和真实 GPU 主机生命周期验收仍需
 单独推进。Docker Ray 整组屏障已作为预览实现；Raw Ray 编排仍不支持。
 有序门槛见 [Docker 执行计划](docker-runtime-execution-plan.md)。
 

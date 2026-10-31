@@ -7,8 +7,8 @@ native Cluster, Node, Job, or Task APIs.
 
 ## Scope of this increment
 
-The console is a preview management surface for explicitly provisioned Raw
-container clusters. It provides:
+The console is a preview management surface for explicitly provisioned Raw and
+Docker container clusters. It provides:
 
 - a cluster list and detail view;
 - authoritative node identity, private address, runtime, capabilities,
@@ -22,7 +22,8 @@ Allocations, their Job references, and Agent upgrades are displayed as separate 
 The console never derives utilization from a missing observation and never
 turns a stale heartbeat into a Ready or schedulable state. Ray/RLinf group
 submission, terminal/exec, automatic enrollment, Docker Engine creation, and multi-node
-scheduling remain outside this preview. Bounded Raw log reads are available only
+scheduling remain outside this preview. Docker node registration and idle Agent
+rollout are available when their additive capabilities are enabled. Bounded Raw log reads are available only
 when the separate loopback log listener and node poller are explicitly enabled.
 
 ## Resource and ownership model
@@ -159,9 +160,10 @@ CA. No insecure-TLS flag is provided. Node mTLS traffic continues to use the
 separate `container-runtime-api` service. The UI build requires Node.js
 20.19+ or 22.12+; Node.js 24 was used for acceptance.
 
-The preview UI creates Raw clusters. API/CLI provisioning can also create
-Docker host records and accept [host observations or opt-in single-container execution](docker-agent-observation.md).
-Browser Docker Job submission and Docker node registration remain unsupported. Package export, artifact publication and node drain remain CLI/operator workflows;
+The preview UI creates Raw or Docker clusters. API/CLI provisioning and the
+administrator console can register Docker hosts and accept [host observations or
+opt-in single-container execution](docker-agent-observation.md). Docker Job
+submission remains unsupported in this form. Package export, artifact publication and node drain remain CLI/operator workflows;
 registration is available only through the explicitly enabled administrator route. Allocation rows retain their Job references; the
 optional Raw Job panel separately lists verified bound Jobs, submits one process
 and records suspension intent. It is not a historical archive.
@@ -482,4 +484,6 @@ reads and clear displayed data. Reads are transient, bounded and revalidated at
 return; API restart requires a manual retry. See [Docker Agent](docker-agent-observation.md)
 for enablement, ownership, limits and failure/recovery. The underlying Engine
 transport is tested with a simulated daemon; real Docker GPU acceptance remains
-outstanding. Browser Docker registration/Job submission and upgrades remain separate work.
+outstanding. Browser Docker Job submission remains separate work; Docker node
+registration and idle Agent upgrades are covered by the additive management plan
+in [Docker cluster management](docker-cluster-management-plan.md).

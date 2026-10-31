@@ -60,7 +60,7 @@ func (req ClusterRequest) Validate() error {
 	return nil
 }
 
-// NodeRequest registers an explicitly authorized existing container.
+// NodeRequest registers an explicitly authorized Raw container or Docker host.
 type NodeRequest struct {
 	OperationID         string   `json:"operationID"`
 	Cluster             string   `json:"cluster"`

@@ -98,7 +98,6 @@ func TestDockerModeHasNoSupervisorOrExecutionCapabilities(t *testing.T) {
 		func(c *Config) { c.SupervisorSocket = "/raw/supervisor.sock" },
 		func(c *Config) { c.EnableExecution = true },
 		func(c *Config) { c.EnableLogReads = true },
-		func(c *Config) { c.EnableUpgrades = true },
 		func(c *Config) { c.Runtime = "unknown" },
 		func(c *Config) { c.DockerHost = "tcp://127.0.0.1:2375" },
 		func(c *Config) { c.DockerHost = "unix:///run/../docker.sock" },
@@ -108,6 +107,13 @@ func TestDockerModeHasNoSupervisorOrExecutionCapabilities(t *testing.T) {
 		if err := bad.Validate(); err == nil {
 			t.Fatalf("accepted unsupported Docker config: %+v", bad)
 		}
+	}
+	upgrade := cfg
+	upgrade.EnableUpgrades = true
+	upgrade.InstallPath = "/opt/rlark/container-runtime-agent"
+	upgrade.UpgradeStateDirectory = "/var/lib/rlark-agent-upgrades"
+	if err := upgrade.Validate(); err != nil {
+		t.Fatalf("Docker upgrades should be valid with isolated paths: %v", err)
 	}
 	bad := configured()
 	bad.DockerHost = "unix:///run/docker.sock"
@@ -160,5 +166,25 @@ func TestDockerDiagnosticsRequireExplicitDockerExecution(t *testing.T) {
 	cfg.SupervisorSocket = "/private/supervisor.sock"
 	if cfg.Validate() == nil {
 		t.Fatal("Raw accepted Docker diagnostics")
+	}
+}
+
+func TestDockerExecutionUpgradeStateMustNotOverlap(t *testing.T) {
+	cfg := configured()
+	cfg.Runtime = "docker"
+	cfg.SupervisorSocket = ""
+	cfg.EnableExecution = true
+	cfg.EnableUpgrades = true
+	cfg.InstallPath = "/opt/rlark/container-runtime-agent"
+	cfg.StateDirectory = "/var/lib/rlark-docker"
+	for _, path := range []string{"/var/lib/rlark-docker", "/var/lib/rlark-docker/upgrades", "/var/lib"} {
+		cfg.UpgradeStateDirectory = path
+		if err := cfg.Validate(); err == nil {
+			t.Fatalf("accepted overlapping Docker execution and upgrade state %q", path)
+		}
+	}
+	cfg.UpgradeStateDirectory = "/var/lib/rlark-docker-agent-upgrades"
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("rejected separate sibling paths: %v", err)
 	}
 }

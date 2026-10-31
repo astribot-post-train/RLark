@@ -58,6 +58,9 @@ func (m Manager) ReserveUpgrade(ctx context.Context, req UpgradeRequest) (*ext.C
 	if node.Status.Busy || ready == nil || ready.Status != metav1.ConditionTrue || ready.ObservedGeneration != node.Generation || node.Status.ObservedGeneration != node.Generation || node.Status.AgentCredentialID != op.Spec.CredentialID || node.Status.LastHeartbeatTime == nil || node.Status.LastHeartbeatTime.After(m.now()) || m.now().Sub(node.Status.LastHeartbeatTime.Time) > m.timeout() || node.Status.AgentVersion != op.Spec.FromVersion || node.Status.AgentVersion == op.Spec.ReleaseSpec.Version {
 		return nil, fmt.Errorf("%w: upgrade requires a fresh idle observation of the source version", ErrUnavailable)
 	}
+	if node.Spec.Runtime == "Docker" && (!slices.Contains(node.Status.Capabilities, ext.AgentUpgradeCapability) || !slices.Contains(node.Status.Capabilities, "agent-platform/"+op.Spec.ReleaseSpec.OS+"/"+op.Spec.ReleaseSpec.Architecture)) {
+		return nil, ErrUnavailable
+	}
 	// Duplicate node/address/device inventory is ambiguous even while idle.
 	var inventory ext.ContainerNodeList
 	if err := m.Client.List(ctx, &inventory); err != nil {
@@ -67,7 +70,7 @@ func (m Manager) ReserveUpgrade(ctx context.Context, req UpgradeRequest) (*ext.C
 		if other.UID == node.UID {
 			continue
 		}
-		if other.Spec.Node == node.Spec.Node || other.Spec.NetworkScope == node.Spec.NetworkScope && other.Spec.PrivateAddress == node.Spec.PrivateAddress {
+		if other.Spec.Node == node.Spec.Node || node.Spec.Runtime == "Docker" && other.Spec.Runtime == "Docker" && other.Spec.InstanceID == node.Spec.InstanceID || other.Spec.NetworkScope == node.Spec.NetworkScope && other.Spec.PrivateAddress == node.Spec.PrivateAddress {
 			return nil, ErrIdentity
 		}
 		for _, gpu := range other.Spec.AuthorizedGPUUUIDs {
@@ -200,7 +203,7 @@ func (m Manager) upgradeTarget(ctx context.Context, req UpgradeRequest, requireF
 	if err := m.Client.Get(ctx, client.ObjectKey{Namespace: op.Spec.NodeRecord.Namespace, Name: op.Spec.NodeRecord.Name}, &node); err != nil {
 		return nil, nil, err
 	}
-	if reference(&node) != op.Spec.NodeRecord || node.Spec.Cluster != op.Spec.Cluster || node.Namespace != op.Namespace || node.Spec.InstanceID != op.Spec.InstanceID || node.Annotations[ext.AgentCredentialAnnotation] != op.Spec.CredentialID || tenant.IDOf(&node) != op.Spec.TenantID || node.Spec.Runtime != "Raw" || !node.DeletionTimestamp.IsZero() || len(node.Spec.AuthorizedGPUUUIDs) == 0 {
+	if reference(&node) != op.Spec.NodeRecord || node.Spec.Cluster != op.Spec.Cluster || node.Namespace != op.Namespace || node.Spec.InstanceID != op.Spec.InstanceID || node.Annotations[ext.AgentCredentialAnnotation] != op.Spec.CredentialID || tenant.IDOf(&node) != op.Spec.TenantID || node.Spec.Runtime != "Raw" && node.Spec.Runtime != "Docker" || !node.DeletionTimestamp.IsZero() || len(node.Spec.AuthorizedGPUUUIDs) == 0 {
 		return nil, nil, ErrIdentity
 	}
 	validated := meta.FindStatusCondition(node.Status.Conditions, "Validated")
@@ -215,7 +218,7 @@ func (m Manager) upgradeTarget(ctx context.Context, req UpgradeRequest, requireF
 	if err := m.Client.Get(ctx, client.ObjectKey{Namespace: node.Spec.Node.Namespace, Name: node.Spec.Node.Name}, &nativeNode); err != nil {
 		return nil, nil, err
 	}
-	if ownership.MatchesNative(op.Spec.Cluster, &cluster) != nil || ownership.MatchesNative(node.Spec.Node, &nativeNode) != nil || cluster.Spec.AgentNamespace != node.Namespace || tenant.IDOf(&cluster) != op.Spec.TenantID || tenant.IDOf(&nativeNode) != op.Spec.TenantID || nativeNode.Namespace != node.Namespace || nativeNode.Spec.AgentType != native.AgentTypeRaw || !cluster.DeletionTimestamp.IsZero() || !nativeNode.DeletionTimestamp.IsZero() || nativeNode.Status.Reservation != nil || len(nativeNode.Status.DockerReservations) != 0 {
+	if ownership.MatchesNative(op.Spec.Cluster, &cluster) != nil || ownership.MatchesNative(node.Spec.Node, &nativeNode) != nil || cluster.Spec.AgentNamespace != node.Namespace || tenant.IDOf(&cluster) != op.Spec.TenantID || tenant.IDOf(&nativeNode) != op.Spec.TenantID || nativeNode.Namespace != node.Namespace || nativeNode.Spec.AgentType != agentTypeForRuntime(node.Spec.Runtime) || !cluster.DeletionTimestamp.IsZero() || !nativeNode.DeletionTimestamp.IsZero() || nativeNode.Status.Reservation != nil || len(nativeNode.Status.DockerReservations) != 0 {
 		return nil, nil, ErrIdentity
 	}
 	var nativeClusters native.ClusterList
@@ -259,4 +262,11 @@ func (m Manager) upgradeTarget(ctx context.Context, req UpgradeRequest, requireF
 		return nil, nil, ErrUnavailable
 	}
 	return &op, &node, nil
+}
+
+func agentTypeForRuntime(runtime ext.Runtime) native.AgentType {
+	if runtime == "Docker" {
+		return native.AgentTypeDocker
+	}
+	return native.AgentTypeRaw
 }

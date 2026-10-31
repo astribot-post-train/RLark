@@ -32,17 +32,20 @@ on retry, and use the returned exact object UIDs.
 The package contains the Agent, node mTLS credentials, public API CA, checksums,
 foreground launcher and root systemd unit ordered after `docker.service`. It
 contains no issuer private key, management kubeconfig or Raw supervisor. Copy
-it privately to the exact install directory. Automatic enrollment/renewal and
-Docker Agent upgrades remain incomplete. Canonical local `unix:///...` sockets
+it privately to the exact install directory. Automatic enrollment/renewal remains incomplete. Docker Agent upgrades are an opt-in
+preview using the root-owned updater and require a separate upgrade state directory. Canonical local `unix:///...` sockets
 are supported; remote TCP/TLS Engines are not supported by this Agent.
 
 For observation only, keep `enableExecution: false` and omit `stateDirectory`.
 For execution, set `enableExecution: true` and
 `stateDirectory: /var/lib/rlark-docker`, separate from the install directory.
 Before first startup, provision that persistent directory as root with mode
-0700. Keep `enableLogReads` and `enableUpgrades` false; omit `supervisorBinary`,
+0700. For the baseline package, keep `enableLogReads` and `enableUpgrades` false; omit `supervisorBinary`,
 `executables`, `workDirectories` and `logBytes`. Invalid combinations fail before
-package output is written.
+package output is written. To opt into idle Agent upgrades, set `enableUpgrades: true`,
+provision the separate root-owned 0700 `<stateDirectory>-agent-upgrades` directory,
+and enable the API and controller upgrade/rollout flags described in the
+[console guide](container-runtime-console.md). `enableLogReads` remains Raw-only.
 
 Manual execution startup with exported credentials:
 
@@ -196,7 +199,7 @@ multiplex decoding, absent/zero/overflow counters, exact-ID SDK reads, credentia
 and capability revocation, transient broker restart/retry, and cleanup while a
 response body is stalled.
 
-GPU utilization, kernel-level port reservation, Docker rolling upgrades and real
+GPU utilization, kernel-level port reservation and real
 GPU-host lifecycle acceptance remain separate work. Docker Ray group barriers are
 implemented as preview; Raw Ray orchestration remains unsupported. See
 [Docker execution plan](docker-runtime-execution-plan.md) for the ordered gates.
@@ -208,7 +211,7 @@ Install the regenerated ContainerJob/ContainerAllocation CRDs before upgrading
 controller, API and execution Agents together. The existing controller reservation,
 API execution and Agent execution flags enable this preview; observation-only
 Agents never advertise `docker-ray-group-v1`. The console submission form remains
-Raw-only. Administrators submit a suspended native Job and exact-UID ContainerJob
+Raw-only for this preview. Administrators submit a suspended native Job and exact-UID ContainerJob
 binding with runtime Docker, using `rlinf.io/ray` v1 workload templates and the
 `docker.rlark.io/container` v1 carrier. See the paired
 [execution contract](docker-runtime-execution-plan.md) and the example manifests.

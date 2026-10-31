@@ -294,7 +294,7 @@ func (a *API) detail(ctx context.Context, cc *ext.ContainerCluster) (*clusterDet
 	}
 	result := &clusterDetailResponse{Cluster: clusterSummary{Namespace: cc.Namespace, Name: cc.Name, UID: string(cc.UID), ResourceVersion: cc.ResourceVersion, TenantID: tenant.IDOf(cc), Runtime: cc.Spec.Runtime, TargetAgentRelease: cc.Spec.TargetAgentRelease, BindingValid: valid, Deleting: !cc.DeletionTimestamp.IsZero(), Conditions: cc.Status.Conditions, LastAgentUpgrade: cc.Status.LastAgentUpgrade}, Nodes: []nodeSummary{}, Releases: []releaseSummary{}, Allocations: []allocationSummary{}, Upgrades: []upgradeSummary{}}
 	result.JobSubmissionEnabled = a.Jobs != nil && cc.Spec.Runtime == "Raw" && valid && cc.DeletionTimestamp.IsZero()
-	result.NodeRegistrationEnabled = a.Registrar != nil && cc.Spec.Runtime == "Raw" && valid && cc.DeletionTimestamp.IsZero() && nc != nil && nc.DeletionTimestamp.IsZero()
+	result.NodeRegistrationEnabled = a.Registrar != nil && (cc.Spec.Runtime == "Raw" || cc.Spec.Runtime == "Docker") && valid && cc.DeletionTimestamp.IsZero() && nc != nil && nc.DeletionTimestamp.IsZero()
 	var allocations ext.ContainerAllocationList
 	if err := a.Client.List(ctx, &allocations, client.InNamespace(cc.Namespace)); err != nil {
 		return nil, err

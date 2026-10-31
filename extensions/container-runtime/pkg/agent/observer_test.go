@@ -136,7 +136,7 @@ func TestDockerReporterIdentityCapacityAndObservationOnly(t *testing.T) {
 			if getErr := r.Client.Get(ctx, client.ObjectKeyFromObject(node), &got); getErr != nil {
 				t.Fatal(getErr)
 			}
-			if mode != "valid" && mode != "busy" {
+			if mode != "valid" && mode != "busy" && mode != "upgrade" {
 				if err == nil || got.Status.LastHeartbeatTime != nil {
 					t.Fatalf("invalid report refreshed status: %v %#v", err, got.Status)
 				}

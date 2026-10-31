@@ -37,6 +37,7 @@ type DockerExecutionObserver struct {
 	EngineID          string
 	GPUUUIDs          []string
 	EnableDiagnostics bool
+	Updater           *Updater
 }
 
 // RunDockerExecution runs the opt-in lifecycle loop while preserving cleanup
@@ -64,7 +65,11 @@ func (o DockerExecutionObserver) Heartbeat(ctx context.Context, observation Obse
 		observation.Capabilities = append(observation.Capabilities, DockerDiagnosticsCapability)
 	}
 	err := o.Client.Heartbeat(ctx, observation)
-	return errors.Join(err, o.reconcile(ctx, err == nil))
+	var upgradeErr error
+	if err == nil && o.Updater != nil {
+		upgradeErr = o.Updater.Step(ctx, observation)
+	}
+	return errors.Join(err, upgradeErr, o.reconcile(ctx, err == nil && upgradeErr == nil))
 }
 
 func (o DockerExecutionObserver) reconcile(ctx context.Context, allowStart bool) error {

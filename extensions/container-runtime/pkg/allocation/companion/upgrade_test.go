@@ -9,6 +9,7 @@ import (
 	"time"
 
 	ext "github.com/astribot-post-train/rlark/extensions/container-runtime/api/v1alpha1"
+	native "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
 	"github.com/rlinf/rlark/apps/rlark/pkg/tenant"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -44,6 +45,34 @@ func mustUpgrade(t *testing.T, err error) {
 	}
 }
 
+func dockerUpgradeFixture(t *testing.T) (Manager, Request, UpgradeRequest, *ext.AgentUpgrade) {
+	t.Helper()
+	m, task, _, op := upgradeFixture(t)
+	ctx := context.Background()
+	var cc ext.ContainerCluster
+	mustUpgrade(t, m.Client.Get(ctx, client.ObjectKey{Namespace: "agents", Name: "gpu"}, &cc))
+	cc.Spec.Runtime = ext.Runtime("Docker")
+	mustUpgrade(t, m.Client.Update(ctx, &cc))
+	cc.Status.ObservedGeneration = cc.Generation
+	cc.Status.Conditions = []metav1.Condition{{Type: "Validated", Status: metav1.ConditionTrue, ObservedGeneration: cc.Generation}}
+	mustUpgrade(t, m.Client.Update(ctx, &cc))
+	var node ext.ContainerNode
+	mustUpgrade(t, m.Client.Get(ctx, task.Node, &node))
+	node.Spec.Runtime = ext.Runtime("Docker")
+	mustUpgrade(t, m.Client.Update(ctx, &node))
+	var nativeNode native.Node
+	mustUpgrade(t, m.Client.Get(ctx, client.ObjectKey{Namespace: "agents", Name: "worker"}, &nativeNode))
+	nativeNode.Spec.AgentType = native.AgentTypeDocker
+	mustUpgrade(t, m.Client.Update(ctx, &nativeNode))
+	node.Status.Capabilities = []string{ext.AgentUpgradeCapability, "agent-platform/linux/amd64"}
+	node.Status.ObservedGeneration = node.Generation
+	for i := range node.Status.Conditions {
+		node.Status.Conditions[i].ObservedGeneration = node.Generation
+	}
+	mustUpgrade(t, m.Client.Status().Update(ctx, &node))
+	return m, task, UpgradeRequest{Operation: client.ObjectKeyFromObject(op)}, op
+}
+
 func TestUpgradeReserveRecoversExactLockAndBlocksTaskRelease(t *testing.T) {
 	m, _, req, op := upgradeFixture(t)
 	ctx := context.Background()
@@ -62,6 +91,67 @@ func TestUpgradeReserveRecoversExactLockAndBlocksTaskRelease(t *testing.T) {
 	}
 	if err := m.ReleaseUpgrade(ctx, client.ObjectKeyFromObject(first), string(first.UID), string(op.UID)); !errors.Is(err, ErrUnavailable) {
 		t.Fatalf("unproved upgrade cleanup released lock: %v", err)
+	}
+}
+
+func TestDockerUpgradeReserveRequiresDockerIdentityAndCapabilities(t *testing.T) {
+	m, _, req, _ := dockerUpgradeFixture(t)
+	ctx := context.Background()
+	allocation, err := m.ReserveUpgrade(ctx, req)
+	mustUpgrade(t, err)
+	if allocation.Spec.Upgrade == nil || allocation.Spec.Node.UID == "" {
+		t.Fatalf("invalid Docker upgrade lock: %#v", allocation)
+	}
+
+	var node ext.ContainerNode
+	mustUpgrade(t, m.Client.Get(ctx, client.ObjectKey{Namespace: "agents", Name: "worker"}, &node))
+	node.Spec.InstanceID = "docker-engine-replaced"
+	mustUpgrade(t, m.Client.Update(ctx, &node))
+	if _, err := m.ReserveUpgrade(ctx, req); !errors.Is(err, ErrIdentity) {
+		t.Fatalf("Engine identity replacement acquired old lock: %v", err)
+	}
+}
+
+func TestDockerUpgradeReserveRejectsNativeRuntimeMismatch(t *testing.T) {
+	m, _, req, _ := dockerUpgradeFixture(t)
+	ctx := context.Background()
+	var nativeNode native.Node
+	mustUpgrade(t, m.Client.Get(ctx, client.ObjectKey{Namespace: "agents", Name: "worker"}, &nativeNode))
+	nativeNode.Spec.AgentType = native.AgentTypeRaw
+	mustUpgrade(t, m.Client.Update(ctx, &nativeNode))
+	if _, err := m.ReserveUpgrade(ctx, req); !errors.Is(err, ErrIdentity) {
+		t.Fatalf("Docker upgrade accepted native Raw AgentType: %v", err)
+	}
+	if _, _, _, err := m.ObserveUpgrade(ctx, req); !errors.Is(err, ErrIdentity) {
+		t.Fatalf("Docker upgrade recovery accepted native Raw AgentType: %v", err)
+	}
+}
+
+func TestDockerUpgradeReserveWaitsForEnabledIdlePlatform(t *testing.T) {
+	for _, scenario := range []string{"disabled", "wrong-platform", "retained-container"} {
+		t.Run(scenario, func(t *testing.T) {
+			m, task, req, _ := dockerUpgradeFixture(t)
+			ctx := context.Background()
+			var node ext.ContainerNode
+			mustUpgrade(t, m.Client.Get(ctx, task.Node, &node))
+			switch scenario {
+			case "disabled":
+				node.Status.Capabilities = []string{"agent-platform/linux/amd64"}
+			case "wrong-platform":
+				node.Status.Capabilities = []string{ext.AgentUpgradeCapability, "agent-platform/linux/arm64"}
+			case "retained-container":
+				node.Status.Busy = true
+			}
+			mustUpgrade(t, m.Client.Status().Update(ctx, &node))
+			if _, err := m.ReserveUpgrade(ctx, req); !errors.Is(err, ErrUnavailable) {
+				t.Fatalf("unready Docker node reserved upgrade: %v", err)
+			}
+			var held ext.ContainerAllocationList
+			mustUpgrade(t, m.Client.List(ctx, &held))
+			if len(held.Items) != 0 {
+				t.Fatal("denied upgrade created a lock")
+			}
+		})
 	}
 }
 

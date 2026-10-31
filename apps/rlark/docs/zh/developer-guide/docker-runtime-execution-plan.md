@@ -61,9 +61,9 @@ API 对每次操作重新校验原生 Job、Task、Cluster、Node、ContainerNod
 ## 升级与发布
 
 Docker 和 Raw 共用证书与 release 校验，但运行时参数互斥。Docker 安装包排在
-`docker.service` 之后启动。Docker 升级执行尚未实现；后续选择器只能选择空闲 Docker 节点，并保留原有 Engine
-socket 和节点 incarnation。目标 release 会阻止新分配；安装本身是带精确 allocation
-和重启回执的 operation。
+`docker.service` 之后启动。Docker 升级复用 root updater；选择器只选择新鲜空闲 Docker
+节点，Agent 通过持久 journal 使用原有 Engine 身份、socket 和节点 incarnation 应用精确
+版本。目标 release 会阻止新分配；安装本身是带精确 allocation 和重启回执的 operation。
 
 ## 验收门槛
 

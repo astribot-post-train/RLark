@@ -44,7 +44,7 @@ func (a *API) registerNode(w http.ResponseWriter, r *http.Request, namespace, cl
 		writeKubeError(w, err)
 		return
 	}
-	if !valid || nativeCluster == nil || cc.Spec.Runtime != "Raw" || cc.DeletionTimestamp != nil || nativeCluster.DeletionTimestamp != nil {
+	if !valid || nativeCluster == nil || cc.Spec.Runtime != "Raw" && cc.Spec.Runtime != "Docker" || cc.DeletionTimestamp != nil || nativeCluster.DeletionTimestamp != nil {
 		writeError(w, http.StatusConflict, "conflict", "cluster binding is invalid; refresh before retrying")
 		return
 	}
