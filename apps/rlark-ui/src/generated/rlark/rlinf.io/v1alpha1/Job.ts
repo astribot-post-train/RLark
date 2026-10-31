@@ -46,6 +46,41 @@ export interface IJob {
        * TaskPlacementSpec describes scheduling constraints for the workload.
        */
       "placement": {
+        /**
+         * Binding is a controller-owned, UID-fenced Raw execution assignment.
+         * It does not authorize execution without a matching Node reservation.
+         */
+        "binding"?: {
+          "allocationID": string;
+          "clusterUID": string;
+          "executionID": string;
+          "groupDigest": string;
+          "incarnation": string;
+          "jobUID": string;
+          "nodeName": string;
+          "nodeUID": string;
+          "taskUID"?: string;
+        };
+        /**
+         * DockerBinding is a controller-owned, UID-fenced Docker execution assignment.
+         * It is intentionally separate from the Raw contract so the two runtimes
+         * cannot accidentally consume each other's reservations.
+         */
+        "dockerBinding"?: {
+          "allocationID": string;
+          "clusterUID": string;
+          "incarnation": string;
+          "jobUID": string;
+          "nodeName": string;
+          "nodeUID": string;
+          "taskUID"?: string;
+        };
+        /**
+         * Environment selects the observed Raw node environment/profile. It is
+         * required for Raw Tasks so a placement cannot silently cross image or
+         * dependency boundaries.
+         */
+        "environment"?: string;
         "nodeSelector"?: {
           [key: string]: string;
         };

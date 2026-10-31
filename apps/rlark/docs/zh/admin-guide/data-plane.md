@@ -110,3 +110,13 @@ rlarkadm install -f apps/rlark/docs/examples/deploy-data-plane.yaml
 - 每个数据面集群分别签发 Agent 证书。
 - 复制的部署 YAML 含有 `agent-key`，必须按 Secret 保护。
 - 使用 `rlarkctl sign` 轮换证书，并重新部署受影响的 Agent。
+
+## 实验性 Raw 容器 Agent
+
+已有的可信 GPU 容器可以使用 `--agent-type=Raw` 和
+`--raw-supervisor-socket=/var/lib/rlark-supervisor/supervisor.sock` 运行
+Agent。管理员签发的 `raw-node` 证书绑定预先创建的 Node UID、容器
+incarnation、Cluster UID 和 tenant。Agent 发送受限 Lease 心跳，只处理绑定到
+该 Node 的 Task。请独立运行并持久化 `raw-supervisor`，Agent 重启时重新连接同一
+socket。该路径不会创建 Docker 容器，也不使用 Docker socket，仍属于实验性能力：
+Job 副本展开、Ray/RLinf group barrier、GPU 授权发现和远程日志尚未达到生产可用。

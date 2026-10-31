@@ -1,0 +1,131 @@
+# RLark container-runtime extension
+
+This is an independently buildable Go module for moving Docker and Raw runtime implementation out of the native RLark module. Its API uses the `containers.rlark.io/v1alpha1` group and companion resources pinned to native object UIDs. It reuses RLark's exported execution contracts; native RLark remains a versioned dependency and contains only generic ownership dispatch and a narrow Host dependency interface.
+
+Current contents are an extraction copy of preview Docker/Raw runtime, allocation and supervisor packages, typed companion API/CRDs, UID/tenant binding checks, validation controller, a durable per-Node reservation planner, a Raw Job controller, cleanup receipts, a dedicated mTLS observation endpoint and a Linux foreground Raw Agent. The endpoint trusts only a verified client certificate signed by its configured Agent CA and writes status for the exact current ContainerNode UID, credential, native references, tenant, private address, target release and operator GPU allowlist. The Agent observes the current cgroup-v2 CPU/memory boundary, visible GPU UUIDs and private supervisor occupancy, then retries authenticated heartbeats with bounded backoff. It fails closed when the supervisor or GPU observation is unavailable and never treats visible GPUs as entitlement. The companion allocation package implements an API-backed exclusive per-native-Node lock, exact-UID recovery, legacy reservation fencing and cleanup-confirmed release. With both `--enable-job-reservations=true` and `--enable-task-execution=true`, the preview path can execute independently allocated, strictly validated Raw process Tasks through the node-scoped mTLS Task channel and existing Host/Coordinator/supervisor; the execution API only revalidates an existing allocation and cannot create one. Automatic enrollment/renewal and native UI integration remain incomplete. Docker Ray group scheduling is an opt-in preview; Raw multi-template execution remains independent. Bounded Raw log transport is an opt-in preview: it requires task execution, an administrator loopback listener, a Gateway JWT key, and the node log poller; private-cloud end-to-end acceptance passed on 2026-10-31. Target-driven idle Agent rollout is an opt-in preview and does not make cloud acceptance production-ready. This module is not a production scheduler. Native Jobs that declare `rlark.io/controller-owner: containers.rlark.io` fail closed if the extension owner is not installed.
+
+Run `make test`, `make vet`, `make build`, or `make generate-crds` here. `make build` writes `bin/container-runtime-controller`, `bin/container-runtime-api`, `bin/container-runtime-agent`, `bin/container-runtime-admin`, and `bin/raw-supervisor`; it does not package or install them on container hosts. The API command requires a TLS server certificate, a dedicated Agent client CA, and a kubeconfig/service account with the narrow permissions in `config/rbac/`. The endpoint listens on `POST /v1/heartbeat`. Start the Linux Agent with an HTTPS origin, node certificate/key, server CA, version, private address and private Raw supervisor socket. It observes before every heartbeat, retries transient failures, and requires the supervisor status to prove occupancy; there is no `--allow-no-gpu` or idle fallback. Agent certificate issuance, enrollment and deployment wiring remain operator-managed and are not integrated with RLark's native Server. `GOWORK=off` is used to prove the module resolves from its own `go.mod` and `go.sum`.
+
+The standalone controller defaults to validation-only. It uses Lease leader election in `rlark-system`; configure `--leader-election-namespace` and the controller RBAC manifest when using another namespace. `--enable-job-reservations=true` opts into the isolated preview controller with an uncached API client. The API and Agent each require their own `--enable-task-execution=true` flag for scoped execution; apply `config/rbac/container-runtime-api-execution.yaml` only for this preview. The controller materializes one independent Raw process Task per named template (up to 16), checks selectors/identity/tenant, aggregates current Running/Succeeded/Failed observations, and releases an allocation only after durable supervisor cleanup, an exact cleanup proof and observed deletion. Completed Task identity is retained so a restart cannot rerun it; suspension, deletion, template changes and explicit restart retire it through the existing cleanup workflow. The optional native `ControllerExtension()` remains validation-only. Stopping the controller leaves reservations intact. Task transport is deliberately limited to the exact certificate-bound allocation and Task; arbitrary Kubernetes reads, watches, discovery, secrets, proxying and allocation creation are denied. Automatic enrollment, historical log archives, native UI integration and Raw Ray/RLinf group coordination remain incomplete; bounded on-demand Raw logs are available only through the separate opt-in preview listener. Idle Agent rollout is an opt-in preview described below.
+
+The detailed target, rollout, cloud test constraints and acceptance gates are maintained in the paired RLark developer plan at `../../apps/rlark/docs/developer-guide/raw-container-runtime-plan.md` and its Chinese counterpart.
+
+For the bounded Raw log preview, set both `enableExecution` and `enableLogReads`
+to `true` in the package request. Start the Agent API with
+`--log-read-addr=127.0.0.1:9446 --gateway-jwt-key-file=/private/gateway-jwt.key`
+and start the console with `--log-api-origin=http://127.0.0.1:9446`. The log
+listener is loopback-only and administrator-authenticated; it returns at most
+64 KiB for the exact current allocation and Task. It is independent of the
+supervisor's cleanup path and is not a historical archive.
+
+The independent `container-runtime-admin` command provides explicit administrator creation of a separate Cluster, registration of an authorized Raw or Docker node, and offline node certificate/package export. Every create uses a caller-retained operation UUID; foreign objects, replacement UIDs, conflicting tenants or credentials are never adopted. Packages contain only node credentials, public server CA, checked Linux artifacts and separate Agent/supervisor launchers. No management kubeconfig or issuer key is exported. Docker packages can opt into scoped single-container execution with `enableExecution` and a root-owned persistent `stateDirectory`; the Agent then requires the local Docker socket, current Engine ID, exact allocation GPU UUIDs and the `docker-container-execution-v1` capability. Plain Docker Jobs use one immutable container Task; Docker Ray Jobs expand up to 16 members with whole-group preparation/start admission. Both require host networking and explicit v1 carrier fields. Automatic enrollment/renewal and kernel-level port reservation remain unsupported. Bounded Docker logs/stats are an explicitly enabled preview. The opt-in `--enable-agent-rollouts=true` controller can select one fresh idle Raw or Docker node at a time after `spec.targetAgentRelease` is set; install the additive rollout RBAC and enable upgrade reservations first. See the paired plan documents for strict JSON requests, prerequisites, command examples and limits.
+
+Copy the templates in `config/examples/`, replace their `REPLACE_...` values from authoritative reads, and run `cluster-create`, `node-register`, then `node-package` with the administrator kubeconfig. Keep each operation UUID unchanged when retrying a lost response. For Docker execution, set `enableExecution: true` and a separate root-owned 0700 `stateDirectory`; transfer the resulting package privately, verify `SHA256SUMS`, and start `start-agent` after Docker Engine. The command does not create an allocation or dispatch a Job by itself.
+
+Authenticated release publication is opt-in: start both the independent API and controller with `--artifact-directory=/private/agent-artifacts`, mounting the same operator-managed tree read-only. Existing RBAC permits release reads and controller status patches; Agents receive no Kubernetes RBAC. Copy `config/examples/agent-release.yaml`, replace all placeholders and its architecture if necessary, publish the corresponding Linux Agent binary at `releases/agent-v1`, and set the matching lowercase SHA-256. Create the immutable AgentRelease in the ContainerCluster namespace with the same tenant label. Wait for current-generation `Available=True` before an administrator changes that ContainerCluster's `spec.targetAgentRelease` to `agent-v1`. Use a new record/path for a new version; do not replace published bytes. Missing or corrupt files revoke availability on periodic inspection.
+
+With the store configured, `POST /v1/release` accepts only the authenticated node's current target. The strict body is `{"action":"manifest","os":"linux","architecture":"amd64"}`; `action: download` additionally requires the manifest's `releaseUID` and `sha256`. No target returns 204. The client methods `TargetRelease` and `DownloadRelease` validate the manifest and exact bounded Linux executable bytes and refuse redirects. The route is absent without a store. Binary installation is opt-in preview functionality described below. An immutable AgentUpgrade operation and typed upgrade allocation now compete on the same node lock as workloads; local idle observation alone cannot authorize a switch. Targeting a newer version can fence scheduling until the operator installs it and fresh heartbeats confirm readiness; it does not stop or free an existing execution. Keep the supervisor running during Agent-only changes. The paired developer documents describe publication, rejection/recovery behavior and the remaining rolling-upgrade gate.
+
+For explicit upgrade reservations, install the updated CRDs/RBAC, start the controller with `--enable-agent-upgrade-reservations=true`, fill `config/examples/provision-upgrade.json`, and run `container-runtime-admin upgrade-create --kubeconfig=/private/admin/kubeconfig --config=...`. Retain the operation UUID on retry. Inspect the resulting AgentUpgrade and its exact allocation with the administrator kubeconfig. Reservation and cancellation are supported: deleting a Pending/Reserved operation waits for proven allocation deletion, while an Applying/uncertain operation remains protected. Task transport cannot execute or release an upgrade allocation. With the additive `config/rbac/container-runtime-api-upgrades.yaml` and API flag `--enable-agent-upgrades=true`, node-scoped `POST /v1/upgrade` supports assignment/get, CAS claim by retained attempt UUID, and authenticated success/rollback receipts. The controller alone releases the exact lock after a fresh idle version proof and observed deletion; it retains completed operations for administrator review. Applying with uncertain results remains protected. The Linux Agent supports opt-in local binary switching and restart recovery; automatic rolling selection is available only through the separate opt-in rollout controller. Real private-cloud rollout and post-upgrade GPU lifecycle acceptance passed on 2026-10-31; see the paired plan for evidence and remaining limits.
+
+To export an upgradable node package, set `enableUpgrades: true` (default false). Before starting the Agent, create `<stateDirectory>-agent-upgrades` owned by root with mode 0700, separate from supervisor/workload paths. The generated launcher passes `--enable-agent-upgrades=true`, `--agent-install-path=<installDirectory>/container-runtime-agent` and `--upgrade-state-directory=<stateDirectory>-agent-upgrades`. The serial heartbeat loop polls/claims only a scoped Reserved operation, persists its attempt before sending, verifies the current immutable release and downloads, then fsyncs a staged binary, backup, journal and atomic installation. It preserves argv/environment on exec and leaves the supervisor running. A failed exec restores the source; the next fresh idle heartbeat permits rollback completion. The retained receipt derives the running version from `/proc/self/exe`, so bootstrap `--version` arguments remain valid across service restarts. Keep the journal and private switch checksum files: the opt-in launcher accepts only the export digest or updater-verified source/target digest while checking all other package files. Locks fence concurrent updaters; foreign credentials/paths, corrupt bytes and uncertain state retain the allocation. Automatic timeout rollback after a new binary starts and power-loss rollback under systemd remain incomplete. The rollout selector is preview-only and requires explicit enablement; it serializes selection and waits for updater journal acknowledgement before reaping success. Real cloud switching and launcher-restart recovery passed on 2026-10-31, but this remains preview infrastructure rather than unattended production rollout.
+
+For target-driven idle rollouts, install the regenerated ContainerCluster/AgentUpgrade CRDs and `config/rbac/container-runtime-controller-rollouts.yaml`, then enable both controller flags `--enable-agent-rollouts=true --enable-agent-upgrade-reservations=true`. Upgrade the mTLS API first; the API and node updater each need their own upgrade flag. Old Agents without the enabled `agent-upgrade-v1` and matching `agent-platform/<os>/<architecture>` capabilities are skipped. Omitted/zero `maxUnavailable` means one simultaneous upgrade; only 0 and 1 are supported. This limits upgrade concurrency, not overall schedulable capacity: the existing target-version fence can exclude old-version nodes. Nodes with busy/stale observations or held allocations wait without preemption.
+
+The selector persists an immutable operation in the exclusive Cluster slot. Success needs authenticated completion, observed allocation deletion, and a separate `acknowledge` proving the updater's terminal journal was saved. The controller saves one bounded `status.lastAgentUpgrade` receipt before deleting its own successful operation, observes deletion, then selects the next member. Completion/acknowledgement/status/delete response loss remains recoverable. Manual/foreign operations, rollback and uncertain application are retained for administrator recovery. Target changes only remove unassigned operations with no allocation witness; exposed assignments require explicit recovery to avoid stranding pre-claim journals. Inspect `AgentRolloutReady` and `status.lastAgentUpgrade`; all current members must freshly report the target version for readiness. A real single-node private-cloud rollout passed with a digest-changing Agent exec, unchanged supervisor, journal-backed launcher restart, and exact allocation/operation cleanup. Multi-node rollout, rollback after failed exec, and external-supervisor power-loss recovery remain outstanding.
+
+Create the controller leadership namespace before applying RBAC. Its namespaced Role includes Lease access and Event create/patch for leader election. The API uses a private flag set so dependency flags cannot collide at startup; `--help` requires no TLS files or management credentials, and unexpected arguments are rejected.
+
+The opt-in real-cluster lifecycle test is `TestCloudRawLifecycle` in `pkg/integration`. It requires an already enrolled, dedicated single-node Raw Cluster and the explicitly configured `RLARK_TEST_RAW_*` inputs in the paired developer plan. It creates real GPU workloads, checks success, capacity reuse, failure, stop, and exact cleanup/deletion. Ordinary `go test ./...` skips it. Failed/uncertain runs retain remaining objects for explicit recovery and prevent subsequent submissions. The native management CRDs and controller-manager must also be updated to the current repository version before the companion controller is enabled; an old native controller may still reconcile external-owner Jobs.
+
+Real single-node acceptance on 2026-10-31 passed against the local KCP and the private Kingsoft Cloud H100 notebook: mTLS enrollment, CUDA success, second-Job GPU reuse, nonzero exit, running stop, allocation release and exact Job/Task/binding deletion (170 seconds), followed by a 166-second post-upgrade rerun of all four lifecycle cases. The rollout changed the Agent executable digest from `c0a8f4…` to `db5714…`, retained the supervisor process, survived launcher restart with the installed release, and left no upgrade/allocation objects. A subsequent five-case lifecycle/checkpoint run passed in 216 seconds, verifying files after success/failure/stop and Job/Task/binding/allocation deletion; the final Job explicitly removed only its own test files. This does not establish storage persistence across platform replacement. The tests used a temporary SSH reverse tunnel and short-lived credentials. Native Node/Cluster Lease-based UI aggregation (the independent console uses companion observations), historical log archives, multi-node Ray/RLinf, cross-replacement checkpoint persistence, failed-exec rollback and power-loss recovery remain incomplete.
+
+The independent administrator console is built with `make build-ui` and served by
+`bin/container-runtime-console --ui-directory=ui/dist`. It accepts only a
+short-lived administrator JWT issued by the configured RLark Gateway and uses a
+separate restricted management ServiceAccount. The browser sees typed companion
+summaries; it never receives a kubeconfig, Secret, Agent certificate, or private
+key. The console is same-origin by default, keeps stale/unknown observations
+visible as unavailable, and uses UID/resourceVersion optimistic preconditions for
+writes. It is a preview surface; it does not add native UI routes or advertise
+multi-node Ray/RLinf or Docker Engine lifecycle support.
+
+Build and deployment details: [English](../../apps/rlark/docs/developer-guide/container-runtime-console.md) / [中文](../../apps/rlark/docs/zh/developer-guide/container-runtime-console.md).
+
+The console now supports guarded node cordon/uncordon through native
+`Node.spec.unschedulable`. It checks companion/native identity and patches with
+atomic UID/resourceVersion tests. Cordon retains running workloads and their
+locks; uncordon waits for exact or uncertain locks and legacy reservations to
+disappear. This does not perform drain or pause the independent Agent rollout.
+
+After a platform stop/start, compare the current container incarnation with the
+registered `instanceID`. A changed incarnation requires exact old Node retirement,
+new registration/credentials and a package in separate install/state directories.
+Do not adopt a replacement by editing the old binding or reusing its credential.
+Automatic enrollment/startup recovery and durable replacement of the test SSH
+reverse tunnel remain incomplete; see the bilingual console recovery section.
+
+On 2026-10-31 the optional log acceptance reran all four GPU lifecycle cases (170 seconds) against the direct log API, then the stop/log/cleanup case through the console proxy (28 seconds). Both verified bounded output, access rejection and denial after allocation release. See the paired plan for private token-file inputs and safe failure recovery.
+
+The console optionally submits, lists and suspends single-process Raw Jobs with
+`--enable-job-submission` and the additive console Job RBAC. It first creates a
+suspended native Job, pins an exact-UID ContainerJob, then activates with a CAS
+patch and retained receipt. Identical operation retries preserve later suspension
+and completion. The typed UI keeps uncertain process input only in memory and
+never accepts GPU visibility overrides. This remains an opt-in preview; see the
+paired console documents for API contracts, recovery and cloud acceptance limits.
+
+The console now provides explicitly enabled Raw node registration with retained
+operation IDs and exact Cluster UID preconditions. Certificate/package export
+stays on the administrator machine; see the paired console documents for the
+contract and cloud acceptance boundaries.
+
+Independent Raw templates may execute sequentially when fewer nodes than templates
+are available. Each member starts with its own exact allocation; sibling allocation
+absence or prior release is not a start barrier. Whole-set retirement still fences
+new starts. Ray/RLinf requires a separate whole-group readiness/port contract and
+remains unsupported by this independent-process path.
+
+Docker host observation is available with `--runtime=docker` and a canonical local
+Unix socket. Default packages observe only; opt into single-container execution
+with `enableExecution: true` and a separate private persistent `stateDirectory`.
+The controller and API also require their respective reservation/execution flags.
+One allocation exclusively reserves a whole host and injects its exact authorized
+GPU UUIDs. The local journal prevents delayed create/start after cleanup, and
+missing/corrupt records retain the allocation. GPU utilization and kernel-level port reservation remain incomplete;
+bounded on-demand logs/stats require explicit diagnostics enablement. See the paired guides:
+[English](../../apps/rlark/docs/developer-guide/docker-agent-observation.md) /
+[中文](../../apps/rlark/docs/zh/developer-guide/docker-agent-observation.md).
+
+Docker execution diagnostics additionally require package `enableDockerDiagnostics: true`
+(or Agent `--enable-docker-diagnostics=true`), plus the existing loopback read
+listener and console proxy. The private mTLS route is `/v1/docker-diagnostics`;
+Raw keeps `/v1/logs`. Administrator GET `/api/v1/container-runtime/logs` and
+`/api/v1/container-runtime/stats` pin allocation UID and Task UID. Reads revalidate
+ownership before returning, are transient and bounded, and cannot hold the
+execution gate while reading a response body. The UI provides manual snapshots
+with lossless uint64 decimal strings and explicit unavailable counters. GPU
+utilization, CPU percentage and host-network traffic attribution are unavailable.
+See the paired Docker Agent guides for limits, failure/recovery and enablement.
+
+
+Docker Ray group scheduling is now an opt-in preview using the existing reservation
+and execution flags. Execution Agents advertise `docker-ray-group-v1`. The
+controller expands up to 16 members, persists the exact group/placement digest in
+ContainerJob Status and immutable allocations, and waits for every exact prepared
+container receipt before allowing starts. Every start revalidates all members;
+`StartPrepared` cannot recreate a missing container. A worker exit fails the group;
+a successful head result waits for complete member cleanup and observed allocation
+deletion. Controller/Agent restart preserves exact identities and cancellation.
+
+Each member exclusively owns one host and its full authorized GPU UUID set. The
+same Cluster can run multiple Jobs on disjoint hosts. The controller persists the
+internal port block (24000..24264); IPv4/IPv6 preflight detects existing listeners
+but does not reserve ports against external races. Images must provide Python 3,
+Ray 2.56.1 and a POSIX shell; the launcher verifies exact private member addresses
+before head training. Raw Ray orchestration is not enabled by this Docker path.
+Tests cover mTLS group admission, partial preparation, contention, stale identity,
+restart and cleanup with simulated Engines. Real two-host Docker GPU/RLinf
+acceptance remains outstanding. The current Kingsoft Cloud notebook has no Docker
+socket and cannot satisfy that gate. See the paired Docker Agent and execution
+plans for prerequisites, protocol ownership and recovery limits.

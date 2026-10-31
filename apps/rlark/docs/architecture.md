@@ -5,14 +5,14 @@
 RLark is an embodied intelligence cloud-native management platform for cross-cluster, multi-runtime scenarios. Core design goals:
 
 1. **Cloud-to-Edge workload orchestration**: From cloud GPU training (RL/LLM) to edge deployment (robot arm, sensor, camera), unified declarative abstraction across the full embodied AI pipeline
-2. **Multi-runtime data plane**: Kubernetes provides unified management for cloud GPU clusters and edge devices, completing the path from cloud training and cross-cluster collaboration to embodied device deployment; Docker and Raw runtimes will extend coverage to additional lightweight edge scenarios
+2. **Multi-runtime data plane**: Kubernetes provides unified management for cloud GPU clusters and edge devices; the Docker preview runs Ray/RLinf v1 containers on fixed hosts, while Raw provides an experimental trusted-process path for additional lightweight environments
 3. **Cross-cluster resource pooling**: Unify GPU clusters and edge devices distributed across different regions into a single logical resource pool
 4. **Direct Pod-to-Pod network communication**: Embodied AI workloads require real-time communication between training actors and edge robots, requiring cross-cluster Pods to establish direct TCP connections
 5. **Security isolation**: Multi-tenant embodied AI tasks require network isolation — different teams/projects must not access each other's devices or data
 
 ## 2. Overall Architecture
 
-RLark uses a **control plane—data plane** separation architecture. The control plane uses kcp as its Kubernetes-compatible API server, while Agents connect cloud GPU clusters and edge Kubernetes nodes through one management plane. The optional **embodied-runtime** Device Plugin runs on Kubernetes nodes equipped with robot (ROS 1/2) or camera hardware and exposes those devices as Kubernetes resources; future Docker and Raw data plane runtimes will extend coverage to additional lightweight edge environments.
+RLark uses a **control plane—data plane** separation architecture. The control plane uses kcp as its Kubernetes-compatible API server, while Agents connect cloud GPU clusters, fixed Docker hosts, and edge Kubernetes nodes through one management plane. The optional **embodied-runtime** Device Plugin runs on Kubernetes nodes equipped with robot (ROS 1/2) or camera hardware and exposes those devices as Kubernetes resources.
 
 ![System Architecture](images/architecture.svg)
 

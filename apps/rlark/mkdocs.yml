@@ -78,6 +78,11 @@ plugins:
             "Project Layout": 项目结构
             "Project Design Principles": 项目设计原则
             "API Conventions": "API 约定"
+            "Raw Container Runtime Plan": "固定 GPU 容器接入计划"
+            "Container Runtime Management Console": "容器运行时管理控制台"
+            "Docker Cluster Management Plan": "Docker 集群管理计划"
+            "Docker Host Agent and Execution": "Docker 主机 Agent 与执行"
+            "Docker Runtime Execution Plan": "Docker 运行时执行计划"
             "Technical Architecture": 技术架构
             "New Device Integration": 新设备适配
             Contributing: 贡献指南
@@ -122,6 +127,11 @@ nav:
   - Developer Guide:
     - Developer Guide Overview: developer-guide/index.md
     - Project Design Principles: developer-guide/design-principles.md
+    - Raw Container Runtime Plan: developer-guide/raw-container-runtime-plan.md
+    - Container Runtime Management Console: developer-guide/container-runtime-console.md
+    - Docker Cluster Management Plan: developer-guide/docker-cluster-management-plan.md
+    - Docker Host Agent and Execution: developer-guide/docker-agent-observation.md
+    - Docker Runtime Execution Plan: developer-guide/docker-runtime-execution-plan.md
     - API Conventions: developer-guide/api-conventions.md
     - Local Development and Debugging: developer-guide/local-development.md
     - Debugging: developer-guide/debugging.md

@@ -91,6 +91,18 @@ export interface INode {
       "type": string;
     }>;
     "diskPressure"?: boolean;
+    "dockerReservations"?: Array<{
+      "allocationID": string;
+      "clusterUID": string;
+      "cpuMilli"?: number;
+      "gpuCount"?: number;
+      "incarnation": string;
+      "jobUID": string;
+      "memoryBytes"?: number;
+      "nodeUID": string;
+      "taskUID": string;
+      "tenantID": string;
+    }>;
     /**
      * Events 由数据面 node-agent 上报节点相关 Kubernetes Event（如 DiskPressure
      * 等 Warning 事件及镜像拉取/调度相关事件）。控制面 Task reconciler 在 Task
@@ -123,6 +135,10 @@ export interface INode {
     "nodeInfo"?: {
       "agentVersion"?: string;
       "architecture"?: string;
+      /**
+       * Incarnation changes when the backing agent/engine identity changes.
+       */
+      "incarnation"?: string;
       "kernelVersion"?: string;
       "operatingSystem"?: string;
     };
@@ -142,11 +158,42 @@ export interface INode {
       "total": number;
     }>;
     /**
+     * Raw is Agent-owned capability observation. Reservations are controller-owned.
+     */
+    "raw"?: {
+      "authorizedGPUUUIDs": Array<string>;
+      "environment": string;
+      "incarnation": string;
+      "networkScope": string;
+      "trainingIP": string;
+    };
+    /**
      * Reason 是 Phase 的机器可读原因（CamelCase），与 Conditions 中
      * ConditionTypeReady 的 Reason 同源，供列表视图直接展示。
      * 该字段与 Conditions 均由数据面 node-agent 独占写入。
      */
     "reason"?: string;
+    /**
+     * RawNodeReservation is controller-owned durable exclusive allocation state.
+     * It is never released on a timeout or heartbeat loss. Cleanup must be proven.
+     */
+    "reservation"?: {
+      "allocationID": string;
+      "clusterUID": string;
+      "committed": boolean;
+      "environment": string;
+      "executionID": string;
+      "groupDigest": string;
+      "incarnation": string;
+      "jobUID": string;
+      "nodeUID": string;
+      /**
+       * TaskUID is set by the allocator after creating the assigned Task. An
+       * unbound reservation never authorizes a process, even after group commit.
+       */
+      "taskUID"?: string;
+      "tenantID": string;
+    };
     /**
      * NodeStorageStatus reports kubelet filesystem usage in bytes.
      */

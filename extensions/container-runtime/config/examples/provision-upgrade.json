@@ -1,0 +1,17 @@
+{
+  "operationID": "REPLACE_RETAINED_OPERATION_UUID",
+  "node": {
+    "namespace": "REPLACE_AGENT_NAMESPACE",
+    "name": "REPLACE_CONTAINER_NODE_NAME",
+    "uid": "REPLACE_CONTAINER_NODE_UID",
+    "tenantID": "REPLACE_TENANT_ID",
+    "credentialID": "REPLACE_ACTIVE_CREDENTIAL_ID"
+  },
+  "release": {
+    "namespace": "REPLACE_AGENT_NAMESPACE",
+    "name": "REPLACE_AGENT_RELEASE_NAME",
+    "uid": "REPLACE_AGENT_RELEASE_UID"
+  },
+  "sha256": "REPLACE_LOWERCASE_SHA256",
+  "fromVersion": "REPLACE_CURRENT_AGENT_VERSION"
+}

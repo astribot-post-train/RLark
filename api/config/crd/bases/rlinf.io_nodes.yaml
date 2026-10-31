@@ -162,6 +162,45 @@ spec:
                 x-kubernetes-list-type: map
               diskPressure:
                 type: boolean
+              dockerReservations:
+                items:
+                  description: |-
+                    DockerNodeReservation is controller-owned durable allocation state for one
+                    Docker Task. GPU allocation is whole-card and represented by GPUCount.
+                  properties:
+                    allocationID:
+                      type: string
+                    clusterUID:
+                      type: string
+                    cpuMilli:
+                      format: int64
+                      type: integer
+                    gpuCount:
+                      format: int64
+                      type: integer
+                    incarnation:
+                      type: string
+                    jobUID:
+                      type: string
+                    memoryBytes:
+                      format: int64
+                      type: integer
+                    nodeUID:
+                      type: string
+                    taskUID:
+                      type: string
+                    tenantID:
+                      type: string
+                  required:
+                  - allocationID
+                  - clusterUID
+                  - incarnation
+                  - jobUID
+                  - nodeUID
+                  - taskUID
+                  - tenantID
+                  type: object
+                type: array
               events:
                 description: |-
                   Events 由数据面 node-agent 上报节点相关 Kubernetes Event（如 DiskPressure
@@ -217,6 +256,10 @@ spec:
                     type: string
                   architecture:
                     type: string
+                  incarnation:
+                    description: Incarnation changes when the backing agent/engine
+                      identity changes.
+                    type: string
                   kernelVersion:
                     type: string
                   operatingSystem:
@@ -256,12 +299,77 @@ spec:
                   - total
                   type: object
                 type: array
+              raw:
+                description: Raw is Agent-owned capability observation. Reservations
+                  are controller-owned.
+                properties:
+                  authorizedGPUUUIDs:
+                    items:
+                      type: string
+                    type: array
+                  environment:
+                    type: string
+                  incarnation:
+                    type: string
+                  networkScope:
+                    type: string
+                  trainingIP:
+                    type: string
+                required:
+                - authorizedGPUUUIDs
+                - environment
+                - incarnation
+                - networkScope
+                - trainingIP
+                type: object
               reason:
                 description: |-
                   Reason 是 Phase 的机器可读原因（CamelCase），与 Conditions 中
                   ConditionTypeReady 的 Reason 同源，供列表视图直接展示。
                   该字段与 Conditions 均由数据面 node-agent 独占写入。
                 type: string
+              reservation:
+                description: |-
+                  RawNodeReservation is controller-owned durable exclusive allocation state.
+                  It is never released on a timeout or heartbeat loss. Cleanup must be proven.
+                properties:
+                  allocationID:
+                    type: string
+                  clusterUID:
+                    type: string
+                  committed:
+                    type: boolean
+                  environment:
+                    type: string
+                  executionID:
+                    type: string
+                  groupDigest:
+                    type: string
+                  incarnation:
+                    type: string
+                  jobUID:
+                    type: string
+                  nodeUID:
+                    type: string
+                  taskUID:
+                    description: |-
+                      TaskUID is set by the allocator after creating the assigned Task. An
+                      unbound reservation never authorizes a process, even after group commit.
+                    type: string
+                  tenantID:
+                    type: string
+                required:
+                - allocationID
+                - clusterUID
+                - committed
+                - environment
+                - executionID
+                - groupDigest
+                - incarnation
+                - jobUID
+                - nodeUID
+                - tenantID
+                type: object
               storage:
                 description: NodeStorageStatus reports kubelet filesystem usage in
                   bytes.

@@ -107,6 +107,8 @@ Use **Refresh** in the list header to update Task, Pod, placement, IP, and statu
 
 On both the Jobs page and the Worker list, **Refresh** updates only the corresponding data region. While the request is in progress, existing rows stay in place under a dimmed loading mask with a centered spinner, and actions in that region are temporarily disabled. The rest of the page remains available.
 
+If a Job returned by the API has incomplete or unreadable task data, the Jobs page hides that record and identifies it in a warning; other jobs remain available. Check the Job API response and contact an administrator to resolve the data or version mismatch. Refresh the list after the underlying issue is corrected.
+
 Click any worker to see its runtime details, including container status, resource usage, and events.
 
 ### Per-Role Configuration
@@ -222,6 +224,53 @@ Deleting a Job cleans up its active workload resources, with these storage excep
 
 - **Edit** — Modify a stopped job's configuration (roles, resources, commands) and resubmit.
 - **Clone** — Create a copy of an existing job configuration to use as a template for a new job.
+
+## Experimental Raw process Jobs
+
+Raw jobs run one trusted process inside an administrator-provisioned GPU
+container. They do not pull an image, create a Docker container, or use a
+Docker socket. The Node must already be registered with `agentType: Raw`, an
+independent `raw-supervisor` must be running, and the requested environment and
+private training network must match the Node capability.
+
+The first Raw path supports exactly one process Task on one Node. GPU requests
+reserve the complete Node and the controller injects the authorized GPU UUIDs
+as `CUDA_VISIBLE_DEVICES`; RLark inventory checks do not prove cloud-provider
+GPU entitlement. Ray/RLinf multi-node groups, replica expansion, remote logs,
+and UI creation are not supported yet. Submit a Raw Job through the API with a
+preinstalled executable and working directory:
+
+```yaml
+apiVersion: rlinf.io/v1alpha1
+kind: Job
+metadata:
+  name: raw-smoke
+spec:
+  tasks:
+  - name: worker
+    role: Actor
+    placement:
+      environment: prepared-python
+      nodeSelector:
+        pool: gpu
+    runtime:
+      kind: Raw
+      name: raw-node
+    workload:
+      kind: raw.rlark.io/process
+      version: v1
+      carrier:
+        type: raw.rlark.io/process
+        version: v1
+      parameters:
+        argv: ["/opt/venv/bin/python", "-c", "print(42)"]
+        directory: /workspace/training
+        env: ["PATH=/opt/venv/bin:/usr/bin"]
+```
+
+The process runs as root in the existing container. Stop, restart, and delete
+wait for the supervisor to confirm cleanup before releasing the Node; an
+unknown cleanup result keeps the reservation to prevent overlap.
 
 ## Preflight Checklist
 

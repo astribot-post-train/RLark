@@ -84,6 +84,11 @@ clean: ## Clean Go cache and bin/
 	go clean -cache
 	rm -rf bin/
 
+# Experimental supervisor is opt-in until Raw Agent integration is complete.
+.PHONY: raw-supervisor
+raw-supervisor: ## Build experimental Linux Raw process supervisor
+	CGO_ENABLED=0 GOOS=linux GOARCH=$(GOARCH) go build -ldflags="$(LDFLAGS)" -o bin/$@ ./cmd/$@
+
 ##@ Docker
 
 .PHONY: docker-build docker-push

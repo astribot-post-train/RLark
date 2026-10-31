@@ -4,9 +4,12 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"os"
 	"time"
 
 	"golang.org/x/sync/errgroup"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
@@ -22,7 +25,15 @@ import (
 	"github.com/rlinf/rlark/apps/rlark/pkg/agent/controllers/node"
 	"github.com/rlinf/rlark/apps/rlark/pkg/agent/controllers/pod"
 	"github.com/rlinf/rlark/apps/rlark/pkg/agent/controllers/task"
+	dockerruntime "github.com/rlinf/rlark/apps/rlark/pkg/agent/controllers/task/runtime/docker"
+	dockerray "github.com/rlinf/rlark/apps/rlark/pkg/agent/controllers/task/workload/ray/docker"
+	"github.com/rlinf/rlark/apps/rlark/pkg/agent/execution/workload"
+	"github.com/rlinf/rlark/apps/rlark/pkg/auth/cert"
+	"github.com/rlinf/rlark/apps/rlark/pkg/common"
 	"github.com/rlinf/rlark/apps/rlark/pkg/log"
+	"github.com/rlinf/rlark/apps/rlark/pkg/rawnode"
+	"github.com/rlinf/rlark/apps/rlark/pkg/server"
+	"github.com/rlinf/rlark/apps/rlark/pkg/tenant"
 )
 
 // clusterAgent manages cluster-level operations (controller manager).
@@ -40,6 +51,10 @@ func (c *clusterAgent) Run(ctx context.Context) error {
 	logger.Info(fmt.Sprintf("agentType=%s, clusterID=%s", agentType, clusterID))
 	if clusterID == "" {
 		return fmt.Errorf("cluster ID is empty")
+	}
+
+	if agentType == string(rlarkv1alpha1.AgentTypeRaw) {
+		return c.runRaw(ctx)
 	}
 
 	mm, err := ctrl.NewManager(c.a.managementConfig, ctrl.Options{
@@ -64,6 +79,9 @@ func (c *clusterAgent) Run(ctx context.Context) error {
 		ManagementNamespace: clusterID,
 		AgentType:           agentType,
 		Image:               c.a.config.Image,
+	}
+	if rlarkv1alpha1.AgentType(agentType) == rlarkv1alpha1.AgentTypeDocker {
+		return c.runDocker(ctx, mm, mclient, bc, clusterID)
 	}
 
 	var lm interface {
@@ -107,10 +125,6 @@ func (c *clusterAgent) Run(ctx context.Context) error {
 		// TODO: initialize Docker controller manager
 		return fmt.Errorf("docker agent is not implemented yet")
 
-	case rlarkv1alpha1.AgentTypeRaw:
-		// TODO: initialize Raw controller manager
-		return fmt.Errorf("raw agent is not implemented yet")
-
 	default:
 		return fmt.Errorf("unknown AgentType: %s", agentType)
 	}
@@ -124,6 +138,7 @@ func (c *clusterAgent) Run(ctx context.Context) error {
 		"task-statefulset": c.a.config.ControllerConcurrency.TaskStatefulSet,
 	}
 	tc := task.NewTaskController(taskController)
+
 	execution, err := task.NewKubernetesExecutionCoordinator(taskController.LocalKubeClient, taskController.Image)
 	if err != nil {
 		return fmt.Errorf("initialize task execution coordinator: %w", err)
@@ -202,4 +217,147 @@ func (c *clusterAgent) Run(ctx context.Context) error {
 	eg.Go(func() error { return mm.Start(ctx) })
 	eg.Go(func() error { return lm.Start(ctx) })
 	return eg.Wait()
+}
+
+func (c *clusterAgent) runDocker(ctx context.Context, mm ctrl.Manager, mclient client.Client, bc base.Controller, clusterID string) error {
+	logger := log.FromContext(ctx).WithName("docker-agent").WithValues("cluster", clusterID)
+	logger.Info("initializing Docker runtime")
+	if c.a.localDockerClient == nil {
+		return fmt.Errorf("Docker Engine client is not configured")
+	}
+	nodeName := c.a.config.NodeName
+	if nodeName == "" {
+		nodeName = common.Hostname("docker-node")
+	}
+	logger.Info("ensuring Docker Node", "node", nodeName)
+	node, err := ensureDockerNode(ctx, mclient, clusterID, nodeName)
+	if err != nil {
+		logger.Error(err, "Docker Node setup failed", "node", nodeName)
+		return err
+	}
+	logger.Info("Docker Node ready", "node", node.Name, "uid", node.UID)
+	info, err := c.a.localDockerClient.Info(ctx)
+	if err != nil {
+		logger.Error(err, "Docker Engine inspection failed")
+		return fmt.Errorf("inspect Docker Engine identity: %w", err)
+	}
+	incarnation := info.ID
+	if incarnation == "" {
+		incarnation = nodeName
+	}
+	logger.Info("Docker Engine ready", "incarnation", incarnation)
+	provider := &dockerruntime.Provider{ID: dockerruntime.DefaultID, Client: c.a.localDockerClient}
+	admission := dockerruntime.NodeAdmission{Client: mclient, Node: client.ObjectKeyFromObject(node), NodeUID: string(node.UID), Incarnation: incarnation, TenantID: tenant.IDOf(node)}
+	provider.Admission = admission
+	bc.LocalDockerClient = c.a.localDockerClient
+	taskController := bc
+	taskController.PullMaxConcurrentReconciles = c.a.config.ControllerConcurrency.TaskPull
+	tc := task.NewTaskController(taskController)
+	execution, err := dockerruntime.NewCoordinator(ctx, provider, []workload.Adapter{dockerray.Adapter{}})
+	if err != nil {
+		return fmt.Errorf("initialize Docker task execution coordinator: %w", err)
+	}
+	logger.Info("Docker task coordinator ready")
+	tc.WithExecutionCoordinator(execution)
+	taskHost, err := dockerruntime.NewHost(ctx, mclient, admission, provider, []workload.Adapter{dockerray.Adapter{}})
+	if err != nil {
+		return fmt.Errorf("initialize Docker Task Host: %w", err)
+	}
+	logger.Info("Docker Task host ready")
+	tc.WithHost(taskHost)
+	if err := tc.SetupPullController(mm); err != nil {
+		return fmt.Errorf("setup Docker Task pull controller: %w", err)
+	}
+	logger.Info("Docker Task pull controller ready")
+	if err := mm.Add(task.NewTaskResync(mclient, clusterID, c.a.config.TaskRuntimeResyncPeriod, tc)); err != nil {
+		return fmt.Errorf("setup Docker Task resync: %w", err)
+	}
+	logger.Info("Docker Task resync ready")
+	local := &dockerManager{}
+	if err := tc.SetupPushController(local); err != nil {
+		return fmt.Errorf("setup Docker Task push controller: %w", err)
+	}
+	logger.Info("Docker Task push controller ready")
+	observer := &dockerruntime.NodeObserver{Client: mclient, Engine: c.a.localDockerClient, Node: client.ObjectKeyFromObject(node), NodeIP: c.a.config.DockerNodeIP, NodeUID: string(node.UID), Incarnation: incarnation}
+	if err := local.Add(observer); err != nil {
+		return fmt.Errorf("setup Docker Node observer: %w", err)
+	}
+	logger.Info("Docker Node observer ready")
+	eg, ctx := errgroup.WithContext(ctx)
+	logger.Info("starting Docker managers")
+	eg.Go(func() error { return mm.Start(ctx) })
+	eg.Go(func() error { return local.Start(ctx) })
+	return eg.Wait()
+}
+
+func ensureDockerNode(ctx context.Context, management client.Client, namespace, name string) (*rlarkv1alpha1.Node, error) {
+	var node rlarkv1alpha1.Node
+	key := client.ObjectKey{Namespace: namespace, Name: name}
+	if err := management.Get(ctx, key, &node); err == nil {
+		if node.Spec.AgentType != "" && node.Spec.AgentType != rlarkv1alpha1.AgentTypeDocker {
+			return nil, fmt.Errorf("Node %s is owned by agent type %s", key.String(), node.Spec.AgentType)
+		}
+		return &node, nil
+	} else if client.IgnoreNotFound(err) != nil {
+		return nil, fmt.Errorf("read Docker Node: %w", err)
+	}
+	node = rlarkv1alpha1.Node{ObjectMeta: metav1.ObjectMeta{Namespace: namespace, Name: name}, Spec: rlarkv1alpha1.NodeSpec{AgentType: rlarkv1alpha1.AgentTypeDocker}}
+	tenant.SetIdentity(&node, tenant.DefaultID, "rlark-agent")
+	if err := management.Create(ctx, &node); err != nil {
+		if apierrors.IsAlreadyExists(err) {
+			if getErr := management.Get(ctx, key, &node); getErr == nil {
+				return &node, nil
+			}
+		}
+		return nil, fmt.Errorf("create Docker Node: %w", err)
+	}
+	return &node, nil
+}
+
+func rawIdentityFromClientCertificate(config server.ClientConfig) (rawnode.Identity, error) {
+	certPEM, err := os.ReadFile(config.ClientCertPath)
+	if err != nil {
+		return rawnode.Identity{}, fmt.Errorf("read client certificate: %w", err)
+	}
+	keyPEM, err := os.ReadFile(config.ClientKeyPath)
+	if err != nil {
+		return rawnode.Identity{}, fmt.Errorf("read client key: %w", err)
+	}
+	data, err := cert.LoadData(certPEM, keyPEM)
+	if err != nil {
+		return rawnode.Identity{}, err
+	}
+	metadata, ok := cert.GetX509CertMeta(data.Cert)
+	if !ok {
+		return rawnode.Identity{}, fmt.Errorf("parse client certificate metadata")
+	}
+	return rawnode.FromMetadata(metadata)
+}
+
+func runRawHeartbeat(ctx context.Context, client *server.Client) {
+	if client == nil {
+		return
+	}
+	beat := func() {
+		requestCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		defer cancel()
+		response, err := client.DoRequest(requestCtx, http.MethodPost, client.BuildURL("api", "raw", "heartbeat"), nil)
+		if response != nil {
+			_ = response.Body.Close()
+		}
+		if err != nil || response == nil || response.StatusCode < 200 || response.StatusCode >= 300 {
+			return
+		}
+	}
+	beat()
+	ticker := time.NewTicker(15 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			beat()
+		}
+	}
 }

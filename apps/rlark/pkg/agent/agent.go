@@ -15,6 +15,7 @@ import (
 
 	"github.com/rlinf/rlark/api/kubeclients/clientset/versioned"
 	rlarkv1alpha1 "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
+	dockerruntime "github.com/rlinf/rlark/apps/rlark/pkg/agent/controllers/task/runtime/docker"
 	"github.com/rlinf/rlark/apps/rlark/pkg/common"
 	"github.com/rlinf/rlark/apps/rlark/pkg/server"
 	"github.com/rlinf/rlark/apps/rlark/pkg/utils"
@@ -29,9 +30,10 @@ type Agent struct {
 	managementConfig *rest.Config
 	managementClient versioned.Interface
 
-	localKubeConfig  *rest.Config
-	localKubeClient  kubernetes.Interface
-	localKubeHandler http.Handler
+	localKubeConfig   *rest.Config
+	localKubeClient   kubernetes.Interface
+	localKubeHandler  http.Handler
+	localDockerClient dockerruntime.EngineClient
 
 	localListener net.Listener
 	localDialer   utils.Dial
@@ -79,6 +81,9 @@ func (a *Agent) init(ctx context.Context) error {
 	if a.config.PodStaleTTL <= 0 {
 		return fmt.Errorf("pod stale TTL must be positive")
 	}
+	if err := a.config.validateRaw(); err != nil {
+		return err
+	}
 	// Initialize server client
 	a.serverClient, err = server.NewClientFromConfig(a.config.ClientConfig)
 	if err != nil {
@@ -86,7 +91,11 @@ func (a *Agent) init(ctx context.Context) error {
 	}
 
 	// Initialize Management Kube API client
-	a.managementConfig, err = a.config.ClientConfig.BuildRestConfig()
+	if rlarkv1alpha1.AgentType(a.config.AgentType) == rlarkv1alpha1.AgentTypeRaw {
+		a.managementConfig, err = a.config.ClientConfig.BuildRawRestConfig()
+	} else {
+		a.managementConfig, err = a.config.ClientConfig.BuildRestConfig()
+	}
 	if err != nil {
 		return fmt.Errorf("build management API config: %w", err)
 	}
@@ -115,10 +124,15 @@ func (a *Agent) init(ctx context.Context) error {
 		a.localKubeHandler = kubeProxy.GetHandler()
 
 	case rlarkv1alpha1.AgentTypeDocker:
-		// TODO: Initialize Docker client
+		a.localDockerClient, err = dockerruntime.NewSDKClient(a.config.DockerHost)
+		if err != nil {
+			return fmt.Errorf("create Docker Engine client: %w", err)
+		}
 
 	case rlarkv1alpha1.AgentTypeRaw:
-		// TODO: Initialize Raw client
+		if a.config.RawSupervisorSocket == "" {
+			return fmt.Errorf("raw-supervisor socket is required for Raw agent")
+		}
 
 	default:
 		return fmt.Errorf("unknown AgentType: %s", a.config.AgentType)
@@ -154,13 +168,22 @@ func (a *Agent) Run(ctx context.Context) error {
 		cancel()
 	}()
 
-	var eg errgroup.Group
+	if a.config.AgentType == string(rlarkv1alpha1.AgentTypeRaw) {
+		return (&clusterAgent{a: a}).Run(ctx)
+	}
+
+	eg, ctx := errgroup.WithContext(ctx)
 
 	// Run tunnel for all modes
 	eg.Go(func() error {
 		role := ""
 		if a.config.Mode == "node" {
 			role = "node-agent:" + common.NodeName("-")
+		} else if a.config.AgentType == string(rlarkv1alpha1.AgentTypeDocker) {
+			// Docker cluster agents need both the cluster heartbeat and a
+			// node-scoped heartbeat so the shared Node controller can schedule
+			// the host. The server recognizes this role specially.
+			role = "docker-agent:" + common.NodeName(a.config.NodeName)
 		}
 		return a.runTunnel(ctx, role)
 	})
