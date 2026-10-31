@@ -154,6 +154,7 @@ rlark-controller-manager \
 | `--ca-cert` | string | `""` | CA 证书路径 |
 | `--insecure-skip-tls-verify` | bool | `false` | 跳过 TLS 证书验证 |
 | `--agent-type` | string | `Kubernetes` | Agent 类型：Kubernetes、Docker、Raw |
+| `--raw-supervisor-socket` | string | 未设置 | Raw 独立 supervisor 的私有 Unix socket；`Raw` Agent 必须设置 |
 | `--mode` | string | `cluster` | Agent 模式：cluster、node、both |
 | `--leader-election` | bool | `false` | 启用 Leader Election |
 | `--leader-election-key` | string | `default/rlark-agent` | Leader Election Key（namespace/name） |
@@ -299,12 +300,12 @@ Gateway 使用的对象存储后端配置。
 | `db` | DBConfig | 未设置 | 数据库配置；在 `rlarkadm` 部署中启用 PostgreSQL 组件 |
 | `kubernetes` | KubernetesEnv | 未设置 | Kubernetes 部署环境 |
 | `docker` | DockerEnv | 未设置 | Docker 部署环境 |
-| `raw` | RawEnv | 未设置 | Raw 部署环境 |
+| `raw` | RawEnv | 未设置 | Raw 部署环境；仅实验性单节点进程路径 |
 | `cert` | CertConfig | 未设置 | 证书配置；数据面部署时必填 |
 | `insecure-skip-tls-verify` | bool | `false` | 跳过 Server TLS 验证 |
 
 !!! warning "运行时支持范围"
-    配置 schema 仍保留 `kubernetes`、`docker` 和 `raw`，但当前仅支持 Kubernetes 工作负载路径。现阶段部署不应使用 Docker 或 Raw；这两种路径不受支持，也不推荐使用。Kubernetes 数据面还必须提供 `control-plane-address` 和 `cert`。
+    配置 schema 仍保留 `kubernetes`、`docker` 和 `raw`。Docker 是预览数据面 Agent 路径，仅支持 Ray/RLinf v1，要求宿主机 Docker socket、root 权限和 Docker 主机间私网 host network；不支持 Docker-in-Docker。Raw 需要明确的 Agent flags、管理员预置 Node/证书契约，且仅为实验性单节点路径；详见 Raw 运行时计划。Kubernetes 数据面还必须提供 `control-plane-address` 和 `cert`。
 
 ### DBConfig
 
@@ -342,10 +343,28 @@ Gateway 使用的对象存储后端配置。
 !!! tip "镜像优先级"
     `gateway-image` 等组件专用镜像优先于 `image`。
 
+独立构建的伴生 Agent 使用单独参数：`--runtime=docker`、`--docker-host`、
+`--enable-task-execution`（默认 false）和执行时必需的 `--state-directory`。
+它通过扩展 API 支持单个不可变容器 Task 及有界按需日志/stats，尚不支持 Ray 组。见
+[Docker Agent](../developer-guide/docker-agent-observation.md)。
+
+
+容器诊断使用以下独立扩展配置，默认均关闭：
+
+| 组件 | 配置 | 契约 |
+| --- | --- | --- |
+| Docker Agent | `--enable-docker-diagnostics=true` | 要求 Task 执行和私有持久 journal；声明 `docker-diagnostics-v1` |
+| 离线安装包 | `enableDockerDiagnostics: true` | 仅 Docker；同时设置 `enableExecution: true`；`enableLogReads` 仍只用于 Raw |
+| API | `--log-read-addr=127.0.0.1:9446` | 管理员日志/stats 的显式回环 IP HTTP 监听器；要求 `--enable-task-execution` 与 `--gateway-jwt-key-file` |
+| 控制台 | `--log-api-origin=http://127.0.0.1:9446` | 固定日志/stats 代理，必须指向 Agent 轮询所用同一 API 实例 |
+
+这些是预览配置，不是原生 Agent/rlarkadm 字段。诊断为临时读取，不提供历史归档或
+指标数据库。
+
 ### DockerEnv
 
-!!! warning "当前不支持"
-    这些字段为兼容性保留在 schema 中，但 Docker 不是当前支持的工作负载路径，不建议用于部署。
+!!! warning "预览"
+    这些字段用于控制面部署环境。Docker workload Agent 还需要 `--docker-host` 和 `--docker-node-ip`；Agent 必须以 root 运行并直接访问宿主机 Docker socket，不支持 Docker-in-Docker。固定主机的 systemd 服务需要由宿主机自行管理。
 
 | 字段 | 类型 | 说明 |
 | ------ | ------ | ------ |
@@ -362,7 +381,7 @@ Gateway 使用的对象存储后端配置。
 ### RawEnv
 
 !!! warning "当前不支持"
-    这些字段为兼容性保留在 schema 中，但 Raw 不是当前支持的工作负载路径，不建议用于部署。请使用 Kubernetes。
+    这些字段为兼容性保留在 schema 中。Raw 部署还需要明确的 `raw-*` Agent flags 和独立管理的 supervisor；本节不是 Docker 配置或容器创建接口。
 
 | 字段 | 类型 | 说明 |
 | ------ | ------ | ------ |

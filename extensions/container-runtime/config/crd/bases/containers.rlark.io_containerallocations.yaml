@@ -1,0 +1,503 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.18.0
+  name: containerallocations.containers.rlark.io
+spec:
+  group: containers.rlark.io
+  names:
+    kind: ContainerAllocation
+    listKind: ContainerAllocationList
+    plural: containerallocations
+    singular: containerallocation
+  scope: Namespaced
+  versions:
+  - name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: ContainerAllocation is a durable exclusive reservation and cleanup
+          record.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            properties:
+              cluster:
+                description: NativeObjectReference pins an extension record to one
+                  exact RLark object incarnation.
+                properties:
+                  name:
+                    type: string
+                  namespace:
+                    type: string
+                  uid:
+                    type: string
+                required:
+                - name
+                - uid
+                type: object
+                x-kubernetes-validations:
+                - message: referenced object instance is immutable
+                  rule: self == oldSelf
+              executionID:
+                type: string
+              generation:
+                format: int64
+                type: integer
+              gpuUUIDs:
+                items:
+                  type: string
+                type: array
+              group:
+                description: |-
+                  Group is immutable execution material for a Docker Ray gang. It is absent
+                  for single-container and Raw allocations. The controller owns this field;
+                  Agents only consume it after the exact Task and allocation identities pass
+                  authorization.
+                properties:
+                  digest:
+                    pattern: ^[a-f0-9]{64}$
+                    type: string
+                  id:
+                    pattern: ^[a-f0-9]{64}$
+                    type: string
+                  memberIndex:
+                    format: int32
+                    minimum: 0
+                    type: integer
+                  plan:
+                    description: |-
+                      RayGroupPlan is the controller-owned complete placement decision. It is
+                      persisted before any member allocation is exposed; ID/digest are recomputed
+                      at every authorization boundary. Index zero is the only head.
+                    properties:
+                      binding:
+                        description: NativeObjectReference pins an extension record
+                          to one exact RLark object incarnation.
+                        properties:
+                          name:
+                            type: string
+                          namespace:
+                            type: string
+                          uid:
+                            type: string
+                        required:
+                        - name
+                        - uid
+                        type: object
+                        x-kubernetes-validations:
+                        - message: referenced object instance is immutable
+                          rule: self == oldSelf
+                      cluster:
+                        description: NativeObjectReference pins an extension record
+                          to one exact RLark object incarnation.
+                        properties:
+                          name:
+                            type: string
+                          namespace:
+                            type: string
+                          uid:
+                            type: string
+                        required:
+                        - name
+                        - uid
+                        type: object
+                        x-kubernetes-validations:
+                        - message: referenced object instance is immutable
+                          rule: self == oldSelf
+                      job:
+                        description: NativeObjectReference pins an extension record
+                          to one exact RLark object incarnation.
+                        properties:
+                          name:
+                            type: string
+                          namespace:
+                            type: string
+                          uid:
+                            type: string
+                        required:
+                        - name
+                        - uid
+                        type: object
+                        x-kubernetes-validations:
+                        - message: referenced object instance is immutable
+                          rule: self == oldSelf
+                      jobGeneration:
+                        format: int64
+                        minimum: 1
+                        type: integer
+                      members:
+                        items:
+                          description: GroupMember is the trusted placement and rank
+                            for one group member.
+                          properties:
+                            credentialID:
+                              type: string
+                            generation:
+                              format: int64
+                              minimum: 1
+                              type: integer
+                            gpuUUIDs:
+                              items:
+                                type: string
+                              type: array
+                              x-kubernetes-list-type: set
+                            instanceID:
+                              type: string
+                            node:
+                              description: NativeObjectReference pins an extension
+                                record to one exact RLark object incarnation.
+                              properties:
+                                name:
+                                  type: string
+                                namespace:
+                                  type: string
+                                uid:
+                                  type: string
+                              required:
+                              - name
+                              - uid
+                              type: object
+                              x-kubernetes-validations:
+                              - message: referenced object instance is immutable
+                                rule: self == oldSelf
+                            nodeRecord:
+                              description: NativeObjectReference pins an extension
+                                record to one exact RLark object incarnation.
+                              properties:
+                                name:
+                                  type: string
+                                namespace:
+                                  type: string
+                                uid:
+                                  type: string
+                              required:
+                              - name
+                              - uid
+                              type: object
+                              x-kubernetes-validations:
+                              - message: referenced object instance is immutable
+                                rule: self == oldSelf
+                            privateAddress:
+                              type: string
+                            rank:
+                              format: int32
+                              minimum: 0
+                              type: integer
+                            task:
+                              description: NativeObjectReference pins an extension
+                                record to one exact RLark object incarnation.
+                              properties:
+                                name:
+                                  type: string
+                                namespace:
+                                  type: string
+                                uid:
+                                  type: string
+                              required:
+                              - name
+                              - uid
+                              type: object
+                              x-kubernetes-validations:
+                              - message: referenced object instance is immutable
+                                rule: self == oldSelf
+                          required:
+                          - credentialID
+                          - generation
+                          - instanceID
+                          - node
+                          - nodeRecord
+                          - privateAddress
+                          - rank
+                          - task
+                          type: object
+                        type: array
+                      networkScope:
+                        type: string
+                      ports:
+                        description: RayPortPlan is an immutable host port block shared
+                          by all group members.
+                        properties:
+                          base:
+                            format: int32
+                            maximum: 65535
+                            minimum: 1024
+                            type: integer
+                          workerCount:
+                            format: int32
+                            minimum: 1
+                            type: integer
+                        required:
+                        - base
+                        - workerCount
+                        type: object
+                      restart:
+                        type: string
+                      tenantID:
+                        type: string
+                    required:
+                    - binding
+                    - cluster
+                    - job
+                    - jobGeneration
+                    - members
+                    - networkScope
+                    - ports
+                    - tenantID
+                    type: object
+                required:
+                - digest
+                - id
+                - memberIndex
+                - plan
+                type: object
+              job:
+                description: NativeObjectReference pins an extension record to one
+                  exact RLark object incarnation.
+                properties:
+                  name:
+                    type: string
+                  namespace:
+                    type: string
+                  uid:
+                    type: string
+                required:
+                - name
+                - uid
+                type: object
+                x-kubernetes-validations:
+                - message: referenced object instance is immutable
+                  rule: self == oldSelf
+              jobBindingUID:
+                type: string
+              jobGeneration:
+                format: int64
+                type: integer
+              networkScope:
+                type: string
+              node:
+                description: NativeObjectReference pins an extension record to one
+                  exact RLark object incarnation.
+                properties:
+                  name:
+                    type: string
+                  namespace:
+                    type: string
+                  uid:
+                    type: string
+                required:
+                - name
+                - uid
+                type: object
+                x-kubernetes-validations:
+                - message: referenced object instance is immutable
+                  rule: self == oldSelf
+              nodeInstanceID:
+                type: string
+              nodeRecordUID:
+                type: string
+              privateAddress:
+                type: string
+              task:
+                description: NativeObjectReference pins an extension record to one
+                  exact RLark object incarnation.
+                properties:
+                  name:
+                    type: string
+                  namespace:
+                    type: string
+                  uid:
+                    type: string
+                required:
+                - name
+                - uid
+                type: object
+                x-kubernetes-validations:
+                - message: referenced object instance is immutable
+                  rule: self == oldSelf
+              tenantID:
+                type: string
+              upgrade:
+                description: Upgrade is absent for legacy and canonical workload allocations.
+                properties:
+                  operation:
+                    description: NativeObjectReference pins an extension record to
+                      one exact RLark object incarnation.
+                    properties:
+                      name:
+                        type: string
+                      namespace:
+                        type: string
+                      uid:
+                        type: string
+                    required:
+                    - name
+                    - uid
+                    type: object
+                    x-kubernetes-validations:
+                    - message: referenced object instance is immutable
+                      rule: self == oldSelf
+                  release:
+                    description: NativeObjectReference pins an extension record to
+                      one exact RLark object incarnation.
+                    properties:
+                      name:
+                        type: string
+                      namespace:
+                        type: string
+                      uid:
+                        type: string
+                    required:
+                    - name
+                    - uid
+                    type: object
+                    x-kubernetes-validations:
+                    - message: referenced object instance is immutable
+                      rule: self == oldSelf
+                  sha256:
+                    pattern: ^[a-f0-9]{64}$
+                    type: string
+                required:
+                - operation
+                - release
+                - sha256
+                type: object
+            required:
+            - cluster
+            - networkScope
+            - node
+            - nodeInstanceID
+            - nodeRecordUID
+            - privateAddress
+            - tenantID
+            type: object
+            x-kubernetes-validations:
+            - message: allocation identity is immutable
+              rule: self == oldSelf
+            - message: allocation must identify either an upgrade operation or a workload
+                Task
+              rule: 'has(self.upgrade) ? (!has(self.job) && !has(self.task) && !has(self.executionID)
+                && !has(self.jobBindingUID) && !has(self.generation) && !has(self.jobGeneration)
+                && !has(self.group)) : (has(self.job) && has(self.task) && has(self.executionID)
+                && has(self.jobBindingUID) && has(self.generation) && has(self.jobGeneration))'
+          status:
+            properties:
+              cleanupConfirmed:
+                type: boolean
+              conditions:
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+              observedGeneration:
+                format: int64
+                type: integer
+              phase:
+                type: string
+              prepared:
+                description: |-
+                  Prepared is written only by the certificate-bound owning Agent. It proves
+                  a journalled stopped container; it is never itself a start grant.
+                properties:
+                  allocationUID:
+                    type: string
+                  containerID:
+                    type: string
+                  engineID:
+                    type: string
+                  generation:
+                    format: int64
+                    type: integer
+                  groupDigest:
+                    type: string
+                  groupID:
+                    type: string
+                  manifestDigest:
+                    pattern: ^[a-f0-9]{64}$
+                    type: string
+                  taskUID:
+                    type: string
+                required:
+                - allocationUID
+                - containerID
+                - engineID
+                - generation
+                - groupDigest
+                - groupID
+                - manifestDigest
+                - taskUID
+                type: object
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

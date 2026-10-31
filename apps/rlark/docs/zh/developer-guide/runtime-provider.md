@@ -4,7 +4,7 @@
 
 ## 兼容范围
 
-Kubernetes 是唯一受支持的 workload 运行时。Docker 和 Raw 字段只是 API 骨架，不能执行 workload。该执行边界属于内部实现，不定义 CRD、生成客户端、REST 接口、CLI 参数、配置、Status Schema、Finalizer、Annotation key 或生成的 Kubernetes 对象结构。
+Kubernetes 仍是通用 workload 运行时。Docker 以预览成熟度支持使用 Docker container carrier 的 Ray/RLinf v1 Task。Docker Agent 直接使用宿主机 Docker socket，不支持 Docker-in-Docker，要求以 root 运行，并依赖 Docker 主机之间的私网 host network。一个逻辑 Cluster 可以包含多个 Docker Agent；每个 Job 副本展开为一个独立 Task 和容器，GPU 按整卡数量独占预留。Raw 仍是实验性单节点进程路径。Docker 当前不支持 Kubernetes volumes、`imagePullSecrets`、`serviceAccount`、`hostAliases` 或 Kubernetes Environment 注入；Provider 已支持容器日志和 stats，但 Gateway Task logs/metrics 尚未接通。`rlarkadm` 目前不会为固定 Docker 主机生成 systemd 安装包，应由宿主机自行管理 Agent 服务。
 
 Kubernetes 兼容契约包括固定 workload namespace、legacy workload 收养、claimant identity 格式、原地模板修改、SSH key 注入、跨 Domain 网络 sidecar 注入和清理顺序。Task 被 claim 时会冻结 workload 与 carrier selector；已 claim Task 修改任一 selector 都会在不产生 Runtime effect 的情况下被拒绝，调用方必须删除并以新 UID 重建 Task。存储采用原生 PodTemplate 语义：`persistentVolumeClaim.claimName` 引用已有外部 PVC，而 `ephemeral.volumeClaimTemplate` 创建的 PVC 由 Kubernetes 随 Pod 管理。
 
@@ -315,18 +315,22 @@ Binding revision 是标准化的 `sha256:` digest，输入包括 binding kind/na
 
 ## 当前能力矩阵
 
+Docker 预览契约要求 root Agent 直接访问宿主机 socket，并使用 Docker Engine API 1.44+。控制面先预留 CPU、内存和整卡 GPU，Agent 才能创建容器。Job 的每个展开副本都是独立 Task，并使用 UID fence 的绑定；只有 Agent 证明容器已经删除后，清理流程才会释放预留。Docker daemon 中断、Agent 重启或 watch 丢失会通过重新观测和 Task resync 恢复。预留已落盘而 Task binding 尚未保存时，会先找回原预留；原节点离线或身份冲突会阻止再次分配其他主机。预留写入发生并发冲突时，必须重新读取状态后重试。Gateway 历史日志归档、exec、systemd 安装包和按设备 UUID 的 GPU 分配仍不属于当前契约；有界诊断路由属于显式启用的独立扩展预览。
+
+Docker Ray Task 使用 host network，并根据 Task identity 生成稳定端口。Head 使用相邻的 companion port 运行 Ray client service；当前 Ray 版本拒绝端口 0，因此不会配置为 0。一个 Docker 主机同一时间只预留给一个 Docker Task，端口分配仍受该主机的 RLark reservation 约束。
+
 | 能力 | Kubernetes | Docker | Raw |
 | --- | --- | --- | --- |
-| Task claim 与 finalizer | 支持 | 未实现 | 未实现 |
+| Task claim 与 finalizer | 支持 | 预览支持 | 实验性单节点进程 |
 | Deployment | 支持 | 不适用 | 不适用 |
 | StatefulSet | 支持 | 不适用 | 不适用 |
 | DaemonSet | 支持 | 不适用 | 不适用 |
-| 容器/进程执行 | Kubernetes Pod | 仅有 Spec 骨架 | 仅有 Spec 骨架 |
-| 状态观察 | 支持 | 未实现 | 未实现 |
-| 运行时日志 | Kubernetes Pod fallback | 未实现 | 未实现 |
+| 容器/进程执行 | Kubernetes Pod | Ray/RLinf Docker 容器 | 实验性已有进程 |
+| 状态观察 | 支持 | Docker inspect/stats | 实验性限定状态 |
+| 运行时日志 | Kubernetes Pod fallback | Provider 支持；Gateway Task logs 尚未接通 | 未实现 |
 | Exec | Kubernetes 路径 | 未实现 | 未实现 |
 | 已有 PVC 引用与 generic ephemeral volume | 采用 Kubernetes 原生 Pod 语义；RLark 不拥有被引用 PVC | 未实现 | 未实现 |
-| GPU 与设备 | Kubernetes resource 语义 | 未实现 | 未实现 |
+| GPU 与设备 | Kubernetes resource 语义 | 按整卡数量独占预留 | 实验性授权整卡计数 |
 | Addon 与 Delivery | 支持 | 未实现 | 未实现 |
 | 跨集群 workload 网络 | Kubernetes sidecar 路径 | 未实现 | 未实现 |
 | 镜像拉取观察 | 支持 | 仅有部分 monitor，无执行链路 | 不适用 |

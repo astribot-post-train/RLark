@@ -1,0 +1,45 @@
+# Independent processes only: this does not establish a Ray/RLinf group.
+# Replace environment and canonical paths with the enrolled nodes' allowlists.
+apiVersion: rlinf.io/v1alpha1
+kind: Job
+metadata:
+  name: independent-raw-processes
+  labels:
+    rlark.io/tenant-id: team-a
+  annotations:
+    rlark.io/controller-owner: containers.rlark.io
+spec:
+  suspended: true
+  tasks:
+    - name: worker-a
+      role: worker
+      placement:
+        environment: REPLACE_PREPARED_ENVIRONMENT
+      runtime:
+        kind: Raw
+      workload:
+        kind: raw.rlark.io/process
+        version: v1
+        parameters:
+          argv: [/usr/bin/python3.12, -c, "print('independent worker a')"]
+          env: []
+          directory: /workspace/training
+        carrier:
+          type: raw.rlark.io/process
+          version: v1
+    - name: worker-b
+      role: worker
+      placement:
+        environment: REPLACE_PREPARED_ENVIRONMENT
+      runtime:
+        kind: Raw
+      workload:
+        kind: raw.rlark.io/process
+        version: v1
+        parameters:
+          argv: [/usr/bin/python3.12, -c, "print('independent worker b')"]
+          env: []
+          directory: /workspace/training
+        carrier:
+          type: raw.rlark.io/process
+          version: v1

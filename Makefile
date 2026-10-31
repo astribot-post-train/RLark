@@ -42,10 +42,17 @@ fmt-web: ## Format web UI (prettier)
 
 ##@ Go targets
 
-.PHONY: build test-go test-web test-e2e test-e2e-rlark go-tidy
+.PHONY: build build-container-runtime test-go test-container-runtime test-web test-e2e test-e2e-rlark go-tidy
 
 build: ## Build all binaries (apps/rlark)
 	$(MAKE) -C apps/rlark build $(MAKEOVERRIDES)
+	$(MAKE) -C extensions/container-runtime build $(MAKEOVERRIDES)
+
+build-container-runtime: ## Build independent container-runtime extension binaries
+	$(MAKE) -C extensions/container-runtime build $(MAKEOVERRIDES)
+
+test-container-runtime: ## Run container-runtime extension tests independently
+	GOWORK=off $(MAKE) -C extensions/container-runtime test $(MAKEOVERRIDES)
 
 test-go: ## Run Go unit tests with coverage
 	@mkdir -p coverage/go
@@ -54,6 +61,7 @@ test-go: ## Run Go unit tests with coverage
 		coverage=$$(cd $$module && realpath --relative-to=. $(CURDIR)/coverage/go/$$name.out); \
 		(cd $$module && go test ./... -v -count=1 -short -covermode=atomic -coverprofile=$$coverage) || exit $$?; \
 	done
+	GOWORK=off $(MAKE) -C extensions/container-runtime test $(MAKEOVERRIDES)
 
 test-web: ## Run web UI unit tests with coverage
 	npm ci --prefix apps/rlark-ui

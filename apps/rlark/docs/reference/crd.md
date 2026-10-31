@@ -1202,6 +1202,18 @@ Responses:
       - `status`: `string`, required, enum=True,False,Unknown - status of the condition, one of True, False, Unknown.
       - `type`: `string`, required - type of condition in CamelCase or in foo.example.com/CamelCase.
   - `diskPressure`: `boolean`, optional
+  - `dockerReservations`: `array`, optional
+    - `items`: `object`, optional - DockerNodeReservation is controller-owned durable allocation state for one Docker Task. GPU allocation is whole-card ...
+      - `allocationID`: `string`, required
+      - `clusterUID`: `string`, required
+      - `cpuMilli`: `integer`, optional
+      - `gpuCount`: `integer`, optional
+      - `incarnation`: `string`, required
+      - `jobUID`: `string`, required
+      - `memoryBytes`: `integer`, optional
+      - `nodeUID`: `string`, required
+      - `taskUID`: `string`, required
+      - `tenantID`: `string`, required
   - `events`: `array`, optional - Events 由数据面 node-agent 上报节点相关 Kubernetes Event（如 DiskPressure 等 Warning 事件及镜像拉取/调度相关事件）。控制面 Task reconciler 在 Task 处于...
     - `items`: `object`, optional - NodeEvent represents a Kubernetes Event observed on a node that is relevant for surfacing to operators (e.g. DiskPres...
       - `count`: `integer`, optional
@@ -1217,6 +1229,7 @@ Responses:
   - `nodeInfo`: `object`, optional - NodeInfo 是节点基础信息，由数据面 Agent 上报；控制面不写入本字段。
     - `agentVersion`: `string`, optional
     - `architecture`: `string`, optional
+    - `incarnation`: `string`, optional - Incarnation changes when the backing agent/engine identity changes.
     - `kernelVersion`: `string`, optional
     - `operatingSystem`: `string`, optional
   - `phase`: `string`, optional, enum=Online,Offline - Phase 是节点连通性聚合阶段，由数据面 node-agent 上报。
@@ -1228,7 +1241,25 @@ Responses:
       - `speed`: `number`, required
       - `status`: `string`, required
       - `total`: `integer`, required
+  - `raw`: `object`, optional - Raw is Agent-owned capability observation. Reservations are controller-owned.
+    - `authorizedGPUUUIDs`: `array`, required
+    - `environment`: `string`, required
+    - `incarnation`: `string`, required
+    - `networkScope`: `string`, required
+    - `trainingIP`: `string`, required
   - `reason`: `string`, optional - Reason 是 Phase 的机器可读原因（CamelCase），与 Conditions 中 ConditionTypeReady 的 Reason 同源，供列表视图直接展示。 该字段与 Conditions 均由数据面 node...
+  - `reservation`: `object`, optional - RawNodeReservation is controller-owned durable exclusive allocation state. It is never released on a timeout or heart...
+    - `allocationID`: `string`, required
+    - `clusterUID`: `string`, required
+    - `committed`: `boolean`, required
+    - `environment`: `string`, required
+    - `executionID`: `string`, required
+    - `groupDigest`: `string`, required
+    - `incarnation`: `string`, required
+    - `jobUID`: `string`, required
+    - `nodeUID`: `string`, required
+    - `taskUID`: `string`, optional - TaskUID is set by the allocator after creating the assigned Task. An unbound reservation never authorizes a process, ...
+    - `tenantID`: `string`, required
   - `storage`: `object`, optional - NodeStorageStatus reports kubelet filesystem usage in bytes.
     - `availableBytes`: `integer`, optional
     - `capacityBytes`: `integer`, optional
@@ -1621,6 +1652,25 @@ Responses:
       - `type`: `string`, required
       - `version`: `string`, required
   - `placement`: `object`, required - TaskPlacementSpec describes scheduling constraints for the workload.
+    - `binding`: `object`, optional - Binding is a controller-owned, UID-fenced Raw execution assignment. It does not authorize execution without a matchin...
+      - `allocationID`: `string`, required
+      - `clusterUID`: `string`, required
+      - `executionID`: `string`, required
+      - `groupDigest`: `string`, required
+      - `incarnation`: `string`, required
+      - `jobUID`: `string`, required
+      - `nodeName`: `string`, required
+      - `nodeUID`: `string`, required
+      - `taskUID`: `string`, optional
+    - `dockerBinding`: `object`, optional - DockerBinding is a controller-owned, UID-fenced Docker execution assignment. It is intentionally separate from the Ra...
+      - `allocationID`: `string`, required
+      - `clusterUID`: `string`, required
+      - `incarnation`: `string`, required
+      - `jobUID`: `string`, required
+      - `nodeName`: `string`, required
+      - `nodeUID`: `string`, required
+      - `taskUID`: `string`, optional
+    - `environment`: `string`, optional - Environment selects the observed Raw node environment/profile. It is required for Raw Tasks so a placement cannot sil...
     - `nodeSelector`: `object`, optional
   - `role`: `string`, required - TaskRole 描述 Task 在业务编排中的角色，用于前端分组与展示。 该字段当前不在 CRD 层做枚举校验：它可能承载上层编排框架的自定义角色名， 收窄取值会阻止合法的既有数据写入。请勿据此推断取值的封闭集合。
   - `runtime`: `object`, required - TaskRuntimeSpec selects the runtime implementation and instance that lowers the common Pod template. Name is a stable...

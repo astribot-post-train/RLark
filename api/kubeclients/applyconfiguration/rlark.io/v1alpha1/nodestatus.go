@@ -27,6 +27,10 @@ import (
 // NodeStatusApplyConfiguration represents a declarative configuration of the NodeStatus type for use
 // with apply.
 type NodeStatusApplyConfiguration struct {
+	// Raw is Agent-owned capability observation. Reservations are controller-owned.
+	Raw                *RawNodeStatusApplyConfiguration          `json:"raw,omitempty"`
+	Reservation        *RawNodeReservationApplyConfiguration     `json:"reservation,omitempty"`
+	DockerReservations []DockerNodeReservationApplyConfiguration `json:"dockerReservations,omitempty"`
 	// Phase 是节点连通性聚合阶段，由数据面 node-agent 上报。
 	Phase *rlarkiov1alpha1.NodePhase `json:"phase,omitempty"`
 	// Reason 是 Phase 的机器可读原因（CamelCase），与 Conditions 中
@@ -65,6 +69,35 @@ type NodeStatusApplyConfiguration struct {
 // apply.
 func NodeStatus() *NodeStatusApplyConfiguration {
 	return &NodeStatusApplyConfiguration{}
+}
+
+// WithRaw sets the Raw field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the Raw field is set to the value of the last call.
+func (b *NodeStatusApplyConfiguration) WithRaw(value *RawNodeStatusApplyConfiguration) *NodeStatusApplyConfiguration {
+	b.Raw = value
+	return b
+}
+
+// WithReservation sets the Reservation field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the Reservation field is set to the value of the last call.
+func (b *NodeStatusApplyConfiguration) WithReservation(value *RawNodeReservationApplyConfiguration) *NodeStatusApplyConfiguration {
+	b.Reservation = value
+	return b
+}
+
+// WithDockerReservations adds the given value to the DockerReservations field in the declarative configuration
+// and returns the receiver, so that objects can be build by chaining "With" function invocations.
+// If called multiple times, values provided by each call will be appended to the DockerReservations field.
+func (b *NodeStatusApplyConfiguration) WithDockerReservations(values ...*DockerNodeReservationApplyConfiguration) *NodeStatusApplyConfiguration {
+	for i := range values {
+		if values[i] == nil {
+			panic("nil value passed to WithDockerReservations")
+		}
+		b.DockerReservations = append(b.DockerReservations, *values[i])
+	}
+	return b
 }
 
 // WithPhase sets the Phase field in the declarative configuration to the given value

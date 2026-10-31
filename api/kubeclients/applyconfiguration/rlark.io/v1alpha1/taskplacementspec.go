@@ -23,6 +23,17 @@ package v1alpha1
 // TaskPlacementSpec describes scheduling constraints for the workload.
 type TaskPlacementSpecApplyConfiguration struct {
 	NodeSelector map[string]string `json:"nodeSelector,omitempty"`
+	// Environment selects the observed Raw node environment/profile. It is
+	// required for Raw Tasks so a placement cannot silently cross image or
+	// dependency boundaries.
+	Environment *string `json:"environment,omitempty"`
+	// Binding is a controller-owned, UID-fenced Raw execution assignment.
+	// It does not authorize execution without a matching Node reservation.
+	Binding *RawTaskBindingApplyConfiguration `json:"binding,omitempty"`
+	// DockerBinding is a controller-owned, UID-fenced Docker execution assignment.
+	// It is intentionally separate from the Raw contract so the two runtimes
+	// cannot accidentally consume each other's reservations.
+	DockerBinding *DockerTaskBindingApplyConfiguration `json:"dockerBinding,omitempty"`
 }
 
 // TaskPlacementSpecApplyConfiguration constructs a declarative configuration of the TaskPlacementSpec type for use with
@@ -42,5 +53,29 @@ func (b *TaskPlacementSpecApplyConfiguration) WithNodeSelector(entries map[strin
 	for k, v := range entries {
 		b.NodeSelector[k] = v
 	}
+	return b
+}
+
+// WithEnvironment sets the Environment field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the Environment field is set to the value of the last call.
+func (b *TaskPlacementSpecApplyConfiguration) WithEnvironment(value string) *TaskPlacementSpecApplyConfiguration {
+	b.Environment = &value
+	return b
+}
+
+// WithBinding sets the Binding field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the Binding field is set to the value of the last call.
+func (b *TaskPlacementSpecApplyConfiguration) WithBinding(value *RawTaskBindingApplyConfiguration) *TaskPlacementSpecApplyConfiguration {
+	b.Binding = value
+	return b
+}
+
+// WithDockerBinding sets the DockerBinding field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the DockerBinding field is set to the value of the last call.
+func (b *TaskPlacementSpecApplyConfiguration) WithDockerBinding(value *DockerTaskBindingApplyConfiguration) *TaskPlacementSpecApplyConfiguration {
+	b.DockerBinding = value
 	return b
 }

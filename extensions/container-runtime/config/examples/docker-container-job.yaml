@@ -1,0 +1,31 @@
+# Preview: one immutable Docker container Task per Job.
+# Replace tenant, environment and image before unsuspending.
+apiVersion: rlinf.io/v1alpha1
+kind: Job
+metadata:
+  name: docker-single-container
+  labels:
+    rlark.io/tenant-id: team-a
+  annotations:
+    rlark.io/controller-owner: containers.rlark.io
+spec:
+  suspended: true
+  tasks:
+    - name: main
+      placement:
+        environment: REPLACE_DOCKER_ENVIRONMENT
+      runtime:
+        kind: Docker
+      workload:
+        kind: docker.rlark.io/container
+        version: v1
+        parameters:
+          image: REPLACE_REGISTRY_IMAGE
+          entrypoint: [/bin/sh]
+          command: [-lc, "exec python3 train.py"]
+          env: []
+          workingDir: /workspace
+          hostNetwork: true
+        carrier:
+          type: docker.rlark.io/container
+          version: v1

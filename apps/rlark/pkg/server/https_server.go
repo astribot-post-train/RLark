@@ -26,6 +26,8 @@ func (s *Server) registerHTTPSHandlers(r *gin.Engine) {
 	// Sign and revoke certificate endpoints
 	api.POST("sign", s.handleSignCertificate)
 	api.POST("revoke", s.handleRevokeCertificate)
+	api.Any("raw/kubernetes/*path", s.handleRawNodeAPI)
+	api.POST("raw/heartbeat", s.handleRawNodeHeartbeat)
 
 	// Kubernetes API proxy endpoint
 	kubernetes := api.Group("/kubernetes")

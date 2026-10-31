@@ -27,7 +27,7 @@ Manage cross-cluster embodied intelligence workloads through a unified cloud-nat
 ## Key Capabilities
 
 - **Embodied AI Workload Orchestration**: From cloud GPU training (RL/LLM) to edge deployment (robot arm, sensor, camera), unified declarative Job/Task abstraction across the full pipeline
-- **Multi-Runtime Data Plane**: Kubernetes provides unified management for cloud GPU clusters and edge devices across the complete training-to-deployment lifecycle; Docker and Raw runtime support will extend coverage to lightweight edge scenarios where Kubernetes is not suitable
+- **Multi-Runtime Data Plane**: Kubernetes provides unified management for cloud GPU clusters and edge devices, while the Docker preview adds Ray/RLinf v1 containers on fixed GPU hosts and Raw remains an experimental trusted-process path
 - **Cross-Cluster Resource Abstraction**: Unify multi-site GPU clusters and edge devices via Domain (virtual network domain) and Node (compute node) CRDs, with the control plane running on kcp
 - **Declarative Training Jobs**: Job/Task abstraction with declarative distributed training and Ray cluster definition
 - **Cross-Cluster Pod Networking**: Virtual network based on TUN devices + gVisor netstack + SSH tunnels, enabling Pod-to-Pod communication without NAT traversal — cloud GPUs and edge robots communicate directly
@@ -47,8 +47,8 @@ Manage cross-cluster embodied intelligence workloads through a unified cloud-nat
 
 ### Planned
 
-- Docker runtime support for lightweight data planes
-- Raw runtime support for hosts and edge devices without a container orchestrator
+- Broader Docker workload adapters and Gateway observability
+- A more complete Raw runtime contract for hosts and edge devices without a container orchestrator
 - More complete account, role, and permission management
 - Continued web UI usability and workflow improvements
 - Cross-cluster network throughput, latency, and resource-efficiency optimizations

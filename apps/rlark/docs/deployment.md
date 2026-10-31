@@ -224,10 +224,19 @@ RLark supports three deployment environment modes, configured in the DeployConfi
 | Mode | Description | Use Case |
 |------|-------------|----------|
 | `kubernetes` | Deploy to K8s cluster | Production, GPU cluster |
-| `docker` | Manage via Docker API (TODO) | Edge devices, single-node |
-| `raw` | Download artifact and execute (TODO) | Bare metal, embedded |
+| `docker` | Docker deployment environment; workload execution is preview-only | Fixed GPU Docker hosts |
+| `raw` | Experimental process execution in an existing trusted Node | Fixed GPU/cloud containers |
 
 In the config file, specify exactly one of `kubernetes`, `docker`, or `raw` env blocks.
+
+### Docker workload hosts
+
+Install one root `rlark-agent` process per Docker host with `--agent-type=Docker --mode=cluster --docker-host=unix:///var/run/docker.sock --docker-node-ip=<private-ip>`. Hosts in one logical Cluster must be mutually reachable on their private network. The agent creates containers through the mounted host socket, so Docker-in-Docker is not used. The controller schedules one Task/container per replica and reserves whole GPUs by count. `rlarkadm` currently does not create the systemd unit for these fixed hosts; manage that service with the host operating system.
+
+For the independent companion implementation, use the separate
+[Docker Agent guide](developer-guide/docker-agent-observation.md). It supports
+opt-in single-container Tasks with exact GPU UUIDs and a persistent cancellation
+journal; Ray/RLinf groups and port reservations remain incomplete.
 
 ### 5.6 Agent Modes
 
@@ -553,3 +562,13 @@ kubectl get pods -n rlark-system
 ## 14. Physical Device Onboarding
 
 For the complete workflow for onboarding GPU nodes, robots, cameras, and other physical devices, configuring the Embodied Runtime, and submitting device workloads, see [Embodied Device Onboarding](admin-guide/embodied-runtime.md).
+
+## Independent container diagnostics preview
+
+The extension Docker Agent can optionally read allocation-bound logs and Linux
+resource snapshots. Configure `enableExecution` and `enableDockerDiagnostics` in
+the exported package. Keep the administrator read listener on a literal loopback
+address; point the console proxy and Agent polling at the same API process.
+This adds no native Agent deployment fields or Docker GPU acceptance claim.
+See [Docker Agent diagnostics](developer-guide/docker-agent-observation.md#bounded-logs-and-resource-snapshots)
+and [configuration](reference/configuration.md) for complete settings and limits.

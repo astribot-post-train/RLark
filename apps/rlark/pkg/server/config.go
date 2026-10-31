@@ -176,3 +176,18 @@ func (c *ClientConfig) BuildRestConfig() (*rest.Config, error) {
 	config.Burst = defaultClientBurst
 	return config, nil
 }
+
+// BuildRawRestConfig builds a client configuration for the node-scoped Raw
+// Kubernetes-shaped subset. Raw certificates are deliberately rejected from
+// the general management proxy; this path is the only API host they may use.
+func (c *ClientConfig) BuildRawRestConfig() (*rest.Config, error) {
+	if err := c.loadNamespace(); err != nil {
+		return nil, err
+	}
+	config, err := c.BuildRestConfig()
+	if err != nil {
+		return nil, err
+	}
+	config.Host = fmt.Sprintf("%s/api/raw/kubernetes", c.ServerAddress)
+	return config, nil
+}

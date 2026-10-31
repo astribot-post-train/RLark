@@ -70,6 +70,23 @@ func TestReconcileAddsCleanupFinalizer(t *testing.T) {
 	}
 }
 
+func TestReconcileFailsClosedForUnavailableExternalOwner(t *testing.T) {
+	job := &rlarkv1alpha1.Job{ObjectMeta: metav1.ObjectMeta{Name: "external", UID: types.UID("job-uid"), Annotations: map[string]string{ControllerOwnerAnnotation: "containers.rlark.io"}}}
+	scheme := jobTestScheme(t)
+	c := jobTestClientBuilder(scheme).WithObjects(job).Build()
+	r := &Reconciler{Client: c, Scheme: scheme}
+	if _, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKey{Name: job.Name}}); err == nil {
+		t.Fatal("Job with unavailable declared external owner was silently handled by native controller")
+	}
+	var tasks rlarkv1alpha1.TaskList
+	if err := c.List(context.Background(), &tasks); err != nil {
+		t.Fatal(err)
+	}
+	if len(tasks.Items) != 0 {
+		t.Fatalf("native controller dispatched externally owned Job: %#v", tasks.Items)
+	}
+}
+
 func TestInvalidTaskTemplatePreventsAllTaskDispatch(t *testing.T) {
 	valid := validJobTaskTemplate("valid")
 	invalid := validJobTaskTemplate("invalid")

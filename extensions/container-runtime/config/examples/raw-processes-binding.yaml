@@ -1,0 +1,17 @@
+# Create only after reading the exact native Job and Cluster UIDs.
+apiVersion: containers.rlark.io/v1alpha1
+kind: ContainerJob
+metadata:
+  name: independent-raw-processes
+  namespace: REPLACE_AGENT_NAMESPACE
+  labels:
+    rlark.io/tenant-id: team-a
+spec:
+  cluster:
+    name: REPLACE_NATIVE_CLUSTER_NAME
+    uid: REPLACE_NATIVE_CLUSTER_UID
+  job:
+    name: independent-raw-processes
+    uid: REPLACE_NATIVE_JOB_UID
+  tenantID: team-a
+  runtime: Raw

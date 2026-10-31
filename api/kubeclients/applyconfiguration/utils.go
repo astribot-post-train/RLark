@@ -43,6 +43,10 @@ func ForKind(kind schema.GroupVersionKind) interface{} {
 		return &rlarkiov1alpha1.ClusterSpecApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("ClusterStatus"):
 		return &rlarkiov1alpha1.ClusterStatusApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("DockerNodeReservation"):
+		return &rlarkiov1alpha1.DockerNodeReservationApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("DockerTaskBinding"):
+		return &rlarkiov1alpha1.DockerTaskBindingApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("Domain"):
 		return &rlarkiov1alpha1.DomainApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("DomainIPAllocation"):
@@ -89,6 +93,12 @@ func ForKind(kind schema.GroupVersionKind) interface{} {
 		return &rlarkiov1alpha1.PodStatusApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("PullProgress"):
 		return &rlarkiov1alpha1.PullProgressApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("RawNodeReservation"):
+		return &rlarkiov1alpha1.RawNodeReservationApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("RawNodeStatus"):
+		return &rlarkiov1alpha1.RawNodeStatusApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("RawTaskBinding"):
+		return &rlarkiov1alpha1.RawTaskBindingApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("Task"):
 		return &rlarkiov1alpha1.TaskApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("TaskEnvironment"):

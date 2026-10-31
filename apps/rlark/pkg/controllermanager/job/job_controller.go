@@ -26,9 +26,23 @@ const (
 	cleanupRequeue   = time.Second
 )
 
+// OwnerResolver determines whether an independently assembled controller owns a Job.
+// Implementations must prove ownership from authoritative state, not labels.
+type OwnerResolver interface {
+	Owns(context.Context, *rlarkv1alpha1.Job) (bool, error)
+}
+
+// ControllerOwnerAnnotation declares an external controller boundary. A native
+// controller without the matching resolver must never dispatch such a Job.
+const ControllerOwnerAnnotation = "rlark.io/controller-owner"
+
 // Reconciler reconciles Job resources.
 type Reconciler struct {
+	// ExternalOwner is optional; nil preserves the native controller behavior.
+	ExternalOwner OwnerResolver
 	client.Client
+	// RawClient is uncached; allocation and cleanup must never use informer state.
+	RawClient               client.Client
 	Scheme                  *runtime.Scheme
 	MaxConcurrentReconciles int
 }
@@ -44,6 +58,38 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	job := &rlarkv1alpha1.Job{}
 	if err := r.Get(ctx, req.NamespacedName, job); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
+	}
+	if job.Annotations[ControllerOwnerAnnotation] != "" {
+		if r.ExternalOwner != nil {
+			owned, err := r.ExternalOwner.Owns(ctx, job)
+			if err != nil {
+				return ctrl.Result{}, fmt.Errorf("resolve external Job ownership: %w", err)
+			}
+			if owned {
+				return ctrl.Result{}, nil
+			}
+		}
+		return ctrl.Result{}, fmt.Errorf("external Job controller %q is not available", job.Annotations[ControllerOwnerAnnotation])
+	}
+	if hasRawTemplates(job) {
+		return r.reconcileRawJob(ctx, req.NamespacedName)
+	}
+	if hasDockerTemplates(job) {
+		return r.reconcileDockerJob(ctx, req.NamespacedName)
+	}
+	if r.RawClient != nil {
+		var children rlarkv1alpha1.TaskList
+		if err := r.RawClient.List(ctx, &children, client.MatchingLabels{jobLabel: job.Name}); err != nil {
+			return ctrl.Result{}, err
+		}
+		for _, child := range children.Items {
+			if child.Spec.Runtime.Kind == "Raw" {
+				return r.reconcileRawJob(ctx, req.NamespacedName)
+			}
+			if child.Spec.Runtime.Kind == "Docker" {
+				return r.reconcileDockerJob(ctx, req.NamespacedName)
+			}
+		}
 	}
 	if job.DeletionTimestamp.IsZero() {
 		if !controllerutil.ContainsFinalizer(job, CleanupFinalizer) {
@@ -196,6 +242,13 @@ func (r *Reconciler) ReconcileStateMachine(ctx context.Context, obj client.Objec
 
 // SetupWithManager registers the controller with the manager.
 func (r *Reconciler) SetupWithManager(mgr ctrl.Manager) error {
+	if r.RawClient == nil {
+		direct, err := client.New(mgr.GetConfig(), client.Options{Scheme: r.Scheme})
+		if err != nil {
+			return fmt.Errorf("create Raw allocation client: %w", err)
+		}
+		r.RawClient = direct
+	}
 	if err := mgr.GetFieldIndexer().IndexField(context.Background(), &rlarkv1alpha1.Task{}, taskJobField, indexTaskByJob); err != nil {
 		return fmt.Errorf("index Tasks by Job: %w", err)
 	}

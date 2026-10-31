@@ -1,0 +1,7 @@
+{
+  "operationID": "e18614d3-f97a-4cde-a4f5-3f3cf31aac56",
+  "name": "ksyun-containers",
+  "tenantID": "team-a",
+  "agentNamespace": "ksyun-container-agents",
+  "runtime": "Raw"
+}

@@ -26,6 +26,10 @@ Worker 处于等待中时，可悬停或聚焦其状态旁的信息图标。RLar
 
 ## 任务类型
 
+使用 Docker Runtime 时，每个 Job 副本会展开为一个独立 Task 和容器。Ray 任务必须恰好有一个 Header；控制面先为 Header 选择 Docker Node，再把该 Node 的私网 IP 注入 Worker。Docker 主机之间必须在同一私网可互通，容器使用 host network。GPU 按整卡数量独占分配。
+
+Docker 预览路径不支持 Kubernetes volumes、`imagePullSecrets`、`serviceAccount`、`hostAliases` 或 Kubernetes Environment 注入；请将所需配置写入镜像和显式容器字段。容器状态、日志和资源 stats 已由 Agent Provider 观察，但 Gateway Task 日志和指标接口尚未接通。
+
 RLark 支持以下任务类型，每种类型预配置了适合该工作负载的默认角色：
 
 - **强化学习** — 面向分布式 RL 训练工作流。默认角色包括 Actor、Rollout、Environment 和 Learner。
@@ -102,6 +106,8 @@ RLark 支持以下任务类型，每种类型预配置了适合该工作负载�
 使用列表表头的**刷新**按钮更新 Task、Pod、调度节点、IP 与状态信息，无需重载整个页面。
 
 任务列表和 Worker 列表的**刷新**都只更新对应的数据区域。请求处理中会保留当前行并显示半透明局部遮罩和居中的旋转加载指示，同时暂时禁用该区域内的操作；页面其余部分仍可使用。
+
+如果 API 返回的 Job 包含不完整或无法解析的任务数据，任务列表会隐藏该记录并在提示中标明其名称，其他任务仍可使用。请检查 Job API 返回数据并联系管理员排查数据或版本不匹配问题。底层问题修复后刷新列表即可恢复显示。
 
 点击任意 Worker 查看运行时详情，包括容器状态、资源使用情况和事件。
 
@@ -212,6 +218,50 @@ WebTerminal 支持文件上传和下载：
 
 - **编辑** — 修改已停止任务的配置（角色、资源、命令）并重新提交。
 - **克隆** — 复制现有任务配置，作为新任务的模板。
+
+## 实验性 Raw 进程任务
+
+Raw 任务会在管理员预置的 GPU 容器内运行一个可信进程，不会拉取镜像、创建
+Docker 容器或使用 Docker socket。Node 必须已注册为 `agentType: Raw`，独立的
+`raw-supervisor` 必须持续运行，任务请求的环境和私有训练网络必须与 Node
+能力一致。
+
+首版 Raw 路径严格支持一个 Node 上的一个进程 Task。GPU 申请会预留整个 Node，
+控制器将已授权的 GPU UUID 注入为 `CUDA_VISIBLE_DEVICES`；RLark inventory 的
+唯一性检查不能证明云平台 GPU entitlement。Ray/RLinf 多节点组、副本展开、远程
+日志和 UI 创建暂不支持。通过 API 提交 Raw Job 时，使用容器内已经存在的可执行
+文件和工作目录：
+
+```yaml
+apiVersion: rlinf.io/v1alpha1
+kind: Job
+metadata:
+  name: raw-smoke
+spec:
+  tasks:
+  - name: worker
+    role: Actor
+    placement:
+      environment: prepared-python
+      nodeSelector:
+        pool: gpu
+    runtime:
+      kind: Raw
+      name: raw-node
+    workload:
+      kind: raw.rlark.io/process
+      version: v1
+      carrier:
+        type: raw.rlark.io/process
+        version: v1
+      parameters:
+        argv: ["/opt/venv/bin/python", "-c", "print(42)"]
+        directory: /workspace/training
+        env: ["PATH=/opt/venv/bin:/usr/bin"]
+```
+
+进程以 root 身份在现有容器内运行。停止、重启和删除会等待 supervisor 确认清理
+后才释放 Node；清理结果未知时会继续保留预留，避免新旧进程重叠。
 
 ## 提交前检查清单
 
