@@ -23,6 +23,11 @@ type ScopedProvider struct {
 	Journal  *Journal
 	EngineID string
 	GPUUUIDs []string
+	// StartAdmission is independently checked immediately before ContainerStart.
+	// Group execution must supply it; create authorization cannot grant start.
+	StartAdmission interface {
+		Authorize(context.Context, rt.TaskIdentity) error
+	}
 }
 
 var _ RuntimeProvider = (*ScopedProvider)(nil)
@@ -45,17 +50,29 @@ func (p *ScopedProvider) checkEngine(ctx context.Context) error {
 // uncertain create with no ID is recoverable only when its exact container is
 // observed; daemon absence alone cannot release that execution.
 func (p *ScopedProvider) Apply(ctx context.Context, req rt.ApplyRequest) (rt.ApplyResult, error) {
-	return p.ensureScoped(ctx, req, true)
+	return p.ensureScoped(ctx, req, true, false)
 }
 
 // Prepare journals the same exact create identity as Apply, but leaves the
 // container stopped. It does not publish a group readiness receipt or grant
 // start permission; those remain separate admission responsibilities.
 func (p *ScopedProvider) Prepare(ctx context.Context, req rt.ApplyRequest) (rt.ApplyResult, error) {
-	return p.ensureScoped(ctx, req, false)
+	return p.ensureScoped(ctx, req, false, false)
 }
 
-func (p *ScopedProvider) ensureScoped(ctx context.Context, req rt.ApplyRequest, start bool) (rt.ApplyResult, error) {
+// StartPrepared starts only a journalled existing container. It cannot create
+// or replace a missing prepared instance, including after an uncertain start.
+func (p *ScopedProvider) StartPrepared(ctx context.Context, req rt.ApplyRequest) (rt.ApplyResult, error) {
+	if p == nil || p.StartAdmission == nil {
+		return rt.ApplyResult{}, errors.New("separate prepared-container start admission required")
+	}
+	if req.Current == nil || req.Current.ID == "" || req.Current.ID != req.Current.UID {
+		return rt.ApplyResult{}, fault.New(fault.InvalidArgument, "exact prepared container reference required")
+	}
+	return p.ensureScoped(ctx, req, true, true)
+}
+
+func (p *ScopedProvider) ensureScoped(ctx context.Context, req rt.ApplyRequest, start, preparedOnly bool) (rt.ApplyResult, error) {
 	if p == nil || p.Journal == nil {
 		return rt.ApplyResult{}, errors.New("docker execution journal required")
 	}
@@ -89,6 +106,12 @@ func (p *ScopedProvider) ensureScoped(ctx context.Context, req rt.ApplyRequest, 
 	if record != nil && (record.Cancelled || record.Digest != digest || record.Task.Generation != req.Task.Generation) {
 		return rt.ApplyResult{}, fault.New(fault.Conflict, "Docker execution was cancelled or changed")
 	}
+	if preparedOnly && (record == nil || record.ContainerID == "" || !record.Creating) {
+		return rt.ApplyResult{}, fault.New(fault.FailedPrecondition, "prepared container journal is absent")
+	}
+	if preparedOnly && record.ContainerID != req.Current.ID {
+		return rt.ApplyResult{}, fault.New(fault.Conflict, "prepared receipt and local container journal disagree")
+	}
 	if p.Admission == nil {
 		return rt.ApplyResult{}, fault.New(fault.FailedPrecondition, "Docker admission required")
 	}
@@ -96,6 +119,9 @@ func (p *ScopedProvider) ensureScoped(ctx context.Context, req rt.ApplyRequest, 
 		return rt.ApplyResult{}, err
 	}
 	current, err := p.Client.ContainerInspect(ctx, containerName(req.Task))
+	if preparedOnly && errdefs.IsNotFound(err) {
+		return rt.ApplyResult{}, fault.New(fault.FailedPrecondition, "prepared container disappeared; replacement is forbidden")
+	}
 	if err != nil && !errdefs.IsNotFound(err) {
 		return rt.ApplyResult{}, err
 	}
@@ -122,6 +148,9 @@ func (p *ScopedProvider) ensureScoped(ctx context.Context, req rt.ApplyRequest, 
 	}
 	local := *p.Provider
 	local.beforeCreate = func(ctx context.Context) error {
+		if preparedOnly {
+			return fault.New(fault.FailedPrecondition, "prepared instance disappeared; replacement is forbidden")
+		}
 		if err := p.Admission.Authorize(ctx, req.Task); err != nil {
 			return err
 		}
@@ -141,6 +170,9 @@ func (p *ScopedProvider) ensureScoped(ctx context.Context, req rt.ApplyRequest, 
 	local.beforeStart = func(ctx context.Context, id string) error {
 		if record.ContainerID == "" || record.ContainerID != id {
 			return errors.New("docker start identity conflict")
+		}
+		if p.StartAdmission != nil {
+			return p.StartAdmission.Authorize(ctx, req.Task)
 		}
 		return p.Admission.Authorize(ctx, req.Task)
 	}

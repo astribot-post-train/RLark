@@ -30,20 +30,28 @@ The first executable contract is one immutable Docker container per Task:
 
 ## Task and Ray dispatch
 
-The existing controller expands a Job into independent Tasks. The Docker
-scheduler uses the same durable per-host lock, but selects only Docker nodes and
-writes the canonical Task target annotation plus the exact ContainerAllocation
-before an Agent can start; it does not write legacy `DockerBinding`. A Docker Task is dispatched only when the node heartbeat is fresh, the
-Engine ID and credential match, the target release is ready, and the allocation
-UID/Task UID pair is current.
+The controller expands a Job into stable Tasks. Plain Docker Jobs use one Task and
+one durable whole-host lock. Docker Ray Jobs expand to one Task per replica (one
+head, up to 16 members), compute a complete placement before taking locks, and
+persist a typed group plan in ContainerJob Status. Every member gets an immutable
+ContainerAllocation containing the same group identity, digest, network scope and
+port block. The controller selects only Docker nodes and never writes legacy
+`DockerBinding`.
 
-Ray/RLinf is a later gang layer. The current Docker execution contract supports one
-explicit container Task per Job and rejects Ray groups, `rayPort`, user GPU
-assignments and reserved `RLARK_*` environment fields. A later Ray adapter must
-reserve its host ports in the same node allocation and reject collisions. A multi-node
-Ray Job is admitted only after all member containers report current private
-addresses and the same Job generation. Until that barrier exists, the API must
-reject Ray group dispatch instead of starting a partial group.
+A member is dispatched only when its node heartbeat, Engine ID, credential, target
+release, tenant, Job/Task generation and exact allocation UID are current. Group
+execution moves through `Allocating`, `Preparing`, `Starting`, `Stopping`,
+`Succeeded` and `Failed`. Agent preparation creates a stopped container and writes
+an exact receipt; no member may start until every receipt matches. Each start then
+re-authorizes the complete group. A missing prepared container is terminal for that
+member and cannot be replaced. Container Running is not Ray readiness: the bundled
+launcher verifies the exact private address set before head training.
+
+The controller's internal block is TCP 24000..24264 (nine Ray service ports plus
+256 worker ports). Preflight checks IPv4/IPv6 listeners before create/start, but
+releases its sockets before Docker starts; this is not kernel-level reservation.
+Additional NCCL/training ports are an operator network policy. A host is exclusive
+to one RLark group member, so separate Jobs may run concurrently on disjoint hosts.
 
 ## Agent protocol and ownership
 
@@ -82,8 +90,8 @@ installation is an operation with an exact allocation and restart receipt.
 4. A real private Docker GPU host must pass one image pull/create/start/inspect,
    logs/stats, stop/remove and restart recovery. This gate is separate from the
    current Raw-only Kingsoft Cloud notebook, which has no Docker socket.
-5. Multi-host Ray/RLinf, gang barriers, port reservation and rolling upgrade
-   acceptance remain separate gates after the single-Task lifecycle is stable.
+5. Real two-host Docker GPU/RLinf, gang failure/recovery, port-block and rolling
+   upgrade acceptance remain separate gates after the preview group lifecycle is stable.
 
 ## Local cancellation barrier
 
@@ -95,15 +103,18 @@ records or changed permissions block execution until operator recovery. Entire
 directory loss requires fencing and retiring the old node; never recreate an
 empty journal for old credentials. The first carrier uses
 explicit `docker.rlark.io/container` v1 parameters and rejects user-provided GPU
-UUIDs, reserved ownership labels, Pod templates and unsupported Ray groups. The
+UUIDs, reserved ownership labels, Pod templates and unsupported Raw Ray fields. The
+Docker Ray group contract carries internal group material separately; the
 allocation injects GPU UUIDs independently through NVIDIA DeviceIDs.
 
-## Implementation sequence
+## Delivery sequence and remaining acceptance
 
 1. Wire Docker admission into the scoped Agent Task loop and add provider
    lifecycle/status tests.
 2. Add exact Docker logs/stats API actions, bounded console routes and failure/recovery tests.
-3. Add scheduler port reservations and reject incomplete Ray groups.
+3. Add scheduler port material and reject incomplete Ray groups. (The Docker Ray
+   group barrier is now implemented in the extension; this item remains for the
+   real-host port and GPU acceptance gate.)
 4. Add Docker Agent release rollout selection and a real-host acceptance test.
 5. Add the Docker cluster management UI for runtime, Engine identity, node
    inventory, occupancy, capabilities, heartbeat, rollout and blocked reasons.
@@ -168,11 +179,11 @@ output and discarding in-flight results after selection changes or logout.
 
 ## Ray/RLinf implementation contract (2026-10-31)
 
-This section is the next implementation plan, **not enabled Ray scheduling**.
-The scoped Agent continues to install only the single-container adapter until
-all group admission, failure and recovery gates below pass. The old unscoped
-Ray adapter must not be enabled as a shortcut. Changes stay in the independent
-extension; native Cluster/Node/Job/Task APIs remain unchanged.
+This section documents the opt-in Docker Ray group preview. The scoped Agent
+advertises the group capability only when Docker execution is enabled; observation
+Agents remain incapable of dispatch. Real two-host Docker GPU/RLinf acceptance is
+still a separate gate. Changes stay in the independent extension; native
+Cluster/Node/Job/Task APIs remain unchanged.
 
 ### Ports and host ownership
 
@@ -309,9 +320,10 @@ head-only, and image default entrypoints/commands are never inherited.
 The nine-service contiguous block and worker range become immutable manifest
 material in `rayPorts`, retained under an extension-owned container label and
 protected by the journal digest. The public single-container Task validator
-rejects this internal field. No allocation CRD/Agent protocol or advertised
-capability has been expanded yet; operation-pinned allocation material and
-prepared/start receipts remain the next delivery gate.
+rejects this internal field. The extension now persists group allocation material,
+exposes `prepared` and `authorize-start` Agent actions, and advertises
+`docker-ray-group-v1` only from execution-enabled Agents. Prepared/start receipts
+and full-group cleanup are implemented; real two-host acceptance remains open.
 
 `ScopedProvider.Prepare` records/recovers one exact created container without
 starting it. A later `Apply` rechecks ports and current admission immediately
@@ -342,3 +354,16 @@ Ray 2.56.1 CLI help was separately checked for all generated flags in an isolate
 Python environment. Ordinary Go tests invoke the process suite when `python3`
 is available (otherwise that suite explicitly skips). Broader Ray versions and
 real multi-host training remain unaccepted.
+
+
+### Implemented: durable Ray group contract
+
+The extension now persists the typed group snapshot in `ContainerJob.status.group`
+and immutable member material in `ContainerAllocation.spec.group`. The snapshot
+pins binding, Job UID/generation/restart marker, ordered Task UIDs/generations,
+node/Engine/credential identities, tenant, private network scope and one port plan.
+Strict expansion validates the complete Job before child creation. The digest
+covers immutable execution material; mutable observations remain Status conditions.
+Prepare/start admission, cleanup fan-out and restart recovery are wired through the
+scoped mTLS protocol. This is preview functionality: the real two-host Docker
+GPU/RLinf acceptance gate remains open.

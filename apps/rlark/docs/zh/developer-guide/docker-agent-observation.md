@@ -68,7 +68,7 @@ Raw 仍为单独的默认模式，要求 `--supervisor-socket`。
 Cluster UID、namespace 和预置环境后再解除 Job 暂停。独立控制台的 Job 提交表单
 仍只接受 Raw。
 
-控制器创建一个 Task 与独占整台主机的 ContainerAllocation，并写规范 Task target
+对于普通容器 Job，控制器创建一个 Task 与独占整台主机的 ContainerAllocation，并写规范 Task target
 注解，不写旧 DockerBinding 或按数量分配的 GPU reservation。Job 必须只有一个
 `docker.rlark.io/container` v1 template/carrier。支持显式 image、entrypoint、
 command、环境变量、工作目录、CPU/内存限额；拒绝 Pod 模板、卷、Secret、环境注入、
@@ -159,15 +159,49 @@ daemon 不可用或已退出容器的 stats 不可用时需重新读取，不合
 SDK 读取、凭据和能力撤销、临时 broker 重启/重试，以及正文卡住时并发清理。
 传输测试中的 daemon 是模拟服务，不代表真实 Docker GPU 已运行。
 
-GPU 利用率、端口预留、Ray/RLinf 集群屏障、Docker 滚动升级和
-真实 GPU 主机生命周期验收仍需单独推进。host network 本身不构成多主机 Ray 契约。
+GPU 利用率、内核级端口预留、Docker 滚动升级和真实 GPU 主机生命周期验收仍需
+单独推进。Docker Ray 整组屏障已作为预览实现；Raw Ray 编排仍不支持。
 有序门槛见 [Docker 执行计划](docker-runtime-execution-plan.md)。
 
 
-## Ray 运行时基础的范围
+## Docker Ray 整组预览
 
-扩展已包含经测试的内部 Ray 2.56.1 编译器/launcher，以及只创建不启动的 provider
-原语；它们**没有开启整组派发**，scoped Agent 仍只安装单容器适配器。`rayPorts`
-及已解析成员/GPU 字段是内部分配材料，公开容器 Task 输入会拒绝。端口块、
-prepare/start 屏障、镜像要求、失败/恢复测试和剩余真实主机验收见
-[Ray 实施契约](docker-runtime-execution-plan.md)。没有新增开关允许部分组启动。
+先安装重新生成的 ContainerJob/ContainerAllocation CRD，再配套升级控制器、API 和
+执行 Agent。沿用控制器 reservation、API execution 和 Agent execution 开关；
+只观测 Agent 不声明 `docker-ray-group-v1`。控制台提交表单仍仅支持 Raw。
+管理员提交暂停的原生 Job 及精确 UID 的 Docker ContainerJob 绑定，模板使用
+`rlinf.io/ray` v1 workload 和 `docker.rlark.io/container` v1 carrier。
+参见[执行契约](docker-runtime-execution-plan.md)与配套示例清单。
+
+整组必须只有一个 head，合计最多 16 个副本。每个成员需要独立主机、新鲜认证观测、
+匹配的预置环境、相同私网作用域以及完整授权的独占 GPU 集合，只支持 host network。
+镜像须提供 Python 3、Ray **2.56.1**、POSIX shell 及训练依赖，Agent 不自动安装。
+每台主机同时只运行一个 RLark 成员；同一 Cluster 中不同 Job 可使用不重叠主机并行。
+本功能不为 Raw 进程 Job 增加 Ray 屏障。
+
+控制器拥有 `ContainerJob.status.group`：不可变执行身份、精确 Task/节点/Engine/
+凭据/成员计划与摘要，以及 `Allocating`、`Preparing`、`Starting`、`Stopping`、
+`Succeeded`、`Failed` 阶段。取得锁前先计算完整落点。每次 allocation 创建独立原子，
+竞争冲突会取消本次尝试，已暴露的分配必须完成清理；不承诺跨对象事务、公平性或抢占。
+创建响应丢失时沿用原身份和主机重试。API 独占写入 allocation Status 中的精确准备
+回执；Agent 发回执前先将本地容器身份持久化到私有 journal。
+
+mTLS Task 协议新增 `prepared` 和 `authorize-start`。所有成员回执匹配后，控制器
+才进入 `Starting`，每次容器启动又重新校验当前完整组。`StartPrepared` 仅启动
+journal 中的精确容器 ID，已准备容器消失时绝不重建。这是协调屏障，不是原子同时
+启动。容器 Running 不等于 Ray 就绪：镜像内 launcher 验证精确 GCS 地址集合后才
+执行 head 训练。初始容器启动期限为十分钟，launcher 最多等待 120 秒完成 Ray
+成员就绪。任何 worker 自发退出（含退出码零）都会导致整组失败。head 成功后停止
+worker，必须等全组精确清理证明和 allocation 已观测删除，才报告成功。暂停、删除
+或重启会撤销启动并退役整个旧集合。保留终态身份，避免 reconcile 静默重跑。
+
+当前控制器选择 TCP **24000..24264**：九个服务端口和 256 个 worker 端口，写入
+全体不可变 allocation。`rayPorts`、已解析地址、rank、GPU UUID 为内部材料，
+公开容器 Task 不能设置。create/start 前通过本地 IPv4/IPv6 预检查拒绝外部监听；
+检查 socket 在 Docker 启动前释放，因此不是内核级预留。管理员仍需运维保留该端口
+块，并另行配置 NCCL/训练流量。
+
+测试通过真实 mTLS 和模拟 Engine，覆盖完整/部分准备、两个 Job 竞争、worker
+退出、head 完成、暂停/重启、allocation 响应丢失、凭据/generation/摘要/回执变化
+及清理屏障。真实双机 Docker GPU/RLinf 验收仍待完成。金山云 Notebook 没有
+Docker socket，仅能证明另行记录的 Raw 验收。

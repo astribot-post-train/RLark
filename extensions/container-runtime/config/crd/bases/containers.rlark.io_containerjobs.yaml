@@ -148,6 +148,280 @@ spec:
                   - type
                   type: object
                 type: array
+              group:
+                description: |-
+                  JobGroupStatus reports durable group barriers without embedding logs or
+                  unbounded member history.
+                properties:
+                  conditions:
+                    items:
+                      description: Condition contains details for one aspect of the
+                        current state of this API Resource.
+                      properties:
+                        lastTransitionTime:
+                          description: |-
+                            lastTransitionTime is the last time the condition transitioned from one status to another.
+                            This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                          format: date-time
+                          type: string
+                        message:
+                          description: |-
+                            message is a human readable message indicating details about the transition.
+                            This may be an empty string.
+                          maxLength: 32768
+                          type: string
+                        observedGeneration:
+                          description: |-
+                            observedGeneration represents the .metadata.generation that the condition was set based upon.
+                            For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                            with respect to the current state of the instance.
+                          format: int64
+                          minimum: 0
+                          type: integer
+                        reason:
+                          description: |-
+                            reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                            Producers of specific condition types may define expected values and meanings for this field,
+                            and whether the values are considered a guaranteed API.
+                            The value should be a CamelCase string.
+                            This field may not be empty.
+                          maxLength: 1024
+                          minLength: 1
+                          pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                          type: string
+                        status:
+                          description: status of the condition, one of True, False,
+                            Unknown.
+                          enum:
+                          - "True"
+                          - "False"
+                          - Unknown
+                          type: string
+                        type:
+                          description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                          maxLength: 316
+                          pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                          type: string
+                      required:
+                      - lastTransitionTime
+                      - message
+                      - reason
+                      - status
+                      - type
+                      type: object
+                    type: array
+                  digest:
+                    type: string
+                  id:
+                    type: string
+                  phase:
+                    enum:
+                    - Allocating
+                    - Preparing
+                    - Starting
+                    - Stopping
+                    - Succeeded
+                    - Failed
+                    type: string
+                  plan:
+                    description: |-
+                      RayGroupPlan is the controller-owned complete placement decision. It is
+                      persisted before any member allocation is exposed; ID/digest are recomputed
+                      at every authorization boundary. Index zero is the only head.
+                    properties:
+                      binding:
+                        description: NativeObjectReference pins an extension record
+                          to one exact RLark object incarnation.
+                        properties:
+                          name:
+                            type: string
+                          namespace:
+                            type: string
+                          uid:
+                            type: string
+                        required:
+                        - name
+                        - uid
+                        type: object
+                        x-kubernetes-validations:
+                        - message: referenced object instance is immutable
+                          rule: self == oldSelf
+                      cluster:
+                        description: NativeObjectReference pins an extension record
+                          to one exact RLark object incarnation.
+                        properties:
+                          name:
+                            type: string
+                          namespace:
+                            type: string
+                          uid:
+                            type: string
+                        required:
+                        - name
+                        - uid
+                        type: object
+                        x-kubernetes-validations:
+                        - message: referenced object instance is immutable
+                          rule: self == oldSelf
+                      job:
+                        description: NativeObjectReference pins an extension record
+                          to one exact RLark object incarnation.
+                        properties:
+                          name:
+                            type: string
+                          namespace:
+                            type: string
+                          uid:
+                            type: string
+                        required:
+                        - name
+                        - uid
+                        type: object
+                        x-kubernetes-validations:
+                        - message: referenced object instance is immutable
+                          rule: self == oldSelf
+                      jobGeneration:
+                        format: int64
+                        minimum: 1
+                        type: integer
+                      members:
+                        items:
+                          description: GroupMember is the trusted placement and rank
+                            for one group member.
+                          properties:
+                            credentialID:
+                              type: string
+                            generation:
+                              format: int64
+                              minimum: 1
+                              type: integer
+                            gpuUUIDs:
+                              items:
+                                type: string
+                              type: array
+                              x-kubernetes-list-type: set
+                            instanceID:
+                              type: string
+                            node:
+                              description: NativeObjectReference pins an extension
+                                record to one exact RLark object incarnation.
+                              properties:
+                                name:
+                                  type: string
+                                namespace:
+                                  type: string
+                                uid:
+                                  type: string
+                              required:
+                              - name
+                              - uid
+                              type: object
+                              x-kubernetes-validations:
+                              - message: referenced object instance is immutable
+                                rule: self == oldSelf
+                            nodeRecord:
+                              description: NativeObjectReference pins an extension
+                                record to one exact RLark object incarnation.
+                              properties:
+                                name:
+                                  type: string
+                                namespace:
+                                  type: string
+                                uid:
+                                  type: string
+                              required:
+                              - name
+                              - uid
+                              type: object
+                              x-kubernetes-validations:
+                              - message: referenced object instance is immutable
+                                rule: self == oldSelf
+                            privateAddress:
+                              type: string
+                            rank:
+                              format: int32
+                              minimum: 0
+                              type: integer
+                            task:
+                              description: NativeObjectReference pins an extension
+                                record to one exact RLark object incarnation.
+                              properties:
+                                name:
+                                  type: string
+                                namespace:
+                                  type: string
+                                uid:
+                                  type: string
+                              required:
+                              - name
+                              - uid
+                              type: object
+                              x-kubernetes-validations:
+                              - message: referenced object instance is immutable
+                                rule: self == oldSelf
+                          required:
+                          - credentialID
+                          - generation
+                          - instanceID
+                          - node
+                          - nodeRecord
+                          - privateAddress
+                          - rank
+                          - task
+                          type: object
+                        type: array
+                      networkScope:
+                        type: string
+                      ports:
+                        description: RayPortPlan is an immutable host port block shared
+                          by all group members.
+                        properties:
+                          base:
+                            format: int32
+                            maximum: 65535
+                            minimum: 1024
+                            type: integer
+                          workerCount:
+                            format: int32
+                            minimum: 1
+                            type: integer
+                        required:
+                        - base
+                        - workerCount
+                        type: object
+                      restart:
+                        type: string
+                      tenantID:
+                        type: string
+                    required:
+                    - binding
+                    - cluster
+                    - job
+                    - jobGeneration
+                    - members
+                    - networkScope
+                    - ports
+                    - tenantID
+                    type: object
+                  reason:
+                    type: string
+                  result:
+                    description: Result is retained before cleanup fan-out, including
+                      partial reservations.
+                    enum:
+                    - Succeeded
+                    - Failed
+                    type: string
+                  startedAt:
+                    format: date-time
+                    type: string
+                required:
+                - digest
+                - id
+                - phase
+                - plan
+                - startedAt
+                type: object
               observedGeneration:
                 format: int64
                 type: integer

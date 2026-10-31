@@ -15,6 +15,7 @@ import (
 	"github.com/astribot-post-train/rlark/extensions/container-runtime/pkg/allocation/companion"
 	dockerruntime "github.com/astribot-post-train/rlark/extensions/container-runtime/pkg/runtime/docker"
 	"github.com/astribot-post-train/rlark/extensions/container-runtime/pkg/taskcontract"
+	ray "github.com/astribot-post-train/rlark/extensions/container-runtime/pkg/workload/ray/docker"
 	api "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
 	"github.com/rlinf/rlark/apps/rlark/pkg/agent/execution/coordination"
 	"github.com/rlinf/rlark/apps/rlark/pkg/agent/execution/host"
@@ -58,7 +59,7 @@ func (o DockerExecutionObserver) Heartbeat(ctx context.Context, observation Obse
 	if err := o.Journal.Check(ctx); err != nil {
 		return errors.Join(err, o.reconcile(ctx, false))
 	}
-	observation.Capabilities = append(slices.Clone(observation.Capabilities), DockerExecutionCapability)
+	observation.Capabilities = append(slices.Clone(observation.Capabilities), DockerExecutionCapability, ray.Capability)
 	if o.EnableDiagnostics {
 		observation.Capabilities = append(observation.Capabilities, DockerDiagnosticsCapability)
 	}
@@ -78,6 +79,9 @@ func (o DockerExecutionObserver) reconcile(ctx context.Context, allowStart bool)
 	identity := rt.TaskIdentity{Logical: rt.LogicalTaskID{Namespace: task.Namespace, Name: task.Name}, ObjectUID: string(task.UID), Generation: task.Generation}
 	scoped := ScopedTasks{Client: o.Client, Allocation: objectRef(&a.Allocation), Task: objectRef(task)}
 	provider := &dockerruntime.ScopedProvider{Provider: &dockerruntime.Provider{ID: dockerruntime.DefaultID, Client: o.Engine, Admission: scopedAdmission{scoped: scoped}}, Journal: o.Journal, EngineID: o.EngineID, GPUUUIDs: slices.Clone(a.Allocation.Spec.GPUUUIDs)}
+	if a.Allocation.Spec.Group != nil {
+		return o.reconcileRay(ctx, a, provider, scoped, identity, allowStart)
+	}
 	if task.Spec.Suspended || !task.DeletionTimestamp.IsZero() || taskcontract.Observed(task) && taskcontract.HasResult(task) {
 		_, err := provider.Cleanup(ctx, identity)
 		if err != nil {
