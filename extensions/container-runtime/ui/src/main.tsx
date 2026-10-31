@@ -29,6 +29,7 @@ import {
   logText as decodeLogText,
   rawJobIntent,
   nodeRegistrationIntent,
+  clusterIntentFromForm,
   canReadDiagnostic,
   diagnosticInventory,
 } from "./models";
@@ -45,9 +46,9 @@ const labels = {
     empty: "没有容器集群",
     select: "选择集群查看节点和升级状态",
     nodes: "节点",
-    registerNode: "登记已有容器",
+    registerNode: "登记运行时节点",
     nodeName: "节点名称",
-    instanceID: "已核验的容器实例身份",
+    instanceID: "已核验的实例身份（Raw 容器 / Docker Engine）",
     privateAddress: "私网 IPv4 地址",
     networkScope: "网络范围",
     gpuInput: "平台授权 GPU UUID（JSON 字符串数组）",
@@ -86,6 +87,9 @@ const labels = {
     name: "集群名",
     namespace: "Agent namespace",
     tenant: "租户",
+    runtime: "运行时",
+    rawRuntime: "Raw（已有进程）",
+    dockerRuntime: "Docker（Docker Engine）",
     retry: "重试同一操作",
     close: "收起",
     logout: "退出",
@@ -99,7 +103,7 @@ const labels = {
     targetHint:
       "目标是持续期望状态。清空目标只暂停新升级，不取消正在应用的操作。",
     onboarding:
-      "节点登记和诊断需单独启用；安装包通过管理员 CLI 导出。Docker 单容器执行和诊断为预览，尚无真实 GPU 主机验收。Ray/RLinf 多节点待实现。",
+      "Docker 集群独立于 Kubernetes 集群；节点登记、Agent 更新和诊断需单独启用，安装包通过管理员 CLI 导出。Docker Ray 多节点仍是预览能力。",
     logs: "读取日志",
     stats: "读取资源快照",
     statsLoading: "读取中…",
@@ -153,9 +157,9 @@ const labels = {
     empty: "No container clusters",
     select: "Select a cluster to inspect nodes and upgrades",
     nodes: "Nodes",
-    registerNode: "Register existing container",
+    registerNode: "Register runtime node",
     nodeName: "Node name",
-    instanceID: "Verified container incarnation",
+    instanceID: "Verified instance identity (Raw container / Docker Engine)",
     privateAddress: "Private IPv4 address",
     networkScope: "Network scope",
     gpuInput: "Platform-authorized GPU UUIDs (JSON string array)",
@@ -195,6 +199,9 @@ const labels = {
     name: "Cluster name",
     namespace: "Agent namespace",
     tenant: "Tenant",
+    runtime: "Runtime",
+    rawRuntime: "Raw (existing process)",
+    dockerRuntime: "Docker (Docker Engine)",
     retry: "Retry same operation",
     close: "Collapse",
     logout: "Sign out",
@@ -208,7 +215,7 @@ const labels = {
     targetHint:
       "The target is durable intent. Clearing it pauses new upgrades; it does not cancel an applying operation.",
     onboarding:
-      "Registration and diagnostics require explicit enablement. Export packages with the administrator CLI. Docker single-container execution and diagnostics are preview, without real GPU-host acceptance. Multi-node Ray/RLinf remains incomplete.",
+      "Docker clusters are separate from Kubernetes clusters. Registration, Agent updates and diagnostics require explicit enablement and administrator package export. Multi-node Docker Ray remains preview.",
     logs: "Read logs",
     stats: "Read resource snapshot",
     statsLoading: "Reading…",
@@ -573,13 +580,18 @@ function App() {
     event.preventDefault();
     if (!client || jobIntent || nodeIntent) return;
     const data = new FormData(event.currentTarget);
-    const retained: ClusterIntent = intent ?? {
-      operationID: crypto.randomUUID(),
-      name: String(data.get("name")),
-      agentNamespace: String(data.get("namespace")),
-      tenantID: String(data.get("tenant")),
-      runtime: "Raw",
-    };
+    let retained: ClusterIntent;
+    try {
+      retained = intent ?? clusterIntentFromForm(crypto.randomUUID(), {
+        name: String(data.get("name") || ""),
+        agentNamespace: String(data.get("namespace") || ""),
+        tenantID: String(data.get("tenant") || ""),
+        runtime: String(data.get("runtime") || ""),
+      });
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Invalid cluster intent");
+      return;
+    }
     try {
       sessionStorage.setItem(intentKey, JSON.stringify(retained));
     } catch {
@@ -816,7 +828,18 @@ function App() {
                         defaultValue={intent?.tenantID}
                       />
                     </label>
-                    <p>Raw · existing container</p>
+                    <label>
+                      {t.runtime}
+                      <select
+                        name="runtime"
+                        required
+                        disabled={!!intent || writing}
+                        defaultValue={intent?.runtime || "Docker"}
+                      >
+                        <option value="Docker">{t.dockerRuntime}</option>
+                        <option value="Raw">{t.rawRuntime}</option>
+                      </select>
+                    </label>
                     {intent && <code>{intent.operationID}</code>}
                     <button className="primary" disabled={writing}>
                       {intent ? t.retry : t.create}

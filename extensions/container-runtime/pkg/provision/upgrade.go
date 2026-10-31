@@ -41,8 +41,8 @@ func (s Service) CreateUpgrade(ctx context.Context, req UpgradeRequest) (*ext.Ag
 	if err != nil {
 		return nil, err
 	}
-	if node.Spec.Runtime != "Raw" {
-		return nil, errors.New("upgrade reservations currently support Raw nodes")
+	if node.Spec.Runtime != "Raw" && node.Spec.Runtime != "Docker" {
+		return nil, errors.New("unsupported node runtime")
 	}
 	_, cc, err := s.cluster(ctx, node.Spec.Cluster.Name, node.Spec.Cluster.UID, req.Node.TenantID)
 	if err != nil {

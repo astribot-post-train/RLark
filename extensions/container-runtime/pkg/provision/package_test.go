@@ -414,9 +414,35 @@ func TestDockerObservationPackageOmitsRawSupervisor(t *testing.T) {
 	}
 }
 
+func TestDockerPackageCanOptIntoAgentUpgrade(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("Linux ELF packaging")
+	}
+	s, cn := registeredRuntime(t, "Docker")
+	req := packageRequest(t, nodeID(cn))
+	req.Runtime = "Docker"
+	req.SupervisorBinary = ""
+	req.Executables = nil
+	req.WorkDirectories = nil
+	req.LogBytes = 0
+	req.EnableUpgrades = true
+	req.StateDirectory = "/var/lib/rlark-docker"
+	_, err := s.ExportPackage(context.Background(), req)
+	must(t, err)
+	data, err := os.ReadFile(filepath.Join(req.OutputDirectory, "start-agent"))
+	must(t, err)
+	text := string(data)
+	if !strings.Contains(text, "--runtime=docker") || !strings.Contains(text, "--enable-agent-upgrades=true") || !strings.Contains(text, "--agent-install-path="+req.InstallDirectory+"/container-runtime-agent") {
+		t.Fatalf("Docker upgrade launcher missing flags: %s", text)
+	}
+	if _, err := os.Stat(filepath.Join(req.OutputDirectory, "raw-supervisor")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("Docker upgrade package unexpectedly contains Raw supervisor: %v", err)
+	}
+}
+
 func TestDockerPackageRejectsUnsupportedOptionsBeforeWriting(t *testing.T) {
 	s, cn := registeredRuntime(t, "Docker")
-	for _, mode := range []string{"raw-default", "execution", "logs", "upgrades", "supervisor", "state", "executable", "work", "log-bound", "remote-host", "bad-path"} {
+	for _, mode := range []string{"raw-default", "execution", "logs", "supervisor", "state", "executable", "work", "log-bound", "remote-host", "bad-path"} {
 		t.Run(mode, func(t *testing.T) {
 			req := packageRequest(t, nodeID(cn))
 			req.Runtime = "Docker"
@@ -432,8 +458,6 @@ func TestDockerPackageRejectsUnsupportedOptionsBeforeWriting(t *testing.T) {
 				req.EnableExecution = true
 			case "logs":
 				req.EnableLogReads = true
-			case "upgrades":
-				req.EnableUpgrades = true
 			case "supervisor":
 				req.SupervisorBinary = "/opt/raw-supervisor"
 			case "state":

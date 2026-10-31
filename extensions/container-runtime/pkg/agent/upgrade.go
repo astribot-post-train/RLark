@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"slices"
 	"time"
 
 	ext "github.com/astribot-post-train/rlark/extensions/container-runtime/api/v1alpha1"
@@ -106,6 +107,9 @@ func (r Reporter) upgradeResponse(op *ext.AgentUpgrade, allocation *ext.Containe
 }
 
 func (r Reporter) freshUpgradeObservation(node *ext.ContainerNode, version string, after *metav1.Time) error {
+	if node.Spec.Runtime == "Docker" && !slices.Contains(node.Status.Capabilities, UpgradeCapability) {
+		return ErrUpgradeUnavailable
+	}
 	if node.Status.AgentCredentialID == "" || node.Status.AgentCredentialID != node.Annotations[CredentialAnnotation] || node.Status.ObservedGeneration != node.Generation || node.Status.Busy || node.Status.AgentVersion != version || node.Status.LastHeartbeatTime == nil || node.Status.LastHeartbeatTime.After(r.now()) || r.now().Sub(node.Status.LastHeartbeatTime.Time) > 45*time.Second {
 		return ErrUpgradeUnavailable
 	}
@@ -185,6 +189,9 @@ func (r Reporter) Upgrade(ctx context.Context, id Identity, request UpgradeReque
 }
 
 func (r Reporter) claimUpgrade(ctx context.Context, id Identity, request UpgradeRequest, op *ext.AgentUpgrade, node *ext.ContainerNode, allocation *ext.ContainerAllocation) (*UpgradeResponse, error) {
+	if node.Spec.Runtime == "Docker" && !slices.Contains(node.Status.Capabilities, "agent-platform/"+op.Spec.ReleaseSpec.OS+"/"+op.Spec.ReleaseSpec.Architecture) {
+		return nil, ErrUpgradeUnavailable
+	}
 	if !companion.ValidUpgradeAttempt(request.AttemptID) {
 		return nil, ErrUpgradeIdentity
 	}

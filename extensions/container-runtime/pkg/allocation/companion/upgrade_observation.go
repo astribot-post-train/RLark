@@ -56,7 +56,7 @@ func (m Manager) ObserveUpgrade(ctx context.Context, req UpgradeRequest) (*ext.A
 	if err := m.Client.Get(ctx, client.ObjectKey{Namespace: op.Spec.NodeRecord.Namespace, Name: op.Spec.NodeRecord.Name}, &node); err != nil {
 		return nil, nil, nil, err
 	}
-	if reference(&node) != op.Spec.NodeRecord || node.Namespace != op.Namespace || node.Spec.Cluster != op.Spec.Cluster || node.Spec.Runtime != "Raw" || node.Spec.InstanceID != op.Spec.InstanceID || tenant.IDOf(&node) != op.Spec.TenantID {
+	if reference(&node) != op.Spec.NodeRecord || node.Namespace != op.Namespace || node.Spec.Cluster != op.Spec.Cluster || node.Spec.Runtime != "Raw" && node.Spec.Runtime != "Docker" || node.Spec.InstanceID != op.Spec.InstanceID || tenant.IDOf(&node) != op.Spec.TenantID {
 		return nil, nil, nil, ErrIdentity
 	}
 	var cluster native.Cluster
@@ -67,7 +67,7 @@ func (m Manager) ObserveUpgrade(ctx context.Context, req UpgradeRequest) (*ext.A
 	if err := m.Client.Get(ctx, client.ObjectKey{Namespace: node.Spec.Node.Namespace, Name: node.Spec.Node.Name}, &nn); err != nil {
 		return nil, nil, nil, err
 	}
-	if ownership.MatchesNative(op.Spec.Cluster, &cluster) != nil || ownership.MatchesNative(node.Spec.Node, &nn) != nil || cluster.Spec.AgentNamespace != node.Namespace || nn.Namespace != node.Namespace || nn.Spec.AgentType != native.AgentTypeRaw || tenant.IDOf(&cluster) != op.Spec.TenantID || tenant.IDOf(&nn) != op.Spec.TenantID || nn.Status.Reservation != nil || len(nn.Status.DockerReservations) != 0 {
+	if ownership.MatchesNative(op.Spec.Cluster, &cluster) != nil || ownership.MatchesNative(node.Spec.Node, &nn) != nil || cluster.Spec.AgentNamespace != node.Namespace || nn.Namespace != node.Namespace || nn.Spec.AgentType != agentTypeForRuntime(node.Spec.Runtime) || tenant.IDOf(&cluster) != op.Spec.TenantID || tenant.IDOf(&nn) != op.Spec.TenantID || nn.Status.Reservation != nil || len(nn.Status.DockerReservations) != 0 {
 		return nil, nil, nil, ErrIdentity
 	}
 	var clusterList native.ClusterList

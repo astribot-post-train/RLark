@@ -75,9 +75,7 @@ Status separates desired state, observed container state and cleanup proof:
 
 Docker and Raw packages share certificate and release verification, but runtime
 flags are mutually exclusive. A Docker package starts after `docker.service`.
-Docker upgrade execution is not implemented. Its future selector must choose
-only an idle Docker node and preserve the same Engine socket and incarnation. A target release fences new allocations;
-installation is an operation with an exact allocation and restart receipt.
+Docker upgrades reuse the root-owned updater. Its selector chooses only a fresh idle Docker node, and the Agent preserves the same Engine identity, socket and incarnation while applying the exact release through its durable journal. A target release fences new allocations; installation is an operation with an exact allocation and restart receipt.
 
 ## Acceptance gates
 

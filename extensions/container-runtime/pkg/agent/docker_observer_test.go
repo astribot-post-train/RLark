@@ -6,6 +6,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/docker/docker/api/types"
@@ -43,6 +44,16 @@ func TestDockerObserverReportsBoundedEngineIdentityAndRetainedWork(t *testing.T)
 	}
 	if obs.Capabilities[0] != "docker-observation-v1" {
 		t.Fatalf("missing observation capability: %#v", obs.Capabilities)
+	}
+	if slices.Contains(obs.Capabilities, UpgradeCapability) {
+		t.Fatal("default observer advertised disabled upgrades")
+	}
+	upgradable, err := (DockerObserver{Version: "preview", PrivateAddress: "10.0.3.85", Engine: e, NvidiaSMI: bin, EnableUpgrades: true}).Observe(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(upgradable.Capabilities, UpgradeCapability) || !upgradable.Busy {
+		t.Fatalf("upgrade opt-in lost capability or retained-container occupancy: %#v", upgradable)
 	}
 }
 

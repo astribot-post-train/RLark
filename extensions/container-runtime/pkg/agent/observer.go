@@ -199,7 +199,7 @@ func (r Reporter) validateBindings(ctx context.Context, node *ext.ContainerNode,
 		if other.UID == node.UID {
 			continue
 		}
-		if other.Spec.Node == node.Spec.Node || other.Spec.NetworkScope == node.Spec.NetworkScope && other.Spec.PrivateAddress == node.Spec.PrivateAddress {
+		if other.Spec.Node == node.Spec.Node || node.Spec.Runtime == "Docker" && other.Spec.Runtime == "Docker" && other.Spec.InstanceID == node.Spec.InstanceID || other.Spec.NetworkScope == node.Spec.NetworkScope && other.Spec.PrivateAddress == node.Spec.PrivateAddress {
 			return ErrIdentity
 		}
 		for _, gpu := range other.Spec.AuthorizedGPUUUIDs {
@@ -218,7 +218,7 @@ func validateObservation(node *ext.ContainerNode, obs Observation) error {
 	if node.Spec.Runtime != "Raw" && node.Spec.Runtime != "Docker" || obs.Runtime != "" && obs.Runtime != node.Spec.Runtime || obs.InstanceID != "" && obs.InstanceID != node.Spec.InstanceID {
 		return ErrIdentity
 	}
-	if node.Spec.Runtime == "Docker" && (obs.Runtime != "Docker" || obs.InstanceID != node.Spec.InstanceID || !slices.Contains(obs.Capabilities, "docker-observation-v1") || slices.Contains(obs.Capabilities, UpgradeCapability) || obs.Capacity["cpu"] == "" || obs.Capacity["memory"] == "") {
+	if node.Spec.Runtime == "Docker" && (obs.Runtime != "Docker" || obs.InstanceID != node.Spec.InstanceID || !slices.Contains(obs.Capabilities, "docker-observation-v1") || obs.Capacity["cpu"] == "" || obs.Capacity["memory"] == "") {
 		return ErrCapability
 	}
 	if len(obs.Version) > 128 || strings.TrimSpace(obs.Version) == "" || strings.TrimSpace(obs.PrivateAddress) == "" || obs.PrivateAddress != node.Spec.PrivateAddress || len(obs.Capabilities) > 16 || len(obs.VisibleGPUUUIDs) > 256 {

@@ -6,7 +6,7 @@ Cluster、Node、Job、Task API 增加容器专属字段。
 
 ## 本次范围
 
-本预览版面向显式接入的 Raw 容器集群，提供：
+本预览版面向显式接入的 Raw 和 Docker 容器集群，提供：
 
 - 集群列表和详情；
 - 节点的权威身份、私网地址、运行时、能力、授权 GPU UUID、心跳新鲜度、
@@ -135,8 +135,8 @@ bin/container-runtime-console \
 `container-runtime-api` 服务。UI 构建要求 Node.js 20.19+ 或 22.12+，验收使用
 Node.js 24。
 
-预览 UI 创建 Raw 集群。API/CLI 可以注册 Docker 主机，接入[观测或按需开启的单容器执行](docker-agent-observation.md)；
-浏览器 Docker Job 提交和 Docker 节点登记仍不支持。节点登记仅在显式启用的管理员入口提供；安装包导出、产物发布、drain 仍通过
+预览 UI 可以创建 Raw 或 Docker 集群。API/CLI 和管理员控制台可以登记 Docker 主机，接入[观测或按需开启的单容器执行](docker-agent-observation.md)；
+当前表单仍不提交 Docker Job。节点登记仅在显式启用的管理员入口提供；安装包导出、产物发布、drain 仍通过
 CLI 或运维流程完成。allocation 行保留其 Job 引用；可选 Raw Job 面板单独列出经过
 验证的绑定 Job、提交单进程和记录暂停意图，不提供历史归档。
 
@@ -384,4 +384,4 @@ host network 流量归属。仅支持手动读取；切换/退出、观测到 al
 或能力撤销都会取消在途请求并清除显示。读取临时、有界且在返回前重验；API 重启
 后需手动重试。启用、所有权、限额和故障恢复见 [Docker Agent](docker-agent-observation.md)。
 底层 Engine 传输通过模拟 daemon 测试，真实 Docker GPU 验收仍未完成。浏览器
-Docker 登记/Job 提交和升级为后续工作。
+Docker Job 提交仍是后续工作；Docker 登记和升级见[集群管理交付计划](docker-cluster-management-plan.md)。

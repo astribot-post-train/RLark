@@ -122,12 +122,6 @@ func TestNodeRegistrationRejectsInvalidForeignAndReplacedIdentity(t *testing.T) 
 			nc.UID = "replacement"
 			require.NoError(t, c.Update(context.Background(), &nc))
 		}, 409},
-		{"Docker inventory", func(t *testing.T, _ *API, _ *registerNodeRequest, c client.Client) {
-			var cc ext.ContainerCluster
-			require.NoError(t, c.Get(context.Background(), client.ObjectKey{Namespace: "cloud-agents", Name: "cloud"}, &cc))
-			cc.Spec.Runtime = "Docker"
-			require.NoError(t, c.Update(context.Background(), &cc))
-		}, 409},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			a, req, c := registrationFixture(t)
@@ -170,6 +164,22 @@ func TestNodeRegistrationProtocolRejectsSpoofedAuthorityAndNonAdmins(t *testing.
 	w := httptest.NewRecorder()
 	a.ServeHTTP(w, r)
 	require.Equal(t, 403, w.Code)
+}
+
+func TestDockerNodeRegistrationUsesDockerNativeAgentType(t *testing.T) {
+	a, req, c := registrationFixture(t)
+	var cc ext.ContainerCluster
+	require.NoError(t, c.Get(context.Background(), client.ObjectKey{Namespace: "cloud-agents", Name: "cloud"}, &cc))
+	cc.Spec.Runtime = "Docker"
+	require.NoError(t, c.Update(context.Background(), &cc))
+	w := request(t, a, http.MethodPost, registrationPath, registrationBody(t, req))
+	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+	var cn ext.ContainerNode
+	require.NoError(t, c.Get(context.Background(), client.ObjectKey{Namespace: "cloud-agents", Name: req.Name}, &cn))
+	require.Equal(t, ext.Runtime("Docker"), cn.Spec.Runtime)
+	var nn native.Node
+	require.NoError(t, c.Get(context.Background(), client.ObjectKey{Namespace: "cloud-agents", Name: req.Name}, &nn))
+	require.Equal(t, native.AgentTypeDocker, nn.Spec.AgentType)
 }
 
 // A companion replaced after the API read must also be rejected by the shared

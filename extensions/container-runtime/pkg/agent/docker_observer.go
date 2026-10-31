@@ -33,6 +33,7 @@ type DockerObserver struct {
 	PrivateAddress string
 	Engine         DockerObservationEngine
 	NvidiaSMI      string
+	EnableUpgrades bool
 }
 
 func (o DockerObserver) Observe(ctx context.Context) (Observation, error) {
@@ -70,6 +71,9 @@ func (o DockerObserver) Observe(ctx context.Context) (Observation, error) {
 		return Observation{}, err
 	}
 	capabilities := []string{"docker-observation-v1", "docker-engine/api/" + version.APIVersion, "agent-platform/" + runtime.GOOS + "/" + runtime.GOARCH}
+	if o.EnableUpgrades {
+		capabilities = append(capabilities, UpgradeCapability)
+	}
 	return Observation{
 		Runtime:        "Docker",
 		InstanceID:     info.ID,

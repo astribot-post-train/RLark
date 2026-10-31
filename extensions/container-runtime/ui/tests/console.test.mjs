@@ -7,7 +7,28 @@ import {
   heartbeatAge,
   clusterState,
   logText,
+  clusterIntentFromForm,
 } from "../.test-build/models.js";
+
+test("cluster form preserves each runtime and refuses an unknown runtime", async () => {
+  const fields = { name: "cloud", agentNamespace: "agents", tenantID: "tenant" };
+  const client = new Client("admin");
+  for (const runtime of ["Docker", "Raw"]) {
+    const intent = clusterIntentFromForm("operation", { ...fields, runtime });
+    const seen = [];
+    globalThis.fetch = async (_path, init) => {
+      seen.push(JSON.parse(init.body));
+      throw new Error("response lost");
+    };
+    await assert.rejects(client.create(intent));
+    await assert.rejects(client.create(intent));
+    assert.deepEqual(seen, [intent, intent]);
+    assert.equal(intent.runtime, runtime);
+  }
+  for (const runtime of ["", "docker", "Kubernetes", "Unknown"]) {
+    assert.throws(() => clusterIntentFromForm("operation", { ...fields, runtime }));
+  }
+});
 
 test("log reads pin exact allocation and Task identity and preserve cancellation/auth", async () => {
   let request;

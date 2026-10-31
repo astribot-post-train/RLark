@@ -164,6 +164,16 @@ export function nodeRegistrationIntent(
   return value;
 }
 
+export function clusterIntentFromForm(
+  operationID: string,
+  fields: { name: string; agentNamespace: string; tenantID: string; runtime: string },
+): { operationID: string; name: string; agentNamespace: string; tenantID: string; runtime: "Raw" | "Docker" } {
+  if (!operationID || !fields.name || !fields.agentNamespace || !fields.tenantID || (fields.runtime !== "Raw" && fields.runtime !== "Docker")) {
+    throw new Error("Invalid cluster intent");
+  }
+  return { operationID, name: fields.name, agentNamespace: fields.agentNamespace, tenantID: fields.tenantID, runtime: fields.runtime };
+}
+
 // UI visibility is advisory; the API independently revalidates each read.
 export function canReadDiagnostic(
   detail: Detail,

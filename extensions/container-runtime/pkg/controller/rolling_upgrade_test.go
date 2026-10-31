@@ -90,6 +90,42 @@ func TestIdleRolloutSelectsUnschedulableSourceButDoesNotGrantInstallation(t *tes
 	}
 }
 
+func TestDockerIdleRolloutReservesAndRecoversExactOperation(t *testing.T) {
+	r, req, upgrades, opReq := rolloutFixture(t)
+	ctx := context.Background()
+	cc := rolloutCluster(t, r, req)
+	cc.Spec.Runtime = "Docker"
+	checkUpgrade(t, r.Client.Update(ctx, cc))
+	var n ext.ContainerNode
+	checkUpgrade(t, r.Client.Get(ctx, client.ObjectKey{Namespace: "agents", Name: "worker"}, &n))
+	n.Spec.Runtime = "Docker"
+	checkUpgrade(t, r.Client.Update(ctx, &n))
+	var nn native.Node
+	checkUpgrade(t, r.Client.Get(ctx, client.ObjectKey{Namespace: n.Spec.Node.Namespace, Name: n.Spec.Node.Name}, &nn))
+	nn.Spec.AgentType = native.AgentTypeDocker
+	// Cordon is workload scheduling intent; it does not pause idle rollouts.
+	nn.Spec.Unschedulable = true
+	checkUpgrade(t, r.Client.Update(ctx, &nn))
+	reconcileRollout(t, r, req, 3)
+	op := readUpgrade(t, upgrades, opReq)
+	if op.Spec.NodeRecord.UID != string(n.UID) || op.Spec.InstanceID != n.Spec.InstanceID {
+		t.Fatalf("Docker rollout lost exact Engine/node identity: %+v", op.Spec)
+	}
+	reconcileUpgrade(t, upgrades, opReq, 1)
+	if readUpgrade(t, upgrades, opReq).Status.Phase != "Reserved" {
+		t.Fatal("Docker rollout failed to reserve its idle host")
+	}
+	reconcileRollout(t, AgentRolloutReconciler{Client: r.Client, Now: r.Now}, req, 2)
+	if readUpgrade(t, upgrades, opReq).UID != op.UID {
+		t.Fatal("controller restart replaced Docker upgrade operation")
+	}
+	var held ext.ContainerAllocationList
+	checkUpgrade(t, r.Client.List(ctx, &held))
+	if len(held.Items) != 1 || held.Items[0].Spec.Upgrade == nil || held.Items[0].Spec.Upgrade.Operation.UID != string(op.UID) {
+		t.Fatal("Docker rollout did not retain its exact exclusive lock")
+	}
+}
+
 func TestIdleRolloutWaitsForFreshEnabledIdleUnallocatedNodes(t *testing.T) {
 	for _, scenario := range []string{"busy", "stale", "future", "revoked", "disabled", "wrong-platform", "unvalidated", "stale-ready", "missing-gpu", "held-node", "held-address", "held-gpu", "cross-tenant", "old-native-uid"} {
 		t.Run(scenario, func(t *testing.T) {
