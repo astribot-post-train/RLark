@@ -8,6 +8,7 @@ FROM ${GO_BASE_IMAGE} AS builder
 WORKDIR /src
 COPY api/go.mod api/go.sum ./api/
 COPY sdks/execution-go/go.mod sdks/execution-go/go.sum ./sdks/execution-go/
+COPY extensions/container-runtime/core/go.mod extensions/container-runtime/core/go.sum ./extensions/container-runtime/core/
 COPY apps/rlark/go.mod apps/rlark/go.sum ./apps/rlark/
 RUN --mount=type=cache,target=/go/pkg/mod \
     GOMODCACHE=/go/pkg/mod go mod download -C apps/rlark
@@ -15,6 +16,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 COPY api/ ./api/
 COPY sdks/execution-go/ ./sdks/execution-go/
 COPY apps/rlark/ ./apps/rlark/
+COPY extensions/container-runtime/core/ ./extensions/container-runtime/core/
 
 RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
     GOMODCACHE=/go/pkg/mod GOCACHE=/root/.cache/go-build \

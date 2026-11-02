@@ -4,17 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
 	rt "github.com/rlinf/rlark/apps/rlark/pkg/agent/execution/runtime"
 	"io"
-	"path/filepath"
-	"regexp"
-	"strings"
 
 	"github.com/rlinf/rlark/apps/rlark/pkg/agent/execution/fault"
 )
-
-var environmentName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 func decodeManifest(data json.RawMessage) (ProcessManifest, error) {
 	var spec ProcessManifest
@@ -33,32 +27,6 @@ func decodeManifest(data json.RawMessage) (ProcessManifest, error) {
 		return spec, fault.New(fault.InvalidArgument, "complete Raw process schema and metadata required")
 	}
 	return spec, nil
-}
-
-// Validate rejects ambiguous executables and environment entries before effects.
-// Empty Env is an explicit empty environment, never os.Environ(). The Supervisor
-// must separately authorize directories and executable paths on its local node.
-func (s ProcessSpec) Validate() error {
-	if len(s.Argv) == 0 || !filepath.IsAbs(s.Argv[0]) || filepath.Clean(s.Argv[0]) != s.Argv[0] {
-		return fmt.Errorf("a canonical absolute executable path is required")
-	}
-	if !filepath.IsAbs(s.Directory) || filepath.Clean(s.Directory) != s.Directory {
-		return fmt.Errorf("a canonical absolute working directory is required")
-	}
-	for _, arg := range s.Argv {
-		if strings.ContainsRune(arg, 0) {
-			return fmt.Errorf("NUL in process argument")
-		}
-	}
-	seen := map[string]bool{}
-	for _, entry := range s.Env {
-		name, _, ok := strings.Cut(entry, "=")
-		if !ok || !environmentName.MatchString(name) || seen[name] || strings.ContainsRune(entry, 0) {
-			return fmt.Errorf("invalid or duplicate process environment entry")
-		}
-		seen[name] = true
-	}
-	return nil
 }
 
 // ProcessManifest carries the identity the Coordinator uses to match desired and

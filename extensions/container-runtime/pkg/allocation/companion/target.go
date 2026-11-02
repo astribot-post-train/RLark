@@ -8,7 +8,7 @@ import (
 	"io"
 	"reflect"
 
-	ext "github.com/astribot-post-train/rlark/extensions/container-runtime/api/v1alpha1"
+	ext "github.com/astribot-post-train/rlark/extensions/container-runtime/core/api/v1alpha1"
 	native "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"

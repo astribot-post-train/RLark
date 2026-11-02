@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	ext "github.com/astribot-post-train/rlark/extensions/container-runtime/api/v1alpha1"
+	ext "github.com/astribot-post-train/rlark/extensions/container-runtime/core/api/v1alpha1"
 	native "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
 	"github.com/rlinf/rlark/apps/rlark/pkg/tenant"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"

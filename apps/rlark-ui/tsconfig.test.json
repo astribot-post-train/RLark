@@ -12,6 +12,8 @@
   },
   "include": [
     "src/api.ts",
+    "src/admin/container-runtime/api.ts",
+    "src/admin/container-runtime/models.ts",
     "src/backend.ts",
     "src/utils/clipboard.ts",
     "src/utils/crd.ts",

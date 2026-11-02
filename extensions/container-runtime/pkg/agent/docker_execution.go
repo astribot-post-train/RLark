@@ -11,7 +11,7 @@ import (
 	"slices"
 	"time"
 
-	ext "github.com/astribot-post-train/rlark/extensions/container-runtime/api/v1alpha1"
+	ext "github.com/astribot-post-train/rlark/extensions/container-runtime/core/api/v1alpha1"
 	"github.com/astribot-post-train/rlark/extensions/container-runtime/pkg/allocation/companion"
 	dockerruntime "github.com/astribot-post-train/rlark/extensions/container-runtime/pkg/runtime/docker"
 	"github.com/astribot-post-train/rlark/extensions/container-runtime/pkg/taskcontract"

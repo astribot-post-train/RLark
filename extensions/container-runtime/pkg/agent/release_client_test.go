@@ -14,7 +14,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/astribot-post-train/rlark/extensions/container-runtime/pkg/artifact"
+	"github.com/astribot-post-train/rlark/extensions/container-runtime/core/pkg/artifact"
 )
 
 func TestReleaseClientUsesAuthenticatedTransport(t *testing.T) {

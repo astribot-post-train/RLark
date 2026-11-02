@@ -35,6 +35,8 @@ import {
   UNAUTHORIZED_EVENT,
 } from "../api";
 import { authApi } from "../backend";
+import { ContainerClustersPage } from "./container-runtime/ContainerClustersPage";
+import { containerClusterPath } from "../utils/route";
 
 export function AdminLogin({
   lang,
@@ -399,6 +401,24 @@ export function AdminApp() {
             onSelectCluster={(id?: string) => navigate("clusters-list", id)}
             onSelectNode={(name: string) => navigate("clusters-nodes", name)}
             adminMode
+          />
+        )}
+        {adminPage === "container-clusters" && (
+          <ContainerClustersPage
+            lang={lang}
+            selectedCluster={adminSub}
+            onSelect={(selection) => {
+              setAdminSub(
+                selection ? `${selection.namespace}/${selection.name}` : "",
+              );
+              window.history.pushState(
+                {},
+                "",
+                selection
+                  ? containerClusterPath(selection.namespace, selection.name)
+                  : "/admin/container-clusters",
+              );
+            }}
           />
         )}
         {adminPage === "jobs" && (

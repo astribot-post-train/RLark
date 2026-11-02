@@ -4,8 +4,8 @@ import (
 	"context"
 	"reflect"
 
-	ext "github.com/astribot-post-train/rlark/extensions/container-runtime/api/v1alpha1"
-	"github.com/astribot-post-train/rlark/extensions/container-runtime/pkg/ownership"
+	ext "github.com/astribot-post-train/rlark/extensions/container-runtime/core/api/v1alpha1"
+	"github.com/astribot-post-train/rlark/extensions/container-runtime/core/pkg/ownership"
 	"github.com/google/uuid"
 	native "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
 	"github.com/rlinf/rlark/apps/rlark/pkg/tenant"

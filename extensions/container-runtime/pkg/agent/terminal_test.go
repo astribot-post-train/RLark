@@ -6,7 +6,7 @@ import (
 	"reflect"
 	"testing"
 
-	ext "github.com/astribot-post-train/rlark/extensions/container-runtime/api/v1alpha1"
+	ext "github.com/astribot-post-train/rlark/extensions/container-runtime/core/api/v1alpha1"
 	"github.com/astribot-post-train/rlark/extensions/container-runtime/pkg/controller"
 	"github.com/astribot-post-train/rlark/extensions/container-runtime/pkg/taskcontract"
 	native "github.com/rlinf/rlark/api/rlark.io/v1alpha1"

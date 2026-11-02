@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	process "github.com/astribot-post-train/rlark/extensions/container-runtime/core/pkg/process"
 	"reflect"
 
 	"github.com/rlinf/rlark/apps/rlark/pkg/agent/execution/fault"
@@ -16,13 +17,8 @@ import (
 // ProcessKind is the versioned Raw process manifest schema.
 var ProcessKind = rt.ObjectKind{Group: "raw.rlark.io", Version: "v1alpha1", Kind: "Process"}
 
-// ProcessSpec is immutable once an execution has been accepted. Env is an
-// explicit allowlist: credentials and the Agent environment must not be inherited.
-type ProcessSpec struct {
-	Argv      []string `json:"argv"`
-	Env       []string `json:"env"`
-	Directory string   `json:"directory"`
-}
+// ProcessSpec is the shared immutable process declaration.
+type ProcessSpec = process.ProcessSpec
 
 // Record is a durable observed execution, scoped to one management Task UID.
 // Cleaned proves that supervision confirmed termination of all owned processes.

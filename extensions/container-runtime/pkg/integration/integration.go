@@ -2,7 +2,7 @@
 package integration
 
 import (
-	containerapi "github.com/astribot-post-train/rlark/extensions/container-runtime/api/v1alpha1"
+	containerapi "github.com/astribot-post-train/rlark/extensions/container-runtime/core/api/v1alpha1"
 	"github.com/astribot-post-train/rlark/extensions/container-runtime/pkg/controller"
 	nativecontroller "github.com/rlinf/rlark/apps/rlark/pkg/controllermanager"
 	nativejob "github.com/rlinf/rlark/apps/rlark/pkg/controllermanager/job"

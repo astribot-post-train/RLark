@@ -13,7 +13,7 @@ import (
 	"sort"
 	"strings"
 
-	ext "github.com/astribot-post-train/rlark/extensions/container-runtime/api/v1alpha1"
+	ext "github.com/astribot-post-train/rlark/extensions/container-runtime/core/api/v1alpha1"
 	dockerruntime "github.com/astribot-post-train/rlark/extensions/container-runtime/pkg/runtime/docker"
 	native "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
 	taskapi "github.com/rlinf/rlark/apps/rlark/pkg/agent/controllers/task/api"

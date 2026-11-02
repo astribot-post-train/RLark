@@ -87,6 +87,10 @@ API 网关。处理所有 REST API 请求，包括集群管理、任务管理和
 | `--kube-qps` | float32 | `5000` | Kubernetes 客户端 QPS |
 | `--kube-burst` | int | `8000` | Kubernetes 客户端 Burst |
 | `--kube-timeout` | duration | `0` | Kubernetes 客户端请求超时 |
+| `--enable-container-runtime` | bool | `false` | 启用预览版容器集群管理；要求扩展 CRD 和附加 RBAC |
+| `--container-runtime-enable-node-registration` | bool | `false` | 启用管理员节点登记；要求附加登记 RBAC |
+| `--container-runtime-enable-job-submission` | bool | `false` | 启用单进程 Raw Job 提交；要求附加 Job RBAC |
+| `--container-runtime-diagnostics-origin` | string | `""` | 可选的字面回环 HTTP 日志/stats 代理来源 |
 
 **示例：**
 
@@ -96,6 +100,8 @@ rlark-gateway \
   --db-config=/etc/rlark/db-config.yaml \
   --server-address=https://rlark-server:8443
 ```
+
+预览版“容器集群”页面集成在 RLark 主 UI 中，复用同一个 Gateway 会话。附加 RBAC、启用顺序和模块边界见[容器运行时管理控制台](../developer-guide/container-runtime-console.md)。
 
 ## rlark-controller-manager
 
@@ -355,7 +361,7 @@ Gateway 使用的对象存储后端配置。
 | Docker Agent | `--enable-docker-diagnostics=true` | 要求 Task 执行和私有持久 journal；声明 `docker-diagnostics-v1` |
 | 离线安装包 | `enableDockerDiagnostics: true` | 仅 Docker；同时设置 `enableExecution: true`；`enableLogReads` 仍只用于 Raw |
 | API | `--log-read-addr=127.0.0.1:9446` | 管理员日志/stats 的显式回环 IP HTTP 监听器；要求 `--enable-task-execution` 与 `--gateway-jwt-key-file` |
-| 控制台 | `--log-api-origin=http://127.0.0.1:9446` | 固定日志/stats 代理，必须指向 Agent 轮询所用同一 API 实例 |
+| Gateway | `--container-runtime-diagnostics-origin=http://127.0.0.1:9446` | 固定日志/stats 代理，必须指向 Agent 轮询所用同一 API 实例 |
 
 这些是预览配置，不是原生 Agent/rlarkadm 字段。诊断为临时读取，不提供历史归档或
 指标数据库。

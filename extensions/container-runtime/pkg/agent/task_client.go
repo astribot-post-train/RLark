@@ -9,7 +9,7 @@ import (
 	"io"
 	"net/http"
 
-	ext "github.com/astribot-post-train/rlark/extensions/container-runtime/api/v1alpha1"
+	ext "github.com/astribot-post-train/rlark/extensions/container-runtime/core/api/v1alpha1"
 	native "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
 	"github.com/rlinf/rlark/apps/rlark/pkg/agent/execution/host"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"

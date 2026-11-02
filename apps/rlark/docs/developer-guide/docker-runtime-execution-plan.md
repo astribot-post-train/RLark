@@ -301,7 +301,7 @@ uncertain create requires explicit recovery; never force-release automatically.
    Agent restart, cleanup and a second Job reusing capacity. The Raw notebook
    and local CPU-only Ray tests cannot substitute for this gate.
 5. Expose typed group phases, member placements, reserved ports and blocking
-   reasons in the independent console, then add submission/registration flows.
+   reasons in the main RLark Container Clusters page, then add submission/registration flows.
    Docker idle upgrades remain a separate acceptance gate.
 
 

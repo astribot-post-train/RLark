@@ -4,10 +4,9 @@ package companion
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
+	allocation "github.com/astribot-post-train/rlark/extensions/container-runtime/core/pkg/allocation"
 	"net"
 	"reflect"
 	"slices"
@@ -15,9 +14,9 @@ import (
 	"strings"
 	"time"
 
-	ext "github.com/astribot-post-train/rlark/extensions/container-runtime/api/v1alpha1"
-	"github.com/astribot-post-train/rlark/extensions/container-runtime/pkg/artifact"
-	"github.com/astribot-post-train/rlark/extensions/container-runtime/pkg/ownership"
+	ext "github.com/astribot-post-train/rlark/extensions/container-runtime/core/api/v1alpha1"
+	"github.com/astribot-post-train/rlark/extensions/container-runtime/core/pkg/artifact"
+	"github.com/astribot-post-train/rlark/extensions/container-runtime/core/pkg/ownership"
 	raydocker "github.com/astribot-post-train/rlark/extensions/container-runtime/pkg/workload/ray/docker"
 	native "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
 	nativejob "github.com/rlinf/rlark/apps/rlark/pkg/controllermanager/job"
@@ -51,12 +50,9 @@ type Manager struct {
 // cannot specify an allocation UID, GPU subset, or execution identity.
 type Request struct{ Binding, Node, Task client.ObjectKey }
 
-// Name is stable across Agent/controller restarts and container replacements on
-// the same native Node UID. Never use display names as lock identities.
-func Name(nodeUID string) string {
-	sum := sha256.Sum256([]byte(nodeUID))
-	return "node-" + hex.EncodeToString(sum[:20])
-}
+// Name returns the canonical allocation key.
+var Name = allocation.Name
+
 func reference(obj metav1.Object) ext.NativeObjectReference {
 	return ext.NativeObjectReference{Namespace: obj.GetNamespace(), Name: obj.GetName(), UID: string(obj.GetUID())}
 }

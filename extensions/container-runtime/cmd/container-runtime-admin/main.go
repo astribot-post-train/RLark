@@ -14,7 +14,7 @@ import (
 	"syscall"
 	"time"
 
-	ext "github.com/astribot-post-train/rlark/extensions/container-runtime/api/v1alpha1"
+	ext "github.com/astribot-post-train/rlark/extensions/container-runtime/core/api/v1alpha1"
 	"github.com/astribot-post-train/rlark/extensions/container-runtime/pkg/provision"
 	native "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
 	corev1 "k8s.io/api/core/v1"

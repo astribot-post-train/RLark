@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/astribot-post-train/rlark/extensions/container-runtime/pkg/artifact"
+	"github.com/astribot-post-train/rlark/extensions/container-runtime/core/pkg/artifact"
 	"github.com/rlinf/rlark/apps/rlark/pkg/auth/cert"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 )

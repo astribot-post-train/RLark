@@ -1,9 +1,12 @@
 # Container runtime management console
 
-The container runtime extension has an independent administrator console. It
-is a companion to the native RLark console and is packaged under
-`extensions/container-runtime/`; it does not add container fields to the
-native Cluster, Node, Job, or Task APIs.
+The container runtime preview is integrated into the RLark administrator UI at
+**Clusters → Container Clusters** (`/admin/container-clusters`). It shares the
+normal RLark login, language, theme and same-origin Gateway. The page lives in
+`apps/rlark-ui/src/admin/container-runtime/`; management logic stays in the
+independent `extensions/container-runtime/core` Go module. A narrow Gateway
+adapter mounts its typed handlers. No container-specific fields are added to
+native Cluster, Node, Job or Task APIs.
 
 ## Scope of this increment
 
@@ -46,28 +49,29 @@ rollouts and does not cancel an Agent already applying an upgrade.
 
 ## Authentication and deployment
 
-The browser uses the normal RLark authenticated session through a same-origin
-Gateway route. The extension API accepts only a short-lived RLark HS256 JWT
-issued by the trusted Gateway, requires issuer, subject, administrator role,
-algorithm, and expiration, and rejects user-supplied identity headers. It does
-not issue browser tokens, accept kubeconfigs, expose signing keys, or proxy an
-arbitrary Kubernetes path. The API process uses a dedicated read/write-limited
-management ServiceAccount and a separate Agent mTLS endpoint; Agent
-certificates are never sent to the browser.
+The browser uses the normal RLark authenticated session and shared transport.
+Gateway verifies the JWT and administrator role before establishing a typed,
+in-process administrator identity for extension handlers. Client identity
+headers cannot establish that identity. Unauthenticated requests receive 401;
+authenticated non-administrators receive 403. Administrators have platform-wide
+container inventory access, including across tenants; ordinary users have none.
+All enabled routes are explicitly registered under `/api/v1/container-runtime`.
+Authenticated responses use `Cache-Control: no-store`.
 
-Serve the independent UI and API from the same origin under
-`/api/v1/container-runtime/`. Use TLS or a loopback reverse proxy in
-development. Set `Cache-Control: no-store` on authenticated responses and do
-not log authorization headers, kubeconfig contents, certificate material, or
-task payloads. A direct end-user request without an administrator JWT receives
-401; an authenticated non-administrator receives 403.
+Gateway uses its configured management API credentials and an uncached client
+for ownership and resourceVersion checks. Install the additive management RBAC
+for that identity; the example binds `rlark-gateway` in `rlark-system`. Adjust
+the subject to the actual Gateway identity, not the Agent API identity. The
+browser receives typed summaries, never Secret data, kubeconfigs, Agent
+certificates or signing keys. Registration and Job submission each require a
+separate opt-in flag and additive role. Node patches remain restricted by the
+handler to `spec.unschedulable`; Kubernetes RBAC cannot restrict patch by field.
 
-The browser receives typed summaries only. It never receives raw Secret data,
-certificate paths, private keys, or management kubeconfig data. When
-`--enable-node-registration=true` and the additive registration RBAC are
-installed, an administrator may declare an existing Raw node from the selected
-cluster page. Certificate/package export remains on the administrator CLI and
-the browser never becomes an enrollment or signing channel.
+Agent mTLS traffic still goes to the separate `container-runtime-api` service.
+Optional diagnostics use its loopback listener and revalidate the same Gateway
+JWT. Only that private listener needs the Gateway signing-key file; normal
+management no longer distributes the signing key to another console process.
+Do not log credentials or task payloads. No arbitrary Kubernetes proxy is exposed.
 
 ## UI behavior and failure handling
 
@@ -99,7 +103,7 @@ capability must still be a boolean; malformed inventory remains an error.
 3. Optionally register each existing Raw container host from the administrator
    console (or CLI), then export its bounded Agent package. The host runs the trusted root process-tree backend when cgroup-v2
    or systemd is unavailable; this is not a task isolation boundary.
-4. Start the extension controller, Agent API, and independent console. Enable
+4. Start the extension controller, Agent API, and the updated RLark Gateway/UI. Enable
    Job reservations and task execution only for an isolated preview cluster.
 5. Open the console, verify the node's fresh heartbeat and authorized GPU
    inventory, then publish an available Agent release as the desired target.
@@ -113,52 +117,83 @@ rollout are accepted. Multi-node Ray/RLinf and Docker Engine lifecycle require
 separate conformance tests before being advertised.
 
 
-## Build and run the independent console
+## Build, enable and debug in RLark
 
-The console uses Bearer authentication only. Its login form forwards typed
-credentials to the configured Gateway; the returned administrator token remains
-in browser memory and disappears on reload or logout. Gateway cookies are not
-forwarded. The console is a separate origin/session from the native UI, and no
-native navigation entry is installed in this increment. The administrator role
-has platform-wide inventory access across tenants; ordinary users have none.
-
-Provision `config/rbac/container-runtime-console.yaml` from the extension
-folder. The example ServiceAccount lives in `rlark-system`; change all three
-references together for a different deployment namespace. It can read inventory,
-create native Clusters and dedicated namespaces, and create/patch companion
-Clusters. It cannot read Secrets, dispatch Tasks, patch observed status, delete
-resources or release allocations. Native Node patches are limited by the API
-to `spec.unschedulable`; Kubernetes RBAC cannot restrict a patch permission by
-field, so the console remains a trusted administrator service. Keep the signing key out of that kubeconfig.
-
-The HS256 key must be the exact raw bytes used by the configured Gateway (at
-least 32 bytes), mounted read-only into this trusted control-plane service.
-HS256 is symmetric: possession of this key also permits signing tokens, so the
-console has the same token trust level as Gateway. Key distribution is an
-operator responsibility; rotate/restart both services together. The console
-never obtains the key through Kubernetes Secret permissions.
+The former standalone console binary, login and UI are retired; management is
+now served by the main RLark UI. Rebuild both Gateway
+and the main UI; restarting an old UI image cannot add the page. Extension
+runtime/controller binaries retain their independent build entry point.
 
 ```bash
-cd extensions/container-runtime
-make build
-make build-ui
-bin/container-runtime-console \
-  --addr=127.0.0.1:9445 \
-  --kubeconfig=/private/console.kubeconfig \
-  --gateway-jwt-key-file=/private/gateway-jwt.key \
-  --gateway-origin=http://127.0.0.1:19000 \
-  --ui-directory=ui/dist \
-  --enable-node-registration=true
+make -C apps/rlark gateway
+make -C extensions/container-runtime build
+npm --prefix apps/rlark-ui ci
+npm --prefix apps/rlark-ui run build
+kubectl apply -f extensions/container-runtime/config/crd/bases/
+kubectl apply -f extensions/container-runtime/config/rbac/container-runtime-management.yaml
 ```
 
-Before enabling this flag, apply `extensions/container-runtime/config/rbac/container-runtime-console-registration.yaml` together with the base console role. Remove the additive binding when registration is disabled.
+Add `--enable-container-runtime=true` to the existing Gateway startup arguments,
+retaining its management API, authentication and other deployment configuration.
+For optional node registration, also apply
+`container-runtime-management-registration.yaml` from the same RBAC directory
+and add `--container-runtime-enable-node-registration=true`. For Raw Job
+submission apply `container-runtime-management-jobs.yaml` and add
+`--container-runtime-enable-job-submission=true`. Remove the respective additive
+binding when disabling a capability. Extension/controller/Agent execution flags
+and RBAC are still separately required to actually execute work.
 
-Open `http://127.0.0.1:9445/` and sign in as an administrator. The command accepts
-HTTP only on an explicit loopback IP. Off loopback, supply `--tls-cert` and
-`--tls-key`; a remote Gateway origin must also use HTTPS with a trusted system
-CA. No insecure-TLS flag is provided. Node mTLS traffic continues to use the
-separate `container-runtime-api` service. The UI build requires Node.js
-20.19+ or 22.12+; Node.js 24 was used for acceptance.
+For diagnostics, co-locate the Agent API loopback listener with Gateway in the
+same network namespace (for Kubernetes, the same Pod), then configure Gateway
+with `--container-runtime-diagnostics-origin=http://127.0.0.1:9446`. Keep
+`--log-read-addr=127.0.0.1:9446` and `--gateway-jwt-key-file=...` on Agent API.
+Only literal loopback HTTP origins are accepted. No diagnostics origin means
+the diagnostics handlers return unavailable; inventory management still works.
+
+Deploy the new Gateway binary/image and main UI static build/image using the
+existing deployment process. For local UI debugging, run
+`npm --prefix apps/rlark-ui run dev` with the existing Vite Gateway proxy
+configuration. Sign in through RLark as an administrator and open
+`/admin/container-clusters`. Cluster links include namespace/name, so refresh
+and browser back/forward preserve selection. The entry is visible even when
+the extension is disabled: requests then return 503 and the page shows an error,
+not empty/zero inventory. Missing CRDs or insufficient API permissions likewise
+remain visible failures. Options requiring the extension are rejected at
+Gateway startup when `--enable-container-runtime` is absent.
+
+The shared UI API layer handles token storage, expiry and logout. An extension
+401 clears the same RLark session; there is no second login or browser token.
+
+### Module boundary and upstream updates
+
+- `core/` contains companion API types, provisioning/submission, typed
+  management handlers, artifact validation and shared contracts. It depends on
+  the native API module, not the native application or Docker SDK.
+- `extensions/container-runtime/` contains Agents, runtime providers,
+  controllers and mTLS transport. It depends on `core/` and native execution
+  interfaces; Gateway imports only `core/`, avoiding a Go module cycle.
+- `apps/rlark/pkg/gateway/container_runtime.go` is the integration adapter.
+  Existing native edits are configuration, handler initialization and explicit
+  route registration; UI edits are navigation and route mounting. Shared
+  ownership/tenant metadata is canonical in `api/metadata` with existing native
+  exports preserved as compatibility aliases.
+- Root workspace and Gateway Docker build include `core/`; extension
+  `make test`, `make vet` and CRD generation enter both module roots explicitly.
+  CRD group/version and wire contracts remain unchanged by the extraction.
+
+### Main UI integration validation
+
+Repository `make test-go`, extension test/vet/build, Gateway build, all 150 main UI
+tests, the UI production build and strict English/Chinese documentation build
+passed. Browser smoke with mocked API transport covered the existing Admin shell,
+two-cluster selection, reload/back/forward, English/dark theme, disabled-extension
+503 and shared-session logout on 401, without JavaScript exceptions. This does
+not establish a live cloud deployment or Docker GPU acceptance.
+
+Core-module lint and incremental native lint pass. Full native lint reports 30
+pre-existing findings; the runtime module reports 30 pre-existing findings.
+Frontend lint exits successfully with 58 existing warnings. Changed UI files pass
+formatting; five unrelated existing test files fail a broader formatting check.
 
 The preview UI creates Raw or Docker clusters. API/CLI provisioning and the
 administrator console can register Docker hosts and accept [host observations or
@@ -262,8 +297,7 @@ The console can show a retained Raw Task snapshot when the API is started with
 `--gateway-jwt-key-file=/private/gateway-jwt.key`. The Agent package must be
 exported with `enableExecution: true` and `enableLogReads: true`; the Agent
 polls the existing mTLS endpoint and the supervisor reads only the exact retained
-Task log. `--log-read-addr` accepts an explicit loopback address only. The
-console uses `--log-api-origin=http://127.0.0.1:9446` to proxy the fixed
+Task log. `--log-read-addr` accepts an explicit loopback address only. Gateway uses `--container-runtime-diagnostics-origin=http://127.0.0.1:9446` to proxy the fixed
 `/api/v1/container-runtime/logs` route.
 
 The Agent poll endpoint and log listener must belong to the same API process:
@@ -323,9 +357,9 @@ suspension request with exact Job UID/resourceVersion. Suspension is not immedia
 cleanup: display Job phase and condition freshness separately and wait for the
 existing allocation cleanup workflow. No force unlock, restart, automatic retry
 or deletion action is added. The console needs additive Job/ContainerJob RBAC
-and an explicit `--enable-job-submission` flag; the default remains disabled. Apply
-`extensions/container-runtime/config/rbac/container-runtime-console-jobs.yaml`
-alongside the base console role, then add the flag to the existing console
+and an explicit `--container-runtime-enable-job-submission` flag; the default remains disabled. Apply
+`extensions/container-runtime/config/rbac/container-runtime-management-jobs.yaml`
+alongside the base management role, then add the flag to the existing Gateway
 command. This role grants native Job get/create/patch and companion Job
 get/list/create; it grants no deletion, Task dispatch or status writes. Kubernetes
 RBAC cannot limit Job patches to suspension, so this is a trusted administrator
@@ -405,8 +439,8 @@ repository lint remains blocked by thirty existing findings in native RLark.
 This increment adds opt-in registration of an existing Raw container from its
 selected cluster detail page. The API/UI and failure/recovery tests are covered;
 cloud enrollment and Agent package acceptance remain separate operational gates.
-Enable `--enable-node-registration=true` and install the additive
-`extensions/container-runtime/config/rbac/container-runtime-console-registration.yaml`.
+Enable `--container-runtime-enable-node-registration=true` and install the additive
+`extensions/container-runtime/config/rbac/container-runtime-management-registration.yaml`.
 The default console has no registration route or Node-create permission. The
 additive role grants only native Node and ContainerNode creation; it grants no
 Secrets, signing, status, delete, dispatch or credential export permissions.
@@ -472,7 +506,7 @@ Docker allocation rows now provide manual logs and resource snapshots when the
 node advertises `docker-diagnostics-v1` and `docker-container-execution-v1` and
 cleanup is not confirmed. The `/api/v1/container-runtime/stats` GET route uses the
 same four exact identity parameters and Gateway administrator JWT as logs. The
-fixed loopback proxy uses the existing `--log-api-origin`. No new browser
+fixed loopback proxy uses the existing `--container-runtime-diagnostics-origin`. No new browser
 credential, arbitrary upstream route or remote Docker socket is exposed.
 
 Snapshots show sample time, cumulative CPU nanoseconds, memory usage/limit, PIDs,

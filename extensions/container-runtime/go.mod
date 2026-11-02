@@ -3,6 +3,7 @@ module github.com/astribot-post-train/rlark/extensions/container-runtime
 go 1.26.5
 
 require (
+	github.com/astribot-post-train/rlark/extensions/container-runtime/core v0.0.0
 	github.com/docker/docker v25.0.14+incompatible
 	github.com/opencontainers/image-spec v1.1.0
 	github.com/rlinf/rlark/api v0.0.0
@@ -162,3 +163,5 @@ require (
 replace github.com/rlinf/rlark/api => ../../api
 
 replace github.com/rlinf/rlark/apps/rlark => ../../apps/rlark
+
+replace github.com/astribot-post-train/rlark/extensions/container-runtime/core => ./core

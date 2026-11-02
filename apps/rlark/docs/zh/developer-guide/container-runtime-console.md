@@ -1,8 +1,10 @@
 # 容器运行时管理控制台
 
-容器运行时扩展提供独立的管理员控制台，作为原生 RLark 控制台的补充。
-代码和构建入口位于 `extensions/container-runtime/`，不会向原生
-Cluster、Node、Job、Task API 增加容器专属字段。
+容器运行时预览功能已集成到 RLark 管理后台的 **集群 → 容器集群**
+（`/admin/container-clusters`），复用登录、语言、主题和同源 Gateway。
+页面代码位于 `apps/rlark-ui/src/admin/container-runtime/`；管理逻辑仍在独立
+Go 模块 `extensions/container-runtime/core/` 中，通过小型 Gateway 适配器挂载。
+不会向原生 Cluster、Node、Job、Task API 增加容器专属字段。
 
 ## 本次范围
 
@@ -38,22 +40,23 @@ terminal/exec、自动注册、Docker Engine 创建和多节点调度仍不属�
 
 ## 认证与部署
 
-浏览器通过同源 Gateway 复用 RLark 的正常登录会话。扩展 API 只接受受信任
-Gateway 签发的短期 RLark HS256 JWT，并强制校验 issuer、subject、管理员角色、
-算法和过期时间，同时拒绝客户端伪造的身份请求头。扩展 API 不签发浏览器
-token，不接受 kubeconfig，不暴露签名密钥，也不代理任意 Kubernetes 路径。API
-进程使用权限受限的独立管理 ServiceAccount；Agent 使用独立的 mTLS 接口。Agent
-证书不会进入浏览器。
+浏览器通过共享 API 层复用 RLark 正常登录会话。Gateway 先验证 JWT 和管理员
+角色，再为扩展处理器建立类型化的进程内管理员身份；客户端请求头不能伪造
+该身份。未认证返回 401，普通用户返回 403。管理员可跨租户查看平台容器资源，
+普通用户不可访问。所有路由均显式注册在 `/api/v1/container-runtime` 下，认证
+响应使用 `Cache-Control: no-store`。
 
-独立 UI 和 API 从同源的 `/api/v1/container-runtime/` 提供服务。开发环境使用
-TLS 或仅监听回环地址的反向代理。认证响应设置 `Cache-Control: no-store`，日志
-不得记录 Authorization、kubeconfig、证书材料或任务负载。没有管理员 JWT 返回
-401；已认证但不是管理员返回 403。
+Gateway 使用其配置的管理 API 凭据，并以非缓存客户端校验所有权和资源版本。
+为该身份安装附加管理 RBAC；示例绑定 `rlark-system` 中的 `rlark-gateway`，
+请按实际 Gateway 身份修改，勿绑定为 Agent API 身份。浏览器只接收类型化摘要，
+不会收到 Secret、kubeconfig、Agent 证书或签名密钥。节点登记和 Job 提交各自
+需要显式开关及附加角色。Node patch 在服务端限定为 `spec.unschedulable`；
+Kubernetes RBAC 本身无法按字段限定 patch。
 
-浏览器只接收类型化摘要，不接收 Secret、证书路径、私钥或管理 kubeconfig。
-启用 `--enable-node-registration=true` 并安装附加登记 RBAC 后，管理员可以在选定集群
-页面声明已有 Raw 节点。证书/安装包导出仍在管理员 CLI 完成，浏览器不会成为接入或
-签名通道。
+Agent mTLS 仍由独立 `container-runtime-api` 服务承载。可选诊断使用其回环
+监听器，并再次校验同一 Gateway JWT；只有该私有监听器需要 Gateway 签名密钥
+文件，普通管理不再向另一个控制台进程分发密钥。日志不得记录凭据或任务负载，
+不提供任意 Kubernetes 路径代理。
 
 ## UI 状态与失败处理
 
@@ -81,7 +84,7 @@ Job 提交能力视为关闭。显式提供的能力值仍必须是布尔值；�
 2. 使用 `container-runtime-admin` 创建独立原生 Cluster 和容器附属资源。
 3. 注册现有 Raw 容器主机并导出受限 Agent 包。cgroup-v2 或 systemd 不可用时，
    主机使用受信任的 root 进程树后端；它不是任务隔离边界。
-4. 启动扩展 controller、Agent API 和独立控制台。仅在隔离预览集群启用 Job
+4. 启动扩展 controller、Agent API 和更新后的 RLark Gateway/UI。仅在隔离预览集群启用 Job
    reservation 与 task execution。
 5. 打开控制台，确认节点心跳新鲜且 GPU 在授权白名单中，再把可用 Agent 版本
    发布为目标版本。
@@ -93,47 +96,67 @@ Job 提交能力视为关闭。显式提供的能力值仍必须是布尔值；�
 才能对外宣称支持。
 
 
-## 构建和启动独立控制台
+## 在 RLark 内构建、启用与调试
 
-控制台只接受 Bearer 认证。登录表单把类型化凭据转交配置的 Gateway，返回的
-管理员 token 只留在浏览器内存中，刷新或退出后消失，不转发 Gateway Cookie。
-本增量采用独立入口/会话，尚未向原生 UI 增加导航。管理员可跨租户查看平台
-资源；普通用户不能访问。
-
-从扩展目录部署 `config/rbac/container-runtime-console.yaml`。示例 ServiceAccount
-位于 `rlark-system`，更换 namespace 时需同步修改三处引用。该身份可读取资源、
-创建原生 Cluster 和专用 namespace、创建/patch 附属 Cluster；不能读取 Secret、
-派发 Task、修改观测 Status、删除资源或释放 allocation。签名密钥不放在该
-kubeconfig 中。原生 Node patch 由 API 限定为 `spec.unschedulable`；Kubernetes
-RBAC 无法按字段限制 patch 权限，因此控制台仍是受信任管理员服务。
-
-HS256 密钥必须是配置 Gateway 使用的原始字节（至少 32 字节），以只读文件
-挂载到受信任控制面服务。HS256 是对称算法，持有密钥也能签发 token，因此
-控制台与 Gateway 具有相同的 token 信任级别。运维负责分发密钥并同步轮换/
-重启两个服务；控制台不会通过 Kubernetes Secret 权限获取密钥。
+原独立控制台二进制、登录和 UI 已退役；管理页面现在由 RLark 主 UI 提供。需要同时重新构建 Gateway 和主 UI；
+仅重启旧 UI 镜像不会增加页面。扩展运行时和控制器保留独立构建入口。
 
 ```bash
-cd extensions/container-runtime
-make build
-make build-ui
-bin/container-runtime-console \
-  --addr=127.0.0.1:9445 \
-  --kubeconfig=/private/console.kubeconfig \
-  --gateway-jwt-key-file=/private/gateway-jwt.key \
-  --gateway-origin=http://127.0.0.1:19000 \
-  --ui-directory=ui/dist \
-  --enable-node-registration=true
+make -C apps/rlark gateway
+make -C extensions/container-runtime build
+npm --prefix apps/rlark-ui ci
+npm --prefix apps/rlark-ui run build
+kubectl apply -f extensions/container-runtime/config/crd/bases/
+kubectl apply -f extensions/container-runtime/config/rbac/container-runtime-management.yaml
 ```
 
-启用该开关前，先与基础控制台角色一起应用
-`extensions/container-runtime/config/rbac/container-runtime-console-registration.yaml`；
-关闭登记能力时同时移除附加绑定。
+在现有 Gateway 启动参数中增加 `--enable-container-runtime=true`，保留其管理
+API、认证及其他部署配置。可选节点登记需安装同目录下的
+`container-runtime-management-registration.yaml` 并增加
+`--container-runtime-enable-node-registration=true`。Raw Job 提交需安装
+`container-runtime-management-jobs.yaml` 并增加
+`--container-runtime-enable-job-submission=true`。关闭能力时移除对应附加绑定。
+实际执行任务仍需分别启用扩展 controller、API、Agent 的执行开关及 RBAC。
 
-打开 `http://127.0.0.1:9445/` 并用管理员登录。HTTP 只允许显式回环 IP；其他
-地址必须提供 `--tls-cert` 和 `--tls-key`。远程 Gateway 也必须使用系统 CA
-信任的 HTTPS，没有跳过 TLS 校验选项。节点 mTLS 仍连接独立
-`container-runtime-api` 服务。UI 构建要求 Node.js 20.19+ 或 22.12+，验收使用
-Node.js 24。
+如需诊断，让 Agent API 回环监听器与 Gateway 处于同一网络命名空间（Kubernetes
+部署时放在同一 Pod），并给 Gateway 配置
+`--container-runtime-diagnostics-origin=http://127.0.0.1:9446`。Agent API 仍使用
+`--log-read-addr=127.0.0.1:9446` 和 `--gateway-jwt-key-file=...`。
+仅接受明确的回环 IP HTTP origin；未配置时诊断返回不可用，资源管理仍可工作。
+
+按现有部署流程更新 Gateway 二进制/镜像及主 UI 静态产物/镜像。本地调试使用
+`npm --prefix apps/rlark-ui run dev`，沿用 Vite 的 Gateway 代理配置。通过 RLark
+管理员登录后访问 `/admin/container-clusters`；集群链接包含 namespace/name，
+刷新及浏览器前进后退会恢复选择。扩展关闭时导航仍可见，API 返回 503，页面
+显示错误而非空列表或零资源。缺少 CRD、API 权限不足同样显示失败。未启用
+`--enable-container-runtime` 却设置依赖选项时，Gateway 启动直接报错。
+
+共享 UI API 层处理 token 存储、过期和退出；扩展返回 401 会清除同一 RLark
+会话，不再维护第二套登录或浏览器 token。
+
+### 模块边界与跟随上游更新
+
+- `core/` 包含附属 API 类型、登记/提交、类型化管理处理器、制品校验和共享
+  合约；依赖原生 API 模块，不依赖原生应用或 Docker SDK。
+- `extensions/container-runtime/` 包含 Agent、运行时、控制器和 mTLS 传输，
+  依赖 `core/` 及原生执行接口；Gateway 只引用 `core/`，避免 Go 模块循环。
+- `apps/rlark/pkg/gateway/container_runtime.go` 是集成适配器。原生入口只增加
+  配置、初始化及显式路由；UI 只增加导航和页面挂载。共享所有权/租户元数据
+  在 `api/metadata` 定义，原生导出保留兼容别名。
+- 根 workspace 和 Gateway Docker 构建包含 `core/`；扩展 `make test`、
+  `make vet` 和 CRD 生成显式进入对应模块根目录。本次提取不改变 CRD
+  group/version 和线上协议。
+
+### 主 UI 集成验证
+
+仓库 `make test-go`、扩展 test/vet/build、Gateway 构建、主 UI 全部 150 项测试、
+UI 生产构建和严格中英文文档构建均通过。使用 API 传输模拟的浏览器冒烟覆盖原有
+管理界面、两个集群切换、刷新/前进/后退、英文/暗色主题、扩展禁用 503 和 401 后
+共享会话退出，无 JavaScript 异常。这不证明已完成线上部署或 Docker GPU 验收。
+
+core 模块 lint 和原生增量 lint 通过。原生全量 lint 有 30 项既有发现；运行时模块
+有 30 项既有发现。前端 lint 以成功状态结束，保留 58 项既有警告。修改的 UI 文件
+格式检查通过；扩大格式检查时，5 个无关的既有测试文件未通过。
 
 预览 UI 可以创建 Raw 或 Docker 集群。API/CLI 和管理员控制台可以登记 Docker 主机，接入[观测或按需开启的单容器执行](docker-agent-observation.md)；
 当前表单仍不提交 Docker Job。节点登记仅在显式启用的管理员入口提供；安装包导出、产物发布、drain 仍通过
@@ -209,8 +232,8 @@ Raw 验收，没有 Docker socket，也没有完成多节点 Ray/RLinf 验证。
 `--gateway-jwt-key-file=/private/gateway-jwt.key`，并在 Agent 安装包中同时启用
 `enableExecution: true`、`enableLogReads: true`，控制台即可查看保留的 Raw Task
 日志。Agent 通过既有 mTLS 接口轮询，supervisor 只读取精确 Task 的保留日志。
-`--log-read-addr` 只接受明确的回环地址；独立控制台用
-`--log-api-origin=http://127.0.0.1:9446` 代理固定的
+`--log-read-addr` 只接受明确的回环地址；Gateway 用
+`--container-runtime-diagnostics-origin=http://127.0.0.1:9446` 代理固定的
 `/api/v1/container-runtime/logs` 路由。
 
 Agent 轮询端点和日志监听器必须属于同一 API 进程，因为待处理的读取请求保存在
@@ -252,10 +275,10 @@ Job。binding 已存在但 Job 丢失或替换时禁止重建；binding 创建�
 提供按集群绑定隔离的类型化 Job 列表，以及携带精确 Job UID/resourceVersion 的
 持续暂停请求。暂停不等于立即完成清理：分别显示 Job phase 与条件新鲜度，等待
 现有 allocation 清理流程。不提供强制解锁、重启、自动重试或删除动作。控制台需要
-附加 Job/ContainerJob RBAC 和显式 `--enable-job-submission` 开关，默认关闭。
-在基础 console role 外安装
-`extensions/container-runtime/config/rbac/container-runtime-console-jobs.yaml`，
-再给既有 console 启动命令增加该开关。附加权限仅授予原生 Job get/create/patch
+附加 Job/ContainerJob RBAC 和显式 `--container-runtime-enable-job-submission` 开关，默认关闭。
+在基础管理 role 外安装
+`extensions/container-runtime/config/rbac/container-runtime-management-jobs.yaml`，
+再给既有 Gateway 启动命令增加该开关。附加权限仅授予原生 Job get/create/patch
 与附属 Job get/list/create，不授予删除、Task 派发或 status 写入。Kubernetes RBAC
 不能把 Job patch 限定为暂停字段，因此控制台仍是受信任管理员服务。详情响应提供
 `jobSubmissionEnabled`；未启用或不支持的集群不显示提交入口，也不轮询缺失接口。
@@ -320,8 +343,8 @@ UI 生产构建与严格双语文档构建通过。仓库 `make test-go` 通过�
 
 本增量在选定集群的详情页提供显式启用的已有 Raw 容器登记入口，API/UI 及失败/恢复
 测试已覆盖；云端接入和 Agent 安装包验收仍是独立的运维门槛。启用
-`--enable-node-registration=true`，并安装附加权限
-`extensions/container-runtime/config/rbac/container-runtime-console-registration.yaml`。
+`--container-runtime-enable-node-registration=true`，并安装附加权限
+`extensions/container-runtime/config/rbac/container-runtime-management-registration.yaml`。
 默认控制台没有登记路由和 Node 创建权限。附加角色仅增加原生 Node 与
 ContainerNode 创建，不增加 Secret、签名、status、删除、派发或凭据导出权限。
 
@@ -375,7 +398,7 @@ JWT 和严格 JSON 请求体：
 Docker allocation 行现在可手动读取日志和资源快照，要求节点同时声明
 `docker-diagnostics-v1`、`docker-container-execution-v1`，且尚未确认清理。
 `/api/v1/container-runtime/stats` GET 路由与日志使用相同四个确切身份参数和
-Gateway 管理员 JWT；固定回环代理复用 `--log-api-origin`。不向浏览器暴露新凭据、
+Gateway 管理员 JWT；固定回环代理复用 `--container-runtime-diagnostics-origin`。不向浏览器暴露新凭据、
 任意上游路由或远程 Docker socket。
 
 快照显示采样时间、CPU 累计纳秒、内存使用/上限、PID 数、块设备读/写字节。

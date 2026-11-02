@@ -3,6 +3,7 @@ package job
 import (
 	"context"
 	"fmt"
+	identity "github.com/rlinf/rlark/api/metadata"
 	"reflect"
 	"time"
 
@@ -34,7 +35,7 @@ type OwnerResolver interface {
 
 // ControllerOwnerAnnotation declares an external controller boundary. A native
 // controller without the matching resolver must never dispatch such a Job.
-const ControllerOwnerAnnotation = "rlark.io/controller-owner"
+const ControllerOwnerAnnotation = identity.ControllerOwnerAnnotation
 
 // Reconciler reconciles Job resources.
 type Reconciler struct {

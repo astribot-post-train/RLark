@@ -18,8 +18,8 @@ import (
 	"testing"
 	"time"
 
-	ext "github.com/astribot-post-train/rlark/extensions/container-runtime/api/v1alpha1"
-	"github.com/astribot-post-train/rlark/extensions/container-runtime/pkg/artifact"
+	ext "github.com/astribot-post-train/rlark/extensions/container-runtime/core/api/v1alpha1"
+	"github.com/astribot-post-train/rlark/extensions/container-runtime/core/pkg/artifact"
 	"github.com/rlinf/rlark/apps/rlark/pkg/auth/cert"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )

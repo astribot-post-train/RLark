@@ -87,6 +87,10 @@ API gateway. Handles all REST API requests including cluster management, job man
 | `--kube-qps` | float32 | `5000` | Kubernetes client QPS |
 | `--kube-burst` | int | `8000` | Kubernetes client burst |
 | `--kube-timeout` | duration | `0` | Kubernetes client request timeout |
+| `--enable-container-runtime` | bool | `false` | Enable preview Container Clusters management; requires extension CRDs and additive RBAC |
+| `--container-runtime-enable-node-registration` | bool | `false` | Enable administrator node registration; requires additive registration RBAC |
+| `--container-runtime-enable-job-submission` | bool | `false` | Enable single-process Raw Job submission; requires additive Job RBAC |
+| `--container-runtime-diagnostics-origin` | string | `""` | Optional literal-loopback HTTP origin for bounded logs/stats proxying |
 
 **Example:**
 
@@ -96,6 +100,8 @@ rlark-gateway \
   --db-config=/etc/rlark/db-config.yaml \
   --server-address=https://rlark-server:8443
 ```
+
+The preview Container Clusters page is part of the main RLark UI and uses the same Gateway session. See [Container runtime management console](../developer-guide/container-runtime-console.md) for additive RBAC, enablement order and module boundaries.
 
 ## rlark-controller-manager
 
@@ -355,7 +361,7 @@ Container diagnostics use these independent-extension settings (defaults are dis
 | Docker Agent | `--enable-docker-diagnostics=true` | Requires task execution and private persistent journal; advertises `docker-diagnostics-v1` |
 | Offline package | `enableDockerDiagnostics: true` | Docker-only; also set `enableExecution: true`; `enableLogReads` remains Raw-only |
 | API | `--log-read-addr=127.0.0.1:9446` | Literal loopback HTTP listener for administrator logs and stats; requires `--enable-task-execution` and `--gateway-jwt-key-file` |
-| Console | `--log-api-origin=http://127.0.0.1:9446` | Fixed logs/stats proxy to the same API instance used by Agent polling |
+| RLark Gateway | `--container-runtime-diagnostics-origin=http://127.0.0.1:9446` | Fixed logs/stats proxy to the same API instance used by Agent polling |
 
 These are preview settings, not native Agent/rlarkadm fields. Diagnostics are
 transient reads; they do not add historical logs or a metrics database.

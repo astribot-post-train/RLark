@@ -2,7 +2,7 @@ package controller
 
 import (
 	"context"
-	ext "github.com/astribot-post-train/rlark/extensions/container-runtime/api/v1alpha1"
+	ext "github.com/astribot-post-train/rlark/extensions/container-runtime/core/api/v1alpha1"
 	dockerruntime "github.com/astribot-post-train/rlark/extensions/container-runtime/pkg/runtime/docker"
 	native "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
 	"sigs.k8s.io/controller-runtime/pkg/client"

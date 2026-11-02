@@ -6,6 +6,7 @@ import {
   hasTerminalSession,
   isAdminPath,
   parseAdminRoute,
+  containerClusterPath,
 } from "../dist/test/utils/route.js";
 
 test("admin routes preserve the storage class file browser context", () => {
@@ -14,6 +15,19 @@ test("admin routes preserve the storage class file browser context", () => {
   assert.deepEqual(parseAdminRoute("/admin/files/shared%2Fdata"), {
     page: "files",
     sub: "shared/data",
+  });
+});
+
+test("container cluster URLs restore selection on reload and history navigation", () => {
+  const path = containerClusterPath("cloud-agents", "ksyun");
+  assert.equal(path, "/admin/container-clusters/cloud-agents/ksyun");
+  assert.deepEqual(parseAdminRoute(path), {
+    page: "container-clusters",
+    sub: "cloud-agents/ksyun",
+  });
+  assert.deepEqual(parseAdminRoute("/admin/container-clusters"), {
+    page: "container-clusters",
+    sub: "",
   });
 });
 

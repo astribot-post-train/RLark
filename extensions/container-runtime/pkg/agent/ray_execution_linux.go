@@ -8,7 +8,7 @@ import (
 	"errors"
 	"slices"
 
-	ext "github.com/astribot-post-train/rlark/extensions/container-runtime/api/v1alpha1"
+	ext "github.com/astribot-post-train/rlark/extensions/container-runtime/core/api/v1alpha1"
 	dockerruntime "github.com/astribot-post-train/rlark/extensions/container-runtime/pkg/runtime/docker"
 	"github.com/astribot-post-train/rlark/extensions/container-runtime/pkg/taskcontract"
 	ray "github.com/astribot-post-train/rlark/extensions/container-runtime/pkg/workload/ray/docker"

@@ -14,9 +14,9 @@ import (
 	"syscall"
 	"time"
 
-	ext "github.com/astribot-post-train/rlark/extensions/container-runtime/api/v1alpha1"
+	ext "github.com/astribot-post-train/rlark/extensions/container-runtime/core/api/v1alpha1"
+	"github.com/astribot-post-train/rlark/extensions/container-runtime/core/pkg/artifact"
 	"github.com/astribot-post-train/rlark/extensions/container-runtime/pkg/agent"
-	"github.com/astribot-post-train/rlark/extensions/container-runtime/pkg/artifact"
 	"github.com/astribot-post-train/rlark/extensions/container-runtime/pkg/console"
 	native "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
 	"github.com/rlinf/rlark/apps/rlark/pkg/log"

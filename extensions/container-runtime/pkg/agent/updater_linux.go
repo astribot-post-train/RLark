@@ -11,7 +11,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/astribot-post-train/rlark/extensions/container-runtime/pkg/artifact"
+	"github.com/astribot-post-train/rlark/extensions/container-runtime/core/pkg/artifact"
 	"github.com/google/uuid"
 )
 

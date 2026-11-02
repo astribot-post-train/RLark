@@ -23,7 +23,7 @@ import (
 	"strings"
 	"time"
 
-	ext "github.com/astribot-post-train/rlark/extensions/container-runtime/api/v1alpha1"
+	ext "github.com/astribot-post-train/rlark/extensions/container-runtime/core/api/v1alpha1"
 	"github.com/astribot-post-train/rlark/extensions/container-runtime/pkg/agent"
 	dockerruntime "github.com/astribot-post-train/rlark/extensions/container-runtime/pkg/runtime/docker"
 	"github.com/rlinf/rlark/apps/rlark/pkg/auth/cert"

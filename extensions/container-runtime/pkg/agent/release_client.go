@@ -9,8 +9,8 @@ import (
 	"io"
 	"net/http"
 
-	ext "github.com/astribot-post-train/rlark/extensions/container-runtime/api/v1alpha1"
-	"github.com/astribot-post-train/rlark/extensions/container-runtime/pkg/artifact"
+	ext "github.com/astribot-post-train/rlark/extensions/container-runtime/core/api/v1alpha1"
+	"github.com/astribot-post-train/rlark/extensions/container-runtime/core/pkg/artifact"
 )
 
 func manifestSpec(m *ReleaseManifest) (ext.AgentReleaseSpec, error) {

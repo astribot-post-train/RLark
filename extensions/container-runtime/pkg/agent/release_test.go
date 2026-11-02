@@ -10,8 +10,8 @@ import (
 	"runtime"
 	"testing"
 
-	ext "github.com/astribot-post-train/rlark/extensions/container-runtime/api/v1alpha1"
-	"github.com/astribot-post-train/rlark/extensions/container-runtime/pkg/artifact"
+	ext "github.com/astribot-post-train/rlark/extensions/container-runtime/core/api/v1alpha1"
+	"github.com/astribot-post-train/rlark/extensions/container-runtime/core/pkg/artifact"
 	"github.com/rlinf/rlark/apps/rlark/pkg/tenant"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"

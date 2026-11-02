@@ -4,6 +4,7 @@ go 1.26.5
 
 require (
 	github.com/aliyun/aliyun-log-go-sdk v0.1.127
+	github.com/astribot-post-train/rlark/extensions/container-runtime/core v0.0.0
 	github.com/aws/aws-sdk-go-v2 v1.43.3
 	github.com/aws/aws-sdk-go-v2/config v1.32.34
 	github.com/aws/aws-sdk-go-v2/credentials v1.19.33
@@ -31,7 +32,7 @@ require (
 	github.com/songgao/water v0.0.0-20200317203138-2b4b6d7c09d8
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.0.9
-	github.com/stretchr/testify v1.11.1
+	github.com/stretchr/testify v1.12.1
 	github.com/uptrace/bun v1.2.18
 	github.com/uptrace/bun/dialect/pgdialect v1.2.18
 	github.com/uptrace/bun/driver/pgdriver v1.2.18
@@ -41,7 +42,7 @@ require (
 	github.com/xtaci/smux v1.5.57
 	go.uber.org/zap v1.27.1
 	go.yaml.in/yaml/v2 v2.4.3
-	go.yaml.in/yaml/v3 v3.0.4
+	go.yaml.in/yaml/v3 v3.0.5
 	golang.org/x/crypto v0.48.0
 	golang.org/x/sync v0.19.0
 	golang.org/x/sys v0.41.0
@@ -222,3 +223,5 @@ require (
 replace github.com/rlinf/rlark/api => ../../api
 
 replace github.com/rlinf/rlark/sdks/execution-go => ../../sdks/execution-go
+
+replace github.com/astribot-post-train/rlark/extensions/container-runtime/core => ../../extensions/container-runtime/core

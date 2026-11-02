@@ -2,8 +2,8 @@ package console
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
+	management "github.com/astribot-post-train/rlark/extensions/container-runtime/core/pkg/console"
 	"net/http"
 	"time"
 
@@ -14,7 +14,7 @@ import (
 )
 
 // StatsPath is the fixed administrator resource snapshot route.
-const StatsPath = "/api/v1/container-runtime/stats"
+const StatsPath = management.StatsPath
 
 // StatsReader is independent of inventory and workload lifecycle operations.
 type StatsReader interface {
@@ -80,18 +80,4 @@ func (a StatsReadAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 200, snapshot)
-}
-
-// NewStatsProxy permits only the fixed stats path on a literal loopback origin.
-func NewStatsProxy(origin string) (http.Handler, error) {
-	return newReadProxy(origin, StatsPath, func(data []byte) (any, error) {
-		var snapshot dockerruntime.StatsSnapshot
-		if err := json.Unmarshal(data, &snapshot); err != nil {
-			return nil, err
-		}
-		if err := snapshot.Validate(time.Now()); err != nil {
-			return nil, err
-		}
-		return snapshot, nil
-	})
 }

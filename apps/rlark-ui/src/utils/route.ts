@@ -6,6 +6,7 @@ export type AdminRoute = { page: string; sub: string };
 const adminPages = new Set([
   "dashboard",
   "clusters-list",
+  "container-clusters",
   "create-cluster",
   "clusters-nodes",
   "addons",
@@ -117,4 +118,9 @@ export function parseRoute() {
   if (!valid.includes(top)) return { page: "overview" as Page, sub: "" };
   const sub = parts.slice(1).join("/");
   return { page: top, sub: decodeURIComponent(sub) };
+}
+
+// Namespace and name remain separate URL segments for direct links and history.
+export function containerClusterPath(namespace: string, name: string) {
+  return `/admin/container-clusters/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}`;
 }

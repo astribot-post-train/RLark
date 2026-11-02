@@ -68,7 +68,7 @@ Raw 仍为单独的默认模式，要求 `--supervisor-socket`。
 安装伴生 CRD 和控制器/API RBAC。除 Agent 开关外，还需开启控制器
 `--enable-job-reservations=true` 和 API `--enable-task-execution=true`。使用
 `config/examples/docker-container-job.yaml` 及对应 ContainerJob 绑定，替换租户、
-Cluster UID、namespace 和预置环境后再解除 Job 暂停。独立控制台的 Job 提交表单
+Cluster UID、namespace 和预置环境后再解除 Job 暂停。RLark 主 UI 容器集群页面的 Job 提交表单
 仍只接受 Raw。
 
 对于普通容器 Job，控制器创建一个 Task 与独占整台主机的 ContainerAllocation，并写规范 Task target
@@ -119,7 +119,7 @@ Raw supervisor。Docker Agent 只有显式启用后才声明 `docker-diagnostics
 为处理 Agent 轮询的同一个 API 进程配置 `--enable-task-execution=true`、
 `--log-read-addr=127.0.0.1:9446` 和
 `--gateway-jwt-key-file=/private/gateway-jwt.key`；控制台配置
-`--log-api-origin=http://127.0.0.1:9446`。回环监听器只提供管理员 GET 路由
+`--container-runtime-diagnostics-origin=http://127.0.0.1:9446`。回环监听器只提供管理员 GET 路由
 `/api/v1/container-runtime/logs` 与 `/api/v1/container-runtime/stats`，均严格要求
 `namespace`、`allocation`、`allocationUID`、`taskUID` 四个参数。等待前和返回前
 都校验浏览器的 Gateway 管理员 JWT。Agent 通过独立私有 mTLS
@@ -149,7 +149,7 @@ Task generation 变化、清理确认、分配释放、能力撤销及身份替�
 数量。stats 响应正文最多 1 MiB。单次快照不提供 CPU 百分比；GPU 利用率和
 host network 流量归属仍不可用。日志与快照均不写资源 Status 或指标数据库。
 
-独立控制台在 allocation 行提供手动读取。Docker 读取要求声明诊断和执行能力，
+RLark 主 UI 容器集群页面在 allocation 行提供手动读取。Docker 读取要求声明诊断和执行能力，
 且 allocation 尚未清理。未知计数显示不可用，输出作为转义文本显示。切换选择、
 退出登录、allocation 替换/清理及能力撤销会清除显示并取消旧请求。API 重启、
 daemon 不可用或已退出容器的 stats 不可用时需重新读取，不合成零值或自动重试。

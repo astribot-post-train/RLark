@@ -3,11 +3,12 @@ package agent
 import (
 	"context"
 	"errors"
+	"github.com/astribot-post-train/rlark/extensions/container-runtime/core/pkg/diagnostics"
 	"sync"
 	"time"
 
-	ext "github.com/astribot-post-train/rlark/extensions/container-runtime/api/v1alpha1"
-	"github.com/astribot-post-train/rlark/extensions/container-runtime/pkg/ownership"
+	ext "github.com/astribot-post-train/rlark/extensions/container-runtime/core/api/v1alpha1"
+	"github.com/astribot-post-train/rlark/extensions/container-runtime/core/pkg/ownership"
 	"github.com/astribot-post-train/rlark/extensions/container-runtime/pkg/runtime/raw"
 	"github.com/google/uuid"
 	native "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
@@ -24,10 +25,7 @@ var (
 )
 
 // LogTarget pins an administrator read to one retained workload allocation.
-type LogTarget struct {
-	Allocation ext.NativeObjectReference `json:"allocation"`
-	TaskUID    string                    `json:"taskUID"`
-}
+type LogTarget = diagnostics.Target
 
 // LogWork is an ephemeral read request, never durable desired workload state.
 type LogWork struct {

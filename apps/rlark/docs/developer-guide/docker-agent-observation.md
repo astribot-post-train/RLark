@@ -75,7 +75,7 @@ Install the companion CRDs and controller/API RBAC. Enable controller
 `--enable-job-reservations=true` and API `--enable-task-execution=true` in addition
 to the Agent flag. Use `config/examples/docker-container-job.yaml` and its
 ContainerJob binding, replacing tenant, Cluster UID, namespace and prepared
-environment before unsuspending the Job. The independent console's Job submit
+environment before unsuspending the Job. The main RLark Container Clusters page's Job submit
 form continues to accept Raw only.
 
 For plain container Jobs, the controller creates one Task and an exclusive whole-host ContainerAllocation,
@@ -140,8 +140,8 @@ Agent advertises `docker-diagnostics-v1` only after explicit enablement.
 
 Configure the same API process that handles Agent polling with
 `--enable-task-execution=true`, `--log-read-addr=127.0.0.1:9446` and
-`--gateway-jwt-key-file=/private/gateway-jwt.key`. Configure the console with
-`--log-api-origin=http://127.0.0.1:9446`. The loopback listener serves only the
+`--gateway-jwt-key-file=/private/gateway-jwt.key`. Configure Gateway with
+`--container-runtime-diagnostics-origin=http://127.0.0.1:9446`. The loopback listener serves only the
 administrator GET routes `/api/v1/container-runtime/logs` and
 `/api/v1/container-runtime/stats`; both require exactly `namespace`, `allocation`,
 `allocationUID` and `taskUID`. The browser's Gateway administrator JWT is checked
@@ -180,7 +180,7 @@ to 1 MiB. One sample does not provide CPU percentage; GPU utilization and
 host-network traffic attribution remain unavailable. Neither logs nor snapshots
 are persisted in resource Status or a metrics database.
 
-The independent console provides manual reads on allocation rows. Docker reads
+The main RLark Container Clusters page provides manual reads on allocation rows. Docker reads
 require the advertised diagnostics and execution capabilities and an allocation
 that has not been cleaned. Unknown counters show as unavailable; output renders
 as escaped text. Selection changes, logout, allocation replacement/cleanup and

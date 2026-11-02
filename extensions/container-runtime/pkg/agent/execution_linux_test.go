@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	ext "github.com/astribot-post-train/rlark/extensions/container-runtime/api/v1alpha1"
+	ext "github.com/astribot-post-train/rlark/extensions/container-runtime/core/api/v1alpha1"
 	"github.com/astribot-post-train/rlark/extensions/container-runtime/pkg/controller"
 	rawruntime "github.com/astribot-post-train/rlark/extensions/container-runtime/pkg/runtime/raw"
 	"github.com/astribot-post-train/rlark/extensions/container-runtime/pkg/runtime/raw/supervision"

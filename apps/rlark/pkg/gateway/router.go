@@ -18,6 +18,7 @@ func (g *Gateway) RegisterRoutes(r gin.IRouter) {
 	rlinfv1alpha1 := api.Group("/rlinf.io/v1alpha1")
 	adminAPI := api.Group("", requireAdmin())
 	adminRlinfv1alpha1 := rlinfv1alpha1.Group("", requireAdmin())
+	g.registerContainerRuntimeRoutes(adminAPI)
 
 	api.GET("/api-reference", g.handleAPIReference)
 	users := api.Group("/users")

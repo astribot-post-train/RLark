@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	process "github.com/astribot-post-train/rlark/extensions/container-runtime/core/pkg/process"
 	"io"
 
 	"github.com/rlinf/rlark/apps/rlark/pkg/agent/execution/fault"
@@ -16,7 +17,7 @@ import (
 
 // ProcessWorkload is the opt-in experimental trusted-process workload. It does
 // not implement Ray cluster orchestration or inject Kubernetes facilities.
-const ProcessWorkload workload.TypeID = "raw.rlark.io/process"
+const ProcessWorkload workload.TypeID = process.ProcessWorkload
 
 // ProcessAdapter compiles an explicitly configured executable, environment and
 // directory. Local supervisor policy remains authoritative for allowed paths.

@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	containerapi "github.com/astribot-post-train/rlark/extensions/container-runtime/api/v1alpha1"
-	"github.com/astribot-post-train/rlark/extensions/container-runtime/pkg/ownership"
+	containerapi "github.com/astribot-post-train/rlark/extensions/container-runtime/core/api/v1alpha1"
+	"github.com/astribot-post-train/rlark/extensions/container-runtime/core/pkg/ownership"
 	native "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
 	nativejob "github.com/rlinf/rlark/apps/rlark/pkg/controllermanager/job"
 	"github.com/rlinf/rlark/apps/rlark/pkg/tenant"
