@@ -16,6 +16,7 @@ build:
 	GOWORK=off go build -o $(BIN_DIR)/raw-supervisor ./cmd/raw-supervisor
 	GOWORK=off go build -o $(BIN_DIR)/container-runtime-agent ./cmd/container-runtime-agent
 	GOWORK=off go build -o $(BIN_DIR)/container-runtime-admin ./cmd/container-runtime-admin
+	GOWORK=off go build -o $(BIN_DIR)/container-runtime-gateway ./cmd/container-runtime-gateway
 
 generate-crds:
 	GOWORK=off $(CURDIR)/../../api/bin/controller-gen-v0.18.0 object paths=./api/...

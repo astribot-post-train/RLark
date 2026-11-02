@@ -6,6 +6,18 @@ Current contents are an extraction copy of preview Docker/Raw runtime, allocatio
 
 Run `make test`, `make vet`, `make build`, or `make generate-crds` here. `make build` writes `bin/container-runtime-controller`, `bin/container-runtime-api`, `bin/container-runtime-agent`, `bin/container-runtime-admin`, and `bin/raw-supervisor`; it does not package or install them on container hosts. The API command requires a TLS server certificate, a dedicated Agent client CA, and a kubeconfig/service account with the narrow permissions in `config/rbac/`. The endpoint listens on `POST /v1/heartbeat`. Start the Linux Agent with an HTTPS origin, node certificate/key, server CA, version, private address and private Raw supervisor socket. It observes before every heartbeat, retries transient failures, and requires the supervisor status to prove occupancy; there is no `--allow-no-gpu` or idle fallback. Agent certificate issuance, enrollment and deployment wiring remain operator-managed and are not integrated with RLark's native Server. `GOWORK=off` is used to prove the module resolves from its own `go.mod` and `go.sum`.
 
+The optional `container-runtime-gateway` binary implements the first A/Hub
+communication component described in the paired gateway plan. It relays Agent
+TCP connections to one fixed extension API while preserving the Agent's
+end-to-end mTLS. Use dedicated TLS 1.3 identities, peer CA bundles and exact
+leaf SHA-256 pins on both sides. A's Agent listener is restricted to a private
+or loopback bind address; Hub mode dials only its configured `--api-address`.
+Concurrent connections and idle time are bounded, and Hub reconnects after
+failure. Build with `make build`; the paired English and Chinese plan has
+startup examples. This binary does not yet SSH-install B/C, manage enrollment
+or retirement operations in the UI, bridge RLark Kubernetes Pod networks, or
+connect Lumo2 and the robot environment.
+
 The standalone controller defaults to validation-only. It uses Lease leader election in `rlark-system`; configure `--leader-election-namespace` and the controller RBAC manifest when using another namespace. `--enable-job-reservations=true` opts into the isolated preview controller with an uncached API client. The API and Agent each require their own `--enable-task-execution=true` flag for scoped execution; apply `config/rbac/container-runtime-api-execution.yaml` only for this preview. The controller materializes one independent Raw process Task per named template (up to 16), checks selectors/identity/tenant, aggregates current Running/Succeeded/Failed observations, and releases an allocation only after durable supervisor cleanup, an exact cleanup proof and observed deletion. Completed Task identity is retained so a restart cannot rerun it; suspension, deletion, template changes and explicit restart retire it through the existing cleanup workflow. The optional native `ControllerExtension()` remains validation-only. Stopping the controller leaves reservations intact. Task transport is deliberately limited to the exact certificate-bound allocation and Task; arbitrary Kubernetes reads, watches, discovery, secrets, proxying and allocation creation are denied. Automatic enrollment, historical log archives, native UI integration and Raw Ray/RLinf group coordination remain incomplete; bounded on-demand Raw logs are available only through the separate opt-in preview listener. Idle Agent rollout is an opt-in preview described below.
 
 The detailed target, rollout, cloud test constraints and acceptance gates are maintained in the paired RLark developer plan at `../../apps/rlark/docs/developer-guide/raw-container-runtime-plan.md` and its Chinese counterpart.

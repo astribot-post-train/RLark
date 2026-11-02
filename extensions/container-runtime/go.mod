@@ -8,12 +8,15 @@ require (
 	github.com/rlinf/rlark/api v0.0.0
 	github.com/rlinf/rlark/apps/rlark v0.0.0
 	github.com/stretchr/testify v1.12.1
+	github.com/xtaci/smux v1.5.57
+	golang.org/x/sync v0.23.0
 	golang.org/x/sys v0.48.0
 	k8s.io/api v0.36.3
 	k8s.io/apiextensions-apiserver v0.36.0
 	k8s.io/apimachinery v0.36.3
 	k8s.io/client-go v0.36.3
 	sigs.k8s.io/controller-runtime v0.24.1
+	sigs.k8s.io/yaml v1.6.0
 )
 
 require (
@@ -117,7 +120,6 @@ require (
 	github.com/x448/float16 v0.8.4 // indirect
 	github.com/xjasonlyu/tun2socks/v2 v2.6.0 // indirect
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
-	github.com/xtaci/smux v1.5.57 // indirect
 	go.mongodb.org/mongo-driver/v2 v2.5.0 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.65.0 // indirect
@@ -137,7 +139,6 @@ require (
 	golang.org/x/exp v0.0.0-20251219203646-944ab1f22d93 // indirect
 	golang.org/x/net v0.59.0 // indirect
 	golang.org/x/oauth2 v0.36.0 // indirect
-	golang.org/x/sync v0.23.0 // indirect
 	golang.org/x/term v0.46.0 // indirect
 	golang.org/x/text v0.42.0 // indirect
 	golang.org/x/time v0.14.0 // indirect
@@ -156,7 +157,6 @@ require (
 	sigs.k8s.io/json v0.0.0-20250730193827-2d320260d730 // indirect
 	sigs.k8s.io/randfill v1.0.0 // indirect
 	sigs.k8s.io/structured-merge-diff/v6 v6.3.3 // indirect
-	sigs.k8s.io/yaml v1.6.0 // indirect
 )
 
 replace github.com/rlinf/rlark/api => ../../api
