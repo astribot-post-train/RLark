@@ -76,7 +76,9 @@ port mapping may change. The Agent must use an HTTPS endpoint whose host
 resolves to A's private address on B/C and whose server certificate SAN matches
 that host. Do not start the listener on the test notebook just because it has
 an SSH connection; current read-only inspection found no Docker socket,
-systemd, `CAP_NET_ADMIN`, or working port 30000/30001 ingress there.
+systemd or `CAP_NET_ADMIN` there. A short-lived listener probe confirmed that
+TCP 30000 is externally reachable when a process listens on it; closed-port
+refusal alone must not be treated as proof that the platform blocks it.
 
 The package tests cover end-to-end node TLS, wrong pins, reconnection, idle
 cleanup, bounded configuration and shutdown. This test does not establish

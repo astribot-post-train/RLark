@@ -62,7 +62,8 @@ extensions/container-runtime/bin/container-runtime-gateway --mode=hub \
 检查得到的示例；部署前要重新查询，因为平台分配地址和端口映射可能变化。B/C 上
 Agent 使用的 HTTPS Endpoint 主机名必须能解析到 A 私网地址，且服务证书 SAN 必须
 匹配该主机名。不能因为当前测试机有 SSH 连接就直接在那里启服务：本轮只读检查
-发现该机没有 Docker socket、systemd、`CAP_NET_ADMIN`，30000/30001 也没有可用入口。
+发现该机没有 Docker socket、systemd、`CAP_NET_ADMIN`。随后短时启动监听探测已确认
+TCP 30000 在有进程监听时可以从外部访问；不能把未启动监听时的拒绝当成平台阻断。
 
 测试覆盖端到端节点 TLS、错误指纹、重连、空闲回收、有界配置和停机。这不能证明
 Kubernetes Pod 网络、Ray 多机通信、Lumo2 推理或 S1U 机器人链路已打通。
