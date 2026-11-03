@@ -9,6 +9,7 @@ import {
 } from "react";
 
 import {
+  nativeResourceNode,
   APIError,
   Client,
   type Cluster,
@@ -35,6 +36,8 @@ import {
 } from "./models";
 import { JobsPanel } from "./JobsPanel";
 import { NodeRegistrationPanel } from "./NodeRegistrationPanel";
+import { NodeOverview } from "../../components/NodeOverview";
+import { copy } from "../../i18n";
 import "./style.css";
 const labels = {
   zh: {
@@ -953,6 +956,8 @@ export function ContainerClustersPage({
                       <NodeCard
                         key={n.uid}
                         node={n}
+                        lang={lang}
+                        runtime={detail.cluster.runtime}
                         expanded={expandedNodes.has(n.uid)}
                         onExpand={(open) =>
                           setExpandedNodes((current) => {
@@ -1128,6 +1133,8 @@ export function ContainerClustersPage({
 }
 function NodeCard({
   node: n,
+  lang,
+  runtime,
   t,
   disabled,
   onScheduling,
@@ -1135,6 +1142,8 @@ function NodeCard({
   onExpand,
 }: {
   node: Node;
+  lang: Lang;
+  runtime: "Raw" | "Docker";
   t: typeof labels.en;
   disabled: boolean;
   onScheduling: () => void;
@@ -1182,6 +1191,12 @@ function NodeCard({
             UID {n.uid} / {n.instanceID}
           </code>
         </p>
+        {nativeResourceNode(n, runtime) && (
+          <NodeOverview
+            node={nativeResourceNode(n, runtime)!}
+            copy={copy[lang]}
+          />
+        )}
         <p>
           {t.capacity}:{" "}
           {Object.entries(n.capacity ?? {})

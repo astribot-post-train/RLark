@@ -59,6 +59,16 @@ func main() {
 	if err := (&containercontroller.ContainerNodeReconciler{Client: mgr.GetClient()}).SetupWithManager(mgr); err != nil {
 		fail(err)
 	}
+	connectivityClient, err := client.New(config, client.Options{Scheme: scheme})
+	if err != nil {
+		fail(fmt.Errorf("create uncached connectivity client: %w", err))
+	}
+	if err := (&containercontroller.ConnectivityReconciler{Client: connectivityClient}).SetupWithManager(mgr); err != nil {
+		fail(err)
+	}
+	if err := (&containercontroller.ResourcesReconciler{Client: connectivityClient}).SetupWithManager(mgr); err != nil {
+		fail(err)
+	}
 	if err := (&containercontroller.ContainerJobReconciler{Client: mgr.GetClient()}).SetupWithManager(mgr); err != nil {
 		fail(err)
 	}

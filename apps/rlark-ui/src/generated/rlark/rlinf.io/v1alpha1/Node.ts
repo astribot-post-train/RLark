@@ -53,8 +53,9 @@ export interface INode {
       [key: string]: number | string;
     };
     /**
-     * Conditions 记录节点的结构化状态结论，当前仅包含 ConditionTypeReady。
-     * 它由观测（而非 Spec）驱动，因此不填写 ObservedGeneration。
+     * Conditions records independently owned observations. Core owns Ready;
+     * the container extension owns RawResourcesReady and RawSchedulingReady.
+     * Ready is observation-driven and does not set ObservedGeneration.
      */
     "conditions"?: Array<{
       /**

@@ -193,8 +193,25 @@ spec:
                 type: integer
               privateAddress:
                 type: string
+              resourceObservedAt:
+                description: |-
+                  ResourceObservedAt is server time for the last accepted resource snapshot.
+                  It is separate from liveness; absent fields are unknown, never zero.
+                format: date-time
+                type: string
               schedulable:
                 type: boolean
+              systemInfo:
+                description: NodeSystemInfo describes the existing container environment,
+                  not its physical host.
+                properties:
+                  architecture:
+                    type: string
+                  kernelVersion:
+                    type: string
+                  operatingSystem:
+                    type: string
+                type: object
               targetAgentVersion:
                 type: string
             type: object

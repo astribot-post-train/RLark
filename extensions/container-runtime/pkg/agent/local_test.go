@@ -4,7 +4,9 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"github.com/astribot-post-train/rlark/extensions/container-runtime/pkg/runtime/raw/supervision"
+	"golang.org/x/sys/unix"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -171,5 +173,23 @@ func TestCloudRawObservation(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("supervisor shutdown blocked")
+	}
+}
+
+func TestSystemInfoOptionalKernelFailure(t *testing.T) {
+	for _, fail := range []bool{false, true} {
+		got := observeSystemInfo(func(u *unix.Utsname) error {
+			if fail {
+				return errors.New("uname unavailable")
+			}
+			copy(u.Release[:], []byte("test-kernel"))
+			return nil
+		})
+		if got.OperatingSystem != runtime.GOOS || got.Architecture != runtime.GOARCH {
+			t.Fatal(got)
+		}
+		if fail && got.KernelVersion != "" || !fail && got.KernelVersion != "test-kernel" {
+			t.Fatal(got)
+		}
 	}
 }

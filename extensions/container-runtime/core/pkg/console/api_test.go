@@ -11,6 +11,7 @@ import (
 	"time"
 
 	ext "github.com/astribot-post-train/rlark/extensions/container-runtime/core/api/v1alpha1"
+	"github.com/astribot-post-train/rlark/extensions/container-runtime/core/pkg/noderesources"
 	"github.com/astribot-post-train/rlark/extensions/container-runtime/core/pkg/provision"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
@@ -18,6 +19,7 @@ import (
 	native "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -101,6 +103,12 @@ func fixture(t *testing.T) (*API, *ext.ContainerCluster, *ext.ContainerNode, *ex
 	nn := &native.Node{ObjectMeta: metadata("node-1", "cloud-agents", "native-node"), Spec: native.NodeSpec{AgentType: native.AgentTypeRaw}}
 	cn := &ext.ContainerNode{ObjectMeta: metadata("node-1", "cloud-agents", "companion-node"), Spec: ext.ContainerNodeSpec{Cluster: cc.Spec.Cluster, Node: ext.NativeObjectReference{Name: nn.Name, Namespace: nn.Namespace, UID: string(nn.UID)}, Runtime: "Raw", InstanceID: "instance-1", PrivateAddress: "10.0.0.2", AuthorizedGPUUUIDs: []string{"GPU-1"}}, Status: ext.ContainerNodeStatus{ObservedGeneration: 1, AgentCredentialID: "credential", Schedulable: true, LastHeartbeatTime: &metav1.Time{Time: time.Now()}, Conditions: []metav1.Condition{trueCondition("Ready")}}}
 	cn.Annotations = map[string]string{ext.AgentCredentialAnnotation: "credential"}
+	nn.Annotations = map[string]string{noderesources.ProjectionAnnotation: string(cn.UID), noderesources.ObservedAtAnnotation: time.Now().UTC().Format(time.RFC3339Nano)}
+	nn.Status.Capacity = corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("4"), corev1.ResourceMemory: resource.MustParse("8Gi")}
+	nn.Status.Allocatable = nn.Status.Capacity.DeepCopy()
+	nn.Status.Used = corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("0"), corev1.ResourceMemory: resource.MustParse("0")}
+	nn.Status.Conditions = []metav1.Condition{trueCondition(noderesources.ResourcesReady), trueCondition(noderesources.SchedulingReady)}
+
 	release := &ext.AgentRelease{ObjectMeta: metadata("v2", "cloud-agents", "release-v2"), Spec: ext.AgentReleaseSpec{Version: "v2", OS: "linux", Architecture: "amd64", Protocol: "v1", SHA256: strings.Repeat("a", 64), ArtifactPath: "releases/v2"}, Status: ext.AgentReleaseStatus{ObservedGeneration: 1, Available: true, Conditions: []metav1.Condition{trueCondition("Available")}}}
 	c := fake.NewClientBuilder().WithScheme(s).WithObjects(nc, cc, nn, cn, release).Build()
 	auth, err := NewGatewayJWT(testKey)
@@ -336,4 +344,34 @@ func TestCreateAPIRecoversExactRetainedOperation(t *testing.T) {
 	var clusters ext.ContainerClusterList
 	require.NoError(t, management.List(context.Background(), &clusters))
 	require.Len(t, clusters.Items, 1)
+}
+
+func TestRawDetailUsesOnlyOwnedNativeResourceProjection(t *testing.T) {
+	for _, mode := range []string{"projected", "unprojected", "foreign-owner", "stale", "missing-conditions"} {
+		t.Run(mode, func(t *testing.T) {
+			a, _, cn, _ := fixture(t)
+			var nn native.Node
+			require.NoError(t, a.Client.Get(context.Background(), client.ObjectKeyFromObject(cn), &nn))
+			switch mode {
+			case "unprojected":
+				delete(nn.Annotations, noderesources.ProjectionAnnotation)
+			case "foreign-owner":
+				nn.Annotations[noderesources.ProjectionAnnotation] = "someone-else"
+			case "stale":
+				nn.Annotations[noderesources.ObservedAtAnnotation] = time.Now().Add(-time.Minute).UTC().Format(time.RFC3339Nano)
+			case "missing-conditions":
+				nn.Status.Conditions = nil
+			}
+			require.NoError(t, a.Client.(client.Client).Update(context.Background(), &nn))
+			d := getDetail(t, a)
+			if mode == "unprojected" || mode == "foreign-owner" {
+				require.Nil(t, d.Nodes[0].Resources)
+				require.Nil(t, d.Nodes[0].Capacity)
+			} else {
+				require.NotNil(t, d.Nodes[0].Resources)
+				require.Equal(t, nn.Status.Capacity, d.Nodes[0].Resources.Capacity)
+			}
+			require.Equal(t, mode == "projected", d.Nodes[0].Schedulable)
+		})
+	}
 }

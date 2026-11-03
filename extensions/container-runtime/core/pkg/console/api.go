@@ -15,13 +15,16 @@ import (
 
 	ext "github.com/astribot-post-train/rlark/extensions/container-runtime/core/api/v1alpha1"
 	"github.com/astribot-post-train/rlark/extensions/container-runtime/core/pkg/artifact"
+	"github.com/astribot-post-train/rlark/extensions/container-runtime/core/pkg/noderesources"
 	"github.com/astribot-post-train/rlark/extensions/container-runtime/core/pkg/ownership"
 	"github.com/astribot-post-train/rlark/extensions/container-runtime/core/pkg/provision"
 	"github.com/astribot-post-train/rlark/extensions/container-runtime/core/pkg/submission"
 	"github.com/google/uuid"
 	tenant "github.com/rlinf/rlark/api/metadata"
 	native "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	meta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"log/slog"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -186,7 +189,25 @@ type clusterSummary struct {
 	UpgradeCount       int                      `json:"upgradeCount"`
 	LastAgentUpgrade   *ext.AgentRolloutReceipt `json:"lastAgentUpgrade,omitempty"`
 }
+
+// nativeResources is the canonical, extension-owned native Node projection.
+// Omitted during rolling upgrades or when projection ownership is not proven.
+type nativeResources struct {
+	Name        string               `json:"name"`
+	Namespace   string               `json:"namespace"`
+	Generation  int64                `json:"generation"`
+	Phase       native.NodePhase     `json:"phase"`
+	ObservedAt  string               `json:"observedAt,omitempty"`
+	Capacity    corev1.ResourceList  `json:"capacity"`
+	Allocatable corev1.ResourceList  `json:"allocatable"`
+	Used        corev1.ResourceList  `json:"used"`
+	NodeInfo    native.NodeInfo      `json:"nodeInfo"`
+	Addresses   []corev1.NodeAddress `json:"addresses"`
+	Conditions  []metav1.Condition   `json:"conditions"`
+}
+
 type nodeSummary struct {
+	Resources          *nativeResources   `json:"resources,omitempty"`
 	ResourceVersion    string             `json:"resourceVersion"`
 	NativeUID          string             `json:"nativeUID"`
 	Name               string             `json:"name"`
@@ -332,7 +353,23 @@ func (a *API) detail(ctx context.Context, cc *ext.ContainerCluster) (*clusterDet
 		fresh := heartbeat != nil && !heartbeat.After(a.now()) && a.now().Sub(heartbeat.Time) <= 45*time.Second
 		ready := nv && n.DeletionTimestamp.IsZero() && nn.DeletionTimestamp.IsZero() && nc.DeletionTimestamp.IsZero() && cc.DeletionTimestamp.IsZero() && fresh && n.Status.ObservedGeneration == n.Generation && current(n.Status.Conditions, "Ready", n.Generation) && n.Status.AgentCredentialID != "" && n.Status.AgentCredentialID == n.Annotations[ext.AgentCredentialAnnotation]
 		schedulable := ready && n.Status.Schedulable && !n.Status.Busy && !held[string(n.UID)] && !held["native/"+n.Spec.Node.UID] && !nn.Spec.Unschedulable && !nc.Spec.Cordoned && !nc.Spec.Draining && nn.Status.Reservation == nil && len(nn.Status.DockerReservations) == 0
-		result.Nodes = append(result.Nodes, nodeSummary{Name: n.Name, UID: string(n.UID), ResourceVersion: nn.ResourceVersion, NativeUID: string(nn.UID), InstanceID: n.Spec.InstanceID, PrivateAddress: n.Spec.PrivateAddress, Environment: n.Spec.Environment, NetworkScope: n.Spec.NetworkScope, AgentVersion: n.Status.AgentVersion, Ready: ready, Schedulable: schedulable, Busy: n.Status.Busy, Unschedulable: nn.Spec.Unschedulable, Held: held[string(n.UID)] || held["native/"+n.Spec.Node.UID], BindingValid: nv, Capacity: n.Status.Capacity, AuthorizedGPUUUIDs: n.Spec.AuthorizedGPUUUIDs, Capabilities: n.Status.Capabilities, LastHeartbeatTime: heartbeat, Conditions: n.Status.Conditions})
+		var resources *nativeResources
+		capacity := n.Status.Capacity
+		if n.Spec.Runtime == "Raw" {
+			capacity = nil
+			projected := nv && nn.Annotations[noderesources.ProjectionAnnotation] == string(n.UID)
+			observed, parseErr := time.Parse(time.RFC3339Nano, nn.Annotations[noderesources.ObservedAtAnnotation])
+			resourceFresh := parseErr == nil && !observed.After(a.now()) && a.now().Sub(observed) <= noderesources.Freshness
+			schedulable = schedulable && projected && resourceFresh && meta.IsStatusConditionTrue(nn.Status.Conditions, noderesources.ResourcesReady) && meta.IsStatusConditionTrue(nn.Status.Conditions, noderesources.SchedulingReady)
+			if projected {
+				resources = &nativeResources{Name: nn.Name, Namespace: nn.Namespace, Generation: nn.Generation, Phase: nn.Status.Phase, ObservedAt: nn.Annotations[noderesources.ObservedAtAnnotation], Capacity: nn.Status.Capacity, Allocatable: nn.Status.Allocatable, Used: nn.Status.Used, NodeInfo: nn.Status.NodeInfo, Addresses: nn.Status.Addresses, Conditions: nn.Status.Conditions}
+				capacity = map[string]string{}
+				for key, amount := range nn.Status.Capacity {
+					capacity[string(key)] = amount.String()
+				}
+			}
+		}
+		result.Nodes = append(result.Nodes, nodeSummary{Resources: resources, Name: n.Name, UID: string(n.UID), ResourceVersion: nn.ResourceVersion, NativeUID: string(nn.UID), InstanceID: n.Spec.InstanceID, PrivateAddress: n.Spec.PrivateAddress, Environment: n.Spec.Environment, NetworkScope: n.Spec.NetworkScope, AgentVersion: n.Status.AgentVersion, Ready: ready, Schedulable: schedulable, Busy: n.Status.Busy, Unschedulable: nn.Spec.Unschedulable, Held: held[string(n.UID)] || held["native/"+n.Spec.Node.UID], BindingValid: nv, Capacity: capacity, AuthorizedGPUUUIDs: n.Spec.AuthorizedGPUUUIDs, Capabilities: n.Status.Capabilities, LastHeartbeatTime: heartbeat, Conditions: n.Status.Conditions})
 		result.Cluster.NodeCount++
 		result.Cluster.GPUCount += len(n.Spec.AuthorizedGPUUUIDs)
 		if ready {

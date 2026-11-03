@@ -108,7 +108,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		LastTransitionTime: metav1.NewTime(now),
 	})
 	if changed || !sameTime(lastHeartbeat, before.Status.LastHeartbeatTime) || !conditionsEqual(node.Status.Conditions, before.Status.Conditions) {
-		if err := r.Status().Patch(ctx, &node, client.MergeFrom(before)); err != nil {
+		if err := r.Status().Patch(ctx, &node, client.MergeFromWithOptions(before, client.MergeFromWithOptimisticLock{})); err != nil {
 			return ctrl.Result{}, fmt.Errorf("patch node connection status: %w", err)
 		}
 		logger.Info("updated node connection status", "phase", phase, "reason", reason)

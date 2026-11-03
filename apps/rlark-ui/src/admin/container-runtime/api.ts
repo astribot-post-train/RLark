@@ -1,3 +1,4 @@
+import type { CRDNode } from "../../types";
 import { requestJson, ApiError as SharedApiError } from "../../api.js";
 export type Condition = {
   type: string;
@@ -30,7 +31,21 @@ export type Cluster = {
     completedAt: string;
   };
 };
+export type NativeResources = {
+  name: string;
+  namespace: string;
+  generation?: number;
+  phase: string;
+  observedAt?: string;
+  capacity: Record<string, string> | null;
+  allocatable: Record<string, string> | null;
+  used: Record<string, string> | null;
+  nodeInfo: NonNullable<CRDNode["status"]>["nodeInfo"];
+  addresses: Array<{ type: string; address: string }> | null;
+  conditions: Condition[] | null;
+};
 export type Node = {
+  resources?: NativeResources;
   resourceVersion: string;
   nativeUID: string;
   unschedulable: boolean;
@@ -274,6 +289,68 @@ function cluster(value: unknown): value is Cluster {
         )))
   );
 }
+function resourceMap(value: unknown) {
+  return (
+    value === null ||
+    (record(value) && Object.values(value).every((v) => typeof v === "string"))
+  );
+}
+function nativeResources(value: unknown): boolean {
+  if (value === undefined) return true;
+  return (
+    record(value) &&
+    strings(value, ["name", "namespace", "phase"]) &&
+    (value.generation === undefined ||
+      (typeof value.generation === "number" &&
+        Number.isSafeInteger(value.generation) &&
+        value.generation >= 0)) &&
+    (value.observedAt === undefined ||
+      (typeof value.observedAt === "string" &&
+        Number.isFinite(Date.parse(value.observedAt)))) &&
+    resourceMap(value.capacity) &&
+    resourceMap(value.allocatable) &&
+    resourceMap(value.used) &&
+    (value.nodeInfo === null ||
+      (record(value.nodeInfo) &&
+        Object.values(value.nodeInfo).every((v) => typeof v === "string"))) &&
+    (value.addresses === null ||
+      (Array.isArray(value.addresses) &&
+        value.addresses.every(
+          (v) => record(v) && strings(v, ["type", "address"]),
+        ))) &&
+    conditions(value.conditions)
+  );
+}
+// Adapt the validated extension DTO to the native read-only presentation.
+export function nativeResourceNode(
+  node: Node,
+  runtime: "Raw" | "Docker",
+): CRDNode | undefined {
+  const r = node.resources;
+  if (!r) return undefined;
+  return {
+    apiVersion: "rlinf.io/v1alpha1",
+    kind: "Node",
+    metadata: {
+      name: r.name,
+      namespace: r.namespace,
+      generation: r.generation,
+      annotations: r.observedAt
+        ? { "containers.rlark.io/resources-observed-at": r.observedAt }
+        : {},
+    },
+    spec: { agentType: runtime, unschedulable: node.unschedulable },
+    status: {
+      phase: r.phase,
+      capacity: r.capacity ?? {},
+      allocatable: r.allocatable ?? {},
+      used: r.used ?? {},
+      nodeInfo: r.nodeInfo ?? undefined,
+      addresses: r.addresses ?? [],
+      conditions: r.conditions ?? [],
+    },
+  };
+}
 function detail(value: unknown): value is Detail {
   return (
     record(value) &&
@@ -303,6 +380,7 @@ function detail(value: unknown): value is Detail {
           "bindingValid",
           "unschedulable",
         ]) &&
+        nativeResources(n.resources) &&
         stringArray(n.authorizedGPUUUIDs) &&
         stringArray(n.capabilities) &&
         conditions(n.conditions) &&

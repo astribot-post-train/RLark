@@ -1195,7 +1195,7 @@ Responses:
       - `type`: `string`, required - Node address type, one of Hostname, ExternalIP or InternalIP.
   - `allocatable`: `object`, optional - ResourceList is a set of (resource name, quantity) pairs.
   - `capacity`: `object`, optional - ResourceList is a set of (resource name, quantity) pairs.
-  - `conditions`: `array`, optional - Conditions 记录节点的结构化状态结论，当前仅包含 ConditionTypeReady。 它由观测（而非 Spec）驱动，因此不填写 ObservedGeneration。
+  - `conditions`: `array`, optional - Conditions records independently owned observations. Core owns Ready; the container extension owns RawResourcesReady ...
     - `items`: `object`, optional - Condition contains details for one aspect of the current state of this API Resource.
       - `lastTransitionTime`: `string`, required - lastTransitionTime is the last time the condition transitioned from one status to another. This should be when the un...
       - `message`: `string`, required - message is a human readable message indicating details about the transition. This may be an empty string.

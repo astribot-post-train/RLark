@@ -29,6 +29,21 @@ scheduling remain outside this preview. Docker node registration and idle Agent
 rollout are available when their additive capabilities are enabled. Bounded Raw log reads are available only
 when the separate loopback log listener and node poller are explicitly enabled.
 
+## Native online status
+
+The extension controller projects authenticated, current ContainerNode
+observations into UID-owned native heartbeat Leases. Native Node and Cluster
+pages now use the core controllers' Online/Offline and Online/Downgraded/Offline
+aggregation. The 45-second Lease uses the original server-side heartbeat time;
+stopping the Hub or adapter stops renewal, and the next valid observation
+restores online status. Online and schedulable are separate: native Node cordon,
+workload reservations, runtime capability and release readiness still apply.
+The adapter owns only its Leases and fenced Raw capability/credential projection;
+unknown Leases or conflicting native identity are rejected. It does not alter
+Node Spec or reservations. Apply updated controller RBAC and restart the
+extension controller; refreshing the existing UI is sufficient. See the
+[connectivity projection contract and acceptance](container-gateway-plan.md#native-connectivity-projection).
+
 ## Resource and ownership model
 
 The extension owns `containers.rlark.io/v1alpha1` companion resources. A
@@ -521,3 +536,101 @@ transport is tested with a simulated daemon; real Docker GPU acceptance remains
 outstanding. Browser Docker Job submission remains separate work; Docker node
 registration and idle Agent upgrades are covered by the additive management plan
 in [Docker cluster management](docker-cluster-management-plan.md).
+
+
+## Raw Notebook resources in native Nodes
+
+Raw existing-container nodes now project their authenticated resource observations
+into the existing RLark `Node.status.capacity`, `allocatable`, `used`, `nodeInfo`
+and `addresses` fields. The detail DTO carries the native generation so both views
+reject stale resource/scheduling conditions. The native Node page and Container Cluster detail reuse
+one read-only Node overview. Kubernetes Pod request fallback is never used for Raw.
+The Kubernetes workload placement picker excludes explicit Raw and Docker nodes;
+resource visibility does not add Kubernetes workload support to those runtimes.
+
+- CPU is bounded by effective process affinity and the smallest cgroup v2 ancestor
+  quota. Memory uses the smallest finite cgroup ancestor limit; an unlimited or
+  unavailable memory limit is omitted, not replaced with physical host memory.
+- GPU capacity counts only the operator-authorized UUID set verified visible by
+  the Agent. Extra visible devices do not grant scheduling authority.
+- `Allocatable = Capacity`: these are container resource bounds. No arbitrary
+  Agent/system overhead is subtracted. Zero is distinct from missing information.
+- `Used` is RLark workload reservation accounting, **not live CPU/GPU/memory
+  utilization**. The current Raw runtime reserves the entire Notebook per Task,
+  regardless of requested GPU count. CPU, memory and authorized GPUs remain fully
+  reserved while its exact allocation exists, including terminal Tasks, deletion,
+  cleanup confirmation, lost heartbeat and restart. Only allocation removal frees
+  that reservation. Upgrade holds and external supervisor occupancy block
+  scheduling separately and do not count as RLark workload Used.
+- The control plane stamps `ContainerNode.status.resourceObservedAt` with server
+  time when a valid positive CPU observation arrives. Agents may optionally report
+  OS, architecture and kernel; older Agents without these fields remain compatible
+  but do not get fabricated system information. GPU-only legacy heartbeats do not
+  become a complete fresh resource observation.
+- The independent resource reconciler re-reads bindings and allocations, periodically
+  repairs every 15 seconds, and owns only the projected resource/system fields,
+  `RawResourcesReady` / `RawSchedulingReady` conditions, and
+  `containers.rlark.io/native-resource-projection` / `resources-observed-at`
+  annotations. Projection ownership is fenced by the companion UID. Core retains
+  connectivity `Ready`/Phase and the Node Spec. Status patches use optimistic locks
+  to preserve concurrent conditions. No resource projection acquires/releases a
+  scheduling lock or renews a heartbeat.
+- Observations older than 45 seconds, future timestamps, revoked credentials,
+  stale Spec observations, ambiguous ownership and failed allocation inventory
+  reads cannot advertise free resources. Last known capacity/reservations can stay
+  visible with an unavailable/stale state; the UI shows unknown availability as
+  `—`. A known cordon, maintenance hold or busy Agent shows zero dispatchable
+  resources even when resource accounting is zero. Native resource views are
+  eventually reconciled observations; the current allocation checks remain the
+  authoritative dispatch fence.
+
+This preview does not report physical-host capacity, live utilization, GPU models,
+storage quota, disk pressure or hardware topology. A missing disk field means
+unreported, not a healthy or empty disk. Notebook nodes require neither a Docker
+socket nor systemd / `CAP_NET_ADMIN` for this resource view.
+
+### Resource rollout and read-only verification
+
+1. Apply the updated `containers.rlark.io_containernodes.yaml` CRD before the new
+   Agent API; then deploy the extension controller, Agent API and native Gateway.
+2. Deploy the native Node controller with optimistic status patches, and rebuild
+   the main RLark UI. The two views share the native resource snapshot; there is
+   no separate dashboard or independent resource database.
+3. Upgrade only the Notebook Agent to collect optional system information. Keep
+   the Node cordoned during acceptance and do not restart an active supervisor.
+4. Check the exact companion/native Node UIDs, server observation timestamp,
+   authorized GPUs, resource conditions and `status.nodeInfo`. Verify a second
+   observation refreshes the timestamp without changing ownership or cordon.
+
+```bash
+kubectl --kubeconfig "$MGMT_KUBECONFIG" -n ksyun-container-agents \
+  get containernodes.containers.rlark.io ksyun-a -o yaml
+kubectl --kubeconfig "$MGMT_KUBECONFIG" -n ksyun-container-agents \
+  get nodes.rlinf.io ksyun-a -o yaml
+```
+
+A node without a fresh projection remains connected if its heartbeat is valid,
+but resource availability stays unknown. Upgrading this view neither starts a
+workload nor releases an allocation; task execution acceptance is separate.
+
+
+### Read-only cloud acceptance on 2026-11-03
+
+The existing `ksyun-a` Notebook was verified through the real management API,
+Gateway and main UI (native Node and expanded Container Cluster detail). Both
+views matched the canonical Node snapshot: 100 CPU cores, 1,270,236,577,792 bytes
+of memory (about 1183 GiB), five authorized GPUs, Linux/amd64, kernel
+`5.15.0-88-generic`, and InternalIP `10.1.3.100`. These are this Notebook's
+reported bounds, not the earlier one-GPU test machine's specification.
+
+Capacity equaled Allocatable; RLark workload Used was zero and dispatchable
+availability was zero because the Node stayed cordoned. The exact native and
+companion UIDs were unchanged, connectivity stayed Online, and observation times
+advanced across heartbeats. Only the Agent collection process restarted; the
+existing supervisor and Raylet PIDs/start times were unchanged. No workload was
+submitted. Both actual browser views reported no JavaScript exceptions.
+
+The local Gateway startup configuration now persists `--enable-container-runtime`
+and the optional registration/submission flags; keeping these only in a temporary
+process would make the console return 503 after restart. Diagnostic log/stats
+proxying remains separately configured and is not part of this acceptance.

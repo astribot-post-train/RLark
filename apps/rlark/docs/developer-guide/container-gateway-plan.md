@@ -1,9 +1,129 @@
 # Container gateway and managed enrollment plan
 
-Status: partial implementation. The independent extension now has a tested,
-optional A/Hub mTLS relay for the fixed Agent API described below. SSH-managed
-node installation, UI enrollment/retirement operations, and the cloud-to-robot
-data path remain design/acceptance work; this plan is not complete.
+Status: partial implementation. The independent extension has a tested,
+optional A/Hub mTLS relay and a completed acceptance on the authorized Kingsoft
+Cloud A notebook described below. UI enrollment/retirement workflows, automatic
+certificate renewal, Docker Engine execution, and the cloud-to-robot data path
+remain incomplete.
+
+## 2026-11-02 A enrollment acceptance
+
+The retained `ksyun-containers` cluster now has ContainerNode `ksyun-a` bound to
+its native Raw Node. A connects to the RLark Hub at the public TCP 30000 endpoint
+with the dedicated pinned mTLS gateway; no SSH forwarding is used at runtime. The
+authenticated ContainerNode heartbeat reports the authorized five H100 GPUs,
+100 CPU and the observed memory capacity. Restarting only the local Hub caused a
+clean disconnect and a fresh heartbeat, confirming reconnect behavior.
+
+A is an existing notebook container without Docker Engine, systemd, or
+`CAP_NET_ADMIN`, so this acceptance uses Raw process execution and does not create
+Docker containers or provide a Kubernetes network. Three additive supervisord
+programs manage the gateway, Raw supervisor, and Agent without restarting the
+notebook's existing services. The native Node remains
+`spec.unschedulable=true` because existing Ray/Fleet work consumes the machine;
+no test Job was dispatched. The Agent package currently uses a 72-hour
+node certificate and must be manually regenerated and installed before expiry.
+For this installation the node certificate expires at 2026-11-05 19:41:27
+Asia/Shanghai (11:41:27 UTC); automatic renewal is disabled. Agent log-read and
+rolling-upgrade endpoints are also disabled. Only the scoped node leaf/key,
+server CA, gateway leaf/key and public Hub CA were installed on A; the management
+kubeconfig and CA signing keys remain on the control-plane host.
+
+The package uses the canonical Python path `/root/fleet/python/bin/python3.11`;
+`/opt/conda/bin/python3.11` is a symlink and is intentionally rejected by the
+Raw supervisor's path check.
+
+The extension controller now publishes tightly owned native Node and Cluster
+heartbeat Leases from the authenticated ContainerNode observations. The core
+controllers therefore provide the same `Online`, `Downgraded`, and `Offline`
+aggregation used by Kubernetes clusters. The adapter also projects the Raw
+capability and credential identity required by the core Raw Lease check, fenced
+by the exact native and companion UIDs. It never changes `Node.spec`, Raw
+reservations, or Docker reservations. Online means the connection is fresh;
+it does not make a cordoned node schedulable. The effective scheduling decision
+continues to check the native Node's `spec.unschedulable` and allocation state.
+An idle Raw supervisor does not account for pre-existing Ray/Fleet GPU usage.
+
+The control-plane host runs `rlark-container-controller`, `rlark-container-api`,
+and `rlark-container-hub` as enabled user systemd services. User lingering is
+enabled so logout does not stop them. The API listens only on `127.0.0.1:9444`;
+A's private Agent listener is `10.1.3.100:9444`. A's three additive supervisord
+programs are `rlark-raw-supervisor`, `rlark-container-gateway` and
+`rlark-container-agent`; use targeted `status`, `start`, `stop` or `restart` for
+these names only. Do not stop the trusted Raw supervisor to restart the Agent.
+Notebook replacement still requires verified retirement and fresh enrollment.
+
+Cleanup removed native Node `docker-local-test`, its local
+`rlark-docker-agent-test` Pod, the Pending `ksyun-gpu-smoke-20261031` Job, and the
+old `ksyun-test-1` ContainerNode/native Node. All three real clusters and both
+existing Lumo2 Jobs were retained; no allocations were created on A. The remaining
+container node is `ksyun-a`. Cleanup used controller-owned finalizers, not forced
+finalizer removal.
+
+This acceptance does not establish Lumo2 inference, Ray multi-host traffic,
+Kubernetes Pod networking, or S1U connectivity.
+
+Native connectivity acceptance on 2026-11-02 passed after applying controller
+RBAC and restarting only the extension controller: `ksyun-a` became
+`Online / AgentLeaseActive`, and `ksyun-containers` became `Online` with one of
+one native Nodes online. Pausing only the local Hub let both Leases expire and
+both native resources become `Offline / AgentLeaseExpired` (the reason applies
+to the Node). Starting the Hub restored fresh observations and both resources
+became Online automatically. A remained `spec.unschedulable=true`; no allocations
+or test Jobs were created. Two-member Online → Downgraded → Offline → Online
+aggregation is covered by controller tests, not multi-host cloud acceptance.
+
+## Native connectivity projection
+
+The standalone controller always runs the additive connectivity adapter. It
+reacts to companion changes and repairs current state every 15 seconds. Before
+publishing, it checks the current native and companion UIDs, tenant, authoritative
+`Cluster.spec.agentNamespace`, runtime, current-generation validation/readiness,
+and observed credential against the active credential. Registration alone never
+produces a heartbeat. Busy state, target release readiness, and cordon remain
+separate from connection status.
+
+For each fresh authenticated observation, it maintains
+`node-heartbeat-<native-node-name>` and the namespace's `heartbeat` Lease. Both
+have a 45-second duration and retain the **original server-side observation
+time**, not the adapter's current time. The Cluster Lease uses the newest valid
+member observation. Core controllers derive Node Online/Offline and Cluster
+Online (all registered native Nodes online), Downgraded (some offline), or
+Offline (cluster heartbeat expired); Cluster cordon/drain still takes precedence.
+Status convergence also depends on core controller reconciliation and UI refresh.
+
+Leases have native controller owner references and a
+`containers.rlark.io/native-heartbeat-projection` annotation containing the exact
+companion UID. The adapter refuses an unknown Lease, a replacement native UID,
+an ambiguous namespace/binding, or a foreign Raw projection. It does not delete
+or adopt foreign resources. Raw Nodes receive only the adapter-owned `status.raw`
+and `raw.rlark.io/credential-id` compatibility projection; existing conflicting
+Raw capability must be recovered explicitly. This does not issue native Raw
+credentials or authorize legacy workload execution. Credential rotation requires
+a new authenticated observation before renewal. Container replacement requires
+retirement and fresh registration, not editing the old instance binding.
+
+On lost Agent/Hub/API connectivity, invalid identity, companion deletion, or an
+adapter outage, renewal stops and the retained Leases expire. Reservations and
+running processes remain intact. The next valid heartbeat restores connectivity
+without uncordoning the node. No SSH tunnel or Agent reinstall is needed for
+this projection. Apply the updated controller RBAC before restarting the
+controller: it adds native Node metadata/status patches and heartbeat Lease
+get/list/watch/create/update/patch permissions in agent namespaces, in addition
+to the separate leader-election Role. The main UI needs only a refresh.
+
+```bash
+kubectl --kubeconfig=/path/to/management.kubeconfig apply -f \
+  extensions/container-runtime/config/rbac/container-runtime-controller.yaml
+make -C extensions/container-runtime build
+# For this user-service installation:
+systemctl --user restart rlark-container-controller.service
+kubectl --kubeconfig=/path/to/management.kubeconfig -n ksyun-container-agents \
+  get leases.coordination.k8s.io
+kubectl --kubeconfig=/path/to/management.kubeconfig -n ksyun-container-agents \
+  get nodes.rlinf.io ksyun-a
+kubectl --kubeconfig=/path/to/management.kubeconfig get clusters.rlinf.io ksyun-containers
+```
 
 ## Goal and constraints
 
@@ -53,7 +173,7 @@ Gateway A:
 
 ```bash
 extensions/container-runtime/bin/container-runtime-gateway --mode=gateway \
-  --agent-listen=10.1.3.100:30001 --hub-listen=0.0.0.0:30000 \
+  --agent-listen=10.1.3.100:9444 --hub-listen=0.0.0.0:30000 \
   --server-cert=/etc/rlark/gateway.crt --server-key=/etc/rlark/gateway.key \
   --roots=/etc/rlark/hub-ca.crt --peer-cert-sha256=REPLACE_HUB_LEAF_SHA256
 ```
@@ -69,8 +189,8 @@ extensions/container-runtime/bin/container-runtime-gateway --mode=hub \
 ```
 
 Port 30000 is only the TLS Hub listener and must be explicitly allowed from the
-RLark Hub source. Port 30001 is the private Agent listener and must remain
-private to A/B/C. These values illustrate the current test host's private
+RLark Hub source. Port 9444 is the private Agent listener in the accepted A
+deployment and must remain private to A/B/C. These values illustrate the current test host's private
 address only; query the platform again before deployment because its IP and
 port mapping may change. The Agent must use an HTTPS endpoint whose host
 resolves to A's private address on B/C and whose server certificate SAN matches

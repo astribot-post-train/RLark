@@ -28,6 +28,10 @@ const clustersSource = await readFile(
   new URL("../src/pages/Clusters.tsx", import.meta.url),
   "utf8",
 );
+const nodeOverviewSource = await readFile(
+  new URL("../src/components/NodeOverview.tsx", import.meta.url),
+  "utf8",
+);
 const nodesSource = await readFile(
   new URL("../src/utils/nodes.ts", import.meta.url),
   "utf8",
@@ -179,22 +183,25 @@ test("mock topology exposes a real disk warning on gpu-cloud-01", () => {
 });
 
 test("node detail shows real disk usage with the requested card layout", () => {
-  assert.match(clustersSource, /label: zh \? "磁盘" : "Storage"/);
-  assert.match(clustersSource, /getNodeDiskUsage\(node\)/);
-  assert.match(clustersSource, /node\.status\?\.diskPressure === true/);
-  assert.match(clustersSource, /磁盘使用率已达到/);
-  assert.match(clustersSource, /<AlertCircle size=\{16\} \/>/);
-  assert.match(clustersSource, /className="node-capacity-alert"/);
-  assert.match(clustersSource, /className="node-capacity-alert-tooltip"/);
-  assert.match(clustersSource, /健康与容量告警/);
+  assert.match(nodeOverviewSource, /label: zh \? "磁盘" : "Storage"/);
+  assert.match(nodeOverviewSource, /getNodeDiskUsage\(node\)/);
+  assert.match(nodeOverviewSource, /node\.status\?\.diskPressure === true/);
+  assert.match(nodeOverviewSource, /磁盘使用率已达到/);
+  assert.match(nodeOverviewSource, /<AlertCircle size=\{16\} \/>/);
+  assert.match(nodeOverviewSource, /className="node-capacity-alert"/);
+  assert.match(nodeOverviewSource, /className="node-capacity-alert-tooltip"/);
+  assert.match(nodeOverviewSource, /健康与容量告警/);
   assert.match(
     jobsStyles,
     /\.node-capacity-alert:hover \.node-capacity-alert-tooltip/,
   );
-  assert.match(clustersSource, /used\[key\]\?\.endsWith\("%"\)/);
-  assert.match(clustersSource, /total - \(requested \?\? 0\)/);
-  assert.match(clustersSource, /className="node-capacity-progress"/);
-  assert.match(clustersSource, /<em>\{zh \? "剩余量" : "Available"\}<\/em>/);
+  assert.match(nodeOverviewSource, /used\[key\]\?\.endsWith\("%"\)/);
+  assert.match(nodeOverviewSource, /total - \(requested \?\? 0\)/);
+  assert.match(nodeOverviewSource, /className="node-capacity-progress"/);
+  assert.match(
+    nodeOverviewSource,
+    /<em>\{zh \? "剩余量" : "Available"\}<\/em>/,
+  );
   assert.match(
     jobsStyles,
     /grid-template-columns: repeat\(3, minmax\(0, 1fr\)\)/,

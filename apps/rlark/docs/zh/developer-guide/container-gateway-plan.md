@@ -1,8 +1,102 @@
 # 容器网关与托管接入计划
 
 状态：部分实现。独立扩展已经新增可选的 A/Hub mTLS 固定 Agent API 转发组件及
-测试。SSH 托管安装、UI 接入/退役操作和云端到机器人的数据通路仍待实现或验收，
-本计划尚未全部完成。
+测试，并完成下面所述、已授权金山云 A 开发机的接入验收。UI 接入/退役流程、自动
+证书续签、Docker Engine 执行以及云端到机器人的数据通路仍未完成。
+
+## 2026-11-02 A 接入验收
+
+保留的 `ksyun-containers` 集群现在包含绑定原生 Raw Node 的 ContainerNode
+`ksyun-a`。A 通过公网 TCP 30000 入口使用专用、固定指纹的 mTLS 网关连接 RLark
+Hub；运行时不使用 SSH 转发。经过认证的 ContainerNode 心跳报告了授权的 5 张 H100、
+100 CPU 和观测到的内存容量。只重启本地 Hub 后，连接先断开又恢复，并产生新鲜心跳，
+重连行为通过验证。
+
+A 是没有 Docker Engine、systemd 或 `CAP_NET_ADMIN` 的现有 Notebook 容器，因此本次
+验收使用 Raw 进程执行，不创建 Docker 容器，也不提供 Kubernetes 网络。网关、Raw
+supervisor 和 Agent 由三个新增的 supervisord 程序管理，不会重启 Notebook 原有服务。
+由于现有 Ray/Fleet 工作负载正在使用这台机器，原生 Node 仍保持
+`spec.unschedulable=true`，没有下发测试 Job。Agent 包当前使用 72 小时节点证书，
+过期前必须手动重新生成并安装。本次节点证书于北京时间 2026-11-05 19:41:27
+（UTC 11:41:27）过期，未启用自动续签；Agent 日志读取和滚动升级端点也未启用。
+A 仅安装节点专用叶证书/私钥、服务端 CA、网关叶证书/私钥及 Hub 公共 CA；管理
+kubeconfig 和 CA 签发私钥保留在控制面主机上。
+
+包中使用规范 Python 路径
+`/root/fleet/python/bin/python3.11`；`/opt/conda/bin/python3.11` 是符号链接，
+会被 Raw supervisor 的路径校验有意拒绝。
+
+扩展控制器现在会根据经过认证的 ContainerNode 观测发布严格绑定的原生 Node 和
+Cluster heartbeat Lease，因此核心控制器会继续提供与 Kubernetes 集群相同的
+`Online`、`Downgraded`、`Offline` 聚合状态。适配器还会投影核心 Raw Lease 校验所需的
+Raw 能力和凭据身份，并绑定精确的原生对象 UID 和附属对象 UID；不会修改
+`Node.spec`、Raw reservation 或 Docker reservation。Online 只表示连接新鲜，不代表
+节点可调度；最终可调度判断仍检查原生 Node 的 `spec.unschedulable` 和 allocation 状态。
+Raw supervisor 空闲也不代表现有 Ray/Fleet 占用的 GPU 空闲。
+
+控制面主机通过已启用的用户 systemd 服务运行 `rlark-container-controller`、
+`rlark-container-api` 和 `rlark-container-hub`，并启用 user lingering，避免退出
+登录停止服务。API 只监听 `127.0.0.1:9444`；A 的私网 Agent 入口为
+`10.1.3.100:9444`。A 新增的三个 supervisord 程序为 `rlark-raw-supervisor`、
+`rlark-container-gateway` 和 `rlark-container-agent`，仅对这些名称执行定向
+`status`、`start`、`stop` 或 `restart`。重启 Agent 时不能停止受信任的 Raw supervisor。
+Notebook 实例替换仍须确认旧实例退役并重新接入。
+
+本次清理删除了原生 Node `docker-local-test`、对应本地
+`rlark-docker-agent-test` Pod、Pending 的 `ksyun-gpu-smoke-20261031` Job，以及
+旧 `ksyun-test-1` ContainerNode/原生 Node。三个真实集群和两个已有 Lumo2 Job
+均保留，A 上没有创建 allocation。剩余容器节点为 `ksyun-a`。删除通过控制器完成
+finalizer 清理，没有强制移除 finalizer。
+
+本次验收不代表 Lumo2 推理、Ray 多机通信、Kubernetes Pod 网络或 S1U 连接已经打通。
+
+2026-11-02 原生连通性验收通过：应用控制器 RBAC 并只重启扩展控制器后，`ksyun-a`
+变为 `Online / AgentLeaseActive`，`ksyun-containers` 变为 `Online`，原生节点在线数为
+1/1。仅暂停本地 Hub 后，两份 Lease 过期，原生 Node 和 Cluster 都转为 `Offline`，
+Node 原因为 `AgentLeaseExpired`。启动 Hub 后恢复新鲜观测，两者自动回到 Online。
+A 全程保持 `spec.unschedulable=true`，没有创建 allocation 或测试 Job。两节点的
+Online → Downgraded → Offline → Online 聚合由控制器测试覆盖，不代表已完成云端多机验收。
+
+## 原生连通性投影
+
+独立控制器始终运行新增的连通性适配器。它响应附属资源变化，并每 15 秒按当前状态修复。
+发布前会检查当前原生/附属对象 UID、租户、权威的 `Cluster.spec.agentNamespace`、运行时、
+当前 generation 的校验和 Ready 条件，以及观测凭据是否仍为有效凭据。仅登记节点不会产生
+心跳；忙闲、目标版本就绪及禁止调度与连接状态分别判断。
+
+每次新鲜且经过认证的观测会维护 `node-heartbeat-<原生节点名>` 和该命名空间的
+`heartbeat` Lease。两者有效期均为 45 秒，使用**原始服务端观测时间**，不会用适配器当前
+时间给旧观测续命。Cluster Lease 使用有效成员最新的观测时间。核心控制器据此生成 Node
+Online/Offline，以及 Cluster Online（全部已登记原生 Node 在线）、Downgraded（部分离线）
+或 Offline（集群心跳过期）；Cluster 禁止调度/排空状态仍优先。状态收敛还取决于核心控制器
+的调谐和 UI 刷新周期。
+
+Lease 通过原生对象的 controller owner reference，以及记录精确附属对象 UID 的
+`containers.rlark.io/native-heartbeat-projection` annotation 证明归属。适配器拒绝未知
+Lease、被替换的原生 UID、歧义命名空间/绑定和外部 Raw 投影，不删除或接管外部资源。
+Raw Node 只补写适配器拥有的 `status.raw` 与 `raw.rlark.io/credential-id` 兼容投影；
+已存在且冲突的 Raw 能力须显式恢复。这不会签发原生 Raw 凭据，也不会授权旧工作负载执行。
+凭据轮换后，必须收到新凭据认证的观测才会继续续租；容器实例替换仍需退役并重新登记，不能
+修改旧实例绑定来接管新实例。
+
+Agent/Hub/API 失联、身份失效、附属对象删除或适配器停机后，停止续租并保留 Lease 等待
+自然过期，reservation 和正在运行的进程保留。下一次有效心跳恢复在线，但不会解除禁止调度。
+该投影不需要 SSH 隧道或重装 Agent。重启控制器前先应用更新后的控制器 RBAC：除独立的选主
+Role 外，新增 agent 命名空间的原生 Node metadata/status patch 和 heartbeat Lease 的
+get/list/watch/create/update/patch 权限。主 UI 刷新即可看到状态。
+
+```bash
+kubectl --kubeconfig=/path/to/management.kubeconfig apply -f \
+  extensions/container-runtime/config/rbac/container-runtime-controller.yaml
+make -C extensions/container-runtime build
+# 当前用户服务安装方式：
+systemctl --user restart rlark-container-controller.service
+kubectl --kubeconfig=/path/to/management.kubeconfig -n ksyun-container-agents \
+  get leases.coordination.k8s.io
+kubectl --kubeconfig=/path/to/management.kubeconfig -n ksyun-container-agents \
+  get nodes.rlinf.io ksyun-a
+kubectl --kubeconfig=/path/to/management.kubeconfig get clusters.rlinf.io ksyun-containers
+```
 
 ## 目标与约束
 
@@ -42,7 +136,7 @@ A 上的启动示例：
 
 ```bash
 extensions/container-runtime/bin/container-runtime-gateway --mode=gateway \
-  --agent-listen=10.1.3.100:30001 --hub-listen=0.0.0.0:30000 \
+  --agent-listen=10.1.3.100:9444 --hub-listen=0.0.0.0:30000 \
   --server-cert=/etc/rlark/gateway.crt --server-key=/etc/rlark/gateway.key \
   --roots=/etc/rlark/hub-ca.crt --peer-cert-sha256=REPLACE_HUB_LEAF_SHA256
 ```
@@ -58,7 +152,7 @@ extensions/container-runtime/bin/container-runtime-gateway --mode=hub \
 ```
 
 30000 端口仅作为 TLS Hub 入口，必须由网络策略明确允许 RLark Hub 来源访问。
-30001 是私网 Agent 入口，只允许 A/B/C 私网访问。这里的地址只是当前测试机只读
+9444 是本次 A 部署使用的私网 Agent 入口，只允许 A/B/C 私网访问。这里的地址只是当前测试机只读
 检查得到的示例；部署前要重新查询，因为平台分配地址和端口映射可能变化。B/C 上
 Agent 使用的 HTTPS Endpoint 主机名必须能解析到 A 私网地址，且服务证书 SAN 必须
 匹配该主机名。不能因为当前测试机有 SSH 连接就直接在那里启服务：本轮只读检查
@@ -89,7 +183,9 @@ Task 端点，并设置资源上限。自动证书接入、续签及动态地址
 凭据连接，检查运行时与授权 GPU，然后在私有目录安装经过验证的版本。等待经过认证
 的新鲜心跳；重试不得接管外部文件或进程。已有工作负载和结果不明确的操作保留
 预留。主机支持 systemd 时使用 systemd；无 systemd 的 Notebook 使用显式管理的
-前台启动器。A 本身须先独立安装，不能依赖尚不存在的网关自动安装自己。
+前台启动器。A 本身须先独立安装，不能依赖尚不存在的网关自动安装自己。对于没有 systemd 的
+Notebook，只能在 `/etc/kaic/services.d/` 新增唯一命名的配置，并通过现有
+supervisord 的 `reread`/`add` 操作管理；不能重启无关的 Notebook 程序。
 
 复用已有的可选空闲滚动升级和分配隔离：验证产物和清理完成后才进入下一节点。
 退役时阻止新任务，等待精确清理，撤销节点凭据，只删除可证明属于本扩展的资源。

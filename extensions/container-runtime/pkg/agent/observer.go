@@ -53,14 +53,15 @@ type Identity struct {
 // Observation is supplied by a trusted Agent after local checks. Capacity is
 // a bounded snapshot, separate from the operator-authorized GPU allowlist.
 type Observation struct {
-	Runtime         ext.Runtime       `json:"runtime,omitempty"`
-	InstanceID      string            `json:"instanceID,omitempty"`
-	Version         string            `json:"version"`
-	PrivateAddress  string            `json:"privateAddress"`
-	Capacity        map[string]string `json:"capacity,omitempty"`
-	Capabilities    []string          `json:"capabilities,omitempty"`
-	VisibleGPUUUIDs []string          `json:"visibleGPUUUIDs,omitempty"`
-	Busy            bool              `json:"busy"`
+	Runtime         ext.Runtime         `json:"runtime,omitempty"`
+	InstanceID      string              `json:"instanceID,omitempty"`
+	Version         string              `json:"version"`
+	PrivateAddress  string              `json:"privateAddress"`
+	Capacity        map[string]string   `json:"capacity,omitempty"`
+	SystemInfo      *ext.NodeSystemInfo `json:"systemInfo,omitempty"`
+	Capabilities    []string            `json:"capabilities,omitempty"`
+	VisibleGPUUUIDs []string            `json:"visibleGPUUUIDs,omitempty"`
+	Busy            bool                `json:"busy"`
 }
 
 // UpgradeCapability is advertised only by agents built with the scoped,
@@ -126,6 +127,13 @@ func (r Reporter) Report(ctx context.Context, id Identity, obs Observation) erro
 	node.Status.Busy = obs.Busy
 	now := metav1.NewTime(r.now())
 	node.Status.LastHeartbeatTime = &now
+	node.Status.SystemInfo = obs.SystemInfo.DeepCopy()
+	// Legacy Agents with capacity remain compatible; GPU-only heartbeats do
+	// not manufacture a complete CPU resource observation.
+	node.Status.ResourceObservedAt = nil
+	if cpu, err := resource.ParseQuantity(obs.Capacity["cpu"]); err == nil && cpu.Sign() > 0 {
+		node.Status.ResourceObservedAt = now.DeepCopy()
+	}
 	meta.SetStatusCondition(&node.Status.Conditions, metav1.Condition{Type: "Ready", Status: metav1.ConditionTrue, Reason: "AgentObserved", Message: "Authenticated Agent reported an authorized capability", ObservedGeneration: node.Generation, LastTransitionTime: now})
 	if node.Spec.Runtime == "Docker" {
 		executionStatus, executionReason := metav1.ConditionFalse, "DockerObservationOnly"
@@ -212,6 +220,13 @@ func (r Reporter) validateBindings(ctx context.Context, node *ext.ContainerNode,
 }
 
 func validateObservation(node *ext.ContainerNode, obs Observation) error {
+	if obs.SystemInfo != nil {
+		for _, value := range []string{obs.SystemInfo.OperatingSystem, obs.SystemInfo.Architecture, obs.SystemInfo.KernelVersion} {
+			if len(value) > 256 || strings.ContainsAny(value, "\x00\r\n") {
+				return ErrCapability
+			}
+		}
+	}
 	// Preserve legacy Raw heartbeats while requiring explicit Docker runtime
 	// and daemon identity. A successful connection to another socket cannot
 	// make a replacement Engine appear as the registered node.

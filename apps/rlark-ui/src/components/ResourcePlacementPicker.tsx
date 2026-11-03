@@ -52,7 +52,9 @@ type ResourceOption = {
 
 const isSchedulable = (resource: NodeResource) =>
   resource.node.status?.phase !== "Offline" &&
-  !resource.node.spec?.unschedulable;
+  !resource.node.spec?.unschedulable &&
+  (!resource.node.spec?.agentType ||
+    resource.node.spec.agentType === "Kubernetes");
 
 const quantity = (value?: string) => {
   const parsed = Number.parseFloat(value ?? "0");

@@ -370,3 +370,90 @@ test("diagnostic scope changes on allocation replacement, cleanup and capability
   );
   assert.notEqual(diagnosticInventory(undefined), scope);
 });
+
+test("native resource transport validates optional projection and recovers after malformed data", async () => {
+  const resources = {
+    name: "raw",
+    namespace: "agents",
+    generation: 2,
+    phase: "Online",
+    observedAt: new Date().toISOString(),
+    capacity: { cpu: "2500m" },
+    allocatable: { cpu: "2500m" },
+    used: null,
+    nodeInfo: { architecture: "amd64" },
+    addresses: null,
+    conditions: null,
+  };
+  const node = {
+    name: "raw",
+    uid: "companion",
+    nativeUID: "native",
+    instanceID: "instance",
+    privateAddress: "10.0.0.1",
+    environment: "test",
+    networkScope: "private",
+    agentVersion: "test",
+    resourceVersion: "2",
+    ready: true,
+    schedulable: false,
+    busy: false,
+    held: false,
+    bindingValid: true,
+    unschedulable: true,
+    authorizedGPUUUIDs: null,
+    capabilities: null,
+    conditions: null,
+    lastHeartbeatTime: null,
+    capacity: null,
+  };
+  const inventory = {
+    cluster: {
+      namespace: "agents",
+      name: "cloud",
+      uid: "cluster",
+      resourceVersion: "2",
+      tenantID: "tenant",
+      runtime: "Raw",
+      targetAgentRelease: "",
+      bindingValid: true,
+      deleting: false,
+      nodeCount: 1,
+      readyNodes: 1,
+      busyNodes: 0,
+      gpuCount: 0,
+      allocationCount: 0,
+      upgradeCount: 0,
+      conditions: null,
+    },
+    nodes: [node],
+    releases: [],
+    allocations: [],
+    upgrades: [],
+  };
+  const client = new Client();
+  globalThis.fetch = async () => new Response(JSON.stringify(inventory));
+  assert.equal(
+    (await client.detail("agents", "cloud")).nodes[0].resources,
+    undefined,
+  );
+  for (const invalid of [
+    null,
+    { ...resources, used: { cpu: 0 } },
+    { ...resources, observedAt: "invalid" },
+    { ...resources, generation: "2" },
+    { ...resources, addresses: [{}] },
+    { ...resources, nodeInfo: { architecture: 2 } },
+  ]) {
+    node.resources = invalid;
+    await assert.rejects(
+      client.detail("agents", "cloud"),
+      (e) => e instanceof APIError && e.code === "invalid_response",
+    );
+  }
+  node.resources = resources;
+  assert.deepEqual(
+    (await client.detail("agents", "cloud")).nodes[0].resources,
+    resources,
+  );
+});

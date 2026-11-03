@@ -10,8 +10,17 @@ metadata:
   name: container-runtime-controller
 rules:
   - apiGroups: ["rlinf.io"]
-    resources: ["clusters", "nodes"]
+    resources: ["clusters"]
     verbs: ["get", "list", "watch"]
+  - apiGroups: ["rlinf.io"]
+    resources: ["nodes"]
+    verbs: ["get", "list", "watch", "patch"]
+  - apiGroups: ["rlinf.io"]
+    resources: ["nodes/status"]
+    verbs: ["get", "patch"]
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
   - apiGroups: ["rlinf.io"]
     resources: ["jobs"]
     verbs: ["get", "list", "watch", "patch"]

@@ -108,8 +108,9 @@ type NodeStatus struct {
 	// ConditionTypeReady 的 Reason 同源，供列表视图直接展示。
 	// 该字段与 Conditions 均由数据面 node-agent 独占写入。
 	Reason string `json:"reason,omitempty"`
-	// Conditions 记录节点的结构化状态结论，当前仅包含 ConditionTypeReady。
-	// 它由观测（而非 Spec）驱动，因此不填写 ObservedGeneration。
+	// Conditions records independently owned observations. Core owns Ready;
+	// the container extension owns RawResourcesReady and RawSchedulingReady.
+	// Ready is observation-driven and does not set ObservedGeneration.
 	// +listType=map
 	// +listMapKey=type
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
@@ -125,7 +126,7 @@ type NodeStatus struct {
 	Addresses    []corev1.NodeAddress `json:"addresses,omitempty"`
 	DiskPressure *bool                `json:"diskPressure,omitempty"`
 	Storage      *NodeStorageStatus   `json:"storage,omitempty"`
-	Allocatable  corev1.ResourceList  `json:"allocatable,omitempty"` // 需要预留系统组件 agent
+	Allocatable  corev1.ResourceList  `json:"allocatable,omitempty"` // Runtime-reported scheduling upper bounds; active reservations belong in Used.
 	Capacity     corev1.ResourceList  `json:"capacity,omitempty"`
 	Used         corev1.ResourceList  `json:"used,omitempty"`
 	// PullProgress 是节点上正在进行的镜像拉取进度，由 node-agent 上报。

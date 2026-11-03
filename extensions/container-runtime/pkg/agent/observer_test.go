@@ -163,3 +163,40 @@ func TestDockerReporterIdentityCapacityAndObservationOnly(t *testing.T) {
 		})
 	}
 }
+
+func TestReporterResourceObservationUsesServerTimeAndOptionalSystemInfo(t *testing.T) {
+	for _, legacy := range []bool{false, true} {
+		t.Run(map[bool]string{true: "old-agent", false: "system-info"}[legacy], func(t *testing.T) {
+			r, id, node := observerFixture(t)
+			obs := Observation{Version: "v1", PrivateAddress: node.Spec.PrivateAddress, VisibleGPUUUIDs: []string{"GPU-a", "GPU-extra"}, Capacity: map[string]string{"nvidia.com/gpu": "1"}}
+			if !legacy {
+				obs.Capacity["cpu"] = "2500m"
+				obs.Capacity["memory"] = "8Gi"
+				obs.SystemInfo = &ext.NodeSystemInfo{OperatingSystem: "linux", Architecture: "amd64", KernelVersion: "6.8.0"}
+			}
+			if err := r.Report(context.Background(), id, obs); err != nil {
+				t.Fatal(err)
+			}
+			var got ext.ContainerNode
+			if err := r.Client.Get(context.Background(), client.ObjectKeyFromObject(node), &got); err != nil {
+				t.Fatal(err)
+			}
+			if got.Status.Capacity["nvidia.com/gpu"] != "1" {
+				t.Fatal("visible but unauthorized GPU counted")
+			}
+			if legacy {
+				if got.Status.ResourceObservedAt != nil || got.Status.SystemInfo != nil {
+					t.Fatal("legacy observation fabricated resources")
+				}
+			} else {
+				if got.Status.ResourceObservedAt == nil || !got.Status.ResourceObservedAt.Time.Equal(r.Now()) || got.Status.SystemInfo.KernelVersion != "6.8.0" {
+					t.Fatalf("bad projection: %#v", got.Status)
+				}
+				obs.SystemInfo.KernelVersion = "injected\nvalue"
+				if err := r.Report(context.Background(), id, obs); !errors.Is(err, ErrCapability) {
+					t.Fatalf("invalid system info accepted: %v", err)
+				}
+			}
+		})
+	}
+}

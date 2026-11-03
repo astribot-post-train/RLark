@@ -13,7 +13,9 @@ import (
 	"strings"
 	"time"
 
+	ext "github.com/astribot-post-train/rlark/extensions/container-runtime/core/api/v1alpha1"
 	"github.com/astribot-post-train/rlark/extensions/container-runtime/pkg/runtime/raw/supervision"
+	"golang.org/x/sys/unix"
 )
 
 // LocalObserver reports Raw node observations, never GPU entitlement. A missing
@@ -52,7 +54,7 @@ func (o LocalObserver) Observe(ctx context.Context) (Observation, error) {
 	if err != nil {
 		return Observation{}, err
 	}
-	obs := Observation{Version: o.Version, PrivateAddress: o.PrivateAddress, Capacity: capacity, VisibleGPUUUIDs: gpus, Busy: status.Busy}
+	obs := Observation{Version: o.Version, PrivateAddress: o.PrivateAddress, Capacity: capacity, SystemInfo: observeSystemInfo(unix.Uname), VisibleGPUUUIDs: gpus, Busy: status.Busy}
 	if o.EnableUpgrades {
 		obs.Capabilities = []string{UpgradeCapability, "agent-platform/" + runtime.GOOS + "/" + runtime.GOARCH}
 	}
@@ -106,4 +108,19 @@ func (b *boundedOutput) Write(p []byte) (int, error) {
 	}
 	b.data = append(b.data, p...)
 	return len(p), nil
+}
+
+// A failed optional kernel probe never hides an otherwise valid heartbeat.
+func observeSystemInfo(uname func(*unix.Utsname) error) *ext.NodeSystemInfo {
+	info := &ext.NodeSystemInfo{OperatingSystem: runtime.GOOS, Architecture: runtime.GOARCH}
+	var name unix.Utsname
+	if uname(&name) == nil {
+		for _, b := range name.Release {
+			if b == 0 {
+				break
+			}
+			info.KernelVersion += string(b)
+		}
+	}
+	return info
 }

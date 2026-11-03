@@ -22,6 +22,17 @@ Allocation、其中的 Job 引用和 Agent 升级作为独立维度展示。控�
 terminal/exec、自动注册、Docker Engine 创建和多节点调度仍不属于本预览版。
 有界 Raw 日志读取需要显式启用独立的回环日志监听器和节点轮询器。
 
+## 原生在线状态
+
+扩展控制器将当前经过认证的 ContainerNode 观测投影为精确绑定 UID 的原生 heartbeat
+Lease。原生 Node 和 Cluster 页面使用核心控制器的 Online/Offline 和
+Online/Downgraded/Offline 聚合。Lease 有效期 45 秒，使用原始服务端心跳时间；停止
+Hub 或适配器会停止续租，下一次有效观测恢复在线。在线与可调度分别判断：原生 Node
+禁止调度、工作负载预留、运行时能力和版本就绪条件仍然有效。适配器只拥有自身 Lease
+及受控 Raw 能力/凭据投影，拒绝未知 Lease 或冲突的原生身份，不修改 Node Spec 或
+reservation。应用更新后的控制器 RBAC 并重启扩展控制器后，已有 UI 刷新即可。
+详见[连通性投影契约和验收](container-gateway-plan.md)。
+
 ## 资源与所有权
 
 扩展拥有 `containers.rlark.io/v1alpha1` 附属资源组。`ContainerCluster`
@@ -408,3 +419,79 @@ host network 流量归属。仅支持手动读取；切换/退出、观测到 al
 后需手动重试。启用、所有权、限额和故障恢复见 [Docker Agent](docker-agent-observation.md)。
 底层 Engine 传输通过模拟 daemon 测试，真实 Docker GPU 验收仍未完成。浏览器
 Docker Job 提交仍是后续工作；Docker 登记和升级见[集群管理交付计划](docker-cluster-management-plan.md)。
+
+
+## Raw Notebook 资源复用原生 Node
+
+Raw 已有容器节点现已将经过身份校验的资源观测投影到原有 RLark
+`Node.status.capacity`、`allocatable`、`used`、`nodeInfo` 和 `addresses`。
+详情 DTO 包含原生 generation，使两处视图都能拒绝过期资源/调度条件。
+原生节点页与容器集群详情复用同一个只读节点概况组件，Raw 不使用 Kubernetes
+Pod 申请量作为回退值。Kubernetes 作业节点选择器排除显式 Raw 和 Docker 节点；
+能看到资源不代表这些运行时可以执行 Kubernetes 工作负载。
+
+- CPU 取进程有效亲和性与 cgroup v2 各级祖先配额的较小值。内存取各级祖先最小有限
+  上限；无限或无法获取的内存上限不填报，不拿物理宿主内存代替。
+- GPU 只统计管理员授权、并由 Agent 确认可见的 UUID 集合。额外可见的卡不带来调度权限。
+- `Allocatable = Capacity`，表示容器资源上限，不任意扣除 Agent/系统开销。
+  有效的零值与缺失信息严格区分。
+- `Used` 是 RLark 工作负载预留量，**不是 CPU/GPU/内存实时利用率**。当前 Raw 运行时
+  每个 Task 独占整个 Notebook，与请求几张卡无关。只要对应分配对象仍存在，所有已知
+  CPU、内存和授权 GPU 都继续预留；任务终止、对象删除中、清理确认、心跳失联或重启
+  都不会直接释放。只有分配对象删除后才释放。升级维护锁和 supervisor 发现的外部占用
+  单独阻止调度，不计入 RLark 工作负载 Used。
+- 控制面在收到有效正数 CPU 观测时，使用服务端时间写入
+  `ContainerNode.status.resourceObservedAt`。Agent 可选上报 OS、架构和内核版本；
+  旧 Agent 缺少这些字段仍兼容，但不会伪造系统信息。只有 GPU 的旧心跳不视为完整的新鲜资源观测。
+- 独立资源控制器重新读取绑定与分配，每 15 秒修复，只负责投影资源/系统字段、
+  `RawResourcesReady` / `RawSchedulingReady` 条件，以及
+  `containers.rlark.io/native-resource-projection` / `resources-observed-at` 注解。
+  投影所有权绑定 companion UID，核心继续负责连接 `Ready`/Phase 与 Node Spec。
+  状态补丁使用乐观锁，保留并发写入的其他条件。资源投影不创建/释放调度锁，也不续心跳。
+- 超过 45 秒的观测、未来时间、凭证撤销、过期 Spec 观测、所有权冲突或读取分配清单
+  失败，都不能宣告资源空闲。上次容量与预留量可保留展示，同时标明不可用/过期；
+  未知剩余量显示 `—`。已知停止调度、维护或 Agent 忙碌时，即使预留量为零，可下发资源
+  仍为零。原生资源视图最终一致，真正下发仍以当前分配检查为准。
+
+本预览不报告物理宿主容量、实时利用率、GPU 型号、存储配额、磁盘压力和硬件拓扑。
+磁盘缺失表示未上报，不表示磁盘健康或空闲。Notebook 节点的这项资源展示不需要
+Docker socket、systemd 或 `CAP_NET_ADMIN`。
+
+### 资源功能部署与只读验收
+
+1. 新 Agent API 启动前，先应用更新后的 `containers.rlark.io_containernodes.yaml` CRD，
+   然后部署扩展控制器、Agent API 与原生 Gateway。
+2. 部署使用乐观锁状态补丁的原生节点控制器，重新构建 RLark 主 UI。两处视图使用同一份
+   原生资源快照，不增加独立仪表盘或资源数据库。
+3. 只升级 Notebook Agent 采集进程以获得可选系统信息。验收期间保持 Node 停止调度，
+   不重启承载活动任务的 supervisor。
+4. 核对 companion/native Node 的准确 UID、服务端观测时间、授权 GPU、资源条件及
+   `status.nodeInfo`；确认第二次观测更新时间，所有权与停止调度状态不变。
+
+```bash
+kubectl --kubeconfig "$MGMT_KUBECONFIG" -n ksyun-container-agents \
+  get containernodes.containers.rlark.io ksyun-a -o yaml
+kubectl --kubeconfig "$MGMT_KUBECONFIG" -n ksyun-container-agents \
+  get nodes.rlinf.io ksyun-a -o yaml
+```
+
+没有新鲜资源投影的节点，只要心跳有效仍可显示已连接，但资源可用量保持未知。
+升级资源展示不会启动工作负载或释放分配；任务执行验收另行进行。
+
+
+### 2026-11-03 云端只读验收
+
+通过真实管理 API、Gateway 和 RLark 主 UI，检查了现有 `ksyun-a` Notebook 的
+原生节点页与展开后的容器集群详情。两处与原生 Node 快照一致：100 核 CPU、
+1,270,236,577,792 字节内存（约 1183 GiB）、5 张授权 GPU、Linux/amd64、
+内核 `5.15.0-88-generic`，以及内网地址 `10.1.3.100`。这是当前 Notebook 上报的
+资源上限，不是早期单 GPU 测试机的规格。
+
+Capacity 与 Allocatable 相等；RLark 工作负载 Used 为零，节点保持停止调度，因此
+可下发资源为零。原生与 companion UID 均未改变，连接保持 Online，观测时间随心跳
+持续刷新。仅重启了 Agent 采集进程，原有 supervisor 和 Raylet 的 PID/启动时间未变。
+未提交任何工作负载，两个真实页面均无 JavaScript 异常。
+
+本地 Gateway 的持久启动配置已包含 `--enable-container-runtime` 及可选注册/提交开关；
+只在临时进程中添加这些开关会导致重启后控制台返回 503。诊断日志/资源快照代理仍需
+单独配置，不在本次验收范围内。

@@ -83,16 +83,28 @@ type ContainerNodeSpec struct {
 	// +listType=set
 	AuthorizedGPUUUIDs []string `json:"authorizedGPUUUIDs,omitempty"`
 }
+
+// NodeSystemInfo describes the existing container environment, not its physical host.
+type NodeSystemInfo struct {
+	OperatingSystem string `json:"operatingSystem,omitempty"`
+	Architecture    string `json:"architecture,omitempty"`
+	KernelVersion   string `json:"kernelVersion,omitempty"`
+}
+
 type ContainerNodeStatus struct {
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
 	// AgentCredentialID is an enrollment identity, never a secret or token.
-	AgentCredentialID  string             `json:"agentCredentialID,omitempty"`
-	AgentVersion       string             `json:"agentVersion,omitempty"`
-	TargetAgentVersion string             `json:"targetAgentVersion,omitempty"`
-	PrivateAddress     string             `json:"privateAddress,omitempty"`
-	Schedulable        bool               `json:"schedulable,omitempty"`
-	Busy               bool               `json:"busy,omitempty"`
-	Capacity           map[string]string  `json:"capacity,omitempty"`
+	AgentCredentialID  string            `json:"agentCredentialID,omitempty"`
+	AgentVersion       string            `json:"agentVersion,omitempty"`
+	TargetAgentVersion string            `json:"targetAgentVersion,omitempty"`
+	PrivateAddress     string            `json:"privateAddress,omitempty"`
+	Schedulable        bool              `json:"schedulable,omitempty"`
+	Busy               bool              `json:"busy,omitempty"`
+	Capacity           map[string]string `json:"capacity,omitempty"`
+	// ResourceObservedAt is server time for the last accepted resource snapshot.
+	// It is separate from liveness; absent fields are unknown, never zero.
+	ResourceObservedAt *metav1.Time       `json:"resourceObservedAt,omitempty"`
+	SystemInfo         *NodeSystemInfo    `json:"systemInfo,omitempty"`
 	AuthorizedGPUUUIDs []string           `json:"authorizedGPUUUIDs,omitempty"`
 	Capabilities       []string           `json:"capabilities,omitempty"`
 	Conditions         []metav1.Condition `json:"conditions,omitempty"`

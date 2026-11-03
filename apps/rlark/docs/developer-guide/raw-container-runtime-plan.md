@@ -595,3 +595,18 @@ child-create responses, controller reconstruction, whole-set replacement, and
 terminal identity retention. Agent tests authorize the exact non-first template
 and reject malformed, missing or ambiguous members. These are component tests;
 no multi-node cloud GPU or Ray/RLinf acceptance is claimed for this increment.
+
+## Raw Notebook resource projection implementation
+
+Implementation target (2026-11-03): reuse native Node resources and the main UI for existing Notebook containers. One Notebook remains one Raw Node; no Docker socket or new cloud container is required.
+
+1. Extend authenticated observations with optional OS, architecture and kernel information and a server-recorded resource observation time. Keep old Agent payloads readable.
+2. Reconcile cgroup/affinity capacity into native `capacity` and `allocatable`. Do not subtract arbitrary Agent overhead. Unlimited memory remains unknown; visible GPUs never grant entitlement beyond authorized UUIDs.
+3. Derive `used` from durable workload allocations independently of Agent liveness. Raw currently reserves the entire Notebook, including known CPU/memory and authorized GPUs, until cleanup and allocation deletion. Upgrade holds and external occupancy are separate availability dimensions.
+4. Project only UID/tenant/instance-bound fields owned by this extension. Preserve core connectivity, reservations and operator metadata. Publish resource validity, scheduling availability and observation time; stale or uncertain data must never imply free capacity.
+5. Reuse a read-only native resource/system presentation in native Node views and Container Cluster details. Preserve runtime eligibility: exposing Raw resources does not enable Kubernetes workloads on Raw.
+6. Validate collection, ownership, allocation cleanup, outages, restarts, concurrent status writers, compatibility and bilingual docs. Real A verification keeps the node cordoned and does not interrupt existing work.
+
+This increment excludes live utilization, host topology, filesystem quota and disk pressure. Notebook cgroup bounds are not task-level enforcement or measurements of currently free hardware. Update this section with implementation and acceptance evidence in the same change.
+
+The resource projection and shared native overview are implemented in this branch. See [resource semantics and rollout](container-runtime-console.md#raw-notebook-resources-in-native-nodes).
