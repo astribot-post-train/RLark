@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"net/netip"
 	"sort"
 	"strconv"
 
@@ -322,6 +323,13 @@ func applyRayEnvironment(spec *corev1.PodSpec, ray taskapi.RayExecutionParameter
 		headAddress := RayHeadServiceName(ray.HeadTaskName)
 		if domain != "" {
 			headAddress = ray.HeadTaskName + "-0.rlark-domain"
+		}
+		if ray.HeadAddress != "" {
+			address, err := netip.ParseAddr(ray.HeadAddress)
+			if err != nil || !address.Is4() || address.IsUnspecified() || address.IsMulticast() {
+				return fault.New(fault.InvalidArgument, "Ray headAddress must be a unicast IPv4 address without a port")
+			}
+			headAddress = address.String()
 		}
 		desired["RLARK_HEAD_ADDRESS"] = corev1.EnvVar{Name: "RLARK_HEAD_ADDRESS", Value: headAddress}
 	case taskapi.RayRoleHead:

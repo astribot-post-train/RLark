@@ -4,7 +4,7 @@ This is an independently buildable Go module for moving Docker and Raw runtime i
 
 Current contents are an extraction copy of preview Docker/Raw runtime, allocation and supervisor packages, typed companion API/CRDs, UID/tenant binding checks, validation controller, a durable per-Node reservation planner, a Raw Job controller, cleanup receipts, a dedicated mTLS observation endpoint and a Linux foreground Raw Agent. The endpoint trusts only a verified client certificate signed by its configured Agent CA and writes status for the exact current ContainerNode UID, credential, native references, tenant, private address, target release and operator GPU allowlist. The Agent observes the current cgroup-v2 CPU/memory boundary, visible GPU UUIDs and private supervisor occupancy, then retries authenticated heartbeats with bounded backoff. It fails closed when the supervisor or GPU observation is unavailable and never treats visible GPUs as entitlement. The companion allocation package implements an API-backed exclusive per-native-Node lock, exact-UID recovery, legacy reservation fencing and cleanup-confirmed release. With both `--enable-job-reservations=true` and `--enable-task-execution=true`, the preview path can execute independently allocated, strictly validated Raw process Tasks through the node-scoped mTLS Task channel and existing Host/Coordinator/supervisor; the execution API only revalidates an existing allocation and cannot create one. Automatic enrollment/renewal remains incomplete; administrator UI integration is available in the main RLark UI. Docker Ray group scheduling is an opt-in preview; Raw multi-template execution remains independent. Bounded Raw log transport is an opt-in preview: it requires task execution, an administrator loopback listener, a Gateway JWT key, and the node log poller; private-cloud end-to-end acceptance passed on 2026-10-31. Target-driven idle Agent rollout is an opt-in preview and does not make cloud acceptance production-ready. This module is not a production scheduler. Native Jobs that declare `rlark.io/controller-owner: containers.rlark.io` fail closed if the extension owner is not installed.
 
-Run `make test`, `make vet`, `make build`, or `make generate-crds` here. `make build` writes `bin/container-runtime-controller`, `bin/container-runtime-api`, `bin/container-runtime-agent`, `bin/container-runtime-admin`, and `bin/raw-supervisor`; it does not package or install them on container hosts. The API command requires a TLS server certificate, a dedicated Agent client CA, and a kubeconfig/service account with the narrow permissions in `config/rbac/`. The endpoint listens on `POST /v1/heartbeat`. Start the Linux Agent with an HTTPS origin, node certificate/key, server CA, version, private address and private Raw supervisor socket. It observes before every heartbeat, retries transient failures, and requires the supervisor status to prove occupancy; there is no `--allow-no-gpu` or idle fallback. Agent certificate issuance, enrollment and deployment wiring remain operator-managed and are not integrated with RLark's native Server. `GOWORK=off` is used to prove the module resolves from its own `go.mod` and `go.sum`.
+Run `make test`, `make vet`, `make build`, or `make generate-crds` here. `make build` writes `bin/container-runtime-controller`, `bin/container-runtime-api`, `bin/container-runtime-agent`, `bin/container-runtime-admin`, `bin/container-runtime-gateway`, `bin/container-runtime-ray-relay`, and `bin/raw-supervisor`; it does not package or install them on container hosts. The API command requires a TLS server certificate, a dedicated Agent client CA, and a kubeconfig/service account with the narrow permissions in `config/rbac/`. The endpoint listens on `POST /v1/heartbeat`. Start the Linux Agent with an HTTPS origin, node certificate/key, server CA, version, private address and private Raw supervisor socket. It observes before every heartbeat, retries transient failures, and requires the supervisor status to prove occupancy; there is no `--allow-no-gpu` or idle fallback. Agent certificate issuance, enrollment and deployment wiring remain operator-managed and are not integrated with RLark's native Server. `GOWORK=off` is used to prove the module resolves from its own `go.mod` and `go.sum`.
 
 The optional `container-runtime-gateway` binary implements the first A/Hub
 communication component described in the paired gateway plan. It relays Agent
@@ -20,7 +20,7 @@ connect Lumo2 and the robot environment.
 
 The standalone controller defaults to validation and authenticated native connectivity projection; workload reservations remain opt-in. The additive connectivity adapter maintains UID-owned native Node/Cluster heartbeat Leases from current authenticated companion observations, preserving their original server-side timestamp and a 45-second expiry. It projects only adapter-owned Raw capability/credential identity and never changes Node Spec or workload reservations. Unknown Leases and conflicting Raw projections are rejected; stopping the adapter or losing Agent connectivity lets Leases expire. Apply the updated controller RBAC before restart. The main UI needs only a refresh; see the paired [English](../../apps/rlark/docs/developer-guide/container-gateway-plan.md#native-connectivity-projection) and [中文](../../apps/rlark/docs/zh/developer-guide/container-gateway-plan.md) operational contract. It uses Lease leader election in `rlark-system`; configure `--leader-election-namespace` and the controller RBAC manifest when using another namespace. `--enable-job-reservations=true` opts into the isolated preview controller with an uncached API client. The API and Agent each require their own `--enable-task-execution=true` flag for scoped execution; apply `config/rbac/container-runtime-api-execution.yaml` only for this preview. The controller materializes one independent Raw process Task per named template (up to 16), checks selectors/identity/tenant, aggregates current Running/Succeeded/Failed observations, and releases an allocation only after durable supervisor cleanup, an exact cleanup proof and observed deletion. Completed Task identity is retained so a restart cannot rerun it; suspension, deletion, template changes and explicit restart retire it through the existing cleanup workflow. The optional native `ControllerExtension()` remains validation-only. Stopping the controller leaves reservations intact. Task transport is deliberately limited to the exact certificate-bound allocation and Task; arbitrary Kubernetes reads, watches, discovery, secrets, proxying and allocation creation are denied. Automatic enrollment, historical log archives and Raw Ray/RLinf group coordination remain incomplete; bounded on-demand Raw logs are available only through the separate opt-in preview listener. Idle Agent rollout is an opt-in preview described below.
 
-The detailed target, rollout, cloud test constraints and acceptance gates are maintained in the paired RLark developer plan at `../../apps/rlark/docs/developer-guide/raw-container-runtime-plan.md` and its Chinese counterpart.
+The detailed target, rollout, cloud test constraints and acceptance gates are maintained in the paired RLark developer plan at `../../apps/rlark/docs/developer-guide/raw-container-runtime-plan.md` and its Chinese counterpart. Container topology roles and GPU authorization are described in the paired [English](../../apps/rlark/docs/developer-guide/container-runtime-console.md#gateway-topology-and-service-management-preview) and [Chinese](../../apps/rlark/docs/zh/developer-guide/container-runtime-console.md#gateway-拓扑与服务管理预览) console contract. An empty registered GPU allowlist uses only a fresh authenticated Agent inventory (45-second limit); remote SSH bootstrap, service start control, and Notebook power management remain unsupported until their restricted execution and recovery contracts are implemented.
 
 For the bounded Raw log preview, set both `enableExecution` and `enableLogReads`
 to `true` in the package request. Start the Agent API with
@@ -148,6 +148,61 @@ restart and cleanup with simulated Engines. Real two-host Docker GPU/RLinf
 acceptance remains outstanding. The current Kingsoft Cloud notebook has no Docker
 socket and cannot satisfy that gate. See the paired Docker Agent and execution
 plans for prerequisites, protocol ownership and recovery limits.
+
+## Ray single-port relay preview
+
+`pkg/rayrelay` provides a TLS 1.3/smux gateway and loopback connectors, with
+mutual certificate validation, exact leaf SHA-256 pins, explicit peer IP/port
+allowlists, stream bounds, reconnect and shutdown. Run it alongside A's management
+gateway with `container-runtime-gateway --ray-config=/private/ray-gateway.json`
+or alongside a Raw Agent with `--ray-peer-config=/private/ray-peer.json`.
+The standalone command accepts `--mode=gateway|peer --config=...`.
+Configuration is operator-owned, strictly decoded JSON. It needs dedicated
+certificate/key/CA paths, a peer map and bounded limits; private keys must be
+regular files inaccessible to group/other users. A peer certificate's common
+name must match its configured node ID. Gateway mode requires `maxNodes`,
+while peer mode requires `gatewayAddress`, `serverName`, `gatewayPin` and `nodeID`.
+`listen`, `maxStreams` and `idleSeconds` are required for both; peer listeners
+must use explicit loopback addresses. Paths/pins/credentials are never inherited
+by workload processes. Changes take effect on targeted service restart.
+
+Build the Linux/glibc process shim with `make build-ray-preload`. Inject it only
+into an assigned Ray process tree using `LD_PRELOAD` plus `RLARK_MUX_REMOTE_IPS`,
+`RLARK_MUX_PORT_MIN`, `RLARK_MUX_PORT_MAX` and `RLARK_MUX_LOCAL_PORT`.
+This injection is **not automated**. The remote IP list contains up to 64
+comma-separated, unique IPv4 addresses sharing one port range. The legacy
+`RLARK_MUX_REMOTE_IP` accepts one address; specifying both forms is invalid,
+including IPv4-mapped IPv6. The bounded control connection obtains a short-lived
+loopback data port, then native connect runs on the application's unchanged
+descriptor. Blocking and nonblocking calls retain native completion semantics;
+the local control exchange may still block for up to five seconds. Successful
+connect means local proxy acceptance: later remote setup failures surface during
+I/O. The connector assumes trusted local processes and provides no local-user
+isolation. Static binaries, arbitrary IPv6, UDP and untested socket APIs remain
+unsupported. Existing streams fail on disconnect; reconnect does not replay bytes.
+
+Tests load real file-based TLS configurations and start the gateway plus three
+peer services, then run compiled dynamically linked clients through the shim in
+both directions, including nonblocking poll/SO_ERROR completion. Additional
+cases cover address mapping, denied peers, handshake EOF/timeout, malformed
+configuration, pass-through and cancellation. These tests establish the packaged
+TCP contract, **not current Ray/Gloo or cloud-to-robot acceptance**.
+
+A/B/C belong to one RLark logical container Cluster; the robot remains in its
+separate Kubernetes cluster. The target is one Fleet interactive Job and one
+Ray cluster/head coordinating both workload roles. The controller now implements
+explicit UID-fenced Kubernetes worker placement alongside Raw process Tasks in
+one externally owned Job, with runtime-specific result observation and stop
+cleanup. This is a controller-level preview: automatic SSH deployment,
+peer configuration/credential provisioning, workload injection, Fleet startup
+barriers and sibling failure cancellation remain incomplete. Do not infer these capabilities
+from the service flags. No HTTP proxy, SSH tunnel or global host route change is
+required by this transport. Real bidirectional RLinf Channel validation through
+the packaged execution path remains required; see the paired raw-runtime plans.
+
+Placement, ownership and recovery contract:
+[English](../../apps/rlark/docs/developer-guide/mixed-container-job-preview.md) /
+[中文](../../apps/rlark/docs/zh/developer-guide/mixed-container-job-preview.md).
 
 
 Raw Notebook resource observations now project into native Node capacity,

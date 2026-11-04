@@ -14,6 +14,15 @@ type NativeObjectReference struct {
 // +kubebuilder:validation:Enum=Raw;Docker
 type Runtime string
 
+// NodeRole identifies the node's responsibility inside the logical container Cluster.
+// +kubebuilder:validation:Enum=Gateway;Worker
+type NodeRole string
+
+const (
+	NodeRoleGateway NodeRole = "Gateway"
+	NodeRoleWorker  NodeRole = "Worker"
+)
+
 // ContainerCluster stores container-runtime settings for a native RLark Cluster.
 type ContainerClusterSpec struct {
 	Cluster NativeObjectReference `json:"cluster"`
@@ -72,14 +81,16 @@ type ContainerClusterList struct {
 
 // +kubebuilder:validation:XValidation:rule="self == oldSelf",message="node identity and authorized capability are immutable; explicitly replace the node after cleanup"
 type ContainerNodeSpec struct {
-	Cluster    NativeObjectReference `json:"cluster"`
-	Node       NativeObjectReference `json:"node"`
-	Runtime    Runtime               `json:"runtime"`
-	InstanceID string                `json:"instanceID"`
-	// Operator-provisioned capability; Agent visibility cannot grant GPUs.
-	PrivateAddress string `json:"privateAddress"`
-	Environment    string `json:"environment"`
-	NetworkScope   string `json:"networkScope"`
+	Cluster NativeObjectReference `json:"cluster"`
+	Node    NativeObjectReference `json:"node"`
+	Runtime Runtime               `json:"runtime"`
+	// Role is the logical Cluster responsibility; Gateway nodes may also compute.
+	Role           NodeRole `json:"role,omitempty"`
+	InstanceID     string   `json:"instanceID"`
+	PrivateAddress string   `json:"privateAddress"`
+	Environment    string   `json:"environment"`
+	NetworkScope   string   `json:"networkScope"`
+	// Optional operator allowlist. When empty, fresh authenticated Agent inventory is used.
 	// +listType=set
 	AuthorizedGPUUUIDs []string `json:"authorizedGPUUUIDs,omitempty"`
 }
@@ -103,9 +114,11 @@ type ContainerNodeStatus struct {
 	Capacity           map[string]string `json:"capacity,omitempty"`
 	// ResourceObservedAt is server time for the last accepted resource snapshot.
 	// It is separate from liveness; absent fields are unknown, never zero.
-	ResourceObservedAt *metav1.Time       `json:"resourceObservedAt,omitempty"`
-	SystemInfo         *NodeSystemInfo    `json:"systemInfo,omitempty"`
-	AuthorizedGPUUUIDs []string           `json:"authorizedGPUUUIDs,omitempty"`
+	ResourceObservedAt *metav1.Time    `json:"resourceObservedAt,omitempty"`
+	SystemInfo         *NodeSystemInfo `json:"systemInfo,omitempty"`
+	AuthorizedGPUUUIDs []string        `json:"authorizedGPUUUIDs,omitempty"`
+	// DiscoveredGPUUUIDs are authenticated observations, never Spec or user input.
+	DiscoveredGPUUUIDs []string           `json:"discoveredGPUUUIDs,omitempty"`
 	Capabilities       []string           `json:"capabilities,omitempty"`
 	Conditions         []metav1.Condition `json:"conditions,omitempty"`
 	LastHeartbeatTime  *metav1.Time       `json:"lastHeartbeatTime,omitempty"`
@@ -199,8 +212,10 @@ type RayGroupPlan struct {
 	Cluster       NativeObjectReference `json:"cluster"`
 	TenantID      string                `json:"tenantID"`
 	NetworkScope  string                `json:"networkScope"`
-	Members       []GroupMember         `json:"members"`
-	Ports         RayPortPlan           `json:"ports"`
+	// +listType=map
+	// +listMapKey=rank
+	Members []GroupMember `json:"members"`
+	Ports   RayPortPlan   `json:"ports"`
 }
 
 // RayPortPlan is an immutable host port block shared by all group members.
@@ -268,6 +283,17 @@ type ContainerJobSpec struct {
 	Job      NativeObjectReference `json:"job"`
 	TenantID string                `json:"tenantID"`
 	Runtime  Runtime               `json:"runtime"`
+	// KubernetesTargets binds each native Kubernetes Task template to one
+	// exact Cluster object. Raw templates use Cluster above.
+	// +listType=map
+	// +listMapKey=template
+	KubernetesTargets []KubernetesTaskTarget `json:"kubernetesTargets,omitempty"`
+}
+
+// KubernetesTaskTarget is an explicit, UID-fenced placement for one Job template.
+type KubernetesTaskTarget struct {
+	Template string                `json:"template"`
+	Cluster  NativeObjectReference `json:"cluster"`
 }
 type ContainerJobStatus struct {
 	ObservedGeneration int64              `json:"observedGeneration,omitempty"`

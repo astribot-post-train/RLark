@@ -18,6 +18,23 @@ type Heartbeater interface {
 	Heartbeat(context.Context, Observation) error
 }
 
+// publishedHeartbeatError preserves a later reconciliation error without
+// treating a successfully published heartbeat as a connectivity outage.
+type publishedHeartbeatError struct{ cause error }
+
+func (e *publishedHeartbeatError) Error() string { return e.cause.Error() }
+func (e *publishedHeartbeatError) Unwrap() error { return e.cause }
+
+func afterHeartbeat(publicationErr, reconciliationErr error) error {
+	if publicationErr != nil {
+		return errors.Join(publicationErr, reconciliationErr)
+	}
+	if reconciliationErr != nil {
+		return &publishedHeartbeatError{cause: reconciliationErr}
+	}
+	return nil
+}
+
 // Run observes before every send, retries outages with bounded exponential
 // backoff and jitter, and never resends a stale successful observation.
 func Run(ctx context.Context, observer Observer, client Heartbeater, interval, retryMax time.Duration, logger *slog.Logger) error {
@@ -47,8 +64,12 @@ func run(ctx context.Context, observer Observer, client Heartbeater, interval, r
 			return nil
 		}
 		wait := interval
-		if err == nil {
+		var published *publishedHeartbeatError
+		if err == nil || errors.As(err, &published) {
 			delay = initial
+			if err != nil {
+				logger.Warn("container-runtime heartbeat published; reconciliation failed", "error", err, "retry_in", wait)
+			}
 		} else {
 			// Subtractive jitter keeps the maximum delay a strict upper bound.
 			wait = delay - time.Duration(rand.Int63n(int64(delay/5)+1))

@@ -51,6 +51,13 @@ func ValidateDockerTask(t native.TaskSpec) error {
 
 // ValidateJob selects only implemented, explicitly versioned task contracts.
 func ValidateJob(job *native.Job) error {
+	if job != nil {
+		for _, t := range job.Spec.Tasks {
+			if t.Runtime.Kind == "Kubernetes" {
+				return ValidateMixedJob(job)
+			}
+		}
+	}
 	if job != nil && len(job.Spec.Tasks) != 0 && job.Spec.Tasks[0].Runtime.Kind == "Docker" {
 		return ValidateDockerJob(job)
 	}

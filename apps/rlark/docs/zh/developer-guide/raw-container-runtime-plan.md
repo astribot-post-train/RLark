@@ -12,7 +12,7 @@
 
 扩展拥有 `containers.rlark.io/v1alpha1` API group。`ContainerCluster` 按稳定身份和 UID 关联一个原生 Cluster，记录运行时和升级策略。`ContainerNode` 关联原生 Node/Cluster UID，记录容器/Engine 实例、私网地址、能力、环境、授权 GPU UUID 和 Agent 版本。`ContainerAllocation` 保存 Job/Task UID、generation、租户、节点实例、执行标识、设备预留和清理进度。`ContainerJob` 是原生 Job 的类型化控制器绑定，不是第二套工作负载 API。`AgentRelease` 标识不可变产物、SHA-256 摘要和协议兼容范围。
 
-`Cluster.spec.agentNamespace` 仍是成员关系权威来源。租户独立于 namespace 验证，并继承到附属资源。标签/注解只能检索，不能证明所有权。派发前验证类型化绑定、精确 Job UID 和租户；活动 Job 在 Task 或清理完成前不得换控制器。直接 Kubernetes API 和扩展 REST 使用同等准入校验。预览版拒绝 Kubernetes/容器混合 Job，原生 Kubernetes Job 行为保持不变。
+`Cluster.spec.agentNamespace` 仍是成员关系权威来源。租户独立于 namespace 验证，并继承到附属资源。标签/注解只能检索，不能证明所有权。派发前验证类型化绑定、精确 Job UID 和租户；活动 Job 在 Task 或清理完成前不得换控制器。直接 Kubernetes API 和扩展 REST 使用同等准入校验。控制器级混合 Raw/Kubernetes Job 预览通过显式 UID 栅栏契约提供，详见[混合 Raw 与 Kubernetes Job 预览](mixed-container-job-preview.md)；原生 Kubernetes Job 行为保持不变。
 
 对于每个由扩展拥有的原生 Task，扩展会在创建 `ContainerAllocation` 之前把一个规范化调度目标持久化到 `containers.rlark.io/allocation-target` 注解。注解包含 Task UID、原生 Node UID、ContainerNode UID、Cluster UID 和节点实例标识。它是持久化的调度意图，不是预留证明；真正的所有权锁仍由 allocation 提供。重试或第二个控制器只能复用完全相同的目标，在创建或派发结果不确定时绝不能换节点。只有在 allocation 具有匹配的清理证明且 Task 正在以新 UID 替换时，才能清除目标。Task 删除、暂停和配置替换在 Agent 报告清理前都保留目标及 allocation 身份。生命周期从当前状态持续维护：`suspended` 和删除会阻止新启动，心跳和 Agent 结果只是观测，不能单独释放锁。
 
@@ -332,8 +332,11 @@ GOWORK=off go test -v ./pkg/integration -run '^TestCloudRawRollout$' -count=1 -t
 
 ## 已确认范围
 
-多个现有 GPU 容器作为独立 Node 加入同一逻辑 Cluster，每个容器内运行一个 Agent，使用预装环境执行进程。不需要 Docker daemon、socket、创建容器或 Docker-in-Docker。一个容器同时独占运行一个 Task，一个 Job 可以占用多个容器。首版支持同一云容器组内的 Ray/RLinf，不支持云 Raw 与机器人 Kubernetes 混合 Job。容器私网地址已确认互通，训练地址与控制面连接地址分别配置。
+A、B、C 是同一个独立 RLark 逻辑容器 Cluster 的成员。A 是管理网关，也可参与计算；B/C 是已有 GPU Notebook 内的 Raw 计算 Node。Agent 在预装环境中执行进程，不把节点加入真正的 Kubernetes 集群，不需要 Docker daemon/socket、创建容器或 Docker-in-Docker。成员关系来自在同一权威 agent namespace 内的显式注册，不靠 IP 自动发现。
 
+机器人 x86 保留独立 Kubernetes 集群。目标是一个 Fleet interactive RLark Job 协调 B 的 Lumo2 rollout 角色与机器人 Kubernetes Env 角色。所有 Ray 进程加入同一个 Ray 集群，该 Job 只使用一个权威 head，必须明确 head 位置和所有权。不能接管或修改无关的既有运行 Job/head。Kubernetes/RLark Cluster 成员关系与 Ray 成员关系独立：B 加入 A 的逻辑容器 Cluster，不加入机器人 Kubernetes 集群。Ray peer 数据可通过 A 的认证单端口多路复用通道，不经过本地 RLark 服务。
+
+控制器级混合运行时 Job 预览现在可以在同一 Job 中协调 Raw rollout 与显式绑定的 Kubernetes Env Task。但它仍只独立启动成员，尚未提供完整 Fleet 屏障、成员失败自动取消或自动中继注入；详见[混合 Raw 与 Kubernetes Job 预览](mixed-container-job-preview.md)。
 ## API 与所有权
 
 复用 Cluster/Node/Job/Task，Cluster.spec.agentNamespace 是成员关系的权威来源，标签不是所有权凭据。记录 Node UID、容器实例、执行和分配标识。Agent 写能力/环境/健康观测，控制器写资源预留。新增运行时无关副本字段，兼容无歧义的 Kubernetes 旧字段并拒绝冲突；Raw 副本展开为独立 Task，索引/rank 稳定，同时聚合模板与实例状态。节点级 claimant 不得接管同 namespace 的其他节点 Task；直接创建 Task 也不能绕过预留和租户验证。
@@ -350,8 +353,15 @@ GOWORK=off go test -v ./pkg/integration -run '^TestCloudRawRollout$' -count=1 -t
 
 ## Ray 与网络
 
-显式配置私网节点 IP，以及同一网络共享范围内不重叠的 Ray 端口段；关闭无用 dashboard/client。验证支持的 Ray 版本、精确成员，传播 readiness 错误，实际 bind 失败必须算执行失败。单容器单 Task 本身不能隔离 host network 端口。RLinf/NCCL 连通性独立验证，不承诺任意框架动态端口均可控制。
+不能直接路由的成员通过 A 的认证单端口 TCP 多路复用通道和明确的 Ray 成员身份通信。A 的 Ray listener 使用 30001；管理通信使用独立配置的 listener，总体遵守 30000/30001/30002 的公网端口约定。B/C 私网成员关系以及经 A SSH 部署，不代表跨地域 Ray 已经可达。此传输不要求 HTTP proxy 变量、SSH 隧道、TUN 权限或修改全局主机路由。
 
+预览传输可通过 `container-runtime-gateway --ray-config=...` 与管理网关一起启动，通过 `container-runtime-agent --ray-peer-config=...` 与 Raw Agent 一起启动；也可独立运行 `container-runtime-ray-relay --mode=gateway|peer --config=...`。这些参数读取运维者管理的 JSON 与专用 TLS 凭证，不会自动配置 peer、注入工作负载、启动 Ray 或实现混合运行时 Job。双向验证证书与精确叶证书 pin；修改配置/凭证后需要定向重启。
+
+Linux/glibc `LD_PRELOAD` shim 识别最多 64 个明确的远端 IPv4 地址和一个端口范围，包括 IPv4-mapped IPv6。独立且有界的本地控制握手返回临时 loopback 数据端口，应用描述符保留原生阻塞/非阻塞 connect 及 poll/SO_ERROR 行为。即使调用方使用非阻塞 socket，本地控制握手也可能阻塞最多五秒。本地 connect 成功只证明代理接受连接；远端拒绝或断连通过 I/O reset/EOF 暴露。connector 假设容器内进程可信，不提供本地进程间隔离。不支持静态程序、任意 IPv6、UDP 或尚未验证的 socket API。重连只允许新 stream，不重放字节，也不能恢复已有 Ray 执行。
+
+当 Ray head 位于 worker 所在 Kubernetes 集群之外时，Kubernetes Ray worker 可使用控制器解析出的 `headAddress`。该字段必须是无端口的单播 IPv4 地址，Ray 端口仍为 6379。未设置时，适配器保留原有同集群 Service 或 RLark domain 发现路径。该地址本身不建立网络连接，也不实现混合运行时编排。
+
+剩余门槛包括仅向分配到的 Raw/Kubernetes Ray 进程树注入 shim、精确配置 Ray/Gloo 地址族和 peer 映射、自动且限定范围地配置 TLS/成员清单、故障恢复，以及经启动包执行路径进行真实双向 RLinf Channel 测试。NCCL 单独验收。单容器单 Task 本身不能隔离 host network 端口。
 ## 环境、资源与存储
 
 只使用预装 Python/Ray/RLinf，验证绝对路径、版本和能力，不自动装依赖。资源容量来自 cgroup/affinity 而非物理宿主机总量。GPU 可见不代表已授权，必须有确认 UUID 白名单或平台绑定，范围未知拒绝调度；只支持整卡独占。分配与利用率分开，遥测可选且有界。
@@ -369,15 +379,15 @@ rlarkadm 生成配置和前台启动包，可接已有 supervisor，不假设容
 - [x] 预览契约的类型 API、schema/deepcopy 生成、兼容及所有权测试。
 - [x] 一个 Task 独占一个 Node 的持久化预留、回滚和恢复。
 - [x] 历史原生预览路径通过 Host/Coordinator 和轮询 Agent 完成单节点 supervisor 执行。
-- [ ] 多节点 Ray 屏障及整组生命周期。
+- [ ] 一个 Fleet interactive Job 协调 B 上的 Raw rollout 与机器人 x86 上的 Kubernetes Env，明确唯一 Ray head、成员及清理所有权。
 - [x] 预览路径的节点注册、限定凭证、GPU 授权和环境校验。
-- [ ] rlarkadm 启动包、授权日志、Gateway 和 UI。
+- [ ] 将 Ray transport 注入已分配的 Raw/Kubernetes 进程树，补齐自动启动包/peer 凭证、授权诊断及集成 Gateway/UI 接入。
 - [ ] 中英文示例、能力矩阵、部署和运维文档。
 - [ ] 定向及仓库 Go/web/doc 检查，附证据的草稿 PR。
 
 ## 验收与故障测试
 
-覆盖并发抢占、部分回滚、控制器重启、外部动作后崩溃、Agent 重新附着、PID 重用、supervisor 丢失、孤儿后代、端口占用、GPU/环境未知、跨节点/租户认领、head/worker 失败、断网、停止与失败区分、checkpoint 保留、Kubernetes 兼容。CPU 假实现和进程集成测试本地运行；真实双容器 Ray/GPU 与最小 RLinf 验证需要准备好环境并确认 GPU 授权，不自动安装或启动云训练。未验证行为明确列出，端到端验收前保持 preview。
+覆盖并发抢占、部分回滚、控制器重启、外部动作后崩溃、Agent 重新附着、PID 重用、supervisor 丢失、孤儿后代、端口占用、GPU/环境未知、跨节点/租户认领、Ray worker 启停、断网、停止与失败区分、checkpoint 保留以及 Kubernetes 原有行为不变。Relay 单元测试覆盖已认证 peer stream、本地 connector 转发和目标白名单，Linux 独立进程测试覆盖实际 `LD_PRELOAD`、IPv4-mapped IPv6、握手拒绝/EOF/超时、无效配置、原生非阻塞完成与未命中连接直通；仍不能证明 Ray/Gloo socket 已使用 shim。CPU 假实现和进程集成测试本地运行；真实 B 到 x86 的 Ray/GPU 与最小 RLinf Channel 测试需要预备环境及明确 GPU 授权；不得静默安装依赖、修改 Kubernetes worker 或启动 Active 机器人任务。未验证行为明确列出，端到端验收前保持 preview。
 
 ## 当前实现证据与剩余接线
 
@@ -584,3 +594,47 @@ Agent 测试验证非首个模板的精确授权，并拒绝非法、缺失或�
 本次不包含实时利用率、宿主机拓扑、文件系统配额和磁盘压力。Notebook cgroup 上限不代表任务级资源强制隔离或当前空闲硬件。实施与验收证据须在同一变更中补充。
 
 本分支已实现资源投影与共用原生概况，详见[资源语义和部署验收](container-runtime-console.md#raw-notebook-node)。
+
+## 2026-11-03 B Notebook 重新接入
+
+Notebook B 重启后私网地址、PID namespace、进程启动时间和 H100 UUID 都发生变化。确认 Raw supervisor 空闲，且没有 allocation 或升级操作引用该节点后，按 UID 正常退役旧身份。随后为同一逻辑 `ksyun-containers` Cluster 签发新凭据和安装包，并部署到独立版本目录。A 到 B 的 root SSH key 仅用于接入和下发安装包，工作负载数据不走 SSH。
+
+B 上报地址 `10.1.3.193`、一张授权 H100、20 CPU 和 `253403070464` 字节 cgroup 内存。原生 Node 达到 `Online`，且 `Ready=True`、`RawResourcesReady=True`、`RawSchedulingReady=True`；配套 ContainerNode 达到 `Ready=True`、`Schedulable=True`。RLark 下发了一次 Raw GPU Job，任务确认只看到一张 CUDA 设备、完成 CUDA 张量计算并以 `Succeeded` 结束。观察到执行完成和 allocation 释放后，再按 UID 删除 Job 和绑定。没有停止或修改任何现有 Fleet/Ray 进程。
+
+这验证了 B 接入、资源投影、单节点 Raw 调度、CUDA 执行及预留释放；没有验证 Ray relay。当时 A 的公网 SSH 新管理连接被远端复位，TCP `30001` 拒绝连接，因此不能声称多主机 Ray/Gloo Channel 或 S1U Passive 推理验收通过。A 当前 Fleet/Ray 进程仍在使用该机器，应保持 A 禁止调度；恢复 A 管理入口并启动数据网关后，再测试分布式 Job。
+
+### B 在北京时间 20:12 的历史重启记录
+
+B 随后重启，私网地址变为 `10.1.3.196`。GPU UUID 未变化，但 PID 1 的启动时间已变化。
+旧 Agent 沿用静态引导身份，错误地继续把 `10.1.3.193` 上报为 Ready。
+确认 supervisor 空闲且没有 allocation 或 upgrade 后，停止旧 Agent 和 supervisor，
+归档其 Notebook 服务配置。对旧 ContainerNode 和原生 Node 执行带 UID 前置条件的删除，
+在同一个逻辑集群内签发新凭据和 `v4` 安装包。
+新原生 Node 已上报新地址、`Online`、`Ready=True`、20 CPU、236 GiB 和一张授权 H100。
+本次安装增加本地启动校验：PID namespace、启动时间、boot ID 或私网地址变化时，
+拒绝启动这两个服务。这只是本次安装的保护，不代表已实现自动身份续期或仓库级 Agent 修复。
+
+历史说明：此前 Notebook 调试测试过独立 GPU 活跃服务。本次交付不包含此能力，
+Agent 不打包或管理它，历史记录不作为安装步骤。派发前检查当前节点占用，移除仓库
+支持不会停止已独立安装的进程。原生 Used 代表 RLark 预留，不代表外部 GPU 利用率。
+
+历史接入凭据在 2026-11-06 到期，复用前重新检查实际凭据有效期和实例身份。
+该恢复不代表 B 到机器人连通或 Lumo2/S1U 验收通过。
+
+## 2026-11-03 A/B Ray 传输隔离验收
+
+A 的 SSH 管理入口恢复后，在隔离目录中使用现有 Ray `2.56.1` 环境，在
+A 启动临时 Ray head、在 B 启动临时 worker。测试没有接管或重启现有 Fleet
+head。A/B 两端的进程树都加载了已打包的 Linux/glibc connector shim，B
+通过 A 的公网 `30001` 连接。relay 观测到多条经过同一个监听端口的、已认证
+的 TCP 流；没有使用 HTTP proxy、SSH 转发、WireGuard、TUN 或全局路由。
+
+RLinf 调度器报告两个 Ray 节点，测试对 1 KiB、1 MiB、4 MiB 数据分别双向
+交换 10 次。本次中位往返时间约为 3.4 ms、8.8 ms、27.4 ms，最终输出
+`PASS_RLINF_TWO_NODE_CHANNEL`。所有临时 Ray/relay 进程、凭据和文件均已
+清理；正在运行的 Fleet Job 及其 Ray 进程没有改变。
+
+这证明了已打包的单端口传输和 A/B 两节点最小 RLinf Channel。它不代表
+RLark Job 控制器已经能自动下发 peer 配置或注入传输，也没有包含机器人 x86、
+S1U Passive 推理或 Lumo2 checkpoint 加载。完成 peer 自动配置、按进程注入、
+整组故障生命周期及 B 到 x86 的 Passive 验收前，继续保持 preview 状态。

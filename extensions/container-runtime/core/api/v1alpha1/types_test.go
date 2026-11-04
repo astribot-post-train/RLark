@@ -24,6 +24,22 @@ func TestTypesRegisterAndDeepCopy(t *testing.T) {
 	}
 }
 
+func TestJobPlacementCopyAndLegacyDecode(t *testing.T) {
+	job := &ContainerJob{Spec: ContainerJobSpec{KubernetesTargets: []KubernetesTaskTarget{{Template: "env", Cluster: NativeObjectReference{Name: "robot", UID: "current"}}}}}
+	copy := job.DeepCopy()
+	copy.Spec.KubernetesTargets[0].Cluster.UID = "replacement"
+	if job.Spec.KubernetesTargets[0].Cluster.UID != "current" {
+		t.Fatal("mixed target references alias a copied object")
+	}
+	var legacy ContainerJobSpec
+	if err := json.Unmarshal([]byte(`{"runtime":"Raw","tenantID":"default","cluster":{"name":"cloud","uid":"cluster"},"job":{"name":"job","uid":"job"}}`), &legacy); err != nil {
+		t.Fatal(err)
+	}
+	if len(legacy.KubernetesTargets) != 0 || legacy.Runtime != "Raw" {
+		t.Fatal("legacy binding changed runtime or acquired mixed targets")
+	}
+}
+
 func TestUpgradeRegistrationAndAllocationCompatibility(t *testing.T) {
 	scheme := runtime.NewScheme()
 	if err := AddToScheme(scheme); err != nil {

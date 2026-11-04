@@ -138,7 +138,7 @@ func (s Service) environment(ctx context.Context, cc *ext.ContainerCluster, prof
 		return err
 	}
 	for _, n := range nodes.Items {
-		if n.UID == "" || n.Spec.Runtime != "Raw" || n.Spec.Cluster != cc.Spec.Cluster || n.Spec.Environment != profile || n.Spec.Node.Namespace != cc.Namespace || len(n.Spec.AuthorizedGPUUUIDs) == 0 || tenant.IDOf(&n) != tenant.IDOf(cc) || !n.DeletionTimestamp.IsZero() {
+		if n.UID == "" || n.Spec.Runtime != "Raw" || n.Spec.Cluster != cc.Spec.Cluster || n.Spec.Environment != profile || n.Spec.Node.Namespace != cc.Namespace || tenant.IDOf(&n) != tenant.IDOf(cc) || !n.DeletionTimestamp.IsZero() {
 			continue
 		}
 		var nn native.Node

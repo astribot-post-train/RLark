@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"errors"
+	"github.com/astribot-post-train/rlark/extensions/container-runtime/core/pkg/gpus"
 	"reflect"
 	"slices"
 	"time"
@@ -60,7 +61,7 @@ func (s TaskService) authorizeGroup(ctx context.Context, a *Assignment, start bo
 		if err := s.Reporter.Client.Get(ctx, client.ObjectKey{Namespace: m.NodeRecord.Namespace, Name: m.NodeRecord.Name}, &node); err != nil {
 			return err
 		}
-		if objectRef(&node) != m.NodeRecord || node.Spec.Node != m.Node || node.Spec.InstanceID != m.InstanceID || node.Spec.Cluster != g.Plan.Cluster || node.Spec.PrivateAddress != m.PrivateAddr || node.Spec.NetworkScope != g.Plan.NetworkScope || node.Annotations[CredentialAnnotation] != m.CredentialID || node.Status.AgentCredentialID != m.CredentialID || !sameGPUSet(node.Spec.AuthorizedGPUUUIDs, m.GPUUUIDs) || !slices.Contains(node.Status.Capabilities, ray.Capability) || !slices.Contains(node.Status.Capabilities, DockerExecutionCapability) {
+		if objectRef(&node) != m.NodeRecord || node.Spec.Node != m.Node || node.Spec.InstanceID != m.InstanceID || node.Spec.Cluster != g.Plan.Cluster || node.Spec.PrivateAddress != m.PrivateAddr || node.Spec.NetworkScope != g.Plan.NetworkScope || node.Annotations[CredentialAnnotation] != m.CredentialID || node.Status.AgentCredentialID != m.CredentialID || !sameGPUSet(gpus.Inventory(&node), m.GPUUUIDs) || !slices.Contains(node.Status.Capabilities, ray.Capability) || !slices.Contains(node.Status.Capabilities, DockerExecutionCapability) {
 			return ErrIdentity
 		}
 		id := Identity{Namespace: node.Namespace, Name: node.Name, UID: string(node.UID), CredentialID: m.CredentialID, InstanceID: m.InstanceID, ClusterUID: g.Plan.Cluster.UID, TenantID: g.Plan.TenantID}

@@ -44,7 +44,9 @@ func TestSwaggerOperationsAreRegisteredRoutes(t *testing.T) {
 			if _, ok := registered[method+" "+path]; !ok {
 				t.Errorf("OpenAPI operation is not registered by Gateway.RegisterRoutes: %s %s", method, path)
 			}
-			if _, ok := operation.Responses["401"]; ok {
+			// API routes now use requireJWT; only the public metrics listener
+			// cannot return the Gateway's authentication response.
+			if _, ok := operation.Responses["401"]; ok && path == "/metrics" {
 				t.Errorf("OpenAPI operation declares unsupported 401 response: %s %s", method, path)
 			}
 		}
@@ -103,6 +105,7 @@ var routesUndocumentedInSwagger = map[string]struct{}{
 	"POST /api/v1/container-runtime/clusters":                                        {},
 	"GET /api/v1/container-runtime/clusters/{namespace}/{name}":                      {},
 	"PATCH /api/v1/container-runtime/clusters/{namespace}/{name}":                    {},
+	"POST /api/v1/container-runtime/clusters/{namespace}/{name}/start":               {},
 	"POST /api/v1/container-runtime/clusters/{namespace}/{name}/nodes":               {},
 	"PATCH /api/v1/container-runtime/clusters/{namespace}/{name}/nodes/{node}":       {},
 	"GET /api/v1/container-runtime/clusters/{namespace}/{name}/jobs":                 {},

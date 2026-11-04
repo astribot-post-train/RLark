@@ -45,6 +45,25 @@ func TestAgentConfigAndFlags(t *testing.T) {
 	}
 }
 
+func TestRayPeerTransportFlagAndRuntimeBoundary(t *testing.T) {
+	cfg := configured()
+	fs := flag.NewFlagSet("ray-peer", flag.ContinueOnError)
+	cfg.SetupFlags(fs)
+	if err := fs.Parse([]string{"--ray-peer-config=/private/ray-peer.json"}); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.RayPeerConfig != "/private/ray-peer.json" {
+		t.Fatal("Ray peer config flag lost")
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	cfg.Runtime, cfg.SupervisorSocket = "docker", ""
+	if cfg.Validate() == nil {
+		t.Fatal("Docker mode accepted Raw Ray peer preview")
+	}
+}
+
 func TestUpgradeFlagsRequireIsolatedPaths(t *testing.T) {
 	cfg := configured()
 	fs := flag.NewFlagSet("upgrade", flag.ContinueOnError)

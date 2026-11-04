@@ -121,7 +121,7 @@ func TestUpdaterPersistsInstallFailureAndResumesRollback(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := u.Step(context.Background(), Observation{Version: "old"}); err == nil {
+	if err := settleUpgrade(u, context.Background(), Observation{Version: "old"}); err == nil {
 		t.Fatal("expected replacement failure")
 	}
 	if got, _ := fileDigest(install); got != digest {
@@ -135,7 +135,7 @@ func TestUpdaterPersistsInstallFailureAndResumesRollback(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := u.Step(context.Background(), Observation{Version: "old"}); err != nil {
+	if err := settleUpgrade(u, context.Background(), Observation{Version: "old"}); err != nil {
 		t.Fatal(err)
 	}
 	receipt, err := u.files.load()
@@ -203,7 +203,7 @@ func TestUpdaterLostClaimAndCompletionSurviveRestart(t *testing.T) {
 	restartCount := 0
 	restart := func(context.Context, string) error { restartCount++; return nil } // Successful exec simulated by opening installed bytes next.
 	u := f.open(t, restart, "")
-	if err := u.Step(context.Background(), Observation{Version: "old"}); err == nil {
+	if err := settleUpgrade(u, context.Background(), Observation{Version: "old"}); err == nil {
 		t.Fatal("lost claim not injected")
 	}
 	if restartCount != 0 {
@@ -211,7 +211,7 @@ func TestUpdaterLostClaimAndCompletionSurviveRestart(t *testing.T) {
 	}
 	u.Close()
 	u = f.open(t, restart, "")
-	if err := u.Step(context.Background(), Observation{Version: "old"}); err == nil {
+	if err := settleUpgrade(u, context.Background(), Observation{Version: "old"}); err == nil {
 		t.Fatal("exec unexpectedly returned without error")
 	}
 	if restartCount != 1 || len(attempts) != 1 {
@@ -222,12 +222,12 @@ func TestUpdaterLostClaimAndCompletionSurviveRestart(t *testing.T) {
 	if u.Version() != "next" {
 		t.Fatal("bootstrap version overrode running digest")
 	}
-	if err := u.Step(context.Background(), Observation{Version: u.Version()}); err == nil {
+	if err := settleUpgrade(u, context.Background(), Observation{Version: u.Version()}); err == nil {
 		t.Fatal("lost completion not injected")
 	}
 	u.Close()
 	u = f.open(t, restart, f.config.Paths.InstallPath)
-	mustAgent(t, u.Step(context.Background(), Observation{Version: u.Version()}))
+	mustAgent(t, settleUpgrade(u, context.Background(), Observation{Version: u.Version()}))
 	receipt, err := u.files.load()
 	mustAgent(t, err)
 	if receipt.Phase != "Succeeded" {
@@ -235,7 +235,7 @@ func TestUpdaterLostClaimAndCompletionSurviveRestart(t *testing.T) {
 	}
 	u.Close()
 	u = f.open(t, restart, f.config.Paths.InstallPath)
-	mustAgent(t, u.Step(context.Background(), Observation{Version: u.Version()}))
+	mustAgent(t, settleUpgrade(u, context.Background(), Observation{Version: u.Version()}))
 	if restartCount != 1 || len(attempts) != 1 {
 		t.Fatal("replayed finished installation")
 	}
@@ -287,7 +287,7 @@ func TestUpdaterRejectsUnprovenInstallation(t *testing.T) {
 				ctx, cancel = context.WithCancel(ctx)
 				cancel()
 			}
-			err := u.Step(ctx, obs)
+			err := settleUpgrade(u, ctx, obs)
 			if mode != "busy" && err == nil {
 				t.Fatal("unsafe installation accepted")
 			}
@@ -337,7 +337,7 @@ func TestUpdaterRejectsSharedPathsAndForeignResume(t *testing.T) {
 				mustAgent(t, os.WriteFile(filepath.Join(cfg.Paths.StateDirectory, "upgrade.json"), []byte(`{"phase":"Succeeded"}`), 0600))
 			case "scope":
 				u := f.open(t, restart, "")
-				_ = u.Step(context.Background(), Observation{Version: "old"})
+				_ = settleUpgrade(u, context.Background(), Observation{Version: "old"})
 				u.Close()
 				cfg.Scope = binaryDigest([]byte("foreign credential"))
 			case "running-binary":
@@ -375,7 +375,7 @@ func TestUpdaterMTLSInstallationAndStartupCompletion(t *testing.T) {
 	defer u.Close()
 	obs := Observation{Version: u.Version(), PrivateAddress: "10.0.3.85", VisibleGPUUUIDs: []string{"GPU-a"}}
 	mustAgent(t, transport.Heartbeat(context.Background(), obs))
-	if err := u.Step(context.Background(), obs); err == nil {
+	if err := settleUpgrade(u, context.Background(), obs); err == nil {
 		t.Fatal("simulated exec unexpectedly returned")
 	}
 	journal, err := u.files.load()
@@ -398,7 +398,7 @@ func TestUpdaterMTLSInstallationAndStartupCompletion(t *testing.T) {
 	}
 	obs.Version = u.Version()
 	mustAgent(t, transport.Heartbeat(context.Background(), obs))
-	mustAgent(t, u.Step(context.Background(), obs))
+	mustAgent(t, settleUpgrade(u, context.Background(), obs))
 	mustAgent(t, f.base.Get(context.Background(), client.ObjectKeyFromObject(f.op), &operation))
 	if operation.Status.Phase != "Applying" || operation.Status.Completion == nil || operation.Status.Completion.Result != "Succeeded" {
 		t.Fatalf("missing exact completion: %+v", operation.Status)
@@ -475,7 +475,7 @@ func TestUpdaterExecHelper(t *testing.T) {
 		tr.phase = "Applying"
 		tr.attempt = r.AttemptID
 	}
-	mustAgent(t, u.Step(context.Background(), Observation{Version: u.Version()}))
+	mustAgent(t, settleUpgrade(u, context.Background(), Observation{Version: u.Version()}))
 	if u.Version() != "next" {
 		t.Fatal("source survived successful exec")
 	}
@@ -504,16 +504,35 @@ func TestUpdaterAcknowledgesOnlyAfterDurableJournalAndRetries(t *testing.T) {
 	}
 	restart := func(context.Context, string) error { return errors.New("exec failed") }
 	u := f.open(t, restart, "")
-	if err := u.Step(context.Background(), Observation{Version: "old"}); err == nil {
+	if err := settleUpgrade(u, context.Background(), Observation{Version: "old"}); err == nil {
 		t.Fatal("exec failure missing")
 	}
-	if err := u.Step(context.Background(), Observation{Version: "old"}); err == nil || !lost {
+	if err := settleUpgrade(u, context.Background(), Observation{Version: "old"}); err == nil || !lost {
 		t.Fatal("lost acknowledgement missing")
 	}
 	u.Close()
 	u = f.open(t, restart, "")
-	mustAgent(t, u.Step(context.Background(), Observation{Version: "old"}))
+	mustAgent(t, settleUpgrade(u, context.Background(), Observation{Version: "old"}))
 	if !acknowledged {
 		t.Fatal("persisted journal did not retry acknowledgement")
 	}
+}
+
+// settleUpgrade drives bounded download completion in tests which assert the
+// journal transition, while production returns to its heartbeat between steps.
+func settleUpgrade(u *Updater, ctx context.Context, obs Observation) error {
+	for i := 0; i < 4; i++ {
+		err := u.Step(ctx, obs)
+		if err != nil || u.download == nil {
+			return err
+		}
+		select {
+		case <-u.download.done:
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(5 * time.Second):
+			return errors.New("test download did not finish")
+		}
+	}
+	return errors.New("test upgrade did not settle")
 }

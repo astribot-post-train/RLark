@@ -4,6 +4,12 @@
 测试，并完成下面所述、已授权金山云 A 开发机的接入验收。UI 接入/退役流程、自动
 证书续签、Docker Engine 执行以及云端到机器人的数据通路仍未完成。
 
+控制器级[混合 Job 预览](mixed-container-job-preview.md)现在能在一个原生 Job 下
+生成 Raw rollout 和显式绑定的 Kubernetes Env Task，同时保持 A/B/C 属于同一个
+逻辑容器 Cluster，机器人保留原有 Kubernetes Cluster。各运行时完成观测和停止
+恢复已有自动化测试。Fleet 启动屏障、成员失败自动取消、进程中继注入及 Lumo2/S1U
+验收仍未完成，不能视为云端到机器人 rollout 通路已经可用。
+
 ## 2026-11-02 A 接入验收
 
 保留的 `ksyun-containers` 集群现在包含绑定原生 Raw Node 的 ContainerNode
@@ -49,6 +55,53 @@ Notebook 实例替换仍须确认旧实例退役并重新接入。
 finalizer 清理，没有强制移除 finalizer。
 
 本次验收不代表 Lumo2 推理、Ray 多机通信、Kubernetes Pod 网络或 S1U 连接已经打通。
+
+## 2026-11-03 Ray 中继可行性验证
+
+在开发机上使用隔离的 Ray 进程完成了双节点 RLinf/Ray 2.59.0 测试，双向
+`Channel` 分别传输了 1 KiB、1 MiB 和 4 MiB 数据。测试使用 loopback 地址和
+专用临时进程，没有设置或继承 `HTTP_PROXY`、`HTTPS_PROXY`、`ALL_PROXY`；清理
+仅针对本次测试创建的进程组。现有 Fleet Ray 作业仍在运行。这证明在 Ray 可使用
+足够端口的条件下 RLinf Channel 能工作，但不代表跨主机或经过 A 中继已经通过验收。
+
+当前 Docker Ray 执行器固定使用 9 个 Ray 服务端口，另加可配置的 worker 端口范围，
+最少 1 个，默认 256 个。Ray 节点会直接连接多个分别监听的服务，因此 A 上 TCP
+30000 的现有 Hub API 中继无法承载 Ray 流量；仅在 A 开放 3 个 TCP 端口也不满足
+当前执行器的直连端口契约。单端口方案需要 Ray 感知的多路复用传输及每个节点上的
+重定向或连接器；目前尚未作为 RLark 功能实现。方案不需要设置 HTTP 代理环境变量。
+
+随后进行了隔离的跨主机 PoC：在 A:30001 启动双向 TLS `smux` 网关，在两台 Ray
+节点运行仅作用于测试进程的 TCP 连接器。两节点成功加入同一个 Ray 集群，网关记录到
+25 条双向流量，全部经过这一个公网监听端口，包含 Ray 服务端口、worker 端口和 Gloo
+动态选择的端口。进程级适配器使用了 `LD_PRELOAD` 和临时凭据；这只证明传输层多路复用
+可行，不是生产实现，也不代表 RLark 已支持该能力。
+
+A 的 SSH 恢复后，通过在两台 Ray 节点上固定 Gloo 网卡完成了跨主机 RLinf `Channel`
+验收。Head Actor 使用 `enp5s0`，地址为 `192.168.31.2`；Worker Actor 使用 `eth0`，地址为
+`10.1.3.100`。启动 Ray 前，两端都把 `RLINF_COMM_NET_DEVICES` 和 `GLOO_SOCKET_IFNAME`
+设为本机对应网卡；两个 Actor 均报告了预期 IPv4 地址。Gloo 双向初始化成功，1 KiB、
+1 MiB、4 MiB 三种 payload 分别完成 10 轮 observation/action 请求响应。这解决了本次
+测试环境中的 IPv4/IPv6 地址族不匹配。A:30001 网关记录 33 条流量、目标端口共 18 个，
+跨主机测试流量全部通过这个单一公网监听端口。本次没有测试 Lumo2 推理或机器人连通性。
+
+两端 Ray 均为 2.59.0，但开发机 Python 为 3.11.16，A 的 Fleet 环境 Python 为 3.11.14，
+Ray 输出了 patch 版本不一致警告。PyTorch 版本也不同（`2.11.0+cu130` 和
+`2.10.0+cu128`）。当前传输和 Channel 交换在此组合下通过；正式部署前应统一 Python 和
+PyTorch 构建版本，不应把此次测试组合视为已支持的生产组合。
+
+对已授权 A Notebook 的只读检查发现存在 `/dev/net/tun`，但没有 `CAP_NET_ADMIN`，
+内核也未加载 WireGuard 模块。因此当前 Notebook 环境不能在 A 上创建基于 TUN 的
+WireGuard 接口。如果后续平台授予所需能力，结论可以重新评估；当前安装不能宣称可
+提供该 Overlay 网络。
+
+三端口跨主机 Ray/RLinf 流量仍未验证，当前验收不支持该能力。单端口传输 PoC 已通过本次
+隔离的 Ray/RLinf Channel 测试；未设置代理环境变量，也没有修改现有 Fleet 集群。该实现
+仍是依赖 `LD_PRELOAD` 和临时凭据的进程级 PoC，不是 RLark 生产能力。
+
+此前因 A:22 在 SSH key exchange 阶段重置连接而无法检查 Actor 网卡配置。主机重启后 SSH
+恢复，测试已完成。所有测试 Ray 进程、连接器和 A:30001 网关均已停止，测试临时目录已
+删除。A 上原有 Fleet Ray head（PID `592376`，端口 `6390`）仍运行。清理后 A:30001 已释放；
+本次未操作 A:30000，但测试后检查时该端口没有监听，需在主机重启后另行检查对应服务。
 
 2026-11-02 原生连通性验收通过：应用控制器 RBAC 并只重启扩展控制器后，`ksyun-a`
 变为 `Online / AgentLeaseActive`，`ksyun-containers` 变为 `Online`，原生节点在线数为

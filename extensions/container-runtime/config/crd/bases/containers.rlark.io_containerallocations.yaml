@@ -229,6 +229,9 @@ spec:
                           - task
                           type: object
                         type: array
+                        x-kubernetes-list-map-keys:
+                        - rank
+                        x-kubernetes-list-type: map
                       networkScope:
                         type: string
                       ports:

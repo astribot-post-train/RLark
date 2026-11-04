@@ -29,6 +29,98 @@ scheduling remain outside this preview. Docker node registration and idle Agent
 rollout are available when their additive capabilities are enabled. Bounded Raw log reads are available only
 when the separate loopback log listener and node poller are explicitly enabled.
 
+## Gateway topology and service management preview
+
+Container node records distinguish a logical Cluster Gateway from Worker
+nodes. This role describes RLark's container topology; it does not create a
+Kubernetes control plane. A Gateway may also execute workloads. Agent heartbeat
+and native Node online status remain separate observations. Neither status
+proves A-to-Worker SSH reachability or Ray data-plane connectivity.
+
+The selected Agent release is immutable for a provisioning attempt; the UI may
+default to the newest available compatible release. A node registration may
+provide an explicit GPU UUID allowlist. When that list is empty, the authenticated
+Agent's latest visible GPU inventory is used as the node's authorized inventory.
+This automatic mode requires a non-future heartbeat no older than 45 seconds;
+missing or stale observations fail closed for scheduling. Visibility is treated
+as entitlement only for these explicitly registered container nodes, so use it
+only when the Notebook's device view is the intended allocation boundary.
+
+The node table separates Gateway/Worker role, native online status, Agent
+heartbeat and SSH reachability. The opt-in Notebook start/join preview accepts
+addresses and roles, pins the selected available release, then installs the
+Agent/task manager and A's gateway using strict preconfigured SSH host trust.
+An operation waits for an authenticated fresh Agent heartbeat after process
+startup; a live PID or SSH probe alone is not readiness. Use the same retained
+operation ID to recover an uncertain request. The preview still requires a
+private controller enrollment profile, published artifacts and additive RBAC;
+real A/B/C installation and recovery acceptance is outstanding.
+
+Registration alone remains metadata-only. Stopped Notebooks must first be
+started in the cloud console. New instances or changed addresses are not
+silently adopted. GPU keepalive is not part of enrollment or the Agent package.
+Existing independently installed services are not changed by removing package
+support; check their ownership before any operational cleanup.
+
+The enrollment package records the authenticated Notebook instance fingerprint
+(PID namespace, PID 1 start time and boot ID) and its private address. The local
+service manager checks both before starting or adopting a process receipt. A
+changed fingerprint or address fails closed; use an explicit replacement
+operation to issue a new node identity and package. Completion requires the
+Ready condition itself to observe the current node generation, as well as a
+fresh heartbeat and the pinned Agent version.
+
+Trusted enrollment profiles may use `$GATEWAY_PRIVATE_ADDRESS` in `endpoint`
+and launch arguments, `$NODE_PRIVATE_ADDRESS` in launch arguments, and
+`$INSTALL` for the private package directory. Values come from authenticated
+Notebook discovery; the platform SSH/DNAT address is not the container address.
+Unknown placeholders fail package creation. Static profiles remain accepted.
+After an address change, explicitly replace the node and ensure the API TLS
+certificate covers the newly discovered gateway address before installing.
+This expansion does not rotate certificates or rewrite arbitrary configuration
+files in `gatewayFiles`.
+
+The trusted profile's optional `ssh.ControlDirectory` enables OpenSSH connection
+reuse for bootstrap only. Use a dedicated canonical directory with mode `0700`;
+symlinks, public directories and paths too long for a Unix control socket are
+rejected. Connections are scoped by the
+OpenSSH `%C` host/user/port hash, retain strict host trust, and expire 60 seconds
+after the last bootstrap command. Worker keys stay on A. This is installation
+transport, not an inference tunnel; established connections surviving an
+intermittent SSH handshake failure do not prove the public endpoint is healthy.
+
+Profiles may override the default workload allowlists by node name using
+`executablesByNode` and `workDirectoriesByNode`. These are trusted server
+configuration, not UI-supplied paths. Paths must already exist and resolve to
+themselves on that Notebook; resolve Python virtualenv symlinks explicitly when
+configuring the profile. The service manager validates them before starting
+services and creates only the node's private task/updater state directories.
+Missing paths, public state directories or symlinks fail startup; they are not
+silently dropped or rewritten. Workload paths remain separate from SSH IPs.
+
+Task and upgrade reconciliation errors after a successful heartbeat are logged
+and retried at the normal heartbeat interval. They do not trigger the liveness
+outage backoff or keep a stale observation alive. Observation or heartbeat
+publication failures still use bounded backoff. Online therefore remains a
+connectivity observation; task execution and upgrade readiness may be failing
+independently. Deploy the updated Agent binary to use this behavior.
+
+Use **Cancel enrollment (retain joined nodes)** to release an operation waiting
+for a stopped or replaced Notebook before submitting a new topology. The
+administrator route is
+`POST /api/v1/container-runtime/clusters/{namespace}/{name}/enrollments/{operation}/cancel`
+with `{"uid":"<NodeEnrollment UID>","clusterUID":"<ContainerCluster UID>"}`.
+Cancellation is an irreversible Spec intent, not deletion: the controller marks
+the operation Cancelled and does no further bootstrap work. Joined nodes remain
+running. An SSH command issued before cancellation may still complete; inspect
+its node receipts before a replacement. Retrying cancellation is idempotent.
+Terminal success/failure is preserved. Direct management API clients may set
+`NodeEnrollment.spec.cancelRequested: true` with the same semantics. Apply the
+updated CRD and enrollment RBAC before deploying the controller/Gateway.
+
+See the [delivery checklist](notebook-fleet-delivery.md) for the remaining
+one-click lifecycle, transport automation and mixed Fleet acceptance gates.
+
 ## Native online status
 
 The extension controller projects authenticated, current ContainerNode
@@ -89,6 +181,21 @@ management no longer distributes the signing key to another console process.
 Do not log credentials or task payloads. No arbitrary Kubernetes proxy is exposed.
 
 ## UI behavior and failure handling
+
+The page uses the shared RLark content viewport for vertical scrolling. Cluster
+selection spans the content area, followed by the selected cluster summary,
+resource metrics, release target, Raw Jobs, registration, nodes and operational
+tables. Narrow screens wrap the cluster choices and metrics; wide tables keep
+their own horizontal scroll region.
+
+Nodes appear in a summary table with private IP, native Node state, container
+Agent readiness, Agent version, schedulability and heartbeat age. Expand a row
+to inspect identity, native addresses and node information, environment,
+network scope, heartbeat timestamp, capacities, authorized GPUs, capabilities
+and conditions. Details are collapsed by default. Native Kubernetes Node phase
+and container Agent readiness remain separate: a native Node may be Online
+while its container Agent is stale. A stale Agent remains unschedulable
+regardless of native connectivity.
 
 The cluster page separates desired state from observations:
 

@@ -8,7 +8,9 @@ type Labels = {
   privateAddress: string;
   environment: string;
   networkScope: string;
+  role: string;
   gpuInput: string;
+  gpuAutoHint: string;
   registrationHint: string;
   registrationPending: string;
   registrationDone: string;
@@ -84,10 +86,16 @@ export function NodeRegistrationPanel({
             </label>
           ))}
           <label>
+            {t.role}
+            <select name="role" required disabled={writing || !!intent} defaultValue={intent?.role || "Worker"}>
+              <option value="Gateway">Gateway</option>
+              <option value="Worker">Worker</option>
+            </select>
+          </label>
+          <label>
             {t.gpuInput}
             <textarea
               name="gpus"
-              required
               rows={3}
               disabled={writing || !!intent}
               defaultValue={JSON.stringify(
@@ -96,6 +104,7 @@ export function NodeRegistrationPanel({
                 2,
               )}
             />
+            <small className="muted">{t.gpuAutoHint}</small>
           </label>
           <button
             className="primary"

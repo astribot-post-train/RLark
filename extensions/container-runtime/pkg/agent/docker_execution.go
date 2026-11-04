@@ -69,7 +69,7 @@ func (o DockerExecutionObserver) Heartbeat(ctx context.Context, observation Obse
 	if err == nil && o.Updater != nil {
 		upgradeErr = o.Updater.Step(ctx, observation)
 	}
-	return errors.Join(err, upgradeErr, o.reconcile(ctx, err == nil && upgradeErr == nil))
+	return afterHeartbeat(err, errors.Join(upgradeErr, o.reconcile(ctx, err == nil && upgradeErr == nil)))
 }
 
 func (o DockerExecutionObserver) reconcile(ctx context.Context, allowStart bool) error {

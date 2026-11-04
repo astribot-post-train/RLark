@@ -9,6 +9,9 @@ kind: ClusterRole
 metadata:
   name: container-runtime-controller
 rules:
+  - apiGroups: ["containers.rlark.io"]
+    resources: ["nodeenrollments"]
+    verbs: ["get", "list", "watch"]
   - apiGroups: ["rlinf.io"]
     resources: ["clusters"]
     verbs: ["get", "list", "watch"]

@@ -2,11 +2,13 @@ package agent
 
 import (
 	"bytes"
+	"compress/gzip"
 	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/astribot-post-train/rlark/extensions/container-runtime/core/pkg/artifact"
@@ -177,6 +179,59 @@ func (h Handler) serveRelease(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/octet-stream")
+	// The surrounding server keeps short deadlines for control requests. Only
+	// authenticated, verified, bounded artifact writes get the transfer budget.
+	// Recorders and other wrappers may not expose a write deadline.
+	if err := http.NewResponseController(w).SetWriteDeadline(time.Now().Add(5 * time.Minute)); err != nil && !errors.Is(err, http.ErrNotSupported) {
+		http.Error(w, "artifact transfer unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	w.Header().Set("Vary", "Accept-Encoding")
+	// Existing Go Agents transparently decompress gzip before checking the
+	// manifest length and digest. The immutable artifact remains uncompressed in
+	// the store; only its HTTP representation changes. Compress verified bytes
+	// only, never manifests or responses containing credentials.
+	if acceptsGzip(r.Header.Values("Accept-Encoding")) {
+		w.Header().Set("Content-Encoding", "gzip")
+		compressed, err := gzip.NewWriterLevel(w, gzip.BestSpeed)
+		if err != nil {
+			http.Error(w, "artifact encoding unavailable", http.StatusInternalServerError)
+			return
+		}
+		if _, err := compressed.Write(data); err != nil {
+			_ = compressed.Close()
+			return
+		}
+		_ = compressed.Close()
+		return
+	}
 	w.Header().Set("Content-Length", strconv.FormatInt(int64(len(data)), 10))
 	_, _ = w.Write(data)
+}
+
+func acceptsGzip(headers []string) bool {
+	for _, header := range headers {
+		for _, encoding := range strings.Split(header, ",") {
+			parts := strings.Split(encoding, ";")
+			if !strings.EqualFold(strings.TrimSpace(parts[0]), "gzip") {
+				continue
+			}
+			quality := 1.0
+			for _, parameter := range parts[1:] {
+				key, value, ok := strings.Cut(strings.TrimSpace(parameter), "=")
+				if !ok || !strings.EqualFold(key, "q") {
+					quality = 0
+					break
+				}
+				var err error
+				quality, err = strconv.ParseFloat(value, 64)
+				if err != nil || quality < 0 || quality > 1 {
+					quality = 0
+					break
+				}
+			}
+			return quality > 0 && quality <= 1
+		}
+	}
+	return false
 }

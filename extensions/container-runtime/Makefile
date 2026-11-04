@@ -1,4 +1,4 @@
-.PHONY: test vet build generate-crds test-ui build-ui
+.PHONY: test vet build build-ray-preload generate-crds test-ui build-ui
 
 BIN_DIR ?= $(CURDIR)/bin
 
@@ -18,6 +18,12 @@ build:
 	GOWORK=off go build -o $(BIN_DIR)/container-runtime-agent ./cmd/container-runtime-agent
 	GOWORK=off go build -o $(BIN_DIR)/container-runtime-admin ./cmd/container-runtime-admin
 	GOWORK=off go build -o $(BIN_DIR)/container-runtime-gateway ./cmd/container-runtime-gateway
+	GOWORK=off go build -o $(BIN_DIR)/container-runtime-ray-relay ./cmd/container-runtime-ray-relay
+
+# Linux/glibc process-scoped connect shim prototype for Ray relay experiments.
+build-ray-preload:
+	mkdir -p $(BIN_DIR)
+	$(CC) -Wall -Wextra -Werror -fPIC -shared -o $(BIN_DIR)/librlark-ray-connect.so pkg/rayrelay/preload/connect.c -ldl -pthread
 
 generate-crds:
 	cd core && GOWORK=off $(CURDIR)/../../api/bin/controller-gen-v0.18.0 object paths=./api/...

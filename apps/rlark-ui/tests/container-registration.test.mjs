@@ -16,13 +16,15 @@ const fields = {
   privateAddress: "10.0.3.86",
   environment: "prepared",
   networkScope: "private",
+  role: "Worker",
   gpuText: '["GPU-b","GPU-a"]',
 };
-test("registration requires explicit private hardware identity without changing input", () => {
+test("registration permits automatic GPU discovery and preserves explicit identity", () => {
   const original = structuredClone(fields);
   const request = nodeRegistrationIntent("operation", "cluster", fields);
   assert.deepEqual(fields, original);
   assert.deepEqual(request.authorizedGPUUUIDs, ["GPU-a", "GPU-b"]);
+  assert.equal(request.role, "Worker");
   assert.equal(request.instanceID, fields.instanceID);
   for (const change of [
     { name: "../foreign" },
@@ -33,7 +35,7 @@ test("registration requires explicit private hardware identity without changing 
     { privateAddress: "172.32.0.1" },
     { privateAddress: "10.0.0.999" },
     { privateAddress: "010.0.0.1" },
-    { gpuText: "[]" },
+    { role: "Unknown" },
     { gpuText: '["GPU-a","GPU-a"]' },
     { gpuText: '["all"]' },
     { gpuText: '["GPU-1,2"]' },
@@ -43,6 +45,10 @@ test("registration requires explicit private hardware identity without changing 
     assert.throws(() =>
       nodeRegistrationIntent("operation", "cluster", { ...fields, ...change }),
     );
+  assert.deepEqual(
+    nodeRegistrationIntent("operation", "cluster", { ...fields, gpuText: "[]" }).authorizedGPUUUIDs,
+    [],
+  );
   assert.throws(() =>
     nodeRegistrationIntent("operation", "cluster", {
       ...fields,

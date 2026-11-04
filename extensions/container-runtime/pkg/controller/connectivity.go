@@ -8,6 +8,7 @@ import (
 	"time"
 
 	ext "github.com/astribot-post-train/rlark/extensions/container-runtime/core/api/v1alpha1"
+	"github.com/astribot-post-train/rlark/extensions/container-runtime/core/pkg/gpus"
 	"github.com/astribot-post-train/rlark/extensions/container-runtime/core/pkg/ownership"
 	"github.com/astribot-post-train/rlark/extensions/container-runtime/core/pkg/rawnode"
 	native "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
@@ -189,8 +190,12 @@ func (r ConnectivityReconciler) projectNode(ctx context.Context, node *ext.Conta
 		if owner != "" && owner != string(node.UID) || owner == "" && (nn.Status.Raw != nil || nn.Annotations[rawnode.CredentialAnnotation] != "") {
 			return invalidBinding("native Raw projection ownership cannot be proven")
 		}
-		desired := &native.RawNodeStatus{Incarnation: node.Spec.InstanceID, TrainingIP: node.Spec.PrivateAddress, NetworkScope: node.Spec.NetworkScope, Environment: node.Spec.Environment, AuthorizedGPUUUIDs: append([]string(nil), node.Spec.AuthorizedGPUUUIDs...)}
-		if nn.Status.Raw != nil && !rawnode.SameCapability(nn.Status.Raw, desired) {
+		gpuUUIDs, gpuErr := gpus.Authorized(node, r.now())
+		if gpuErr != nil {
+			gpuUUIDs = nil
+		}
+		desired := &native.RawNodeStatus{Incarnation: node.Spec.InstanceID, TrainingIP: node.Spec.PrivateAddress, NetworkScope: node.Spec.NetworkScope, Environment: node.Spec.Environment, AuthorizedGPUUUIDs: append([]string(nil), gpuUUIDs...)}
+		if nn.Status.Raw != nil && !rawnode.SameCapability(nn.Status.Raw, desired) && owner != string(node.UID) {
 			return invalidBinding("native Raw capability projection conflicts with the registered ContainerNode")
 		}
 		before := nn.DeepCopy()

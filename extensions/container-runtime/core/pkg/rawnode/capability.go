@@ -16,12 +16,11 @@ const CapabilityAnnotation = "raw.rlark.io/authorized-capability"
 
 // ValidateCapability checks the explicit private network, environment and GPU scope.
 func ValidateCapability(v *api.RawNodeStatus) error {
-	if v == nil || v.Incarnation == "" || strings.TrimSpace(v.Environment) == "" || strings.TrimSpace(v.NetworkScope) == "" || len(v.AuthorizedGPUUUIDs) == 0 {
-		return errors.New("complete Raw incarnation, environment, private network and authorized GPUs required")
+	if err := ValidateIdentity(v); err != nil {
+		return err
 	}
-	ip := net.ParseIP(v.TrainingIP)
-	if ip == nil || !ip.IsPrivate() || ip.To4() == nil {
-		return errors.New("raw training address must be a private IPv4 address")
+	if len(v.AuthorizedGPUUUIDs) == 0 {
+		return errors.New("authorized GPUs required")
 	}
 	seen := map[string]bool{}
 	for _, id := range v.AuthorizedGPUUUIDs {
@@ -29,6 +28,18 @@ func ValidateCapability(v *api.RawNodeStatus) error {
 			return errors.New("unique explicit GPU UUIDs required")
 		}
 		seen[id] = true
+	}
+	return nil
+}
+
+// ValidateIdentity checks the non-GPU portion of a registered Raw identity.
+func ValidateIdentity(v *api.RawNodeStatus) error {
+	if v == nil || v.Incarnation == "" || strings.TrimSpace(v.Environment) == "" || strings.TrimSpace(v.NetworkScope) == "" {
+		return errors.New("Raw incarnation, environment and private network required")
+	}
+	ip := net.ParseIP(v.TrainingIP)
+	if ip == nil || !ip.IsPrivate() || ip.To4() == nil {
+		return errors.New("raw training address must be a private IPv4 address")
 	}
 	return nil
 }

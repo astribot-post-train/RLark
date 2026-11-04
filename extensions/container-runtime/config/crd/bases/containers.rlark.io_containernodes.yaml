@@ -39,6 +39,8 @@ spec:
           spec:
             properties:
               authorizedGPUUUIDs:
+                description: Optional operator allowlist. When empty, fresh authenticated
+                  Agent inventory is used.
                 items:
                   type: string
                 type: array
@@ -84,8 +86,13 @@ spec:
                 - message: referenced object instance is immutable
                   rule: self == oldSelf
               privateAddress:
-                description: Operator-provisioned capability; Agent visibility cannot
-                  grant GPUs.
+                type: string
+              role:
+                description: Role is the logical Cluster responsibility; Gateway nodes
+                  may also compute.
+                enum:
+                - Gateway
+                - Worker
                 type: string
               runtime:
                 description: Runtime identifies an implemented container execution
@@ -184,6 +191,12 @@ spec:
                   - status
                   - type
                   type: object
+                type: array
+              discoveredGPUUUIDs:
+                description: DiscoveredGPUUUIDs are authenticated observations, never
+                  Spec or user input.
+                items:
+                  type: string
                 type: array
               lastHeartbeatTime:
                 format: date-time

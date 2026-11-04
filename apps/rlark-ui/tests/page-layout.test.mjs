@@ -6,17 +6,50 @@ import { readStyles } from "./read-styles.mjs";
 const readSource = (path) =>
   readFile(new URL(`../src/${path}`, import.meta.url), "utf8");
 
-const [styles, overview, addons] = await Promise.all([
-  readStyles(),
-  readSource("pages/Overview.tsx"),
-  readSource("admin/Addons.tsx"),
-]);
+const [styles, containerStyles, overview, addons, containerClusters] =
+  await Promise.all([
+    readStyles(),
+    readSource("admin/container-runtime/style.css"),
+    readSource("pages/Overview.tsx"),
+    readSource("admin/Addons.tsx"),
+    readSource("admin/container-runtime/ContainerClustersPage.tsx"),
+  ]);
 
 test("header-adjacent pages use the shared page shell", () => {
   assert.match(overview, /page-content resource-page overview-page/);
   assert.equal(
     addons.match(/className="page-content resource-page addon-page"/g)?.length,
     3,
+  );
+  assert.match(
+    containerClusters,
+    /className="page-content resource-page container-runtime-page"/,
+  );
+  assert.match(containerClusters, /className="container-cluster-picker"/);
+  assert.doesNotMatch(containerClusters, /className="cluster-picker"/);
+  assert.match(containerClusters, /className="node-table"/);
+  assert.match(containerClusters, /className="node-detail-table"/);
+  assert.match(containerClusters, /expandedNodes\.has\(n\.uid\)/);
+  assert.doesNotMatch(containerClusters, /collapsedNodes/);
+  for (const field of [
+    "t.privateIP",
+    "t.nativeState",
+    "t.agentState",
+    "t.version",
+    "t.heartbeat",
+    "t.nativeAddresses",
+    "t.capacity",
+    "t.gpu",
+    "t.capabilities",
+  ]) {
+    assert.ok(
+      containerClusters.includes(field),
+      `missing node table field ${field}`,
+    );
+  }
+  assert.match(
+    containerStyles,
+    /\.container-runtime-page \.container-cluster-picker,[\s\S]*?padding: 16px;/,
   );
 });
 

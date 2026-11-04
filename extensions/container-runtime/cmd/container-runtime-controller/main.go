@@ -16,6 +16,7 @@ import (
 	containerapi "github.com/astribot-post-train/rlark/extensions/container-runtime/core/api/v1alpha1"
 	"github.com/astribot-post-train/rlark/extensions/container-runtime/core/pkg/artifact"
 	containercontroller "github.com/astribot-post-train/rlark/extensions/container-runtime/pkg/controller"
+	"github.com/astribot-post-train/rlark/extensions/container-runtime/pkg/enrollment"
 	nativeapi "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
 	"github.com/rlinf/rlark/apps/rlark/pkg/log"
 )
@@ -28,6 +29,7 @@ func main() {
 	leaderElect := flag.Bool("leader-elect", true, "Use a Kubernetes Lease for controller leadership")
 	leaderNamespace := flag.String("leader-election-namespace", "rlark-system", "Namespace for the controller leadership Lease")
 	artifactDirectory := flag.String("artifact-directory", "", "Read-only verified Agent artifact directory (optional)")
+	enrollmentProfile := flag.String("enrollment-profile", "", "Private trusted SSH enrollment profile; enables preview Notebook start/join operations")
 	flag.Parse()
 	if *enableRollouts && !*enableUpgrades {
 		fail(fmt.Errorf("enable-agent-rollouts requires enable-agent-upgrade-reservations"))
@@ -74,6 +76,18 @@ func main() {
 	}
 	if err := (&containercontroller.AgentReleaseReconciler{Client: mgr.GetClient(), Store: store}).SetupWithManager(mgr); err != nil {
 		fail(err)
+	}
+	if *enrollmentProfile != "" {
+		profile, e := enrollment.LoadProfile(*enrollmentProfile)
+		if e != nil {
+			fail(e)
+		}
+		if store == nil {
+			fail(fmt.Errorf("enrollment requires artifact-directory"))
+		}
+		if e := (&enrollment.Reconciler{Client: connectivityClient, Runner: profile.SSH, Profile: profile, Packages: enrollment.Packages{Client: connectivityClient, Store: store, Profile: profile}}).SetupWithManager(mgr); e != nil {
+			fail(e)
+		}
 	}
 	if *enableReservations {
 		direct, err := client.New(config, client.Options{Scheme: scheme})

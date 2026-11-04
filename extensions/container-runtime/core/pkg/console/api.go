@@ -15,6 +15,7 @@ import (
 
 	ext "github.com/astribot-post-train/rlark/extensions/container-runtime/core/api/v1alpha1"
 	"github.com/astribot-post-train/rlark/extensions/container-runtime/core/pkg/artifact"
+	"github.com/astribot-post-train/rlark/extensions/container-runtime/core/pkg/gpus"
 	"github.com/astribot-post-train/rlark/extensions/container-runtime/core/pkg/noderesources"
 	"github.com/astribot-post-train/rlark/extensions/container-runtime/core/pkg/ownership"
 	"github.com/astribot-post-train/rlark/extensions/container-runtime/core/pkg/provision"
@@ -65,8 +66,9 @@ type API struct {
 	// Jobs is nil by default; workload submission requires explicit opt-in.
 	Jobs JobSubmission
 	// Registrar is nil by default; registration requires additive create RBAC.
-	Registrar NodeRegistrar
-	Now       func() time.Time
+	Enrollments EnrollmentCreator
+	Registrar   NodeRegistrar
+	Now         func() time.Time
 }
 
 func (a *API) now() time.Time {
@@ -131,6 +133,10 @@ func (a *API) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		a.Logs.ServeHTTP(w, r)
+	case len(parts) == 4 && parts[0] == "clusters" && parts[3] == "start" && r.Method == http.MethodPost:
+		a.startNodes(w, r, parts[1], parts[2], subject)
+	case len(parts) == 6 && parts[0] == "clusters" && parts[3] == "enrollments" && parts[5] == "cancel" && r.Method == http.MethodPost:
+		a.cancelEnrollment(w, r, parts[1], parts[2], parts[4], subject)
 	case len(parts) == 4 && parts[0] == "clusters" && parts[3] == "jobs" && r.Method == http.MethodGet:
 		if a.Jobs == nil {
 			writeError(w, http.StatusNotFound, "unsupported", "Job submission is disabled")
@@ -216,6 +222,7 @@ type nodeSummary struct {
 	PrivateAddress     string             `json:"privateAddress"`
 	Environment        string             `json:"environment"`
 	NetworkScope       string             `json:"networkScope"`
+	Role               ext.NodeRole       `json:"role"`
 	AgentVersion       string             `json:"agentVersion"`
 	Ready              bool               `json:"ready"`
 	Schedulable        bool               `json:"schedulable"`
@@ -225,6 +232,7 @@ type nodeSummary struct {
 	BindingValid       bool               `json:"bindingValid"`
 	Capacity           map[string]string  `json:"capacity"`
 	AuthorizedGPUUUIDs []string           `json:"authorizedGPUUUIDs"`
+	DiscoveredGPUUUIDs []string           `json:"discoveredGPUUUIDs"`
 	Capabilities       []string           `json:"capabilities"`
 	LastHeartbeatTime  *metav1.Time       `json:"lastHeartbeatTime"`
 	Conditions         []metav1.Condition `json:"conditions"`
@@ -259,6 +267,8 @@ type upgradeSummary struct {
 	Conditions  []metav1.Condition `json:"conditions"`
 }
 type clusterDetailResponse struct {
+	EnrollmentEnabled       bool                `json:"enrollmentEnabled"`
+	Enrollments             []enrollmentSummary `json:"enrollments"`
 	NodeRegistrationEnabled bool                `json:"nodeRegistrationEnabled"`
 	JobSubmissionEnabled    bool                `json:"jobSubmissionEnabled"`
 	Cluster                 clusterSummary      `json:"cluster"`
@@ -314,6 +324,20 @@ func (a *API) detail(ctx context.Context, cc *ext.ContainerCluster) (*clusterDet
 		return nil, err
 	}
 	result := &clusterDetailResponse{Cluster: clusterSummary{Namespace: cc.Namespace, Name: cc.Name, UID: string(cc.UID), ResourceVersion: cc.ResourceVersion, TenantID: tenant.IDOf(cc), Runtime: cc.Spec.Runtime, TargetAgentRelease: cc.Spec.TargetAgentRelease, BindingValid: valid, Deleting: !cc.DeletionTimestamp.IsZero(), Conditions: cc.Status.Conditions, LastAgentUpgrade: cc.Status.LastAgentUpgrade}, Nodes: []nodeSummary{}, Releases: []releaseSummary{}, Allocations: []allocationSummary{}, Upgrades: []upgradeSummary{}}
+	result.Enrollments = []enrollmentSummary{}
+	result.EnrollmentEnabled = a.Enrollments != nil && valid && cc.Spec.Runtime == "Raw" && cc.DeletionTimestamp.IsZero()
+	if a.Enrollments != nil {
+		var ops ext.NodeEnrollmentList
+		if err := a.Client.List(ctx, &ops, client.InNamespace(cc.Namespace)); err != nil {
+			return nil, err
+		}
+		sort.Slice(ops.Items, func(i, j int) bool { return ops.Items[i].CreationTimestamp.After(ops.Items[j].CreationTimestamp.Time) })
+		for _, op := range ops.Items {
+			if op.Spec.ClusterRecord.UID == string(cc.UID) && op.Spec.ClusterRecord.Name == cc.Name && op.Spec.ClusterRecord.Namespace == cc.Namespace && tenant.IDOf(&op) == tenant.IDOf(cc) {
+				result.Enrollments = append(result.Enrollments, summarizeEnrollment(op))
+			}
+		}
+	}
 	result.JobSubmissionEnabled = a.Jobs != nil && cc.Spec.Runtime == "Raw" && valid && cc.DeletionTimestamp.IsZero()
 	result.NodeRegistrationEnabled = a.Registrar != nil && (cc.Spec.Runtime == "Raw" || cc.Spec.Runtime == "Docker") && valid && cc.DeletionTimestamp.IsZero() && nc != nil && nc.DeletionTimestamp.IsZero()
 	var allocations ext.ContainerAllocationList
@@ -369,9 +393,11 @@ func (a *API) detail(ctx context.Context, cc *ext.ContainerCluster) (*clusterDet
 				}
 			}
 		}
-		result.Nodes = append(result.Nodes, nodeSummary{Resources: resources, Name: n.Name, UID: string(n.UID), ResourceVersion: nn.ResourceVersion, NativeUID: string(nn.UID), InstanceID: n.Spec.InstanceID, PrivateAddress: n.Spec.PrivateAddress, Environment: n.Spec.Environment, NetworkScope: n.Spec.NetworkScope, AgentVersion: n.Status.AgentVersion, Ready: ready, Schedulable: schedulable, Busy: n.Status.Busy, Unschedulable: nn.Spec.Unschedulable, Held: held[string(n.UID)] || held["native/"+n.Spec.Node.UID], BindingValid: nv, Capacity: capacity, AuthorizedGPUUUIDs: n.Spec.AuthorizedGPUUUIDs, Capabilities: n.Status.Capabilities, LastHeartbeatTime: heartbeat, Conditions: n.Status.Conditions})
+		result.Nodes = append(result.Nodes, nodeSummary{Resources: resources, Name: n.Name, UID: string(n.UID), ResourceVersion: nn.ResourceVersion, NativeUID: string(nn.UID), InstanceID: n.Spec.InstanceID, PrivateAddress: n.Spec.PrivateAddress, Environment: n.Spec.Environment, NetworkScope: n.Spec.NetworkScope, Role: n.Spec.Role, AgentVersion: n.Status.AgentVersion, Ready: ready, Schedulable: schedulable, Busy: n.Status.Busy, Unschedulable: nn.Spec.Unschedulable, Held: held[string(n.UID)] || held["native/"+n.Spec.Node.UID], BindingValid: nv, Capacity: capacity, AuthorizedGPUUUIDs: n.Status.AuthorizedGPUUUIDs, DiscoveredGPUUUIDs: n.Status.DiscoveredGPUUUIDs, Capabilities: n.Status.Capabilities, LastHeartbeatTime: heartbeat, Conditions: n.Status.Conditions})
 		result.Cluster.NodeCount++
-		result.Cluster.GPUCount += len(n.Spec.AuthorizedGPUUUIDs)
+		if authorized, err := gpus.Authorized(&n, a.now()); err == nil {
+			result.Cluster.GPUCount += len(authorized)
+		}
 		if ready {
 			result.Cluster.ReadyNodes++
 		}

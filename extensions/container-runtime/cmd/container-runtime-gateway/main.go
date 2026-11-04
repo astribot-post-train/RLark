@@ -16,7 +16,9 @@ import (
 	"time"
 
 	"github.com/astribot-post-train/rlark/extensions/container-runtime/pkg/gatewayrelay"
+	"github.com/astribot-post-train/rlark/extensions/container-runtime/pkg/rayrelay"
 	"github.com/rlinf/rlark/apps/rlark/pkg/log"
+	"golang.org/x/sync/errgroup"
 )
 
 func main() {
@@ -36,6 +38,7 @@ func run(ctx context.Context, args []string) error {
 	var mode, agentListen, hubListen, gatewayAddress, apiAddress, serverCert, serverKey, clientCert, clientKey, rootsFile, pin, serverName string
 	var max int
 	var idle time.Duration
+	rayConfig := fs.String("ray-config", "", "optional A preview Ray gateway JSON; serves alongside the management gateway")
 	fs.StringVar(&mode, "mode", "", "gateway or hub")
 	fs.StringVar(&agentListen, "agent-listen", "", "private Agent TCP address (gateway mode)")
 	fs.StringVar(&hubListen, "hub-listen", "", "mTLS Hub listen address (gateway mode)")
@@ -59,6 +62,9 @@ func run(ctx context.Context, args []string) error {
 	if mode != "gateway" && mode != "hub" {
 		return errors.New("mode must be gateway or hub")
 	}
+	if mode != "gateway" && *rayConfig != "" {
+		return errors.New("ray-config is only supported in gateway mode")
+	}
 	if rootsFile == "" || pin == "" {
 		return errors.New("roots and peer-cert-sha256 are required")
 	}
@@ -71,7 +77,18 @@ func run(ctx context.Context, args []string) error {
 		if err != nil {
 			return fmt.Errorf("load gateway certificate: %w", err)
 		}
-		return gatewayrelay.RunGateway(ctx, gatewayrelay.GatewayConfig{AgentListen: agentListen, HubListen: hubListen, Certificate: cert, HubRoots: roots, HubPin: pin, MaxConnections: max, IdleTimeout: idle})
+		cfg := gatewayrelay.GatewayConfig{AgentListen: agentListen, HubListen: hubListen, Certificate: cert, HubRoots: roots, HubPin: pin, MaxConnections: max, IdleTimeout: idle}
+		if *rayConfig == "" {
+			return gatewayrelay.RunGateway(ctx, cfg)
+		}
+		server, err := rayrelay.LoadGateway(*rayConfig)
+		if err != nil {
+			return err
+		}
+		g, ctx := errgroup.WithContext(ctx)
+		g.Go(func() error { return server.Serve(ctx) })
+		g.Go(func() error { return gatewayrelay.RunGateway(ctx, cfg) })
+		return g.Wait()
 	}
 	client, err := tls.LoadX509KeyPair(clientCert, clientKey)
 	if err != nil {

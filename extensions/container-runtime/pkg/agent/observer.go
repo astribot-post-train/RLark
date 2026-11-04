@@ -100,7 +100,12 @@ func (r Reporter) Report(ctx context.Context, id Identity, obs Observation) erro
 	if string(node.UID) != id.UID || node.Namespace != id.Namespace || node.Spec.InstanceID != id.InstanceID || tenant.IDOf(&node) != id.TenantID || node.Annotations[CredentialAnnotation] != id.CredentialID || !node.DeletionTimestamp.IsZero() {
 		return ErrIdentity
 	}
-	if err := r.validateBindings(ctx, &node, id); err != nil {
+	// Validate duplicate ownership against this observation, not stale inventory.
+	checked := node.DeepCopy()
+	if len(checked.Spec.AuthorizedGPUUUIDs) == 0 {
+		checked.Status.DiscoveredGPUUUIDs = slices.Clone(obs.VisibleGPUUUIDs)
+	}
+	if err := r.validateBindings(ctx, checked, id); err != nil {
 		return err
 	}
 	if err := validateObservation(&node, obs); err != nil {
@@ -120,9 +125,19 @@ func (r Reporter) Report(ctx context.Context, id Identity, obs Observation) erro
 	if node.Status.Capacity == nil {
 		node.Status.Capacity = map[string]string{}
 	}
-	node.Status.Capacity["nvidia.com/gpu"] = strconv.Itoa(len(node.Spec.AuthorizedGPUUUIDs))
+	if len(node.Spec.AuthorizedGPUUUIDs) == 0 {
+		node.Status.Capacity["nvidia.com/gpu"] = strconv.Itoa(len(obs.VisibleGPUUUIDs))
+	} else {
+		node.Status.Capacity["nvidia.com/gpu"] = strconv.Itoa(len(node.Spec.AuthorizedGPUUUIDs))
+	}
 	node.Status.Capabilities = slices.Clone(obs.Capabilities)
-	node.Status.AuthorizedGPUUUIDs = slices.Clone(node.Spec.AuthorizedGPUUUIDs)
+	if len(node.Spec.AuthorizedGPUUUIDs) == 0 {
+		node.Status.DiscoveredGPUUUIDs = slices.Clone(obs.VisibleGPUUUIDs)
+		node.Status.AuthorizedGPUUUIDs = slices.Clone(obs.VisibleGPUUUIDs)
+	} else {
+		node.Status.DiscoveredGPUUUIDs = nil
+		node.Status.AuthorizedGPUUUIDs = slices.Clone(node.Spec.AuthorizedGPUUUIDs)
+	}
 	node.Status.Schedulable = (node.Spec.Runtime == "Raw" || slices.Contains(obs.Capabilities, DockerExecutionCapability)) && releaseReady && !obs.Busy
 	node.Status.Busy = obs.Busy
 	now := metav1.NewTime(r.now())
@@ -210,8 +225,8 @@ func (r Reporter) validateBindings(ctx context.Context, node *ext.ContainerNode,
 		if other.Spec.Node == node.Spec.Node || node.Spec.Runtime == "Docker" && other.Spec.Runtime == "Docker" && other.Spec.InstanceID == node.Spec.InstanceID || other.Spec.NetworkScope == node.Spec.NetworkScope && other.Spec.PrivateAddress == node.Spec.PrivateAddress {
 			return ErrIdentity
 		}
-		for _, gpu := range other.Spec.AuthorizedGPUUUIDs {
-			if slices.Contains(node.Spec.AuthorizedGPUUUIDs, gpu) {
+		for _, gpu := range other.Status.AuthorizedGPUUUIDs {
+			if slices.Contains(node.Spec.AuthorizedGPUUUIDs, gpu) || len(node.Spec.AuthorizedGPUUUIDs) == 0 && slices.Contains(node.Status.DiscoveredGPUUUIDs, gpu) {
 				return ErrIdentity
 			}
 		}
@@ -243,8 +258,19 @@ func validateObservation(node *ext.ContainerNode, obs Observation) error {
 	if ip == nil || ip.To4() == nil || !ip.IsPrivate() {
 		return ErrCapability
 	}
-	if err := rawnode.ValidateCapability(&native.RawNodeStatus{Incarnation: node.Spec.InstanceID, TrainingIP: node.Spec.PrivateAddress, NetworkScope: node.Spec.NetworkScope, Environment: node.Spec.Environment, AuthorizedGPUUUIDs: node.Spec.AuthorizedGPUUUIDs}); err != nil {
-		return fmt.Errorf("%w: %v", ErrCapability, err)
+	allowedGPUUUIDs := node.Spec.AuthorizedGPUUUIDs
+	if len(allowedGPUUUIDs) == 0 {
+		allowedGPUUUIDs = obs.VisibleGPUUUIDs
+	}
+	capability := &native.RawNodeStatus{Incarnation: node.Spec.InstanceID, TrainingIP: node.Spec.PrivateAddress, NetworkScope: node.Spec.NetworkScope, Environment: node.Spec.Environment, AuthorizedGPUUUIDs: allowedGPUUUIDs}
+	var capabilityErr error
+	if len(node.Spec.AuthorizedGPUUUIDs) == 0 {
+		capabilityErr = rawnode.ValidateIdentity(capability)
+	} else {
+		capabilityErr = rawnode.ValidateCapability(capability)
+	}
+	if capabilityErr != nil {
+		return fmt.Errorf("%w: %v", ErrCapability, capabilityErr)
 	}
 	seen := map[string]struct{}{}
 	for _, gpu := range obs.VisibleGPUUUIDs {
@@ -256,9 +282,15 @@ func validateObservation(node *ext.ContainerNode, obs Observation) error {
 		}
 		seen[gpu] = struct{}{}
 	}
-	for _, gpu := range node.Spec.AuthorizedGPUUUIDs {
-		if _, ok := seen[gpu]; !ok {
-			return fmt.Errorf("%w: authorized GPU %q is not visible", ErrCapability, gpu)
+	if len(node.Spec.AuthorizedGPUUUIDs) == 0 {
+		if len(seen) == 0 {
+			return ErrCapability
+		}
+	} else {
+		for _, gpu := range node.Spec.AuthorizedGPUUUIDs {
+			if _, ok := seen[gpu]; !ok {
+				return fmt.Errorf("%w: authorized GPU %q is not visible", ErrCapability, gpu)
+			}
 		}
 	}
 	for key, value := range obs.Capacity {
@@ -269,7 +301,7 @@ func validateObservation(node *ext.ContainerNode, obs Observation) error {
 		if err != nil || q.Sign() < 0 || node.Spec.Runtime == "Docker" && q.Sign() == 0 {
 			return ErrCapability
 		}
-		if key == "nvidia.com/gpu" && (q.MilliValue()%1000 != 0 || q.Value() != int64(len(node.Spec.AuthorizedGPUUUIDs))) {
+		if key == "nvidia.com/gpu" && (q.MilliValue()%1000 != 0 || q.Value() != int64(len(allowedGPUUUIDs))) {
 			return ErrCapability
 		}
 	}

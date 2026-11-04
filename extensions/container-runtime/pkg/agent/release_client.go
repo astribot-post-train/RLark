@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"time"
 
 	ext "github.com/astribot-post-train/rlark/extensions/container-runtime/core/api/v1alpha1"
 	"github.com/astribot-post-train/rlark/extensions/container-runtime/core/pkg/artifact"
@@ -21,9 +22,12 @@ func manifestSpec(m *ReleaseManifest) (ext.AgentReleaseSpec, error) {
 	return spec, artifact.ValidateSpec(spec)
 }
 
-func (c *Client) releaseRequest(ctx context.Context, request ReleaseRequest) (*http.Response, error) {
+func (c *Client) releaseRequest(ctx context.Context, request ReleaseRequest, httpClient *http.Client) (*http.Response, error) {
 	if c == nil || c.HTTPClient == nil || c.Endpoint == "" {
 		return nil, errors.New("configured Agent client required")
+	}
+	if httpClient == nil {
+		httpClient = c.HTTPClient
 	}
 	data, err := json.Marshal(request)
 	if err != nil {
@@ -34,17 +38,30 @@ func (c *Client) releaseRequest(ctx context.Context, request ReleaseRequest) (*h
 		return nil, fmt.Errorf("create release request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	response, err := c.HTTPClient.Do(req)
+	response, err := httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("send release request: %w", err)
 	}
 	return response, nil
 }
 
+// releaseHTTPClient gives the bounded immutable artifact transfer enough time
+// for a Notebook link while keeping heartbeat, task, and log requests on the
+// short client timeout. The transport and redirect policy remain shared with
+// the authenticated client.
+func (c *Client) releaseHTTPClient() *http.Client {
+	if c == nil || c.HTTPClient == nil {
+		return nil
+	}
+	clone := *c.HTTPClient
+	clone.Timeout = 5 * time.Minute
+	return &clone
+}
+
 // TargetRelease reads the authenticated node's current target. Nil means its
 // Cluster has no target. No artifact is installed or executed by this method.
 func (c *Client) TargetRelease(ctx context.Context, osName, architecture string) (*ReleaseManifest, error) {
-	response, err := c.releaseRequest(ctx, ReleaseRequest{Action: "manifest", OS: osName, Architecture: architecture})
+	response, err := c.releaseRequest(ctx, ReleaseRequest{Action: "manifest", OS: osName, Architecture: architecture}, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -88,7 +105,7 @@ func (c *Client) DownloadRelease(ctx context.Context, manifest *ReleaseManifest)
 	if err != nil {
 		return nil, err
 	}
-	response, err := c.releaseRequest(ctx, ReleaseRequest{Action: "download", OS: manifest.OS, Architecture: manifest.Architecture, ReleaseUID: manifest.UID, SHA256: manifest.SHA256})
+	response, err := c.releaseRequest(ctx, ReleaseRequest{Action: "download", OS: manifest.OS, Architecture: manifest.Architecture, ReleaseUID: manifest.UID, SHA256: manifest.SHA256}, c.releaseHTTPClient())
 	if err != nil {
 		return nil, err
 	}

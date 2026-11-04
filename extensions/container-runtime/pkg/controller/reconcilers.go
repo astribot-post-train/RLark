@@ -74,6 +74,10 @@ func (r ContainerClusterReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		var nodes ext.ContainerNodeList
 		var allocations ext.ContainerAllocationList
 		var upgrades ext.AgentUpgradeList
+		var enrollments ext.NodeEnrollmentList
+		if err := r.Client.List(ctx, &enrollments); err != nil {
+			return ctrl.Result{}, err
+		}
 		if err := r.Client.List(ctx, &nodes); err != nil {
 			return ctrl.Result{}, err
 		}
@@ -84,6 +88,11 @@ func (r ContainerClusterReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 			return ctrl.Result{}, err
 		}
 		blocked := false
+		for _, op := range enrollments.Items {
+			if op.Spec.ClusterRecord.UID == string(v.UID) && op.Status.Phase != "Succeeded" && op.Status.Phase != "Failed" && op.DeletionTimestamp.IsZero() {
+				blocked = true
+			}
+		}
 		for _, n := range nodes.Items {
 			if n.Spec.Cluster == v.Spec.Cluster {
 				blocked = true
@@ -138,6 +147,20 @@ func (r ContainerClusterReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 func (r ContainerClusterReconciler) validateCluster(ctx context.Context, v *ext.ContainerCluster) error {
 	if v.Spec.Runtime != "Raw" && v.Spec.Runtime != "Docker" {
 		return invalidBinding("unsupported runtime")
+	}
+	var nodes ext.ContainerNodeList
+	if err := r.Client.List(ctx, &nodes, client.InNamespace(v.Namespace)); err != nil {
+		return err
+	}
+	gateways := 0
+	for i := range nodes.Items {
+		node := &nodes.Items[i]
+		if node.Spec.Cluster == v.Spec.Cluster && node.Spec.Role == ext.NodeRoleGateway && node.DeletionTimestamp.IsZero() {
+			gateways++
+		}
+	}
+	if gateways > 1 {
+		return invalidBinding("ContainerCluster has more than one Gateway node")
 	}
 	var nativeCluster native.Cluster
 	if err := getNative(ctx, r.Client, v.Spec.Cluster, &nativeCluster); err != nil {
@@ -261,9 +284,6 @@ func freshHeartbeat(at, now time.Time) bool {
 	return !at.After(now) && now.Sub(at) <= 45*time.Second
 }
 func (r ContainerNodeReconciler) validateNode(ctx context.Context, v *ext.ContainerNode) error {
-	if err := rawnode.ValidateCapability(&native.RawNodeStatus{Incarnation: v.Spec.InstanceID, TrainingIP: v.Spec.PrivateAddress, NetworkScope: v.Spec.NetworkScope, Environment: v.Spec.Environment, AuthorizedGPUUUIDs: v.Spec.AuthorizedGPUUUIDs}); err != nil {
-		return invalidBinding("container identity, private address or authorized GPU allowlist is invalid")
-	}
 	var cluster native.Cluster
 	var node native.Node
 	if err := getNative(ctx, r.Client, v.Spec.Cluster, &cluster); err != nil {
@@ -293,6 +313,14 @@ func (r ContainerNodeReconciler) validateNode(ctx context.Context, v *ext.Contai
 	}
 	if companion == nil || companion.Spec.Runtime != v.Spec.Runtime || !companion.DeletionTimestamp.IsZero() {
 		return invalidBinding("container Cluster unavailable")
+	}
+	capability := &native.RawNodeStatus{Incarnation: v.Spec.InstanceID, TrainingIP: v.Spec.PrivateAddress, NetworkScope: v.Spec.NetworkScope, Environment: v.Spec.Environment, AuthorizedGPUUUIDs: v.Spec.AuthorizedGPUUUIDs}
+	if len(v.Spec.AuthorizedGPUUUIDs) == 0 {
+		if err := rawnode.ValidateIdentity(capability); err != nil {
+			return invalidBinding("container identity or private address is invalid")
+		}
+	} else if err := rawnode.ValidateCapability(capability); err != nil {
+		return invalidBinding("container identity, private address or authorized GPU allowlist is invalid")
 	}
 	return (ContainerClusterReconciler{Client: r.Client}).validateCluster(ctx, companion)
 }
@@ -342,11 +370,6 @@ func (r ContainerJobReconciler) validateJob(ctx context.Context, v *ext.Containe
 	if v.Spec.Runtime != "Raw" && v.Spec.Runtime != "Docker" {
 		return invalidBinding("unsupported runtime")
 	}
-	for _, task := range job.Spec.Tasks {
-		if string(task.Runtime.Kind) != string(v.Spec.Runtime) {
-			return invalidBinding("mixed runtimes are unsupported")
-		}
-	}
 	var cluster native.Cluster
 	if err := getNative(ctx, r.Client, v.Spec.Cluster, &cluster); err != nil {
 		return err
@@ -354,7 +377,8 @@ func (r ContainerJobReconciler) validateJob(ctx context.Context, v *ext.Containe
 	if tenant.IDOf(&cluster) != v.Spec.TenantID || cluster.Spec.AgentNamespace != v.Namespace {
 		return invalidBinding("wrong Cluster tenant or namespace")
 	}
-	return nil
+	_, err := r.kubernetesTargets(ctx, v, &job)
+	return err
 }
 
 // AgentReleaseReconciler separates metadata validation from byte verification.

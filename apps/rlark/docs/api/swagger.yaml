@@ -3,9 +3,8 @@ info:
   title: RLark Gateway CRD API Subset
   description: >-
     A maintained subset of routes registered by the RLark Gateway, focused on CRD operations and selected supporting endpoints; this is not a complete Gateway specification. The Gateway login endpoint
-    does not issue a token or establish a session, and these routes currently
-    do not enforce the UI login result. Deploy the Gateway only on a trusted
-    network or behind an authenticated access-control layer. Domain resources
+    issues a JWT and a session cookie. Protected routes enforce authentication;
+    container-runtime management requires an administrator. Domain resources
     group virtual addresses and scope cross-cluster forwarding; they do not
     isolate underlying infrastructure or ordinary Kubernetes networking. The
     registered Gateway certificate-revocation route is not implemented and is
@@ -35,6 +34,53 @@ tags:
     description: Gateway Prometheus metrics
 
 paths:
+  /api/v1/container-runtime/clusters/{namespace}/{name}/enrollments/{operation}/cancel:
+    post:
+      tags: [Cluster]
+      summary: Cancel a preview Notebook enrollment
+      description: >-
+        Requires an authenticated RLark administrator and explicitly enabled
+        container enrollment. Sets the irreversible cancelRequested intent on
+        the exact operation instance. Already joined nodes and services are
+        retained. An SSH command issued before cancellation may still finish;
+        cancellation does not roll back external effects or prove cleanup.
+      operationId: cancelNotebookEnrollment
+      parameters:
+        - {name: namespace, in: path, required: true, schema: {type: string}}
+        - {name: name, in: path, required: true, schema: {type: string}}
+        - {name: operation, in: path, required: true, schema: {type: string}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [uid, clusterUID]
+              properties:
+                uid: {type: string, minLength: 1, description: Exact NodeEnrollment UID}
+                clusterUID: {type: string, minLength: 1, description: Exact ContainerCluster UID}
+      responses:
+        '202':
+          description: Cancellation intent accepted, or operation already terminal
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [name, uid, operationID, phase, cancelRequested]
+                properties:
+                  name: {type: string}
+                  uid: {type: string}
+                  operationID: {type: string}
+                  phase: {type: string}
+                  cancelRequested: {type: boolean}
+        '400': {description: Invalid request}
+        '401': {description: Authentication required}
+        '403': {description: Administrator role or same-origin write required}
+        '404': {description: Operation absent or enrollment disabled}
+        '409': {description: UID, tenant, ownership or concurrent update conflict}
+        '503': {description: Management API unavailable}
+
   /api/v1/images:
     get:
       tags: [Image]

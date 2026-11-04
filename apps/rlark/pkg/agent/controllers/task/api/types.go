@@ -34,8 +34,9 @@ type InlineScript struct {
 type RayExecutionParametersV1 struct {
 	Role         RayRole `json:"role"`
 	HeadTaskName string  `json:"headTaskName,omitempty"`
-	// HeadAddress is controller-resolved private address for host-networked
-	// workers. HeadTaskName remains the stable logical identity and port key.
+	// HeadAddress is a controller-resolved address; HeadTaskName remains the
+	// logical identity. The Kubernetes adapter accepts a unicast IPv4 address
+	// without a port and uses its existing Ray port of 6379.
 	HeadAddress   string        `json:"headAddress,omitempty"`
 	TotalNodes    int32         `json:"totalNodes,omitempty"`
 	NodeRankStart int32         `json:"nodeRankStart,omitempty"`

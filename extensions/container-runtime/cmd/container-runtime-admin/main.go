@@ -15,6 +15,7 @@ import (
 	"time"
 
 	ext "github.com/astribot-post-train/rlark/extensions/container-runtime/core/api/v1alpha1"
+	coreprovision "github.com/astribot-post-train/rlark/extensions/container-runtime/core/pkg/provision"
 	"github.com/astribot-post-train/rlark/extensions/container-runtime/pkg/provision"
 	native "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
@@ -48,7 +49,7 @@ func decode(path string, out any) error {
 }
 func run(ctx context.Context, args []string, output io.Writer) error {
 	if len(args) == 0 {
-		return errors.New("command required: cluster-create, node-register, node-package, upgrade-create")
+		return errors.New("command required: cluster-create, node-register, node-package, upgrade-create, node-start")
 	}
 	fs := flag.NewFlagSet(args[0], flag.ContinueOnError)
 	path := fs.String("config", "", "strict JSON request file")
@@ -59,7 +60,7 @@ func run(ctx context.Context, args []string, output io.Writer) error {
 	if *path == "" || fs.NArg() != 0 {
 		return errors.New("--config is required; positional arguments are unsupported")
 	}
-	if args[0] != "cluster-create" && args[0] != "node-register" && args[0] != "node-package" && args[0] != "upgrade-create" {
+	if args[0] != "cluster-create" && args[0] != "node-register" && args[0] != "node-package" && args[0] != "upgrade-create" && args[0] != "node-start" {
 		return errors.New("unsupported administrator command")
 	}
 	cfg, err := clientcmd.BuildConfigFromFlags("", *kubeconfig)
@@ -80,6 +81,12 @@ func run(ctx context.Context, args []string, output io.Writer) error {
 	service := provision.Service{Client: management}
 	var result any
 	switch args[0] {
+	case "node-start":
+		var req coreprovision.EnrollmentRequest
+		if err := decode(*path, &req); err != nil {
+			return err
+		}
+		result, err = (coreprovision.Service{Client: management}).CreateEnrollment(ctx, req)
 	case "cluster-create":
 		var req provision.ClusterRequest
 		if err := decode(*path, &req); err != nil {

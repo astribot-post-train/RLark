@@ -11,6 +11,7 @@ import { Client, APIError } from "../dist/test/admin/container-runtime/api.js";
 import {
   LoadGate,
   nodeState,
+  nativeNodeState,
   heartbeatAge,
   clusterState,
   logText,
@@ -119,6 +120,19 @@ test("capacity absence is distinct from a ready idle node", () => {
   assert.equal(heartbeatAge("invalid"), "—");
   assert.equal(heartbeatAge(null), "—");
 });
+test("native connectivity and container Agent readiness remain independent", () => {
+  const node = {
+    bindingValid: true,
+    held: false,
+    ready: false,
+    resources: { phase: "Online" },
+  };
+  assert.equal(nativeNodeState(node), "online");
+  assert.equal(nodeState(node), "stale");
+  assert.equal(node.schedulable, undefined);
+  assert.equal(nativeNodeState({ resources: { phase: "Offline" } }), "offline");
+  assert.equal(nativeNodeState({ resources: undefined }), "unknown");
+});
 test("transport rejects malformed inventory rather than reporting empty capacity", async () => {
   globalThis.fetch = async () =>
     new Response(JSON.stringify({ items: [{ name: "missing fields" }] }));
@@ -158,6 +172,8 @@ test("legacy console inventory loads with submission disabled and rejects invali
     ...inventory,
     jobSubmissionEnabled: false,
     nodeRegistrationEnabled: false,
+    enrollmentEnabled: false,
+    enrollments: [],
   });
   for (const capability of [false, true]) {
     globalThis.fetch = async () =>
@@ -393,6 +409,7 @@ test("native resource transport validates optional projection and recovers after
     privateAddress: "10.0.0.1",
     environment: "test",
     networkScope: "private",
+    role: "Worker",
     agentVersion: "test",
     resourceVersion: "2",
     ready: true,
@@ -402,6 +419,7 @@ test("native resource transport validates optional projection and recovers after
     bindingValid: true,
     unschedulable: true,
     authorizedGPUUUIDs: null,
+    discoveredGPUUUIDs: null,
     capabilities: null,
     conditions: null,
     lastHeartbeatTime: null,

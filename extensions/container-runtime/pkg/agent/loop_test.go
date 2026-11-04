@@ -61,3 +61,42 @@ func TestRunCanceledBeforeObservation(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestPublishedHeartbeatRetainsCadenceDuringReconciliationFailure(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	calls := 0
+	wanted := errors.New("upgrade API unavailable")
+	observer := observerFunc(func(context.Context) (Observation, error) { return Observation{}, nil })
+	sender := heartbeatFunc(func(context.Context, Observation) error {
+		calls++
+		if calls == 6 {
+			cancel()
+			return nil
+		}
+		return afterHeartbeat(nil, wanted)
+	})
+	if err := Run(ctx, observer, sender, time.Millisecond, time.Second, slog.New(slog.NewTextHandler(io.Discard, nil))); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 6 {
+		t.Fatalf("successful publication entered outage backoff: %d calls", calls)
+	}
+}
+
+func TestHeartbeatPublicationClassificationPreservesErrors(t *testing.T) {
+	publication, effect := errors.New("heartbeat rejected"), errors.New("task unavailable")
+	for _, tc := range []struct {
+		publication error
+		published   bool
+	}{{nil, true}, {publication, false}} {
+		err := afterHeartbeat(tc.publication, effect)
+		var marker *publishedHeartbeatError
+		if errors.As(err, &marker) != tc.published || !errors.Is(err, effect) || tc.publication != nil && !errors.Is(err, publication) {
+			t.Fatalf("wrong publication classification or lost error chain: %v", err)
+		}
+	}
+	if err := afterHeartbeat(nil, nil); err != nil {
+		t.Fatal(err)
+	}
+}

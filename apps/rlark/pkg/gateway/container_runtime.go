@@ -19,7 +19,7 @@ import (
 
 func (g *Gateway) initContainerRuntime(cfg *rest.Config) error {
 	if !g.config.ContainerRuntimeEnabled {
-		if g.config.ContainerRuntimeJobSubmission || g.config.ContainerRuntimeNodeRegistration || g.config.ContainerRuntimeDiagnosticsOrigin != "" {
+		if g.config.ContainerRuntimeEnrollment || g.config.ContainerRuntimeJobSubmission || g.config.ContainerRuntimeNodeRegistration || g.config.ContainerRuntimeDiagnosticsOrigin != "" {
 			return errors.New("container runtime options require --enable-container-runtime")
 		}
 		return nil
@@ -38,6 +38,9 @@ func (g *Gateway) initContainerRuntime(cfg *rest.Config) error {
 		return err
 	}
 	api := &management.API{Client: managementClient, Creator: provision.Service{Client: managementClient}, Auth: management.GatewayIdentity{}}
+	if g.config.ContainerRuntimeEnrollment {
+		api.Enrollments = provision.Service{Client: managementClient}
+	}
 	if g.config.ContainerRuntimeNodeRegistration {
 		api.Registrar = provision.Service{Client: managementClient}
 	}
@@ -66,6 +69,8 @@ func (g *Gateway) registerContainerRuntimeRoutes(admin *gin.RouterGroup) {
 	api.POST("/clusters", g.serveContainerRuntime)
 	api.GET("/clusters/:namespace/:name", g.serveContainerRuntime)
 	api.PATCH("/clusters/:namespace/:name", g.serveContainerRuntime)
+	api.POST("/clusters/:namespace/:name/start", g.serveContainerRuntime)
+	api.POST("/clusters/:namespace/:name/enrollments/:operation/cancel", g.serveContainerRuntime)
 	api.POST("/clusters/:namespace/:name/nodes", g.serveContainerRuntime)
 	api.PATCH("/clusters/:namespace/:name/nodes/:node", g.serveContainerRuntime)
 	api.GET("/clusters/:namespace/:name/jobs", g.serveContainerRuntime)

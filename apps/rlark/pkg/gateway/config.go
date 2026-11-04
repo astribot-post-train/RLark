@@ -36,6 +36,7 @@ type Config struct {
 
 	// ContainerRuntimeEnabled mounts the preview administrator extension API.
 	ContainerRuntimeEnabled          bool
+	ContainerRuntimeEnrollment       bool
 	ContainerRuntimeNodeRegistration bool
 	ContainerRuntimeJobSubmission    bool
 	// ContainerRuntimeDiagnosticsOrigin is a literal loopback HTTP origin of
@@ -63,6 +64,7 @@ func (c *Config) SetupFlags(fs *pflag.FlagSet) {
 	fs.BoolVar(&c.EnableSecretBackend, "enable-secret-backend", c.EnableSecretBackend, "Use Kubernetes Secret as persistence backend (test/CI mode, only when PostgreSQL is not configured).")
 	fs.StringSliceVar(&c.SyncResources, "sync-resources", c.SyncResources, "Resources that query from persistence backend (jobs, tasks, workflows, nodes). Others query from KCP.")
 	fs.BoolVar(&c.ContainerRuntimeEnabled, "enable-container-runtime", c.ContainerRuntimeEnabled, "Enable preview administrator container cluster management (requires extension CRDs and RBAC).")
+	fs.BoolVar(&c.ContainerRuntimeEnrollment, "container-runtime-enable-enrollment", c.ContainerRuntimeEnrollment, "Enable preview Notebook start/join operations (requires SSH enrollment controller and additive RBAC).")
 	fs.BoolVar(&c.ContainerRuntimeNodeRegistration, "container-runtime-enable-node-registration", c.ContainerRuntimeNodeRegistration, "Enable administrator runtime node registration (requires additive RBAC).")
 	fs.BoolVar(&c.ContainerRuntimeJobSubmission, "container-runtime-enable-job-submission", c.ContainerRuntimeJobSubmission, "Enable preview single-process Raw Job submission (requires additive RBAC).")
 	fs.StringVar(&c.ContainerRuntimeDiagnosticsOrigin, "container-runtime-diagnostics-origin", c.ContainerRuntimeDiagnosticsOrigin, "Optional loopback HTTP diagnostic origin of container-runtime-api.")

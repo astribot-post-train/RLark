@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/astribot-post-train/rlark/extensions/container-runtime/core/pkg/gpus"
 	"reflect"
 	"slices"
 	"sort"
@@ -138,7 +139,7 @@ func (r JobReservationReconciler) rayPlan(ctx context.Context, job *native.Job, 
 	plan := ext.RayGroupPlan{Binding: groupRef(b), Job: groupRef(job), JobGeneration: job.Generation, Restart: job.Annotations[nativejob.RestartedAtAnnotation], Cluster: b.Spec.Cluster, TenantID: tenant.IDOf(job), NetworkScope: networkScope, Ports: ext.RayPortPlan{Base: ports.Base, WorkerCount: ports.WorkerCount}}
 	for rank, m := range members {
 		n, t := chosen[rank], byName[m.Name]
-		gpus := slices.Clone(n.Spec.AuthorizedGPUUUIDs)
+		gpus := gpus.Inventory(n)
 		slices.Sort(gpus)
 		plan.Members = append(plan.Members, ext.GroupMember{Task: groupRef(t), Generation: t.Generation, Node: n.Spec.Node, NodeRecord: groupRef(n), InstanceID: n.Spec.InstanceID, CredentialID: n.Status.AgentCredentialID, PrivateAddr: n.Spec.PrivateAddress, Rank: int32(rank), GPUUUIDs: gpus})
 	}

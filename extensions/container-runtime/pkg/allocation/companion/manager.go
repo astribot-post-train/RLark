@@ -11,12 +11,13 @@ import (
 	"reflect"
 	"slices"
 	"sort"
-	"strings"
 	"time"
 
 	ext "github.com/astribot-post-train/rlark/extensions/container-runtime/core/api/v1alpha1"
 	"github.com/astribot-post-train/rlark/extensions/container-runtime/core/pkg/artifact"
+	"github.com/astribot-post-train/rlark/extensions/container-runtime/core/pkg/gpus"
 	"github.com/astribot-post-train/rlark/extensions/container-runtime/core/pkg/ownership"
+	"github.com/astribot-post-train/rlark/extensions/container-runtime/pkg/taskcontract"
 	raydocker "github.com/astribot-post-train/rlark/extensions/container-runtime/pkg/workload/ray/docker"
 	native "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
 	nativejob "github.com/rlinf/rlark/apps/rlark/pkg/controllermanager/job"
@@ -120,6 +121,12 @@ func (m Manager) acquire(ctx context.Context, req Request, existingOnly, plannin
 	if err := ownership.JobBindingMatches(&binding, &job, tenant.IDOf(&job)); err != nil {
 		return nil, fmt.Errorf("%w: invalid native Job binding", ErrIdentity)
 	}
+	if _, err := taskcontract.KubernetesTargets(ctx, m.Client, &binding, &job); err != nil {
+		if errors.Is(err, taskcontract.ErrInvalidTarget) {
+			return nil, fmt.Errorf("%w: %w", ErrIdentity, err)
+		}
+		return nil, fmt.Errorf("validate current Job targets: %w", err)
+	}
 	for _, pair := range []struct {
 		ref ext.NativeObjectReference
 		obj metav1.Object
@@ -153,17 +160,15 @@ func (m Manager) acquire(ctx context.Context, req Request, existingOnly, plannin
 	if node.Spec.InstanceID == "" || node.Spec.Environment == "" || task.Spec.Placement.Environment != node.Spec.Environment || node.Spec.NetworkScope == "" || !net.ParseIP(node.Spec.PrivateAddress).IsPrivate() {
 		return nil, ErrUnavailable
 	}
-	if len(node.Spec.AuthorizedGPUUUIDs) == 0 {
-		return nil, fmt.Errorf("%w: GPU entitlement is not provisioned", ErrUnavailable)
+	gpuUUIDs, gpuErr := gpus.Authorized(&node, m.now())
+	if gpuErr != nil {
+		return nil, fmt.Errorf("%w: %v", ErrUnavailable, gpuErr)
 	}
-	seen := map[string]bool{}
-	for _, id := range node.Spec.AuthorizedGPUUUIDs {
-		if !strings.HasPrefix(id, "GPU-") || strings.ContainsAny(id, ", \t\r\n") || seen[id] {
-			return nil, ErrIdentity
-		}
+	seen := make(map[string]bool, len(gpuUUIDs))
+	for _, id := range gpuUUIDs {
 		seen[id] = true
 	}
-	wanted := &ext.ContainerAllocation{ObjectMeta: metav1.ObjectMeta{Name: Name(string(nativeNode.UID)), Namespace: node.Namespace, Finalizers: []string{Finalizer}}, Spec: ext.ContainerAllocationSpec{Cluster: reference(&cluster), Job: reference(&job), Task: reference(&task), Node: reference(&nativeNode), TenantID: binding.Spec.TenantID, Generation: task.Generation, JobGeneration: job.Generation, ExecutionID: string(task.UID), NodeInstanceID: node.Spec.InstanceID, PrivateAddress: node.Spec.PrivateAddress, NetworkScope: node.Spec.NetworkScope, NodeRecordUID: string(node.UID), JobBindingUID: string(binding.UID), GPUUUIDs: slices.Clone(node.Spec.AuthorizedGPUUUIDs)}}
+	wanted := &ext.ContainerAllocation{ObjectMeta: metav1.ObjectMeta{Name: Name(string(nativeNode.UID)), Namespace: node.Namespace, Finalizers: []string{Finalizer}}, Spec: ext.ContainerAllocationSpec{Cluster: reference(&cluster), Job: reference(&job), Task: reference(&task), Node: reference(&nativeNode), TenantID: binding.Spec.TenantID, Generation: task.Generation, JobGeneration: job.Generation, ExecutionID: string(task.UID), NodeInstanceID: node.Spec.InstanceID, PrivateAddress: node.Spec.PrivateAddress, NetworkScope: node.Spec.NetworkScope, NodeRecordUID: string(node.UID), JobBindingUID: string(binding.UID), GPUUUIDs: slices.Clone(gpuUUIDs)}}
 	sort.Strings(wanted.Spec.GPUUUIDs)
 	if raydocker.IsJob(&job) && !planning {
 		g := binding.Status.Group
@@ -178,6 +183,15 @@ func (m Manager) acquire(ctx context.Context, req Request, existingOnly, plannin
 		}
 		if index < 0 {
 			return nil, ErrIdentity
+		}
+		groupGPUUUIDs, gpuErr := gpus.Authorized(&node, m.now())
+		if gpuErr != nil {
+			return nil, fmt.Errorf("%w: %v", ErrUnavailable, gpuErr)
+		}
+		for i := range g.Plan.Members {
+			if g.Plan.Members[i].NodeRecord.UID == string(node.UID) && !slices.Equal(sortedGPUUUIDs(g.Plan.Members[i].GPUUUIDs), sortedGPUUUIDs(groupGPUUUIDs)) {
+				return nil, ErrIdentity
+			}
 		}
 		wanted.Spec.Group = &ext.AllocationGroup{ID: g.ID, Digest: g.Digest, MemberIndex: int32(index), Plan: *g.Plan.DeepCopy()}
 		if !raydocker.AllocationMatches(wanted.Spec) || !slices.Contains(node.Status.Capabilities, raydocker.Capability) || node.Status.AgentCredentialID != g.Plan.Members[index].CredentialID {
@@ -296,7 +310,11 @@ func (m Manager) acquire(ctx context.Context, req Request, existingOnly, plannin
 		if other.Spec.NetworkScope == node.Spec.NetworkScope && other.Spec.PrivateAddress == node.Spec.PrivateAddress {
 			return nil, ErrIdentity
 		}
-		for _, id := range other.Spec.AuthorizedGPUUUIDs {
+		otherGPUUUIDs, err := gpus.Authorized(&other, m.now())
+		if err != nil {
+			continue
+		}
+		for _, id := range otherGPUUUIDs {
 			if seen[id] {
 				return nil, ErrIdentity
 			}
@@ -318,6 +336,12 @@ func (m Manager) acquire(ctx context.Context, req Request, existingOnly, plannin
 		return sameReservation(&current, wanted)
 	}
 	return wanted, nil
+}
+
+func sortedGPUUUIDs(values []string) []string {
+	copy := slices.Clone(values)
+	sort.Strings(copy)
+	return copy
 }
 func sameReservation(current, wanted *ext.ContainerAllocation) (*ext.ContainerAllocation, error) {
 	if !current.DeletionTimestamp.IsZero() || !controllerutil.ContainsFinalizer(current, Finalizer) || !reflect.DeepEqual(current.Spec, wanted.Spec) || tenant.IDOf(current) != wanted.Spec.TenantID || !reflect.DeepEqual(current.OwnerReferences, wanted.OwnerReferences) {

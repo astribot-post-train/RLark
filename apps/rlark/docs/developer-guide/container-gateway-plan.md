@@ -6,6 +6,14 @@ Cloud A notebook described below. UI enrollment/retirement workflows, automatic
 certificate renewal, Docker Engine execution, and the cloud-to-robot data path
 remain incomplete.
 
+The controller-level [mixed Job preview](mixed-container-job-preview.md) now
+places Raw rollout and explicitly bound Kubernetes Env Tasks under one native
+Job, while keeping A/B/C in one logical container Cluster and the robot in its
+existing Kubernetes Cluster. Runtime-specific completion and stop recovery have
+automated tests. Fleet startup barriers, automatic sibling cancellation, relay
+injection and Lumo2/S1U acceptance remain outstanding; this is not a completed
+cloud-to-robot rollout path.
+
 ## 2026-11-02 A enrollment acceptance
 
 The retained `ksyun-containers` cluster now has ContainerNode `ksyun-a` bound to
@@ -62,6 +70,72 @@ finalizer removal.
 
 This acceptance does not establish Lumo2 inference, Ray multi-host traffic,
 Kubernetes Pod networking, or S1U connectivity.
+
+## 2026-11-03 Ray relay feasibility validation
+
+An isolated two-node RLinf/Ray 2.59.0 test on the development host completed
+bidirectional `Channel` exchanges for 1 KiB, 1 MiB and 4 MiB payloads. It used
+loopback addresses and dedicated temporary Ray processes; it did not use or
+inherit `HTTP_PROXY`, `HTTPS_PROXY`, or `ALL_PROXY`, and cleanup was limited to
+those test process groups. The existing Fleet Ray job remained running. This
+proves the RLinf channel works when Ray can use a sufficiently large port pool;
+it is not a cross-host or A-relay acceptance.
+
+The current Docker Ray executor pins nine Ray service ports plus a configurable
+worker range of at least one port (256 by default). Ray nodes connect directly
+to several independently listening services, so the existing A/Hub API relay
+on TCP 30000 cannot carry Ray traffic, and exposing only three TCP ports on A
+does not satisfy the current executor's direct-port contract. A single-port
+solution requires a Ray-aware multiplexing transport and per-node redirection
+or connector support; it is not implemented as an RLark feature. No HTTP proxy
+environment variables are part of the proposed solution.
+
+An isolated cross-host proof of concept then placed a mutual-TLS `smux`
+gateway on A:30001 and process-scoped TCP connectors on the two Ray nodes. Both
+Ray nodes joined the same cluster, and the gateway recorded 25 bidirectional
+streams over that one public listener, including Ray service, worker, and
+Gloo-selected dynamic ports. The process-scoped adapter used `LD_PRELOAD` and
+temporary credentials; this demonstrates transport multiplexing only and is
+not a production implementation or an RLark-supported capability.
+
+After A's SSH endpoint recovered, the cross-host RLinf `Channel` acceptance
+passed with the Gloo interfaces pinned on both Ray nodes. The head actor used
+`enp5s0` at `192.168.31.2`; the worker actor used `eth0` at `10.1.3.100`.
+Both `RLINF_COMM_NET_DEVICES` and `GLOO_SOCKET_IFNAME` were set to that node's
+interface before starting Ray, and both actors reported the expected IPv4
+address. Gloo initialized in both directions and each of three payload sizes
+(1 KiB, 1 MiB, and 4 MiB) completed 10 observation/action request-response
+round trips. This resolves the prior IPv4/IPv6 mismatch for this tested setup.
+The A:30001 gateway recorded 33 streams targeting 18 distinct Ray/Gloo ports,
+while carrying all cross-host test traffic over the single public listener. No
+Lumo2 inference or robot connectivity was tested.
+
+The acceptance used Ray 2.59.0 on both nodes, but Python 3.11.16 on the
+development host and 3.11.14 in A's Fleet environment; Ray emitted a patch
+version mismatch warning. PyTorch versions also differed (`2.11.0+cu130` and
+`2.10.0+cu128`). The transport and Channel exchange passed with these versions,
+but production rollout should align Python and PyTorch builds before treating
+this as a supported deployment combination.
+
+Read-only inspection of the authorized A notebook found `/dev/net/tun`, but no
+`CAP_NET_ADMIN` and no loaded kernel WireGuard module. A cannot currently host
+a TUN-based WireGuard interface from this notebook environment. This does not
+rule out a future platform change that grants the required capability; it does
+rule out claiming that the current A installation can provide that overlay.
+
+Three-port cross-host Ray/RLinf traffic remains unverified and is not supported
+by this acceptance. The single-port transport prototype passed this isolated
+Ray/RLinf Channel test, without proxy environment variables and without
+changing the active Fleet cluster. This remains a process-scoped PoC using
+`LD_PRELOAD` and temporary credentials, not an RLark production capability.
+
+A previous follow-up attempt was blocked because A:22 reset connections during
+SSH key exchange. After the host restart, SSH recovered and the test completed.
+All test Ray processes, connectors, and the A:30001 gateway were stopped, and
+test temporary directories were removed. A's existing Fleet Ray head (PID
+592376, port 6390) remained alive. A:30001 is free after cleanup. A:30000 was
+not touched; at the post-test check it had no listener, so its service should
+be checked separately after the host restart.
 
 Native connectivity acceptance on 2026-11-02 passed after applying controller
 RBAC and restarting only the extension controller: `ksyun-a` became

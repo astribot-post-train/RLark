@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"slices"
 	"sort"
+	"strconv"
 	"time"
 
 	ext "github.com/astribot-post-train/rlark/extensions/container-runtime/core/api/v1alpha1"
@@ -40,8 +41,8 @@ const (
 	jobTaskSetRetiringCondition    = taskcontract.TaskSetRetiringCondition
 )
 
-// JobReservationReconciler materializes independent Raw process Tasks, reserves
-// one node per Task, and aggregates the observed execution lifecycle. It is
+// JobReservationReconciler materializes Raw process Tasks and explicitly bound
+// Kubernetes workers, reserves one node per Raw Task, and aggregates execution. It is
 // opt-in; runtime effects remain behind the separately scoped Agent API.
 // Client must be uncached; current API state and CAS are the concurrency
 // authority.
@@ -121,7 +122,7 @@ func processTemplate(job *native.Job, binding *ext.ContainerJob) error {
 	return nil
 }
 
-func desiredTasks(job *native.Job, binding *ext.ContainerJob) []*native.Task {
+func desiredTasks(job *native.Job, binding *ext.ContainerJob, placements map[string]string) []*native.Task {
 	if binding.Spec.Runtime == "Docker" && raydocker.IsJob(job) {
 		members, err := raydocker.Expand(job)
 		if err != nil {
@@ -134,6 +135,16 @@ func desiredTasks(job *native.Job, binding *ext.ContainerJob) []*native.Task {
 		template := &job.Spec.Tasks[i]
 		task := &native.Task{ObjectMeta: metav1.ObjectMeta{Name: utils.ChildName(job.Name, template.Name), Namespace: binding.Namespace, Annotations: map[string]string{utils.ParentUIDAnnotation: string(job.UID), utils.ChildTemplateAnnotation: template.Name, nativejob.RestartedAtAnnotation: job.Annotations[nativejob.RestartedAtAnnotation]}, OwnerReferences: []metav1.OwnerReference{*metav1.NewControllerRef(job, native.GroupVersion.WithKind("Job"))}}, Spec: *template.TaskSpec.DeepCopy()}
 		task.Spec.Tags = append(slices.Clone(job.Spec.Tags), task.Spec.Tags...)
+		if template.Runtime.Kind == "Kubernetes" {
+			task.Namespace = placements[template.Name]
+			task.Finalizers = []string{kubernetesTaskProtection}
+			task.Annotations[targetJobGeneration] = strconv.FormatInt(job.Generation, 10)
+			for _, target := range binding.Spec.KubernetesTargets {
+				if target.Template == template.Name {
+					task.Annotations[targetClusterUID] = target.Cluster.UID
+				}
+			}
+		}
 		tenant.Inherit(job, task)
 		result = append(result, task)
 	}
@@ -170,6 +181,9 @@ func (r JobReservationReconciler) children(ctx context.Context, job *native.Job)
 // A target with no allocation is ambiguous (a Create may still be in flight).
 // It intentionally blocks rather than guessing that no process was started.
 func (r JobReservationReconciler) retire(ctx context.Context, task *native.Task) (bool, error) {
+	if task.Spec.Runtime.Kind == "Kubernetes" {
+		return r.retireKubernetes(ctx, task)
+	}
 	if !task.Spec.Suspended && task.DeletionTimestamp.IsZero() {
 		before := task.DeepCopy()
 		task.Spec.Suspended = true
@@ -311,6 +325,24 @@ func (r JobReservationReconciler) reconcileProcesses(ctx context.Context, job *n
 	for i := range children {
 		task := &children[i]
 		row := native.JobTaskStatus{Name: task.Annotations[utils.ChildTemplateAnnotation], Phase: native.TaskPhasePending}
+		if task.Spec.Runtime.Kind == "Kubernetes" {
+			phase, done, err := r.observeKubernetes(ctx, task)
+			if err != nil {
+				return ctrl.Result{}, err
+			}
+			row.Phase = phase
+			statuses = append(statuses, row)
+			observed := kubernetesObserved(task)
+			anyObserved = anyObserved || observed
+			anyRunning = anyRunning || observed && phase == native.TaskPhaseRunning
+			anyReserved = anyReserved || !done
+			allScheduled = allScheduled && observed
+			allTerminal = allTerminal && done
+			allReleased = allReleased && done
+			allSucceeded = allSucceeded && done && phase == native.TaskPhaseSucceeded
+			anyFailed = anyFailed || done && phase == native.TaskPhaseFailed
+			continue
+		}
 		if taskcontract.Observed(task) {
 			anyObserved = true
 			row.Phase, row.Message = task.Status.Phase, task.Status.Message
@@ -355,20 +387,20 @@ func (r JobReservationReconciler) reconcileProcesses(ctx context.Context, job *n
 	if allTerminal && allReleased {
 		phase := native.JobPhaseSucceeded
 		reason := "ExecutionCompleted"
-		message := "All Raw replicas succeeded and exact allocation cleanup/deletion are confirmed"
+		message := "All Tasks succeeded and runtime cleanup and allocation release are confirmed"
 		if anyFailed || !allSucceeded {
-			phase, reason, message = native.JobPhaseFailed, "ExecutionFailed", "A Raw replica failed after its exact cleanup and allocation deletion were confirmed"
+			phase, reason, message = native.JobPhaseFailed, "ExecutionFailed", "A Task failed; runtime cleanup and allocation release are confirmed for all Tasks"
 		}
 		return r.reportState(ctx, job, phase, statuses, reason, message, false, true, true)
 	}
-	phase, reason, message := native.JobPhasePending, "ReservedAwaitingDispatch", "Raw replica Tasks and exclusive node allocations are persisted; awaiting current Agent observations"
+	phase, reason, message := native.JobPhasePending, "ReservedAwaitingDispatch", "Tasks and any exclusive Raw node allocations are persisted; awaiting current Agent observations"
 	if waiting {
 		reason, message = "WaitingForCapacity", "At least one Raw process has no eligible free node; other members continue observation and cleanup"
 	}
 	if anyRunning {
-		phase, reason, message = native.JobPhaseRunning, "ExecutionObserved", "At least one Raw replica is running; all allocations remain protected"
+		phase, reason, message = native.JobPhaseRunning, "ExecutionObserved", "At least one Task is running; Raw allocations remain protected"
 	} else if anyObserved && !waiting {
-		reason, message = "ExecutionObserved", "Raw replica execution observations are available; allocations remain protected"
+		reason, message = "ExecutionObserved", "Current Task execution observations are available; Raw allocations remain protected"
 	}
 	return r.reportState(ctx, job, phase, statuses, reason, message, allScheduled && anyReserved, anyObserved, false)
 }
@@ -427,7 +459,11 @@ func (r JobReservationReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	stopping := !owned || validationErr != nil || job.Spec.Suspended || !job.DeletionTimestamp.IsZero()
 	var desired []*native.Task
 	if !stopping {
-		desired = desiredTasks(&job, binding)
+		placements, err := (ContainerJobReconciler{Client: r.Client}).kubernetesTargets(ctx, binding, &job)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+		desired = desiredTasks(&job, binding, placements)
 	}
 	// A changed member or generation retires the whole prior set before any
 	// replacement is materialized. Otherwise unchanged siblings could retain an
@@ -436,9 +472,19 @@ func (r JobReservationReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	retiring := stopping || retirement != nil && retirement.Status == metav1.ConditionTrue
 	for i := range children {
 		task := &children[i]
+		if task.Spec.Runtime.Kind == "Kubernetes" && !stopping {
+			if _, err := readKubernetesResult(task); err != nil {
+				// Corrupt completion evidence must not be interpreted as spec
+				// drift and silently replay a completed member after retirement.
+				return ctrl.Result{}, err
+			}
+		}
 		matches := false
 		for _, wanted := range desired {
-			if task.Name == wanted.Name && task.Namespace == wanted.Namespace && taskcontract.EqualSpec(task.Spec, wanted.Spec) && task.Annotations[utils.ChildTemplateAnnotation] == wanted.Annotations[utils.ChildTemplateAnnotation] && task.Annotations[nativejob.RestartedAtAnnotation] == wanted.Annotations[nativejob.RestartedAtAnnotation] && (task.DeletionTimestamp.IsZero() || taskcontract.Completed(task)) {
+			if task.Spec.Runtime.Kind == "Kubernetes" && !kubernetesTaskMatches(task, wanted, job.Generation) {
+				continue
+			}
+			if task.Name == wanted.Name && task.Namespace == wanted.Namespace && executionTaskMatches(task, wanted) && task.Annotations[utils.ChildTemplateAnnotation] == wanted.Annotations[utils.ChildTemplateAnnotation] && task.Annotations[nativejob.RestartedAtAnnotation] == wanted.Annotations[nativejob.RestartedAtAnnotation] && (task.DeletionTimestamp.IsZero() || taskcontract.Completed(task) || task.Spec.Runtime.Kind == "Kubernetes" && task.Annotations[kubernetesResultAnnotation] != "") {
 				matches = true
 			}
 		}

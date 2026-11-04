@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	ext "github.com/astribot-post-train/rlark/extensions/container-runtime/core/api/v1alpha1"
+	"github.com/astribot-post-train/rlark/extensions/container-runtime/core/pkg/gpus"
 	dockerruntime "github.com/astribot-post-train/rlark/extensions/container-runtime/pkg/runtime/docker"
 	native "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
 	executionplan "github.com/rlinf/rlark/apps/rlark/pkg/agent/execution/plan"
@@ -12,6 +13,7 @@ import (
 	"github.com/rlinf/rlark/apps/rlark/pkg/agent/execution/workload"
 	"k8s.io/apimachinery/pkg/api/resource"
 	"slices"
+	"time"
 )
 
 // Fits validates requested CPU, memory and exact whole-GPU entitlement before
@@ -32,7 +34,8 @@ func Fits(task *native.Task, node *ext.ContainerNode) error {
 	if err != nil {
 		return fmt.Errorf("node memory capacity: %w", err)
 	}
-	if availableCPU.Cmp(*resource.NewMilliQuantity(cpu, resource.DecimalSI)) < 0 || availableMemory.Cmp(*resource.NewQuantity(memory, resource.BinarySI)) < 0 || len(node.Spec.AuthorizedGPUUUIDs) == 0 || gpu != 0 && gpu != int64(len(node.Spec.AuthorizedGPUUUIDs)) {
+	gpuUUIDs, gpuErr := gpus.Authorized(node, time.Now())
+	if gpuErr != nil || availableCPU.Cmp(*resource.NewMilliQuantity(cpu, resource.DecimalSI)) < 0 || availableMemory.Cmp(*resource.NewQuantity(memory, resource.BinarySI)) < 0 || gpu != 0 && gpu != int64(len(gpuUUIDs)) {
 		return errors.New("ray request does not fit complete host entitlement")
 	}
 	return nil

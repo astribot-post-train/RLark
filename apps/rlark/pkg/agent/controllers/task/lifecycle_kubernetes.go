@@ -30,6 +30,14 @@ func (l kubernetesLifecycle) BeforeReconcile(ctx context.Context, input host.Lif
 	if err != nil {
 		return host.LifecycleDecision{}, err
 	}
+	if hasKubernetesTarget(task) {
+		if l.controller == nil || l.controller.ManagementClient == nil {
+			return host.LifecycleDecision{}, fmt.Errorf("Kubernetes Task target validation requires a management client")
+		}
+		if err := validateKubernetesTarget(ctx, l.controller.ManagementClient, l.controller.ManagementNamespace, task); err != nil {
+			return host.LifecycleDecision{}, err
+		}
+	}
 	if !task.Spec.Suspended && task.Status.Phase == rlarkv1alpha1.TaskPhaseStopped {
 		intent := host.IntentForTask(task, rlarkv1alpha1.TaskPhasePending, "", nil, host.StatusPriorityLifecycle)
 		return host.LifecycleDecision{Action: host.LifecycleWait, Reason: "StoppedStatusReset", Status: &intent, Retry: host.RetryDirective{Class: host.RetryOnChange}}, nil

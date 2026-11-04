@@ -11,14 +11,15 @@ import (
 )
 
 type registerNodeRequest struct {
-	OperationID        string   `json:"operationID"`
-	ClusterUID         string   `json:"clusterUID"`
-	Name               string   `json:"name"`
-	InstanceID         string   `json:"instanceID"`
-	PrivateAddress     string   `json:"privateAddress"`
-	Environment        string   `json:"environment"`
-	NetworkScope       string   `json:"networkScope"`
-	AuthorizedGPUUUIDs []string `json:"authorizedGPUUUIDs"`
+	OperationID        string       `json:"operationID"`
+	ClusterUID         string       `json:"clusterUID"`
+	Name               string       `json:"name"`
+	InstanceID         string       `json:"instanceID"`
+	PrivateAddress     string       `json:"privateAddress"`
+	Environment        string       `json:"environment"`
+	NetworkScope       string       `json:"networkScope"`
+	Role               ext.NodeRole `json:"role"`
+	AuthorizedGPUUUIDs []string     `json:"authorizedGPUUUIDs"`
 }
 
 func (a *API) registerNode(w http.ResponseWriter, r *http.Request, namespace, clusterName, subject string) {
@@ -56,7 +57,7 @@ func (a *API) registerNode(w http.ResponseWriter, r *http.Request, namespace, cl
 		OperationID: body.OperationID, Cluster: nativeCluster.Name, ClusterUID: string(nativeCluster.UID),
 		ContainerClusterUID: string(cc.UID), TenantID: tenant.IDOf(&cc), Name: body.Name,
 		InstanceID: body.InstanceID, PrivateAddress: body.PrivateAddress, Environment: body.Environment,
-		NetworkScope: body.NetworkScope, AuthorizedGPUUUIDs: body.AuthorizedGPUUUIDs,
+		NetworkScope: body.NetworkScope, AuthorizedGPUUUIDs: body.AuthorizedGPUUUIDs, Role: body.Role,
 	}
 	if err := req.Validate(); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())

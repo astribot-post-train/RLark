@@ -72,6 +72,41 @@ spec:
                 x-kubernetes-validations:
                 - message: referenced object instance is immutable
                   rule: self == oldSelf
+              kubernetesTargets:
+                description: |-
+                  KubernetesTargets binds each native Kubernetes Task template to one
+                  exact Cluster object. Raw templates use Cluster above.
+                items:
+                  description: KubernetesTaskTarget is an explicit, UID-fenced placement
+                    for one Job template.
+                  properties:
+                    cluster:
+                      description: NativeObjectReference pins an extension record
+                        to one exact RLark object incarnation.
+                      properties:
+                        name:
+                          type: string
+                        namespace:
+                          type: string
+                        uid:
+                          type: string
+                      required:
+                      - name
+                      - uid
+                      type: object
+                      x-kubernetes-validations:
+                      - message: referenced object instance is immutable
+                        rule: self == oldSelf
+                    template:
+                      type: string
+                  required:
+                  - cluster
+                  - template
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - template
+                x-kubernetes-list-type: map
               runtime:
                 description: Runtime identifies an implemented container execution
                   boundary.
@@ -370,6 +405,9 @@ spec:
                           - task
                           type: object
                         type: array
+                        x-kubernetes-list-map-keys:
+                        - rank
+                        x-kubernetes-list-type: map
                       networkScope:
                         type: string
                       ports:

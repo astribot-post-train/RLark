@@ -83,6 +83,11 @@ export function nodeState(node: Node): "ready" | "stale" | "held" | "invalid" {
   if (!node.ready) return "stale";
   return "ready";
 }
+export function nativeNodeState(node: Node): "online" | "offline" | "unknown" {
+  if (node.resources?.phase === "Online") return "online";
+  if (node.resources?.phase === "Offline") return "offline";
+  return "unknown";
+}
 export function clusterState(
   cluster: Cluster,
 ): "ready" | "degraded" | "invalid" | "deleting" {
@@ -108,8 +113,8 @@ export class LoadGate {
   }
 }
 
-// Registration authorizes existing hardware. Never infer GPU entitlement from
-// an empty list or silently change incarnation/private network identity.
+// An empty GPU list delegates authorization to the Agent's authenticated,
+// fresh inventory. A non-empty list remains an explicit operator allowlist.
 export function nodeRegistrationIntent(
   operationID: string,
   clusterUID: string,
@@ -119,6 +124,7 @@ export function nodeRegistrationIntent(
     privateAddress: string;
     environment: string;
     networkScope: string;
+    role: "Gateway" | "Worker";
     gpuText: string;
   },
 ): NodeRegistration {
@@ -142,9 +148,9 @@ export function nodeRegistrationIntent(
     !fields.instanceID.trim() ||
     !fields.environment.trim() ||
     !fields.networkScope.trim() ||
+    !["Gateway", "Worker"].includes(fields.role) ||
     !privateIPv4 ||
     !Array.isArray(authorizedGPUUUIDs) ||
-    !authorizedGPUUUIDs.length ||
     !authorizedGPUUUIDs.every(
       (v) => typeof v === "string" && v.startsWith("GPU-") && !/[\s,]/.test(v),
     ) ||

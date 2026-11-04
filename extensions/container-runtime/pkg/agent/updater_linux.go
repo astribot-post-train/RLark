@@ -10,6 +10,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/astribot-post-train/rlark/extensions/container-runtime/core/pkg/artifact"
 	"github.com/google/uuid"
@@ -44,6 +45,17 @@ type Updater struct {
 	transport              UpgradeTransport
 	restart                RestartFunc
 	runningDigest, version string
+	download               *releaseDownload
+}
+
+// releaseDownload holds only uninstalled bytes. Closing done publishes its
+// result; the worker never mutates the journal, installation, or updater state.
+type releaseDownload struct {
+	manifest ReleaseManifest
+	done     chan struct{}
+	cancel   context.CancelFunc
+	data     []byte
+	err      error
 }
 
 // NewUpdater validates local state and acquires exclusive locks without starting
@@ -112,9 +124,47 @@ func (u *Updater) Version() string { return u.version }
 func (u *Updater) Close() {
 	u.mu.Lock()
 	defer u.mu.Unlock()
+	u.cancelDownload()
 	if u.files != nil {
 		u.files.close()
 		u.files = nil
+	}
+}
+
+func (u *Updater) cancelDownload() {
+	if u.download != nil {
+		u.download.cancel()
+		<-u.download.done
+		u.download = nil
+	}
+}
+
+// downloadRelease starts at most one bounded transfer. Returning while the
+// bytes are in flight lets the Agent publish fresh observations on schedule.
+// Restart discards partial bytes and resumes from the retained exact journal.
+func (u *Updater) downloadRelease(ctx context.Context, manifest *ReleaseManifest) ([]byte, bool, error) {
+	if u.download == nil {
+		transferCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+		download := &releaseDownload{manifest: *manifest, done: make(chan struct{}), cancel: cancel}
+		u.download = download
+		go func() {
+			defer close(download.done)
+			defer cancel()
+			download.data, download.err = u.transport.DownloadRelease(transferCtx, &download.manifest)
+		}()
+		return nil, false, nil
+	}
+	if u.download.manifest != *manifest {
+		u.cancelDownload()
+		return nil, false, ErrUpgradeIdentity
+	}
+	select {
+	case <-u.download.done:
+		data, err := u.download.data, u.download.err
+		u.download = nil
+		return data, true, err
+	default:
+		return nil, false, nil
 	}
 }
 
@@ -146,12 +196,14 @@ func (u *Updater) Step(ctx context.Context, obs Observation) error {
 		return errors.New("agent updater closed")
 	}
 	if err := ctx.Err(); err != nil {
+		u.cancelDownload()
 		return err
 	}
 	if obs.Version != u.version {
 		return ErrUpgradeIdentity
 	}
 	if obs.Busy {
+		u.cancelDownload()
 		return nil
 	}
 	r, err := u.files.load()
@@ -265,8 +317,8 @@ func (u *Updater) Step(ctx context.Context, obs Observation) error {
 	if !releaseMatches(manifest, granted.Release) || *manifest != r.Release {
 		return ErrUpgradeIdentity
 	}
-	data, err := u.transport.DownloadRelease(ctx, manifest)
-	if err != nil {
+	data, downloaded, err := u.downloadRelease(ctx, manifest)
+	if err != nil || !downloaded {
 		return err
 	}
 	spec, err := manifestSpec(manifest)
@@ -375,5 +427,5 @@ func (h UpgradingHeartbeater) Heartbeat(ctx context.Context, obs Observation) er
 	if err := h.Client.Heartbeat(ctx, obs); err != nil {
 		return err
 	}
-	return h.Updater.Step(ctx, obs)
+	return afterHeartbeat(nil, h.Updater.Step(ctx, obs))
 }

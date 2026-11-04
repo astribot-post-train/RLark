@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/astribot-post-train/rlark/extensions/container-runtime/core/pkg/gpus"
 	"reflect"
 	"slices"
 	"time"
@@ -95,7 +96,7 @@ func (s TaskService) assignment(ctx context.Context, id Identity) (*Assignment, 
 		}
 		return nil, err
 	}
-	if a.UID == "" || a.Generation < 1 || a.Spec.Cluster != n.Spec.Cluster || a.Spec.Node != n.Spec.Node || a.Spec.NodeRecordUID != string(n.UID) || a.Spec.NodeInstanceID != n.Spec.InstanceID || a.Spec.PrivateAddress != n.Spec.PrivateAddress || a.Spec.NetworkScope != n.Spec.NetworkScope || a.Spec.TenantID != id.TenantID || tenant.IDOf(&a) != id.TenantID || !sameGPUSet(a.Spec.GPUUUIDs, n.Spec.AuthorizedGPUUUIDs) || !controllerutil.ContainsFinalizer(&a, companion.Finalizer) {
+	if a.UID == "" || a.Generation < 1 || a.Spec.Cluster != n.Spec.Cluster || a.Spec.Node != n.Spec.Node || a.Spec.NodeRecordUID != string(n.UID) || a.Spec.NodeInstanceID != n.Spec.InstanceID || a.Spec.PrivateAddress != n.Spec.PrivateAddress || a.Spec.NetworkScope != n.Spec.NetworkScope || a.Spec.TenantID != id.TenantID || tenant.IDOf(&a) != id.TenantID || !sameGPUSet(a.Spec.GPUUUIDs, gpus.Inventory(n)) || !controllerutil.ContainsFinalizer(&a, companion.Finalizer) {
 		return nil, ErrIdentity
 	}
 	// An upgrade occupies the same node lock and carries no workload Task.

@@ -1,0 +1,288 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.18.0
+  name: nodeenrollments.containers.rlark.io
+spec:
+  group: containers.rlark.io
+  names:
+    kind: NodeEnrollment
+    listKind: NodeEnrollmentList
+    plural: nodeenrollments
+    singular: nodeenrollment
+  scope: Namespaced
+  versions:
+  - name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: NodeEnrollment records an administrator's recoverable start/join
+          operation.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: |-
+              NodeEnrollmentSpec is a retained one-shot operation. Release identity and
+              bytes are pinned before effects; changing latest later cannot change a retry.
+            properties:
+              cancelRequested:
+                description: CancelRequested stops future bootstrap effects without
+                  stopping joined nodes.
+                type: boolean
+              clusterRecord:
+                description: NativeObjectReference pins an extension record to one
+                  exact RLark object incarnation.
+                properties:
+                  name:
+                    type: string
+                  namespace:
+                    type: string
+                  uid:
+                    type: string
+                required:
+                - name
+                - uid
+                type: object
+                x-kubernetes-validations:
+                - message: referenced object instance is immutable
+                  rule: self == oldSelf
+              nodes:
+                items:
+                  description: |-
+                    EnrollmentNode describes an SSH target. Workers are reached by running SSH on
+                    the gateway, using its local private key, never by exporting that key.
+                  properties:
+                    address:
+                      description: Address is the SSH endpoint, which may differ from
+                        the container's IP.
+                      type: string
+                    name:
+                      type: string
+                    nodeUID:
+                      description: NodeUID is required to start an existing node;
+                        empty means create only.
+                      type: string
+                    port:
+                      default: 22
+                      format: int32
+                      maximum: 65535
+                      minimum: 1
+                      type: integer
+                    privateAddress:
+                      description: PrivateAddress optionally pins the address discovered
+                        inside the Notebook.
+                      type: string
+                    role:
+                      allOf:
+                      - enum:
+                        - Gateway
+                        - Worker
+                      - enum:
+                        - Gateway
+                        - Worker
+                      description: NodeRole identifies the node's responsibility inside
+                        the logical container Cluster.
+                      type: string
+                  required:
+                  - address
+                  - name
+                  - port
+                  - role
+                  type: object
+                maxItems: 64
+                minItems: 1
+                type: array
+                x-kubernetes-list-map-keys:
+                - name
+                x-kubernetes-list-type: map
+              operationID:
+                type: string
+              release:
+                description: NativeObjectReference pins an extension record to one
+                  exact RLark object incarnation.
+                properties:
+                  name:
+                    type: string
+                  namespace:
+                    type: string
+                  uid:
+                    type: string
+                required:
+                - name
+                - uid
+                type: object
+                x-kubernetes-validations:
+                - message: referenced object instance is immutable
+                  rule: self == oldSelf
+              releaseSpec:
+                properties:
+                  architecture:
+                    type: string
+                  artifactPath:
+                    type: string
+                  os:
+                    type: string
+                  protocol:
+                    type: string
+                  sha256:
+                    pattern: ^[a-f0-9]{64}$
+                    type: string
+                  version:
+                    type: string
+                required:
+                - architecture
+                - artifactPath
+                - os
+                - protocol
+                - sha256
+                - version
+                type: object
+                x-kubernetes-validations:
+                - message: release artifacts are immutable
+                  rule: self == oldSelf
+              tenantID:
+                type: string
+            required:
+            - clusterRecord
+            - nodes
+            - operationID
+            - release
+            - releaseSpec
+            - tenantID
+            type: object
+            x-kubernetes-validations:
+            - message: enrollment targets and release are immutable
+              rule: self.clusterRecord == oldSelf.clusterRecord && self.tenantID ==
+                oldSelf.tenantID && self.operationID == oldSelf.operationID && self.release
+                == oldSelf.release && self.releaseSpec == oldSelf.releaseSpec && self.nodes
+                == oldSelf.nodes
+            - message: enrollment cancellation cannot be reversed
+              rule: '!has(oldSelf.cancelRequested) || !oldSelf.cancelRequested ||
+                (has(self.cancelRequested) && self.cancelRequested)'
+          status:
+            properties:
+              conditions:
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+              nodes:
+                items:
+                  description: EnrollmentNodeStatus is one bounded receipt, separate
+                    from Agent liveness.
+                  properties:
+                    instanceID:
+                      type: string
+                    name:
+                      type: string
+                    nodeUID:
+                      type: string
+                    phase:
+                      type: string
+                    privateAddress:
+                      type: string
+                    probedAt:
+                      format: date-time
+                      type: string
+                    reachability:
+                      enum:
+                      - Unknown
+                      - Reachable
+                      - Unreachable
+                      type: string
+                    reason:
+                      type: string
+                    services:
+                      description: Services are observed by the local node manager;
+                        a live PID is not readiness.
+                      items:
+                        type: string
+                      type: array
+                  required:
+                  - name
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - name
+                x-kubernetes-list-type: map
+              observedGeneration:
+                format: int64
+                type: integer
+              phase:
+                type: string
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

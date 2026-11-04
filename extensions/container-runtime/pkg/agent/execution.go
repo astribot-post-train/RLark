@@ -51,7 +51,7 @@ func (o ExecutionObserver) Heartbeat(ctx context.Context, obs Observation) error
 		upgradeErr = o.Updater.Step(ctx, obs)
 	}
 	executionErr := o.Reconcile(ctx)
-	return errors.Join(heartbeatErr, upgradeErr, executionErr)
+	return afterHeartbeat(heartbeatErr, errors.Join(upgradeErr, executionErr))
 }
 
 // Reconcile recovers the exact allocation, reuses Host/Coordinator for active

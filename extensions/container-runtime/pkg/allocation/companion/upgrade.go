@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/astribot-post-train/rlark/extensions/container-runtime/core/pkg/gpus"
 	"reflect"
 	"slices"
 	"strings"
@@ -73,8 +74,8 @@ func (m Manager) ReserveUpgrade(ctx context.Context, req UpgradeRequest) (*ext.C
 		if other.Spec.Node == node.Spec.Node || node.Spec.Runtime == "Docker" && other.Spec.Runtime == "Docker" && other.Spec.InstanceID == node.Spec.InstanceID || other.Spec.NetworkScope == node.Spec.NetworkScope && other.Spec.PrivateAddress == node.Spec.PrivateAddress {
 			return nil, ErrIdentity
 		}
-		for _, gpu := range other.Spec.AuthorizedGPUUUIDs {
-			if slices.Contains(node.Spec.AuthorizedGPUUUIDs, gpu) {
+		for _, gpu := range gpus.Inventory(&other) {
+			if slices.Contains(gpus.Inventory(node), gpu) {
 				return nil, ErrIdentity
 			}
 		}
@@ -88,7 +89,7 @@ func (m Manager) ReserveUpgrade(ctx context.Context, req UpgradeRequest) (*ext.C
 			return nil, ErrUnavailable
 		}
 		for _, gpu := range a.Spec.GPUUUIDs {
-			if slices.Contains(node.Spec.AuthorizedGPUUUIDs, gpu) {
+			if slices.Contains(gpus.Inventory(node), gpu) {
 				return nil, ErrUnavailable
 			}
 		}
@@ -182,7 +183,7 @@ func (m Manager) ReserveCancelledUpgrade(ctx context.Context, req UpgradeRequest
 }
 
 func upgradeLock(op *ext.AgentUpgrade, node *ext.ContainerNode) *ext.ContainerAllocation {
-	wanted := &ext.ContainerAllocation{ObjectMeta: metav1.ObjectMeta{Name: Name(node.Spec.Node.UID), Namespace: node.Namespace, Finalizers: []string{Finalizer}, OwnerReferences: []metav1.OwnerReference{*metav1.NewControllerRef(op, ext.GroupVersion.WithKind("AgentUpgrade"))}}, Spec: ext.ContainerAllocationSpec{Cluster: op.Spec.Cluster, Node: node.Spec.Node, TenantID: op.Spec.TenantID, NodeRecordUID: string(node.UID), NodeInstanceID: node.Spec.InstanceID, PrivateAddress: node.Spec.PrivateAddress, NetworkScope: node.Spec.NetworkScope, GPUUUIDs: slices.Clone(node.Spec.AuthorizedGPUUUIDs), Upgrade: &ext.UpgradeAllocation{Operation: reference(op), Release: op.Spec.Release, SHA256: op.Spec.ReleaseSpec.SHA256}}}
+	wanted := &ext.ContainerAllocation{ObjectMeta: metav1.ObjectMeta{Name: Name(node.Spec.Node.UID), Namespace: node.Namespace, Finalizers: []string{Finalizer}, OwnerReferences: []metav1.OwnerReference{*metav1.NewControllerRef(op, ext.GroupVersion.WithKind("AgentUpgrade"))}}, Spec: ext.ContainerAllocationSpec{Cluster: op.Spec.Cluster, Node: node.Spec.Node, TenantID: op.Spec.TenantID, NodeRecordUID: string(node.UID), NodeInstanceID: node.Spec.InstanceID, PrivateAddress: node.Spec.PrivateAddress, NetworkScope: node.Spec.NetworkScope, GPUUUIDs: slices.Clone(gpus.Inventory(node)), Upgrade: &ext.UpgradeAllocation{Operation: reference(op), Release: op.Spec.Release, SHA256: op.Spec.ReleaseSpec.SHA256}}}
 	slices.Sort(wanted.Spec.GPUUUIDs)
 	tenant.Inherit(op, wanted)
 	return wanted
@@ -203,7 +204,7 @@ func (m Manager) upgradeTarget(ctx context.Context, req UpgradeRequest, requireF
 	if err := m.Client.Get(ctx, client.ObjectKey{Namespace: op.Spec.NodeRecord.Namespace, Name: op.Spec.NodeRecord.Name}, &node); err != nil {
 		return nil, nil, err
 	}
-	if reference(&node) != op.Spec.NodeRecord || node.Spec.Cluster != op.Spec.Cluster || node.Namespace != op.Namespace || node.Spec.InstanceID != op.Spec.InstanceID || node.Annotations[ext.AgentCredentialAnnotation] != op.Spec.CredentialID || tenant.IDOf(&node) != op.Spec.TenantID || node.Spec.Runtime != "Raw" && node.Spec.Runtime != "Docker" || !node.DeletionTimestamp.IsZero() || len(node.Spec.AuthorizedGPUUUIDs) == 0 {
+	if reference(&node) != op.Spec.NodeRecord || node.Spec.Cluster != op.Spec.Cluster || node.Namespace != op.Namespace || node.Spec.InstanceID != op.Spec.InstanceID || node.Annotations[ext.AgentCredentialAnnotation] != op.Spec.CredentialID || tenant.IDOf(&node) != op.Spec.TenantID || node.Spec.Runtime != "Raw" && node.Spec.Runtime != "Docker" || !node.DeletionTimestamp.IsZero() || len(gpus.Inventory(&node)) == 0 {
 		return nil, nil, ErrIdentity
 	}
 	validated := meta.FindStatusCondition(node.Status.Conditions, "Validated")

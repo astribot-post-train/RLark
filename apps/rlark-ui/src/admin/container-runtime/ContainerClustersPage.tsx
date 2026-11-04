@@ -9,7 +9,6 @@ import {
 } from "react";
 
 import {
-  nativeResourceNode,
   APIError,
   Client,
   type Cluster,
@@ -27,6 +26,7 @@ import {
   heartbeatAge,
   LoadGate,
   nodeState,
+  nativeNodeState,
   logText as decodeLogText,
   rawJobIntent,
   nodeRegistrationIntent,
@@ -36,8 +36,9 @@ import {
 } from "./models";
 import { JobsPanel } from "./JobsPanel";
 import { NodeRegistrationPanel } from "./NodeRegistrationPanel";
-import { NodeOverview } from "../../components/NodeOverview";
-import { copy } from "../../i18n";
+import { EnrollmentPanel } from "./EnrollmentPanel";
+import { nodeProbe, probeState } from "./enrollment";
+import type { EnrollmentNode } from "./api";
 import "./style.css";
 const labels = {
   zh: {
@@ -49,20 +50,26 @@ const labels = {
     empty: "没有容器集群",
     select: "选择集群查看节点和升级状态",
     nodes: "节点",
+    nodeColumn: "节点名称",
+    roleColumn: "角色",
+    reachability: "A 到节点网络探测",
+    reachabilityUnknown: "未探测",
     registerNode: "登记运行时节点",
     nodeName: "节点名称",
     instanceID: "已核验的实例身份（Raw 容器 / Docker Engine）",
     privateAddress: "私网 IPv4 地址",
     networkScope: "网络范围",
-    gpuInput: "平台授权 GPU UUID（JSON 字符串数组）",
+    role: "集群角色",
+    gpuInput: "可选 GPU UUID 白名单（JSON 字符串数组）",
+    gpuAutoHint: "留空数组 [] 时使用 Agent 最近 45 秒内认证上报的 GPU；心跳过期后不参与调度。",
     registrationHint:
-      "登记硬件授权后，在管理员机器使用 container-runtime-admin node-package 制包。安装并收到新鲜心跳后才会就绪；请先核验实例与 GPU 授权。",
+      "登记后仍需在管理员机器导出并安装 Agent 包。节点收到新鲜心跳后才会就绪；GPU UUID 可留空以启用 Agent 自动发现。",
     registrationPending:
       "登记结果待确认。保存 UUID 和原始输入，重试相同请求。切换集群已禁用；刷新或退出会丢失内存请求。",
     registrationDone:
       "节点登记已确认；请单独核对安装和心跳。以下为 node-package 的 node 身份字段：",
     invalidNode:
-      "请填写有效节点名、实例身份、私网 IPv4、环境、网络范围及不重复的授权 GPU JSON 数组。",
+      "请填写有效节点名、实例身份、私网 IPv4、环境、网络范围和 Gateway/Worker 角色；GPU 白名单必须是有效且不重复的 JSON 数组。",
     releases: "Agent 版本",
     allocations: "资源预留",
     upgrades: "升级操作",
@@ -70,6 +77,9 @@ const labels = {
     clear: "暂停新升级（清空目标）",
     apply: "发布目标",
     ready: "就绪",
+    nativeOnline: "原生节点在线",
+    nativeOffline: "原生节点离线",
+    nativeUnknown: "原生状态未知",
     stale: "过期 / 未就绪",
     held: "已有预留",
     invalid: "绑定无效",
@@ -84,7 +94,25 @@ const labels = {
     yes: "是",
     no: "否",
     gpu: "授权 GPU",
+    discoveredGPU: "Agent 发现 GPU",
     heartbeat: "心跳距今",
+    privateIP: "私网 IP",
+    nativeAddresses: "原生地址",
+    instance: "实例身份",
+    agentReady: "容器 Agent",
+    nativeState: "原生状态",
+    agentState: "Agent 状态",
+    version: "Agent 版本",
+    actions: "操作",
+    identity: "身份",
+    nodeInfo: "节点信息",
+    scheduling: "调度",
+    resources: "资源与能力",
+    nativeUID: "原生 UID",
+    nativeCapacity: "原生容量",
+    nativeAllocatable: "原生可分配量",
+    nativePhase: "原生阶段",
+    nativeObserved: "原生观测时间",
     conflict: "资源已变化，请刷新后重试。",
     create: "创建集群",
     name: "集群名",
@@ -160,20 +188,26 @@ const labels = {
     empty: "No container clusters",
     select: "Select a cluster to inspect nodes and upgrades",
     nodes: "Nodes",
+    nodeColumn: "Node",
+    roleColumn: "Role",
+    reachability: "A-to-node network probe",
+    reachabilityUnknown: "Not probed",
     registerNode: "Register runtime node",
     nodeName: "Node name",
     instanceID: "Verified instance identity (Raw container / Docker Engine)",
     privateAddress: "Private IPv4 address",
     networkScope: "Network scope",
-    gpuInput: "Platform-authorized GPU UUIDs (JSON string array)",
+    role: "Cluster role",
+    gpuInput: "Optional GPU UUID allowlist (JSON string array)",
+    gpuAutoHint: "With an empty array [], use GPUs reported by an authenticated Agent within the last 45 seconds; stale heartbeats are not schedulable.",
     registrationHint:
-      "After authorizing inventory, use container-runtime-admin node-package on the administrator machine. Installation and a fresh heartbeat are required for readiness. Verify incarnation and GPU entitlement first.",
+      "After registration, export and install the Agent package from an administrator machine. A fresh heartbeat is required for readiness; leave the GPU list empty to enable Agent discovery.",
     registrationPending:
       "Registration is unconfirmed. Retain the UUID and exact input and retry. Cluster switching is disabled; refresh or sign out loses the in-memory request.",
     registrationDone:
       "Node registration confirmed; verify installation and heartbeat separately. Use these node identity fields in node-package:",
     invalidNode:
-      "Provide a valid node name, incarnation, private IPv4, environment, network scope and unique authorized GPU JSON array.",
+      "Provide a valid node name, incarnation, private IPv4, environment, network scope and Gateway/Worker role; the optional GPU allowlist must be valid unique JSON.",
     releases: "Agent releases",
     allocations: "Allocations",
     upgrades: "Upgrade operations",
@@ -181,6 +215,9 @@ const labels = {
     clear: "Pause new upgrades (clear target)",
     apply: "Publish target",
     ready: "Ready",
+    nativeOnline: "Native node online",
+    nativeOffline: "Native node offline",
+    nativeUnknown: "Native status unknown",
     stale: "Stale / not ready",
     held: "Allocation held",
     invalid: "Invalid binding",
@@ -196,7 +233,25 @@ const labels = {
     yes: "Yes",
     no: "No",
     gpu: "Authorized GPUs",
+    discoveredGPU: "Agent-discovered GPUs",
     heartbeat: "Heartbeat age",
+    privateIP: "Private IP",
+    nativeAddresses: "Native addresses",
+    instance: "Instance identity",
+    agentReady: "Container Agent",
+    nativeState: "Native status",
+    agentState: "Agent status",
+    version: "Agent version",
+    actions: "Actions",
+    identity: "Identity",
+    nodeInfo: "Node information",
+    scheduling: "Scheduling",
+    resources: "Resources and capabilities",
+    nativeUID: "Native UID",
+    nativeCapacity: "Native capacity",
+    nativeAllocatable: "Native allocatable",
+    nativePhase: "Native phase",
+    nativeObserved: "Native observed time",
     conflict: "Resource changed. Refresh and retry.",
     create: "Create cluster",
     name: "Cluster name",
@@ -334,6 +389,7 @@ export function ContainerClustersPage({
   const [nodeIntent, setNodeIntent] = useState<NodeRegistration>();
   const [registeredNode, setRegisteredNode] = useState<RegisteredNode>();
   const logRequest = useRef<AbortController | undefined>(undefined);
+
   const pending = useRef(new Set<AbortController>());
   const listGate = useRef(new LoadGate());
   const detailGate = useRef(new LoadGate());
@@ -668,6 +724,7 @@ export function ContainerClustersPage({
           privateAddress: String(data.get("privateAddress") || ""),
           environment: String(data.get("environment") || ""),
           networkScope: String(data.get("networkScope") || ""),
+          role: String(data.get("role") || "Worker") as "Gateway" | "Worker",
           gpuText: String(data.get("gpus") || "[]"),
         });
       if (
@@ -702,8 +759,8 @@ export function ContainerClustersPage({
     });
   };
   return (
-    <div className="container-runtime-page">
-      <header>
+    <div className="page-content resource-page container-runtime-page">
+      <header className="section-heading">
         <div>
           <h1>{t.title}</h1>
           <p className="muted">{t.subtitle}</p>
@@ -725,7 +782,7 @@ export function ContainerClustersPage({
       <>
         <div className="notice">{t.onboarding}</div>
         <section className="layout">
-          <aside>
+          <aside className="container-cluster-picker">
             <div className="actions">
               <h2>{t.title}</h2>
               <button
@@ -735,34 +792,36 @@ export function ContainerClustersPage({
                 ＋
               </button>
             </div>
-            {loading ? (
-              <p>{t.loading}</p>
-            ) : clusters === undefined ? (
-              <p>{t.unavailable}</p>
-            ) : clusters.length === 0 ? (
-              <p>{t.empty}</p>
-            ) : (
-              clusters.map((c) => (
-                <button
-                  disabled={writing || !!jobIntent || !!nodeIntent}
-                  className={`cluster ${selection?.name === c.name && selection.namespace === c.namespace ? "selected" : ""}`}
-                  key={c.uid}
-                  onClick={() => {
-                    setError("");
-                    observedTarget.current = undefined;
-                    setSelection({ namespace: c.namespace, name: c.name });
-                  }}
-                >
-                  <strong>{c.name}</strong>
-                  <span>
-                    {c.runtime} · {c.readyNodes}/{c.nodeCount} {t.nodes}
-                  </span>
-                  <span className={`pill ${clusterState(c)}`}>
-                    {t[clusterState(c)]}
-                  </span>
-                </button>
-              ))
-            )}
+            <div className="cluster-options">
+              {loading ? (
+                <p className="muted">{t.loading}</p>
+              ) : clusters === undefined ? (
+                <p className="muted">{t.unavailable}</p>
+              ) : clusters.length === 0 ? (
+                <p className="muted">{t.empty}</p>
+              ) : (
+                clusters.map((c) => (
+                  <button
+                    disabled={writing || !!jobIntent || !!nodeIntent}
+                    className={`cluster ${selection?.name === c.name && selection.namespace === c.namespace ? "selected" : ""}`}
+                    key={c.uid}
+                    onClick={() => {
+                      setError("");
+                      observedTarget.current = undefined;
+                      setSelection({ namespace: c.namespace, name: c.name });
+                    }}
+                  >
+                    <strong>{c.name}</strong>
+                    <span>
+                      {c.runtime} · {c.readyNodes}/{c.nodeCount} {t.nodes}
+                    </span>
+                    <span className={`pill ${clusterState(c)}`}>
+                      {t[clusterState(c)]}
+                    </span>
+                  </button>
+                ))
+              )}
+            </div>
           </aside>
           <div className="content">
             {showCreate && (
@@ -936,6 +995,7 @@ export function ContainerClustersPage({
                       });
                   }}
                 />
+                <EnrollmentPanel key={detail.cluster.uid} detail={detail} client={client} lang={lang} blocked={writing || !!jobIntent || !!nodeIntent || !!intent} onChanged={()=>setRevision(v=>v+1)} />
                 <NodeRegistrationPanel
                   detail={detail}
                   t={t}
@@ -952,41 +1012,62 @@ export function ContainerClustersPage({
                   {!detail.nodes.length ? (
                     <p className="muted">{t.noRecords}</p>
                   ) : (
-                    detail.nodes.map((n) => (
-                      <NodeCard
-                        key={n.uid}
-                        node={n}
-                        lang={lang}
-                        runtime={detail.cluster.runtime}
-                        expanded={expandedNodes.has(n.uid)}
-                        onExpand={(open) =>
-                          setExpandedNodes((current) => {
-                            if (current.has(n.uid) === open) return current;
-                            const next = new Set(current);
-                            if (open) next.add(n.uid);
-                            else next.delete(n.uid);
-                            return next;
-                          })
-                        }
-                        t={t}
-                        disabled={
-                          writing ||
-                          detail.cluster.deleting ||
-                          !detail.cluster.bindingValid
-                        }
-                        onScheduling={() => {
-                          if (client)
-                            void mutate((signal) =>
-                              client.nodeScheduling(
-                                detail.cluster,
-                                n,
-                                !n.unschedulable,
-                                signal,
-                              ),
-                            );
-                        }}
-                      />
-                    ))
+                    <div className="table-scroll node-table-scroll">
+                      <table className="node-table">
+                        <thead>
+                          <tr>
+                            <th>{t.nodeColumn}</th>
+                            <th>{t.roleColumn}</th>
+                            <th>{t.reachability}</th>
+                            <th>{t.privateIP}</th>
+                            <th>{t.nativeState}</th>
+                            <th>{t.agentState}</th>
+                            <th>{t.version}</th>
+                            <th>{t.schedulable}</th>
+                            <th>{t.heartbeat}</th>
+                            <th>{t.actions}</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {detail.nodes.map((n) => (
+                            <NodeCard
+                              key={n.uid}
+                              node={n}
+                              probe={nodeProbe(detail,n)}
+                              runtime={detail.cluster.runtime}
+                              expanded={expandedNodes.has(n.uid)}
+                              onExpand={(open) =>
+                                setExpandedNodes((current) => {
+                                  if (current.has(n.uid) === open)
+                                    return current;
+                                  const next = new Set(current);
+                                  if (open) next.add(n.uid);
+                                  else next.delete(n.uid);
+                                  return next;
+                                })
+                              }
+                              t={t}
+                              disabled={
+                                writing ||
+                                detail.cluster.deleting ||
+                                !detail.cluster.bindingValid
+                              }
+                              onScheduling={() => {
+                                if (client)
+                                  void mutate((signal) =>
+                                    client.nodeScheduling(
+                                      detail.cluster,
+                                      n,
+                                      !n.unschedulable,
+                                      signal,
+                                    ),
+                                  );
+                              }}
+                            />
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
                   )}
                 </section>
                 <section className="panel">
@@ -1133,7 +1214,7 @@ export function ContainerClustersPage({
 }
 function NodeCard({
   node: n,
-  lang,
+  probe,
   runtime,
   t,
   disabled,
@@ -1142,7 +1223,7 @@ function NodeCard({
   onExpand,
 }: {
   node: Node;
-  lang: Lang;
+  probe?: EnrollmentNode;
   runtime: "Raw" | "Docker";
   t: typeof labels.en;
   disabled: boolean;
@@ -1150,68 +1231,134 @@ function NodeCard({
   expanded: boolean;
   onExpand: (open: boolean) => void;
 }) {
+  const nativeStatus = nativeNodeState(n);
+  const agentStatus = nodeState(n);
+  const addressList = (n.resources?.addresses ?? [])
+    .map((address) => `${address.type}: ${address.address}`)
+    .join(" · ");
+  const capacity = Object.entries(n.capacity ?? {})
+    .map(([key, value]) => `${key}: ${value}`)
+    .join(" · ");
+  const nativeCapacity = Object.entries(n.resources?.capacity ?? {})
+    .map(([key, value]) => `${key}: ${value}`)
+    .join(" · ");
+  const nativeAllocatable = Object.entries(n.resources?.allocatable ?? {})
+    .map(([key, value]) => `${key}: ${value}`)
+    .join(" · ");
+  const nativeInfo = n.resources?.nodeInfo;
+  const nativeStatusLabel =
+    nativeStatus === "online"
+      ? t.nativeOnline
+      : nativeStatus === "offline"
+        ? t.nativeOffline
+        : t.nativeUnknown;
+  const fields = [
+    [t.privateIP, n.privateAddress || "—"],
+    [t.nativeAddresses, addressList || "—"],
+    [t.runtime, `${runtime} · ${n.agentVersion || "—"}`],
+    [t.instance, n.instanceID || "—"],
+    [t.roleColumn, n.role || "Worker"],
+    ["UID", n.uid],
+    [t.nativeUID, n.nativeUID || "—"],
+    [t.environment, n.environment || "—"],
+    [t.networkScope, n.networkScope || "—"],
+    [t.busy, n.busy ? t.yes : t.no],
+    [
+      t.heartbeat,
+      `${heartbeatAge(n.lastHeartbeatTime)} · ${n.lastHeartbeatTime || "—"}`,
+    ],
+    [t.scheduling, n.unschedulable ? t.cordoned : t.schedulable],
+    [t.capacity, capacity || "—"],
+    [t.nativeCapacity, nativeCapacity || "—"],
+    [t.nativeAllocatable, nativeAllocatable || "—"],
+    [t.gpu, (n.authorizedGPUUUIDs ?? []).join(", ") || "—"],
+    [t.discoveredGPU, (n.discoveredGPUUUIDs ?? []).join(", ") || "—"],
+    [t.capabilities, (n.capabilities ?? []).join(", ") || "—"],
+    [t.nativePhase, n.resources?.phase || "—"],
+    [t.nativeObserved, n.resources?.observedAt || "—"],
+    [
+      t.nodeInfo,
+      [
+        nativeInfo?.operatingSystem,
+        nativeInfo?.architecture,
+        nativeInfo?.kernelVersion,
+        nativeInfo?.agentVersion,
+        nativeInfo?.incarnation,
+      ]
+        .filter(Boolean)
+        .join(" · ") || "—",
+    ],
+  ];
   return (
-    <details
-      className="node"
-      open={expanded}
-      onToggle={(event) => onExpand(event.currentTarget.open)}
-    >
-      <summary>
-        <strong>{n.name}</strong>
-        <span>
-          {n.privateAddress} · {n.agentVersion || "—"}
-        </span>
-        <span className={`pill ${nodeState(n)}`}>{t[nodeState(n)]}</span>
-        <span>
-          {t.schedulable}: {n.schedulable ? t.yes : t.no}
-        </span>
-        <span>
-          {t.heartbeat}: {heartbeatAge(n.lastHeartbeatTime)}
-        </span>
-      </summary>
-      <div className="node-details">
-        <p>{n.unschedulable ? t.cordoned : t.schedulable}</p>
-        <button
-          disabled={
-            disabled ||
-            !n.bindingValid ||
-            !n.resourceVersion ||
-            (n.unschedulable && n.held)
-          }
-          onClick={onScheduling}
-        >
-          {n.unschedulable ? t.uncordon : t.cordon}
-        </button>
-        <p className="muted">{t.schedulingHint}</p>
-        <p>
-          {t.busy}: {n.busy ? t.yes : t.no} · {n.environment} · {n.networkScope}
-        </p>
-        <p>
-          <code>
-            UID {n.uid} / {n.instanceID}
-          </code>
-        </p>
-        {nativeResourceNode(n, runtime) && (
-          <NodeOverview
-            node={nativeResourceNode(n, runtime)!}
-            copy={copy[lang]}
-          />
-        )}
-        <p>
-          {t.capacity}:{" "}
-          {Object.entries(n.capacity ?? {})
-            .map(([k, v]) => `${k}: ${v}`)
-            .join(" · ") || "—"}
-        </p>
-        <p>
-          {t.gpu}: {(n.authorizedGPUUUIDs ?? []).join(", ") || "—"}
-        </p>
-        <p>
-          {t.capabilities}: {(n.capabilities ?? []).join(", ") || "—"}
-        </p>
-        <Conditions items={n.conditions} />
-      </div>
-    </details>
+    <>
+      <tr className="node-summary-row">
+        <td>
+          <button
+            type="button"
+            className="node-expand-button"
+            aria-expanded={expanded}
+            onClick={() => onExpand(!expanded)}
+          >
+            {expanded ? "▾" : "▸"} {n.name}
+          </button>
+        </td>
+        <td>{n.role || "Worker"}</td>
+        <td>
+          <span className={`pill ${probeState(probe)==="Reachable"?"ready":"stale"}`} title={probe?.probedAt}>{probeState(probe)==="Unknown"?t.reachabilityUnknown:probeState(probe)}</span>
+        </td>
+        <td>{n.privateAddress || "—"}</td>
+        <td>
+          <span className={`pill ${nativeStatus}`}>{nativeStatusLabel}</span>
+        </td>
+        <td>
+          <span className={`pill ${agentStatus}`}>{t[agentStatus]}</span>
+        </td>
+        <td>{n.agentVersion || "—"}</td>
+        <td>{n.schedulable ? t.yes : t.no}</td>
+        <td>{heartbeatAge(n.lastHeartbeatTime)}</td>
+        <td>
+          <button
+            type="button"
+            disabled={
+              disabled ||
+              !n.bindingValid ||
+              !n.resourceVersion ||
+              (n.unschedulable && n.held)
+            }
+            onClick={onScheduling}
+          >
+            {n.unschedulable ? t.uncordon : t.cordon}
+          </button>
+        </td>
+      </tr>
+      {expanded && (
+        <tr className="node-detail-row">
+          <td colSpan={10}>
+            <table className="node-detail-table">
+              <tbody>
+                {fields.map(([label, value]) => (
+                  <tr key={label}>
+                    <th scope="row">{label}</th>
+                    <td>{value}</td>
+                  </tr>
+                ))}
+                {(n.conditions ?? []).map((condition) => (
+                  <tr key={condition.type}>
+                    <th scope="row">{condition.type}</th>
+                    <td>
+                      <strong>{condition.status}</strong> · {condition.reason}{" "}
+                      {condition.message} · generation{" "}
+                      {condition.observedGeneration ?? "—"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <p className="muted node-scheduling-hint">{t.schedulingHint}</p>
+          </td>
+        </tr>
+      )}
+    </>
   );
 }
 function Conditions({ items }: { items: Detail["cluster"]["conditions"] }) {

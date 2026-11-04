@@ -12,7 +12,7 @@ Native RLark integration is generic only: controller ownership dispatch, depende
 
 The extension owns the `containers.rlark.io/v1alpha1` API group. `ContainerCluster` references one native Cluster by stable identity and UID and records runtime and rollout policy. `ContainerNode` references native Node and Cluster UIDs and records container/Engine incarnation, private address, capabilities, environment, authorized GPU UUIDs and Agent versions. `ContainerAllocation` records Job/Task UIDs, generation, tenant, node incarnation, execution identity, reserved devices and cleanup progress. `ContainerJob` is a typed controller binding to one native Job, not a second workload API. `AgentRelease` identifies an immutable artifact, SHA-256 digest and protocol compatibility.
 
-`Cluster.spec.agentNamespace` remains authoritative membership. Tenant identity is validated independently of namespace and inherited by companion resources. Labels and annotations are lookup hints only. Dispatch verifies the typed binding, exact Job UID and tenant before selecting the extension owner. Active Job ownership is fixed while Tasks or cleanup remain. Direct Kubernetes API writes and extension REST requests have equivalent admission checks. Mixed Kubernetes/container Jobs are rejected in preview; native Kubernetes Jobs retain their behavior.
+`Cluster.spec.agentNamespace` remains authoritative membership. Tenant identity is validated independently of namespace and inherited by companion resources. Labels and annotations are lookup hints only. Dispatch verifies the typed binding, exact Job UID and tenant before selecting the extension owner. Active Job ownership is fixed while Tasks or cleanup remain. Direct Kubernetes API writes and extension REST requests have equivalent admission checks. A controller-level mixed Raw/Kubernetes Job preview is available through the explicit UID-fenced contract documented in [Mixed Raw and Kubernetes Job preview](mixed-container-job-preview.md); native Kubernetes Jobs retain their behavior.
 
 For each owned native Task, the extension persists one canonical scheduling target in the `containers.rlark.io/allocation-target` annotation before creating a `ContainerAllocation`. The annotation contains the Task UID, native Node UID, ContainerNode UID, Cluster UID and node incarnation. It is a durable scheduling intent, not proof of a reservation; the allocation remains the ownership lock. A retry or a second controller may only reuse the exact target, and must never select another node after an uncertain create or dispatch result. A target is cleared only after the allocation has a matching cleanup proof and the Task object is being replaced with a new UID. Task deletion, suspension and spec replacement keep the target and allocation identity until the Agent reports cleanup. Desired lifecycle is maintained from current state: `suspended` and deletion fence new starts, while heartbeat and Agent results are observations and never release a lock by themselves.
 
@@ -340,8 +340,11 @@ The remaining sections of this document retain the prior in-tree Raw/Docker expe
 
 ## Agreed scope
 
-Existing GPU containers join one logical Cluster as independent Nodes. An Agent runs inside each container and executes processes in its preinstalled environment. There is no Docker daemon, Docker socket, container creation, or Docker-in-Docker requirement. One container is exclusively reserved for one Task at a time; a Job may occupy several containers. The first workload is Ray/RLinf within one cloud container group. Cloud-to-robot hybrid Jobs are outside this release. Container private addresses are mutually reachable; control-plane transport addresses are separate.
+A, B and C are members of one separate RLark logical container Cluster. A is its management gateway and may also compute; B/C are Raw compute Nodes inside existing GPU Notebooks. Each Agent executes processes in the preinstalled environment. This does not enroll them in a real Kubernetes cluster and requires no Docker daemon/socket, container creation or Docker-in-Docker. Cluster membership comes from explicit registration in the same authoritative agent namespace, not IP discovery.
 
+The robot x86 remains in its separate Kubernetes cluster. The target is one Fleet interactive RLark Job coordinating B's Lumo2 rollout role and the robot Kubernetes Env role. All Ray processes join one Ray cluster with one authoritative head for that Job; the head location and ownership must be explicit. An existing unrelated running Job/head must not be adopted or modified. Kubernetes/RLark Cluster membership and Ray membership are independent: B joins A's logical container Cluster, not the robot Kubernetes cluster. Ray peer traffic may use A's authenticated single-port multiplexer without passing through the local RLark service.
+
+The controller-level mixed-runtime Job preview now coordinates Raw rollout and explicitly bound Kubernetes Env Tasks in one Job. It remains limited to independent member startup and does not yet provide a complete Fleet barrier, automatic sibling cancellation, or automatic relay injection; see [Mixed Raw and Kubernetes Job preview](mixed-container-job-preview.md).
 ## Contracts and ownership
 
 Reuse Cluster, Node, Job and Task. Cluster.spec.agentNamespace is authoritative membership; a label is not ownership. Persist node UID, container incarnation, execution and allocation identities. Agent owns observed capability/environment/health; the controller owns reservations. Introduce canonical runtime-neutral replicas, preserve unambiguous Kubernetes legacy reads and reject conflicts. Expand Raw replicas into independent Tasks with stable indices/ranks and aggregate both template and instance status. Node-scoped claimants must never claim siblings; direct Tasks must not bypass reservations or tenant checks.
@@ -358,8 +361,15 @@ Implement a typed Raw process Provider and Ray-on-Raw Adapter in the existing Ho
 
 ## Ray and networking
 
-Use explicit private node IP and configurable disjoint Ray port ranges per network sharing scope. Disable unused dashboard/client facilities. Validate supported Ray versions and exact assigned membership, propagate readiness errors, and treat actual bind failures as execution failures. RLinf/NCCL connectivity must be tested separately; arbitrary framework-selected ports are not assumed controlled. One Task per container does not itself isolate host-network port namespaces.
+For members that cannot route directly, the intended data path uses A's authenticated single-port TCP multiplexer with explicit Ray member identities. A exposes the Ray listener on 30001; management communication uses its separate configured listener, within the agreed public-port budget of 30000/30001/30002. B/C private membership and SSH deployment through A do not imply cross-site Ray reachability. No HTTP proxy variables, SSH tunnels, TUN permissions or global host routes are required by this transport.
 
+The preview transport can run alongside the management gateway with `container-runtime-gateway --ray-config=...`, and alongside a Raw Agent with `container-runtime-agent --ray-peer-config=...`. A dedicated `container-runtime-ray-relay --mode=gateway|peer --config=...` is also available. These flags load operator-owned JSON and dedicated TLS credentials; they do not provision peers, inject workloads, launch Ray, or implement the mixed-runtime Job. Certificates and exact leaf pins are checked on both sides. Configuration/credential changes require a targeted restart.
+
+The Linux/glibc `LD_PRELOAD` shim recognizes an explicit list of up to 64 remote IPv4 addresses and one port range, including IPv4-mapped IPv6. It uses a separate bounded local control exchange and an ephemeral loopback data listener; the application's descriptor retains native blocking/nonblocking connect and poll/SO_ERROR behavior. Control setup may block for up to five seconds even for a nonblocking caller. Local connect success proves only proxy acceptance: remote refusal/disconnection appears as an I/O reset/EOF. The connector assumes a trusted container, not isolation from other local processes. Static binaries, arbitrary IPv6, UDP and untested socket APIs remain unsupported. Reconnection enables new streams without replaying bytes or recovering an existing Ray execution.
+
+Kubernetes Ray workers can use a controller-resolved `headAddress` for a head outside their Kubernetes cluster. This must be a unicast IPv4 address without a port; the existing Ray port remains 6379. Without it, the adapter retains same-cluster Service or RLark domain discovery. This address alone does not establish connectivity or implement mixed-runtime orchestration.
+
+Remaining gates are controlled injection into the assigned Raw and Kubernetes Ray process trees, exact Ray/Gloo address-family and peer mapping, automatic scoped TLS/roster provisioning, failure recovery, and real bidirectional RLinf Channel tests through the packaged execution path. NCCL connectivity is a separate gate. One Task per container does not itself isolate host-network port namespaces.
 ## Environment, capacity and storage
 
 Use preinstalled Python/Ray/RLinf only; validate absolute paths, versions and required capabilities. Do not install dependencies implicitly. Report cgroup/affinity limits rather than physical-host capacity. Visible GPUs are not authorized GPUs: require confirmed UUID allowlists/platform binding and reject unknown scope. Use whole exclusive GPUs only. Measured utilization is separate from allocation; telemetry is optional and bounded.
@@ -377,15 +387,15 @@ rlarkadm generates configuration and a foreground start package; integrate with 
 - [x] Typed API, schema/deepcopy generation, compatibility and ownership tests for the preview contract.
 - [x] Durable exclusive reservation, rollback and recovery for one Task per Node.
 - [x] Single-node supervised Raw execution through Host/Coordinator and the polling Agent in the historical native preview.
-- [ ] Multi-node Ray barriers and group lifecycle.
+- [ ] One Fleet interactive Job coordinates Raw rollout on B and Kubernetes Env on robot x86, with one explicit Ray head and exact member/cleanup ownership.
 - [x] Node registration, scoped credentials, GPU authorization and environment validation for the preview path.
-- [ ] rlarkadm package, authorized logs, Gateway and UI integration.
+- [ ] Ray transport injection into assigned Raw/Kubernetes process trees; automatic packages/peer credentials, authorized diagnostics and integrated Gateway/UI provisioning.
 - [ ] Examples, runtime capability/deployment/operations documentation in both languages.
 - [ ] Focused and repository Go/web/doc checks; draft PR with evidence.
 
 ## Acceptance and failure tests
 
-Cover competing reservations, partial rollback, controller restart, crash after external effect, Agent reattach, PID reuse, supervisor loss, orphan descendants, busy ports, unknown GPU/environment, wrong node/tenant claims, head/worker failure, network loss, stop versus failure, retained checkpoints and Kubernetes compatibility. CPU fake/process tests run locally. Real two-container Ray/GPU and minimal RLinf tests require prepared environments and explicit authorized GPU scope; do not silently install dependencies or launch cloud training. Record unverified behavior explicitly and keep maturity preview until end-to-end evidence exists.
+Cover competing reservations, partial rollback, controller restart, crash after external effect, Agent reattach, PID reuse, supervisor loss, orphan descendants, busy ports, unknown GPU/environment, wrong node/tenant claims, Ray worker startup/exit, network loss, stop versus failure, retained checkpoints and unchanged Kubernetes behavior. Relay unit tests cover authenticated peer streams, local connector forwarding and target allowlists. Linux subprocess tests compile the shim and exercise actual `LD_PRELOAD` stream exchange, mapped IPv6, handshake denial/EOF/timeout, malformed configuration, native nonblocking completion and unaffected direct connections. These tests do not prove that Ray/Gloo sockets use the shim. CPU fake/process tests run locally. Real B-to-x86 Ray/GPU and minimal RLinf Channel tests require prepared environments and explicit authorized GPU scope; do not silently install dependencies, alter the Kubernetes worker or launch an Active robot workload. Record unverified behavior explicitly and keep maturity preview until end-to-end evidence exists.
 
 ## Current implementation evidence and remaining integration
 
@@ -610,3 +620,61 @@ Implementation target (2026-11-03): reuse native Node resources and the main UI 
 This increment excludes live utilization, host topology, filesystem quota and disk pressure. Notebook cgroup bounds are not task-level enforcement or measurements of currently free hardware. Update this section with implementation and acceptance evidence in the same change.
 
 The resource projection and shared native overview are implemented in this branch. See [resource semantics and rollout](container-runtime-console.md#raw-notebook-resources-in-native-nodes).
+
+## B Notebook re-enrollment on 2026-11-03
+
+After Notebook B restarted with a new private address, PID namespace, process start time, and H100 UUID, its prior Agent identity was retired by exact-UID deletion after confirming the Raw supervisor was idle and no allocation or upgrade referenced it. A new package and credential were issued for the same logical `ksyun-containers` Cluster and installed in separate versioned paths. The root-only A-to-B SSH key is used for enrollment and package delivery; workload data does not use SSH.
+
+B reported `10.1.3.193`, one authorized H100, 20 CPU and `253403070464` bytes of cgroup memory. The native Node reached `Online`, `Ready=True`, `RawResourcesReady=True`, and `RawSchedulingReady=True`; the companion ContainerNode reached `Ready=True` and `Schedulable=True`. A one-off RLark-owned Raw Job was scheduled there, asserted exactly one visible CUDA device, performed a CUDA tensor operation, and completed `Succeeded`. The Job's execution and allocation cleanup conditions were observed before its Job and binding were deleted by UID. No existing Fleet/Ray process was stopped or changed.
+
+This verifies B enrollment, resource projection, one-node Raw scheduling, CUDA execution, and reservation release. It does not verify the Ray relay: at the time of this test A's public SSH listener reset new management connections and TCP `30001` refused connections. No multi-host Ray/Gloo Channel or S1U Passive inference acceptance is claimed. Keep A cordoned while its current Fleet/Ray processes use the machine; restore A management access and start the data gateway before attempting the distributed Job.
+
+### Historical B restart at 20:12 CST
+
+B subsequently restarted at `10.1.3.196`. Its GPU UUID remained unchanged,
+but the PID-1 start time changed. The prior Agent resumed with static bootstrap
+identity and incorrectly continued reporting `10.1.3.193` as Ready. After
+confirming an idle supervisor and no allocations or upgrades, the old Agent
+and supervisor were stopped and their Notebook service definitions archived.
+The old ContainerNode and native Node were deleted with UID preconditions;
+new credentials and a `v4` package were issued in the same logical Cluster.
+The replacement native Node reports the new address, `Online`, `Ready=True`,
+20 CPU, 236 GiB and one authorized H100. This installation uses a local
+startup guard that rejects a changed PID namespace/start time/boot ID or
+private address before launching either service. This is an installation
+safeguard, not automatic identity renewal or a repository-wide Agent fix.
+
+Historical note: independent GPU activity services were tested during earlier
+Notebook debugging. They are excluded from this delivery and are not packaged
+or managed by the Agent. This historical record is not an installation recipe.
+Check current node occupancy before dispatch; removing repository support does
+not stop independently installed processes. Native Used represents RLark
+reservations, not external device utilization.
+
+The historical enrollment credentials expired on 2026-11-06; re-read actual
+credential validity and instance identity before reuse. The recovery did not
+establish B-to-robot connectivity or Lumo2/S1U acceptance.
+
+## Isolated A/B Ray transport acceptance on 2026-11-03
+
+After A's SSH management entry recovered, an isolated test process started one
+temporary Ray head on A and one worker on B using the existing Ray `2.56.1`
+environment. It did not attach to or restart the existing Fleet head. Both
+process trees loaded the packaged Linux/glibc connector shim, and B connected
+to A's public `30001` listener. The relay observed multiple authenticated TCP
+streams over that one listener; no HTTP proxy, SSH forwarding, WireGuard, TUN,
+or global route was used.
+
+The RLinf scheduler reported two Ray nodes and the test exchanged 10 messages
+in each direction for 1 KiB, 1 MiB, and 4 MiB payloads. Median round trips
+were approximately 3.4 ms, 8.8 ms, and 27.4 ms in this run. The test ended
+with `PASS_RLINF_TWO_NODE_CHANNEL`, and all temporary Ray processes, relay
+processes, credentials, and files were removed. The running Fleet Job and its
+Ray processes were unchanged.
+
+This proves the packaged single-port transport and a minimal two-node RLinf
+Channel on A/B. It does not prove the production RLark Job controller will
+inject the transport automatically, does not include the robot x86 or S1U
+Passive inference, and does not validate Lumo2 checkpoint loading. Keep the
+feature preview-only until peer provisioning, process-scoped injection,
+gang/failure lifecycle, and the B-to-x86 Passive acceptance are implemented.

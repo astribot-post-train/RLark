@@ -84,6 +84,18 @@ func TestNodeRegistrationResumesPartialCreateAndLostResponse(t *testing.T) {
 	conflict := request(t, a, http.MethodPost, registrationPath, registrationBody(t, req))
 	require.Equal(t, 409, conflict.Code)
 }
+
+func TestNodeRegistrationAcceptsAgentDiscoveredGPUAndExplicitRole(t *testing.T) {
+	a, req, c := registrationFixture(t)
+	req.AuthorizedGPUUUIDs = nil
+	req.Role = ext.NodeRoleGateway
+	response := request(t, a, http.MethodPost, registrationPath, registrationBody(t, req))
+	require.Equal(t, http.StatusCreated, response.Code, response.Body.String())
+	var node ext.ContainerNode
+	require.NoError(t, c.Get(context.Background(), client.ObjectKey{Namespace: "cloud-agents", Name: req.Name}, &node))
+	require.Equal(t, ext.NodeRoleGateway, node.Spec.Role)
+	require.Empty(t, node.Spec.AuthorizedGPUUUIDs)
+}
 func TestNodeRegistrationRejectsInvalidForeignAndReplacedIdentity(t *testing.T) {
 	for _, tt := range []struct {
 		name   string
@@ -95,7 +107,6 @@ func TestNodeRegistrationRejectsInvalidForeignAndReplacedIdentity(t *testing.T) 
 		{"missing cluster UID", func(_ *testing.T, _ *API, r *registerNodeRequest, _ client.Client) { r.ClusterUID = "" }, 400},
 		{"stale companion UID", func(_ *testing.T, _ *API, r *registerNodeRequest, _ client.Client) { r.ClusterUID = "replaced" }, 409},
 		{"public address", func(_ *testing.T, _ *API, r *registerNodeRequest, _ client.Client) { r.PrivateAddress = "8.8.8.8" }, 400},
-		{"no GPU authorization", func(_ *testing.T, _ *API, r *registerNodeRequest, _ client.Client) { r.AuthorizedGPUUUIDs = nil }, 400},
 		{"duplicate GPU request", func(_ *testing.T, _ *API, r *registerNodeRequest, _ client.Client) {
 			r.AuthorizedGPUUUIDs = []string{"GPU-2", "GPU-2"}
 		}, 400},

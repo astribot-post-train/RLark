@@ -22,6 +22,67 @@ Allocation、其中的 Job 引用和 Agent 升级作为独立维度展示。控�
 terminal/exec、自动注册、Docker Engine 创建和多节点调度仍不属于本预览版。
 有界 Raw 日志读取需要显式启用独立的回环日志监听器和节点轮询器。
 
+## Gateway 拓扑与服务管理预览
+
+容器节点记录区分一个逻辑集群 Gateway 和 Worker。此角色只描述 RLark 容器拓扑，不会创建 Kubernetes 控制平面。Gateway 也可以执行工作负载。Agent 心跳与原生 Node 在线状态分别观测；两者都不能证明 A 到 Worker 的 SSH 可达性或 Ray 数据面连通。
+
+节点登记可以填写明确的 GPU UUID 白名单。列表为空时，使用经过认证的 Agent 最近一次上报的可见 GPU 作为该节点的授权资源；心跳不得来自未来且必须在 45 秒内，否则调度失败关闭。自动模式仅适用于显式登记的容器节点，并要求 Notebook 的设备可见范围就是预期的资源隔离边界。
+
+节点表分开显示 Gateway/Worker 角色、原生在线状态、Agent 心跳和 SSH 可达性。
+显式启用的 Notebook 启动接入预览接受地址与角色，固定可用版本，再通过预配置的
+严格 SSH 主机信任安装 Agent、任务管理器和 A 网关。进程启动后还要等待经过认证的
+新鲜 Agent 心跳，PID 存活或 SSH 可达不能代替就绪。响应不确定时保留同一个操作
+ID 重试。当前仍需要管理员本地接入 profile、已发布安装文件和附加 RBAC；真实
+A/B/C 安装及恢复验收尚未完成。
+
+单独登记仍只创建元数据。Notebook 停机时请先在云控制台启动，不静默接管新实例
+或新地址。接入和 Agent 包不包含 GPU 保活。移除包支持不会修改独立部署的既有
+服务，运维清理前必须确认归属。
+
+接入安装包还会保存经 SSH 探测的 Notebook 实例指纹（PID namespace、PID 1
+启动时间和 boot ID）及容器私网地址。本地服务管理器在启动或接管进程回执前都会
+重新校验两者；指纹或地址改变时拒绝接管旧服务，必须执行显式替换操作并签发
+新的节点身份和安装包。完成接入还要求 Ready 条件本身对应当前节点 generation，
+同时满足新鲜心跳和已固定的 Agent 版本。
+
+可信接入 profile 的 `endpoint` 和启动参数可以使用 `$GATEWAY_PRIVATE_ADDRESS`，
+启动参数也支持 `$NODE_PRIVATE_ADDRESS`，`$INSTALL` 表示节点专属安装目录。
+地址来自经过认证的 Notebook 探测，不把平台 SSH/DNAT 地址当成容器地址。
+未知占位符会导致安装包生成失败；已有静态配置仍然支持。地址变化后须显式替换
+节点，并在安装前确保 API TLS 证书覆盖新探测的网关地址。这些占位符不会自动
+轮换证书，也不会改写 `gatewayFiles` 中任意配置文件的内容。
+
+可信 profile 中可选的 `ssh.ControlDirectory` 只为安装接入启用 OpenSSH 连接复用。
+必须使用该 profile 专属的规范绝对目录并设置 `0700` 权限；拒绝符号链接、公开目录
+和超过 Unix 控制 socket 长度限制的路径。
+连接按 OpenSSH `%C` 主机、用户、端口哈希区分，保留严格主机信任，在最后一条接入
+命令结束 60 秒后退出。Worker 私钥仍留在 A。这只是安装传输，不承载推理隧道；
+已有连接在间歇性 SSH 握手失败时仍可用，不能据此认定公网入口已恢复健康。
+
+profile 可通过 `executablesByNode` 和 `workDirectoriesByNode` 按节点名覆盖默认
+工作负载白名单。这些路径属于可信服务端配置，不接受页面传入。路径必须在对应
+Notebook 内已存在且解析后仍为原路径；配置 Python 虚拟环境时须显式解析符号链接。
+服务管理器先校验白名单，再启动服务，并只创建该节点专属的私有任务和升级状态目录。
+缺失路径、公开状态目录和符号链接会阻止启动，不会静默忽略或改写。路径配置和 SSH
+地址分别管理。
+
+心跳已成功发布后发生的任务或升级协调错误会记录日志，并按正常心跳间隔重试，
+不会进入连通性中断的退避，也不会让旧观测续命。本地观测或心跳发布失败仍使用
+有上限的退避。Online 只表示连通性；任务执行和升级就绪可以独立失败。
+该行为需要部署更新后的 Agent 二进制。
+
+操作因 Notebook 停机或换实例一直等待时，先点击“取消本次接入（保留已接入节点）”，
+再提交新的拓扑。管理员接口为
+`POST /api/v1/container-runtime/clusters/{namespace}/{name}/enrollments/{operation}/cancel`，
+请求体为 `{"uid":"<NodeEnrollment UID>","clusterUID":"<ContainerCluster UID>"}`。
+取消是不可逆的 Spec 期望状态，不删除操作；控制器将其标为 Cancelled，停止后续
+安装接入。已接入节点继续运行。取消前已发出的 SSH 命令仍可能完成，替换前应检查
+节点回执。重复取消幂等，已终结的成功或失败结果保留。直接管理 API 可设置
+`NodeEnrollment.spec.cancelRequested: true`，语义相同。部署控制器和 Gateway
+前先应用更新的 CRD 与接入 RBAC。
+
+剩余一键生命周期、网络自动化和混合 Fleet 验收见[交付清单](notebook-fleet-delivery.md)。
+
 ## 原生在线状态
 
 扩展控制器将当前经过认证的 ContainerNode 观测投影为精确绑定 UID 的原生 heartbeat
@@ -70,6 +131,16 @@ Agent mTLS 仍由独立 `container-runtime-api` 服务承载。可选诊断使�
 不提供任意 Kubernetes 路径代理。
 
 ## UI 状态与失败处理
+
+页面使用 RLark 共用内容视口进行纵向滚动。集群选择区横跨内容区域，之后依次展示
+所选集群概况、资源指标、版本目标、Raw Job、节点登记、节点和操作表格。窄屏下
+集群选项与指标会自动换行；宽表格保留独立的横向滚动区域。
+
+节点以摘要表格展示私网 IP、原生 Node 状态、容器 Agent 就绪状态、Agent 版本、可调度
+状态和心跳距今时间。展开行后可查看身份、原生地址与节点信息、环境、网络范围、完整
+心跳时间、容量、授权 GPU、能力及条件；详情默认收起。原生 Kubernetes Node 阶段与
+容器 Agent 就绪状态分别显示：原生 Node 可以在线而容器 Agent 心跳已过期；无论原生
+连接状态如何，过期的 Agent 都不能调度。
 
 集群页面将期望状态和观测分开：
 

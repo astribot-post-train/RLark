@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"reflect"
 	"slices"
 	"strings"
@@ -62,17 +63,18 @@ func (req ClusterRequest) Validate() error {
 
 // NodeRequest registers an explicitly authorized Raw container or Docker host.
 type NodeRequest struct {
-	OperationID         string   `json:"operationID"`
-	Cluster             string   `json:"cluster"`
-	ClusterUID          string   `json:"clusterUID"`
-	ContainerClusterUID string   `json:"containerClusterUID,omitempty"`
-	TenantID            string   `json:"tenantID"`
-	Name                string   `json:"name"`
-	InstanceID          string   `json:"instanceID"`
-	PrivateAddress      string   `json:"privateAddress"`
-	Environment         string   `json:"environment"`
-	NetworkScope        string   `json:"networkScope"`
-	AuthorizedGPUUUIDs  []string `json:"authorizedGPUUUIDs"`
+	OperationID         string       `json:"operationID"`
+	Cluster             string       `json:"cluster"`
+	ClusterUID          string       `json:"clusterUID"`
+	ContainerClusterUID string       `json:"containerClusterUID,omitempty"`
+	TenantID            string       `json:"tenantID"`
+	Name                string       `json:"name"`
+	InstanceID          string       `json:"instanceID"`
+	PrivateAddress      string       `json:"privateAddress"`
+	Environment         string       `json:"environment"`
+	NetworkScope        string       `json:"networkScope"`
+	Role                ext.NodeRole `json:"role,omitempty"`
+	AuthorizedGPUUUIDs  []string     `json:"authorizedGPUUUIDs"`
 }
 
 // Validate checks node registration input without reading or mutating resources.
@@ -86,8 +88,20 @@ func (req NodeRequest) Validate() error {
 	if req.Cluster == "" || req.ClusterUID == "" {
 		return errors.New("exact Cluster name and UID required")
 	}
-	capability := &native.RawNodeStatus{Incarnation: req.InstanceID, TrainingIP: req.PrivateAddress, Environment: req.Environment, NetworkScope: req.NetworkScope, AuthorizedGPUUUIDs: req.AuthorizedGPUUUIDs}
-	return rawnode.ValidateCapability(capability)
+	if req.InstanceID == "" || strings.TrimSpace(req.Environment) == "" || strings.TrimSpace(req.NetworkScope) == "" {
+		return errors.New("instance, environment and network scope required")
+	}
+	ip := net.ParseIP(req.PrivateAddress)
+	if ip == nil || ip.To4() == nil || !ip.IsPrivate() {
+		return errors.New("private IPv4 address required")
+	}
+	if req.Role != "" && req.Role != ext.NodeRoleGateway && req.Role != ext.NodeRoleWorker {
+		return errors.New("node role must be Gateway or Worker")
+	}
+	if len(req.AuthorizedGPUUUIDs) > 0 {
+		return rawnode.ValidateCapability(&native.RawNodeStatus{Incarnation: req.InstanceID, TrainingIP: req.PrivateAddress, Environment: req.Environment, NetworkScope: req.NetworkScope, AuthorizedGPUUUIDs: req.AuthorizedGPUUUIDs})
+	}
+	return nil
 }
 
 // Service uses authoritative reads and never adopts unmarked existing objects.
@@ -153,6 +167,8 @@ func (s Service) CreateCluster(ctx context.Context, req ClusterRequest) (*ext.Co
 	if err := req.Validate(); err != nil {
 		return nil, err
 	}
+	// New clusters explicitly trust the isolated Notebook device view. Existing
+	// records with an empty field retain the historical explicit-allowlist mode.
 	intent, err := fingerprint(req)
 	if err != nil {
 		return nil, err
@@ -300,6 +316,20 @@ func (s Service) RegisterNode(ctx context.Context, req NodeRequest) (*ext.Contai
 	if cc.Spec.Runtime != "Raw" && cc.Spec.Runtime != "Docker" {
 		return nil, errors.New("unsupported container runtime")
 	}
+	if req.Role == "" {
+		req.Role = ext.NodeRoleWorker
+	}
+	if req.Role == ext.NodeRoleGateway {
+		var registered ext.ContainerNodeList
+		if err := s.Client.List(ctx, &registered, client.InNamespace(cc.Namespace)); err != nil {
+			return nil, err
+		}
+		for i := range registered.Items {
+			if registered.Items[i].Spec.Cluster == cc.Spec.Cluster && registered.Items[i].Spec.Role == ext.NodeRoleGateway && registered.Items[i].Name != req.Name {
+				return nil, fmt.Errorf("%w: Cluster already has a Gateway node", ErrConflict)
+			}
+		}
+	}
 	var retained ext.ContainerNode
 	if err := s.Client.Get(ctx, client.ObjectKey{Namespace: cc.Namespace, Name: req.Name}, &retained); err == nil {
 		if _, err := s.ReadNode(ctx, NodeIdentity{Namespace: retained.Namespace, Name: retained.Name, UID: string(retained.UID), TenantID: req.TenantID, CredentialID: req.OperationID}); err != nil {
@@ -342,7 +372,7 @@ func (s Service) RegisterNode(ctx context.Context, req NodeRequest) (*ext.Contai
 	if node.UID == "" {
 		return nil, errors.New("management API did not assign Node UID")
 	}
-	cn := &ext.ContainerNode{ObjectMeta: metadata(req.Name, cc.Namespace, req.TenantID, req.OperationID, intent), Spec: ext.ContainerNodeSpec{Cluster: ref(cluster), Node: ref(node), Runtime: cc.Spec.Runtime, InstanceID: req.InstanceID, PrivateAddress: req.PrivateAddress, Environment: req.Environment, NetworkScope: req.NetworkScope, AuthorizedGPUUUIDs: slices.Clone(req.AuthorizedGPUUUIDs)}}
+	cn := &ext.ContainerNode{ObjectMeta: metadata(req.Name, cc.Namespace, req.TenantID, req.OperationID, intent), Spec: ext.ContainerNodeSpec{Cluster: ref(cluster), Node: ref(node), Runtime: cc.Spec.Runtime, Role: req.Role, InstanceID: req.InstanceID, PrivateAddress: req.PrivateAddress, Environment: req.Environment, NetworkScope: req.NetworkScope, AuthorizedGPUUUIDs: slices.Clone(req.AuthorizedGPUUUIDs)}}
 	slices.Sort(cn.Spec.AuthorizedGPUUUIDs)
 	cn.Annotations[ext.AgentCredentialAnnotation] = req.OperationID
 	current := &ext.ContainerNode{}
@@ -392,7 +422,12 @@ func (s Service) ReadNode(ctx context.Context, id NodeIdentity) (*ext.ContainerN
 	if ownership.MatchesNative(node.Spec.Node, &nn) != nil || nn.Namespace != node.Namespace || string(nn.Spec.AgentType) != string(node.Spec.Runtime) || tenant.IDOf(&nn) != id.TenantID || !nn.DeletionTimestamp.IsZero() || nn.Status.Reservation != nil || len(nn.Status.DockerReservations) != 0 {
 		return nil, ErrConflict
 	}
-	if err := rawnode.ValidateCapability(&native.RawNodeStatus{Incarnation: node.Spec.InstanceID, TrainingIP: node.Spec.PrivateAddress, Environment: node.Spec.Environment, NetworkScope: node.Spec.NetworkScope, AuthorizedGPUUUIDs: node.Spec.AuthorizedGPUUUIDs}); err != nil {
+	capability := &native.RawNodeStatus{Incarnation: node.Spec.InstanceID, TrainingIP: node.Spec.PrivateAddress, Environment: node.Spec.Environment, NetworkScope: node.Spec.NetworkScope, AuthorizedGPUUUIDs: node.Spec.AuthorizedGPUUUIDs}
+	if len(node.Spec.AuthorizedGPUUUIDs) == 0 {
+		if err := rawnode.ValidateIdentity(capability); err != nil {
+			return nil, err
+		}
+	} else if err := rawnode.ValidateCapability(capability); err != nil {
 		return nil, err
 	}
 	return &node, nil

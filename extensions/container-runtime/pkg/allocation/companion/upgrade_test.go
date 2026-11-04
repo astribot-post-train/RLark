@@ -3,6 +3,7 @@ package companion
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -23,6 +24,7 @@ func upgradeFixture(t *testing.T) (Manager, Request, UpgradeRequest, *ext.AgentU
 	var node ext.ContainerNode
 	mustUpgrade(t, m.Client.Get(ctx, task.Node, &node))
 	node.Status.AgentVersion = "old"
+	node.Status.AuthorizedGPUUUIDs = slices.Clone(node.Spec.AuthorizedGPUUUIDs)
 	node.Status.Schedulable = false // A target-version fence must not prevent upgrading.
 	node.Status.Conditions = append(node.Status.Conditions, metav1.Condition{Type: "Validated", Status: metav1.ConditionTrue, ObservedGeneration: node.Generation})
 	mustUpgrade(t, m.Client.Status().Update(ctx, &node))

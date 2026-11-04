@@ -20,8 +20,10 @@ import (
 	"time"
 
 	"github.com/astribot-post-train/rlark/extensions/container-runtime/pkg/agent"
+	"github.com/astribot-post-train/rlark/extensions/container-runtime/pkg/rayrelay"
 	dockerruntime "github.com/astribot-post-train/rlark/extensions/container-runtime/pkg/runtime/docker"
 	"github.com/astribot-post-train/rlark/extensions/container-runtime/pkg/runtime/raw/supervision"
+	"golang.org/x/sync/errgroup"
 )
 
 type Config struct {
@@ -30,6 +32,7 @@ type Config struct {
 	Interval, RetryMax                                                                                                     time.Duration
 	EnableExecution, EnableUpgrades, EnableLogReads, EnableDockerDiagnostics                                               bool
 	InstallPath, UpgradeStateDirectory                                                                                     string
+	RayPeerConfig                                                                                                          string
 }
 
 func DefaultConfig() Config {
@@ -42,6 +45,9 @@ func (c Config) Validate() error {
 			return errors.New("raw mode requires a supervisor socket and does not accept docker-host")
 		}
 	case "docker":
+		if c.RayPeerConfig != "" {
+			return errors.New("Ray peer transport is an opt-in Raw-only preview")
+		}
 		if c.SupervisorSocket != "" || c.EnableLogReads {
 			return errors.New("docker mode does not support Raw supervisor or Raw log flag")
 		}
@@ -95,6 +101,7 @@ func (c Config) dockerHost() string {
 	return c.DockerHost
 }
 func (c *Config) SetupFlags(fs *flag.FlagSet) {
+	fs.StringVar(&c.RayPeerConfig, "ray-peer-config", c.RayPeerConfig, "optional local preview Ray peer JSON; does not inject workload transport")
 	fs.StringVar(&c.Runtime, "runtime", c.Runtime, "runtime: raw (default) or docker")
 	fs.StringVar(&c.DockerHost, "docker-host", c.DockerHost, "Docker mode local Unix socket (default unix:///var/run/docker.sock)")
 	fs.BoolVar(&c.EnableUpgrades, "enable-agent-upgrades", c.EnableUpgrades, "enable preview idle Agent binary updates")
@@ -134,6 +141,20 @@ func run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 	if err := cfg.Validate(); err != nil {
 		return err
 	}
+	if cfg.RayPeerConfig == "" {
+		return runAgent(ctx, cfg, logger)
+	}
+	peer, err := rayrelay.LoadPeer(cfg.RayPeerConfig)
+	if err != nil {
+		return err
+	}
+	g, ctx := errgroup.WithContext(ctx)
+	g.Go(func() error { return peer.Run(ctx) })
+	g.Go(func() error { return runAgent(ctx, cfg, logger) })
+	return g.Wait()
+}
+
+func runAgent(ctx context.Context, cfg Config, logger *slog.Logger) error {
 	certificate, err := tls.LoadX509KeyPair(cfg.TLSCert, cfg.TLSKey)
 	if err != nil {
 		return fmt.Errorf("load Agent certificate: %w", err)

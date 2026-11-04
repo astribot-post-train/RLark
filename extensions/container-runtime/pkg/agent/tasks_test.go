@@ -22,6 +22,7 @@ import (
 	nativejob "github.com/rlinf/rlark/apps/rlark/pkg/controllermanager/job"
 	"github.com/rlinf/rlark/apps/rlark/pkg/tenant"
 	"github.com/rlinf/rlark/apps/rlark/pkg/utils"
+	corev1 "k8s.io/api/core/v1"
 	extensions "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -202,6 +203,62 @@ func TestTaskTransportValidatesEveryRawTemplateBeforeAuthorizingMember(t *testin
 	must(t, s.Reporter.Client.Update(ctx, &job))
 	if _, err := s.Handle(ctx, id, requestFor(a, "authorize")); !errors.Is(err, ErrIdentity) {
 		t.Fatalf("malformed sibling was ignored: %v", err)
+	}
+}
+
+func TestTaskTransportRevalidatesMixedTargetsAndRetainsCleanup(t *testing.T) {
+	for _, mode := range []string{"valid", "missing", "uid", "tenant", "cordoned", "draining", "ambiguous", "container", "deleted"} {
+		t.Run(mode, func(t *testing.T) {
+			s, id, a := taskFixture(t)
+			ctx := context.Background()
+			c := s.Reporter.Client
+			var job native.Job
+			must(t, c.Get(ctx, client.ObjectKey{Name: "job"}, &job))
+			job.Spec.Tasks = append(job.Spec.Tasks, native.JobTaskTemplate{Name: "env", TaskSpec: native.TaskSpec{
+				Runtime:  native.TaskRuntimeSpec{Kind: "Kubernetes"},
+				Workload: native.TaskWorkloadSpec{Kind: "rlinf.io/ray", Version: "v1", Parameters: extensions.JSON{Raw: []byte(`{"role":"worker","headAddress":"10.1.3.42","headTaskName":"head","totalNodes":2}`)}, Carrier: native.TaskWorkloadCarrier{Type: "rlinf.io/kubernetes-deployment", Version: "v1"}, Template: &corev1.PodTemplateSpec{Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "env", Image: "test.invalid/env:v1"}}}}},
+			}})
+			must(t, c.Update(ctx, &job))
+			robot := &native.Cluster{ObjectMeta: metav1.ObjectMeta{Name: "robot", UID: "robot-instance"}, Spec: native.ClusterSpec{AgentNamespace: "robot-agents"}}
+			must(t, c.Create(ctx, robot))
+			var binding ext.ContainerJob
+			must(t, c.Get(ctx, client.ObjectKey{Namespace: "agents", Name: "job"}, &binding))
+			binding.Spec.KubernetesTargets = []ext.KubernetesTaskTarget{{Template: "env", Cluster: objectRef(robot)}}
+			must(t, c.Update(ctx, &binding))
+			// First prove that adding a valid mixed contract leaves this exact
+			// Raw member authorized, then revoke only the target authority.
+			_, err := s.Handle(ctx, id, requestFor(a, "authorize"))
+			must(t, err)
+			switch mode {
+			case "missing":
+				binding.Spec.KubernetesTargets = nil
+				must(t, c.Update(ctx, &binding))
+			case "uid":
+				robot.UID = "replacement"
+			case "tenant":
+				tenant.SetIdentity(robot, "foreign", "")
+			case "cordoned":
+				robot.Spec.Cordoned = true
+			case "draining":
+				robot.Spec.Draining = true
+			case "ambiguous":
+				must(t, c.Create(ctx, &native.Cluster{ObjectMeta: metav1.ObjectMeta{Name: "duplicate", UID: "duplicate"}, Spec: robot.Spec}))
+			case "container":
+				must(t, c.Create(ctx, &ext.ContainerCluster{ObjectMeta: metav1.ObjectMeta{Name: "container", Namespace: robot.Spec.AgentNamespace}}))
+			case "deleted":
+				must(t, c.Delete(ctx, robot))
+			}
+			if mode != "deleted" {
+				must(t, c.Update(ctx, robot))
+			}
+			_, err = s.Handle(ctx, id, requestFor(a, "authorize"))
+			if (err == nil) != (mode == "valid") {
+				t.Fatalf("mode=%s authorization error: %v", mode, err)
+			}
+			// Revoking starts must never strand the retained cleanup channel.
+			_, err = s.Handle(ctx, id, requestFor(a, "get"))
+			must(t, err)
+		})
 	}
 }
 

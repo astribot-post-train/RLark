@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/astribot-post-train/rlark/extensions/container-runtime/core/pkg/gpus"
 	"reflect"
 	"slices"
 	"sort"
@@ -217,7 +218,7 @@ func (r AgentRolloutReconciler) selectNode(ctx context.Context, cc *ext.Containe
 		// Old target-fenced nodes intentionally report Schedulable=false. The
 		// upgrade selector relies on the stronger fresh idle heartbeat and
 		// shared-lock checks instead of treating that fence as busy.
-		if selected != nil || !fresh || n.Status.Busy || n.Status.AgentVersion == "" || n.Status.AgentVersion == release.Spec.Version || len(n.Spec.AuthorizedGPUUUIDs) == 0 || !slices.Contains(n.Status.Capabilities, ext.AgentUpgradeCapability) || !slices.Contains(n.Status.Capabilities, "agent-platform/"+release.Spec.OS+"/"+release.Spec.Architecture) {
+		if selected != nil || !fresh || n.Status.Busy || n.Status.AgentVersion == "" || n.Status.AgentVersion == release.Spec.Version || len(gpus.Inventory(n)) == 0 || !slices.Contains(n.Status.Capabilities, ext.AgentUpgradeCapability) || !slices.Contains(n.Status.Capabilities, "agent-platform/"+release.Spec.OS+"/"+release.Spec.Architecture) {
 			continue
 		}
 		occupied := false
@@ -226,7 +227,7 @@ func (r AgentRolloutReconciler) selectNode(ctx context.Context, cc *ext.Containe
 				occupied = true
 			}
 			for _, gpu := range a.Spec.GPUUUIDs {
-				if slices.Contains(n.Spec.AuthorizedGPUUUIDs, gpu) {
+				if slices.Contains(gpus.Inventory(n), gpu) {
 					occupied = true
 				}
 			}

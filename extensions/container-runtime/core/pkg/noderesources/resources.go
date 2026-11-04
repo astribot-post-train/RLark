@@ -4,6 +4,7 @@ package noderesources
 
 import (
 	"fmt"
+	"github.com/astribot-post-train/rlark/extensions/container-runtime/core/pkg/gpus"
 	"slices"
 	"time"
 
@@ -64,7 +65,7 @@ func Evaluate(cn *ext.ContainerNode, nn *native.Node, cc *ext.ContainerCluster, 
 	}
 	cpu := capacity[corev1.ResourceCPU]
 	gpu := capacity[corev1.ResourceName("nvidia.com/gpu")]
-	if cn.Status.ResourceObservedAt != nil && cpu.Sign() > 0 && gpu.Cmp(*resource.NewQuantity(int64(len(cn.Spec.AuthorizedGPUUUIDs)), resource.DecimalSI)) == 0 && sameGPUs(cn.Status.AuthorizedGPUUUIDs, cn.Spec.AuthorizedGPUUUIDs) {
+	if cn.Status.ResourceObservedAt != nil && cpu.Sign() > 0 && gpu.Cmp(*resource.NewQuantity(int64(len(gpus.Inventory(cn))), resource.DecimalSI)) == 0 {
 		v.Capacity = capacity
 	}
 	if !inventoryKnown {
@@ -78,7 +79,7 @@ func Evaluate(cn *ext.ContainerNode, nn *native.Node, cc *ext.ContainerCluster, 
 		if a.Spec.Node.UID != string(nn.UID) && a.Spec.NodeRecordUID != string(cn.UID) && (a.Namespace != cn.Namespace || a.Name != allocation.Name(string(nn.UID))) {
 			continue
 		}
-		if held != nil || a.UID == "" || a.Name != allocation.Name(string(nn.UID)) || a.Namespace != cn.Namespace || a.Spec.Cluster != cn.Spec.Cluster || a.Spec.Node != cn.Spec.Node || a.Spec.NodeRecordUID != string(cn.UID) || tenant.IDOf(a) != tenant.IDOf(cn) || a.Spec.TenantID != tenant.IDOf(cn) || a.Spec.NodeInstanceID != cn.Spec.InstanceID || a.Spec.PrivateAddress != cn.Spec.PrivateAddress || a.Spec.NetworkScope != cn.Spec.NetworkScope || !sameGPUs(a.Spec.GPUUUIDs, cn.Spec.AuthorizedGPUUUIDs) {
+		if held != nil || a.UID == "" || a.Name != allocation.Name(string(nn.UID)) || a.Namespace != cn.Namespace || a.Spec.Cluster != cn.Spec.Cluster || a.Spec.Node != cn.Spec.Node || a.Spec.NodeRecordUID != string(cn.UID) || tenant.IDOf(a) != tenant.IDOf(cn) || a.Spec.TenantID != tenant.IDOf(cn) || a.Spec.NodeInstanceID != cn.Spec.InstanceID || a.Spec.PrivateAddress != cn.Spec.PrivateAddress || a.Spec.NetworkScope != cn.Spec.NetworkScope || !sameGPUs(a.Spec.GPUUUIDs, gpus.Inventory(cn)) {
 			v.Reason = "AllocationIdentityConflict"
 			return v
 		}

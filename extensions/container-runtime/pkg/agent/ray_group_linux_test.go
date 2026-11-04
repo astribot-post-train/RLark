@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"slices"
 	"testing"
 	"time"
 
@@ -143,6 +144,7 @@ func rayFixture(t *testing.T, nodeCount int) *rayFixtureState {
 		record.Spec.InstanceID = "engine-" + name
 		record.Spec.PrivateAddress = fmt.Sprintf("10.0.3.%d", 100+i)
 		record.Spec.AuthorizedGPUUUIDs = []string{fmt.Sprintf("GPU-%d", i)}
+		record.Status.AuthorizedGPUUUIDs = slices.Clone(record.Spec.AuthorizedGPUUUIDs)
 		record.Annotations[CredentialAnnotation] = "cred-" + name
 		record.Status.AgentCredentialID = record.Annotations[CredentialAnnotation]
 		record.Status.Capabilities = append(record.Status.Capabilities, ray.Capability)

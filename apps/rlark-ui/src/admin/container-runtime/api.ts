@@ -55,6 +55,7 @@ export type Node = {
   privateAddress: string;
   environment: string;
   networkScope: string;
+  role: "Gateway" | "Worker" | "";
   agentVersion: string;
   ready: boolean;
   schedulable: boolean;
@@ -63,6 +64,7 @@ export type Node = {
   bindingValid: boolean;
   capacity: Record<string, string> | null;
   authorizedGPUUUIDs: string[] | null;
+  discoveredGPUUUIDs: string[] | null;
   capabilities: string[] | null;
   lastHeartbeatTime: string | null;
   conditions: Condition[] | null;
@@ -136,6 +138,7 @@ export type NodeRegistration = {
   privateAddress: string;
   environment: string;
   networkScope: string;
+  role: "Gateway" | "Worker";
   authorizedGPUUUIDs: string[];
 };
 export type RegisteredNode = {
@@ -146,7 +149,13 @@ export type RegisteredNode = {
   clusterUID: string;
   operationID: string;
 };
+export type EnrollmentTarget = {name: string; role: "Gateway" | "Worker"; address: string; port: number; nodeUID?: string; privateAddress?: string};
+export type EnrollmentRequest = {operationID: string; clusterUID: string; release: string; nodes: EnrollmentTarget[]};
+export type EnrollmentNode = {name: string; nodeUID?: string; reachability?: string; probedAt?: string; phase?: string; reason?: string; services?: string[]};
+export type Enrollment = {name: string; uid: string; operationID: string; releaseName: string; releaseVersion: string; phase: string; cancelRequested?: boolean; targets: EnrollmentTarget[]; nodes: EnrollmentNode[] | null; conditions: Condition[] | null};
 export type Detail = {
+  enrollmentEnabled: boolean;
+  enrollments: Enrollment[];
   nodeRegistrationEnabled: boolean;
   jobSubmissionEnabled: boolean;
   cluster: Cluster;
@@ -234,6 +243,11 @@ function stringArray(value: unknown): boolean {
     (Array.isArray(value) && value.every((v) => typeof v === "string"))
   );
 }
+function enrollment(value: unknown): value is Enrollment {
+  return record(value) && strings(value, ["name", "uid", "operationID", "releaseName", "releaseVersion", "phase"]) && (value.cancelRequested===undefined || typeof value.cancelRequested==="boolean") && conditions(value.conditions) &&
+    Array.isArray(value.targets) && value.targets.every(t => record(t) && strings(t,["name","role","address"]) && ["Gateway","Worker"].includes(String(t.role)) && typeof t.port === "number" && ["nodeUID","privateAddress"].every(k=>t[k]===undefined || typeof t[k]==="string")) &&
+    (value.nodes === null || Array.isArray(value.nodes) && value.nodes.every(n => record(n) && strings(n,["name"]) && ["nodeUID","reachability","probedAt","phase","reason"].every(k=>n[k]===undefined || typeof n[k]==="string") && (n.services===undefined || stringArray(n.services))));
+}
 function jobSummary(value: unknown): value is JobSummary {
   return (
     record(value) &&
@@ -261,6 +275,7 @@ function cluster(value: unknown): value is Cluster {
       "targetAgentRelease",
     ]) &&
     (value.runtime === "Raw" || value.runtime === "Docker") &&
+    (value.gpuAuthorizationPolicy === undefined || typeof value.gpuAuthorizationPolicy === "string") &&
     booleans(value, ["bindingValid", "deleting"]) &&
     conditions(value.conditions) &&
     [
@@ -354,6 +369,7 @@ export function nativeResourceNode(
 function detail(value: unknown): value is Detail {
   return (
     record(value) &&
+    typeof value.enrollmentEnabled === "boolean" && Array.isArray(value.enrollments) && value.enrollments.every(enrollment) &&
     typeof value.jobSubmissionEnabled === "boolean" &&
     typeof value.nodeRegistrationEnabled === "boolean" &&
     cluster(value.cluster) &&
@@ -368,6 +384,7 @@ function detail(value: unknown): value is Detail {
           "privateAddress",
           "environment",
           "networkScope",
+          "role",
           "agentVersion",
           "resourceVersion",
           "nativeUID",
@@ -382,6 +399,7 @@ function detail(value: unknown): value is Detail {
         ]) &&
         nativeResources(n.resources) &&
         stringArray(n.authorizedGPUUUIDs) &&
+        stringArray(n.discoveredGPUUUIDs) &&
         stringArray(n.capabilities) &&
         conditions(n.conditions) &&
         (n.lastHeartbeatTime === null ||
@@ -464,6 +482,16 @@ async function request(
   }
 }
 export class Client {
+  async cancelEnrollment(cluster: Cluster, operation: Enrollment, signal?: AbortSignal): Promise<Enrollment> {
+    const body = await request(`${this.path(cluster.namespace,cluster.name)}/enrollments/${encodeURIComponent(operation.name)}/cancel`, {method:"POST",body:JSON.stringify({uid:operation.uid,clusterUID:cluster.uid})},signal);
+    if (!enrollment(body) || body.uid!==operation.uid || body.operationID!==operation.operationID) throw malformed();
+    return body;
+  }
+  async startNodes(cluster: Cluster, value: EnrollmentRequest, signal?: AbortSignal): Promise<Enrollment> {
+    const body = await request(`${this.path(cluster.namespace,cluster.name)}/start`, {method:"POST",body:JSON.stringify(value)},signal);
+    if (!enrollment(body) || body.operationID !== value.operationID) throw malformed();
+    return body;
+  }
   async list(signal?: AbortSignal): Promise<Cluster[]> {
     const body = await request(
       "/api/v1/container-runtime/clusters",
@@ -489,6 +517,8 @@ export class Client {
     const normalized = record(body)
       ? {
           ...body,
+          enrollmentEnabled: body.enrollmentEnabled === undefined ? false : body.enrollmentEnabled,
+          enrollments: body.enrollments === undefined ? [] : body.enrollments,
           jobSubmissionEnabled:
             body.jobSubmissionEnabled === undefined
               ? false
