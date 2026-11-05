@@ -353,7 +353,6 @@ Docker Ray Tasks use host networking and a deterministic port derived from the T
 | Task claim and finalizer | Supported | Preview supported | Experimental single-node process |
 | Deployment | Supported | Not applicable | Not applicable |
 | StatefulSet | Supported | Not applicable | Not applicable |
-| DaemonSet | Supported | Not applicable | Not applicable |
 | Container/process execution | Kubernetes Pods | Ray/RLinf Docker containers | Experimental pre-existing process |
 | Status observation | Supported | Docker inspect/stats | Experimental scoped status |
 | Runtime logs | Kubernetes Pod fallback | Provider support; Gateway Task logs not connected | Not implemented |

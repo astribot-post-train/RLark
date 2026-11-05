@@ -324,7 +324,6 @@ Docker Ray Task 使用 host network，并根据 Task identity 生成稳定端口
 | Task claim 与 finalizer | 支持 | 预览支持 | 实验性单节点进程 |
 | Deployment | 支持 | 不适用 | 不适用 |
 | StatefulSet | 支持 | 不适用 | 不适用 |
-| DaemonSet | 支持 | 不适用 | 不适用 |
 | 容器/进程执行 | Kubernetes Pod | Ray/RLinf Docker 容器 | 实验性已有进程 |
 | 状态观察 | 支持 | Docker inspect/stats | 实验性限定状态 |
 | 运行时日志 | Kubernetes Pod fallback | Provider 支持；Gateway Task logs 尚未接通 | 未实现 |

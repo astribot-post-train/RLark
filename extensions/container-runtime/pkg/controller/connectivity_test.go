@@ -29,7 +29,10 @@ func connectivityFixture(t *testing.T, heartbeat time.Time) (*ConnectivityReconc
 	if err := clientgoscheme.AddToScheme(scheme); err != nil {
 		t.Fatal(err)
 	}
-	cluster := &native.Cluster{ObjectMeta: metav1.ObjectMeta{Name: "cloud", UID: "cluster-uid", Labels: map[string]string{tenant.IDLabel: "team-a"}}, Spec: native.ClusterSpec{AgentNamespace: "agents"}}
+	// The native Cluster controller adds its cleanup finalizer on the first
+	// reconcile and returns; start from an already-admitted Cluster so each
+	// single reconcile pass in these tests observes status.
+	cluster := &native.Cluster{ObjectMeta: metav1.ObjectMeta{Name: "cloud", UID: "cluster-uid", Labels: map[string]string{tenant.IDLabel: "team-a"}, Finalizers: []string{nativecluster.CleanupFinalizer}}, Spec: native.ClusterSpec{AgentNamespace: "agents"}}
 	node := &native.Node{ObjectMeta: metav1.ObjectMeta{Name: "worker", Namespace: "agents", UID: "node-uid", Labels: map[string]string{tenant.IDLabel: "team-a"}}, Spec: native.NodeSpec{AgentType: native.AgentTypeRaw, Unschedulable: true}}
 	containerCluster := &ext.ContainerCluster{ObjectMeta: metav1.ObjectMeta{Name: "cloud", Namespace: "agents", UID: "container-cluster-uid", Labels: map[string]string{tenant.IDLabel: "team-a"}}, Spec: ext.ContainerClusterSpec{Cluster: ext.NativeObjectReference{Name: "cloud", UID: string(cluster.UID)}, Runtime: "Raw", AgentNamespace: "agents"}}
 	now := metav1.NewTime(heartbeat)
