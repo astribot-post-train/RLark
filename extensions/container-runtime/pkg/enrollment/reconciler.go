@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"reflect"
 	"slices"
@@ -218,34 +219,26 @@ func (r Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resul
 			}
 			status.Reachability = "Reachable"
 			status.Reason = "SSHObserved"
-			if status.InstanceID != "" && status.InstanceID != observed.InstanceID {
+			changed := status.InstanceID != "" && (status.InstanceID != observed.InstanceID || status.PrivateAddress != observed.PrivateAddress)
+			// Completed operations keep their result and only report the change.
+			if completed && changed {
 				status.Reason = "NotebookReplaced"
-				if completed {
-					continue
+				if status.InstanceID == observed.InstanceID {
+					status.Reason = "PrivateAddressChanged"
 				}
-				return r.fail(ctx, before, &op, "NotebookReplaced", false)
+				continue
+			}
+			// A restarted Notebook is a new container with a new identity and
+			// private address. The newest probe is authoritative: the node joins
+			// again under the same name, and registration below replaces any
+			// stale record for it.
+			if changed {
+				*status = ext.EnrollmentNodeStatus{Name: status.Name, ProbedAt: status.ProbedAt, Reachability: "Reachable", Reason: "SSHObserved"}
 			}
 			firstProbe := status.InstanceID == ""
 			status.InstanceID = observed.InstanceID
-			// A platform SSH address may DNAT into a Notebook network namespace.
-			// Pin the authenticated probe's private address independently from the
-			// immutable SSH endpoint; neither may drift on a retained operation.
-			if target.PrivateAddress != "" && target.PrivateAddress != observed.PrivateAddress {
-				status.Reason = "PrivateAddressChanged"
-				if completed {
-					continue
-				}
-				return r.fail(ctx, before, &op, "PrivateAddressChanged", false)
-			}
-			if status.PrivateAddress != "" && status.PrivateAddress != observed.PrivateAddress {
-				status.Reason = "PrivateAddressChanged"
-				if completed {
-					continue
-				}
-				return r.fail(ctx, before, &op, "PrivateAddressChanged", false)
-			}
 			status.PrivateAddress = observed.PrivateAddress
-			// Persist identity before issuing credentials; retries can fence replacement.
+			// Persist identity before issuing credentials so a restart resumes from it.
 			if firstProbe {
 				return r.save(ctx, before, &op)
 			}
@@ -263,8 +256,46 @@ func (r Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resul
 		}
 		var node ext.ContainerNode
 		err := r.Client.Get(ctx, client.ObjectKey{Namespace: op.Namespace, Name: target.Name}, &node)
-		if apierrors.IsNotFound(err) && target.NodeUID == "" && status.NodeUID == "" {
-			operationID := uuid.NewSHA1(uuid.MustParse(op.Spec.OperationID), []byte(target.Name)).String()
+		if err == nil {
+			// A same-name record from an earlier container (or one this operation
+			// already replaced) is retired so the probed container joins fresh.
+			replace, conflict := staleRecord(&node, status, cc.Spec.Cluster, op.Spec.TenantID, target.Role)
+			if conflict {
+				return r.fail(ctx, before, &op, "NodeIdentityConflict", false)
+			}
+			if replace {
+				status.NodeUID, status.Phase, status.Services = "", "", nil
+				if result, done, e := r.retire(ctx, before, &op, &node); !done {
+					return result, e
+				}
+				err = apierrors.NewNotFound(ext.GroupVersion.WithResource("containernodes").GroupResource(), node.Name)
+			}
+		}
+		if apierrors.IsNotFound(err) && status.NodeUID == "" {
+			// A retired native Node may still be finalizing; registering now
+			// would bind the new record to an object that is about to vanish.
+			var nn native.Node
+			if e := r.Client.Get(ctx, client.ObjectKey{Namespace: op.Namespace, Name: target.Name}, &nn); e == nil && !nn.DeletionTimestamp.IsZero() {
+				return r.save(ctx, before, &op)
+			} else if e == nil && nn.Annotations[coreprovision.OperationAnnotation] != registrationID(&op, target.Name, status.InstanceID) {
+				// No ContainerNode references this native Node any more (its
+				// record was retired once its hold cleared), so it belongs to the
+				// previous container. Retire it unless it still carries work.
+				if tenant.IDOf(&nn) != op.Spec.TenantID {
+					return r.fail(ctx, before, &op, "NodeIdentityConflict", false)
+				}
+				if nn.Status.Reservation != nil || len(nn.Status.DockerReservations) != 0 {
+					return r.fail(ctx, before, &op, "ReplacementBlocked", true)
+				}
+				uid := nn.UID
+				if err := r.Client.Delete(ctx, &nn, client.Preconditions{UID: &uid}); client.IgnoreNotFound(err) != nil {
+					return r.fail(ctx, before, &op, "ReplacementBlocked", true)
+				}
+				return r.save(ctx, before, &op)
+			} else if e != nil && !apierrors.IsNotFound(e) {
+				return r.fail(ctx, before, &op, "NodeUnavailable", true)
+			}
+			operationID := registrationID(&op, target.Name, status.InstanceID)
 			created, e := (provision.Service{Client: r.Client}).RegisterNode(ctx, provision.NodeRequest{OperationID: operationID, Cluster: cc.Spec.Cluster.Name, ClusterUID: cc.Spec.Cluster.UID, ContainerClusterUID: string(cc.UID), TenantID: op.Spec.TenantID, Name: target.Name, InstanceID: status.InstanceID, PrivateAddress: status.PrivateAddress, Environment: r.Profile.Environment, NetworkScope: r.Profile.NetworkScope, Role: target.Role})
 			if e != nil {
 				return r.fail(ctx, before, &op, "RegistrationConflict", true)
@@ -275,19 +306,9 @@ func (r Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resul
 		} else if err != nil {
 			return r.fail(ctx, before, &op, "NodeUnavailable", true)
 		}
-		expectedUID := target.NodeUID
-		if expectedUID == "" {
-			expectedUID = status.NodeUID
-		}
-		operationID := uuid.NewSHA1(uuid.MustParse(op.Spec.OperationID), []byte(target.Name)).String()
-		if expectedUID == "" && node.Annotations[ext.AgentCredentialAnnotation] == operationID {
-			expectedUID = string(node.UID)
-		}
-		role := node.Spec.Role
-		if role == "" {
-			role = ext.NodeRoleWorker
-		}
-		if expectedUID == "" || string(node.UID) != expectedUID || node.Spec.Cluster != cc.Spec.Cluster || node.Spec.InstanceID != status.InstanceID || node.Spec.PrivateAddress != status.PrivateAddress || role != target.Role || tenant.IDOf(&node) != op.Spec.TenantID || !node.DeletionTimestamp.IsZero() {
+		// staleRecord already retired records of another container. What remains
+		// matches the probed container; once registered, the UID must not drift.
+		if status.NodeUID != "" && string(node.UID) != status.NodeUID {
 			return r.fail(ctx, before, &op, "NodeIdentityConflict", false)
 		}
 		status.NodeUID = string(node.UID)
@@ -389,6 +410,79 @@ func enrollmentAgentReady(node *ext.ContainerNode, version string, now time.Time
 	condition := meta.FindStatusCondition(node.Status.Conditions, "Ready")
 	return at != nil && !at.After(now) && now.Sub(at.Time) <= 45*time.Second && node.Status.ObservedGeneration == node.Generation && node.Status.AgentCredentialID != "" && node.Status.AgentCredentialID == node.Annotations[ext.AgentCredentialAnnotation] && node.Status.AgentVersion == version && condition != nil && condition.Status == metav1.ConditionTrue && condition.ObservedGeneration == node.Generation
 }
+
+// registrationID is the provisioning operation for one container joining under
+// a name. It includes the probed instance so a Notebook replaced during the
+// same enrollment registers anew instead of resuming the retired record.
+func registrationID(op *ext.NodeEnrollment, name, instanceID string) string {
+	return uuid.NewSHA1(uuid.MustParse(op.Spec.OperationID), []byte(name+"/"+instanceID)).String()
+}
+
+// staleRecord classifies an existing same-name ContainerNode against the
+// container this operation just probed. A record of another cluster or tenant
+// is never touched (conflict). A record of this cluster that describes another
+// container identity or role, or that is already being deleted, is stale and
+// replaced; the probe is authoritative because a restarted Notebook is a new
+// container that must be able to join again by name.
+func staleRecord(node *ext.ContainerNode, status *ext.EnrollmentNodeStatus, cluster ext.NativeObjectReference, tenantID string, role ext.NodeRole) (replace, conflict bool) {
+	if node.Spec.Cluster != cluster || tenant.IDOf(node) != tenantID {
+		return false, true
+	}
+	current := node.Spec.Role
+	if current == "" {
+		current = ext.NodeRoleWorker
+	}
+	return !node.DeletionTimestamp.IsZero() || node.Spec.InstanceID != status.InstanceID || node.Spec.PrivateAddress != status.PrivateAddress || current != role, false
+}
+
+// retire removes a stale ContainerNode and then its native Node, both pinned
+// by UID so a record re-created concurrently is never deleted. The node
+// finalizer keeps the ContainerNode while allocations or upgrades reference it;
+// the operation then waits with ReplacementBlocked and resumes automatically.
+// done reports that both records are gone and registration may proceed.
+func (r Reconciler) retire(ctx context.Context, before, op *ext.NodeEnrollment, node *ext.ContainerNode) (ctrl.Result, bool, error) {
+	if node.DeletionTimestamp.IsZero() {
+		uid := node.UID
+		if err := r.Client.Delete(ctx, node, client.Preconditions{UID: &uid}); client.IgnoreNotFound(err) != nil {
+			res, e := r.fail(ctx, before, op, "ReplacementBlocked", true)
+			return res, false, e
+		}
+		slog.InfoContext(ctx, "replacing stale container node record", "operation", op.Name, "node", node.Name, "uid", node.UID, "instanceID", node.Spec.InstanceID)
+	}
+	var current ext.ContainerNode
+	if err := r.Client.Get(ctx, client.ObjectKeyFromObject(node), &current); err == nil && current.UID == node.UID {
+		// Finalizer still holds it: allocations or upgrades remain.
+		res, e := r.fail(ctx, before, op, "ReplacementBlocked", true)
+		return res, false, e
+	} else if client.IgnoreNotFound(err) != nil {
+		return ctrl.Result{}, false, err
+	}
+	ref := node.Spec.Node
+	if ref.Name == "" || ref.UID == "" {
+		return ctrl.Result{}, true, nil
+	}
+	var nn native.Node
+	err := r.Client.Get(ctx, client.ObjectKey{Namespace: ref.Namespace, Name: ref.Name}, &nn)
+	if apierrors.IsNotFound(err) {
+		return ctrl.Result{}, true, nil
+	} else if err != nil {
+		return ctrl.Result{}, false, err
+	}
+	if ownership.MatchesNative(ref, &nn) != nil {
+		// The name now belongs to a different native Node; leave it alone.
+		return ctrl.Result{}, true, nil
+	}
+	if nn.DeletionTimestamp.IsZero() {
+		uid := nn.UID
+		if err := r.Client.Delete(ctx, &nn, client.Preconditions{UID: &uid}); client.IgnoreNotFound(err) != nil {
+			return ctrl.Result{}, false, err
+		}
+	}
+	// Wait for native finalizers before RegisterNode re-creates the same name.
+	res, e := r.save(ctx, before, op)
+	return res, false, e
+}
+
 func (r Reconciler) idle(ctx context.Context, node *ext.ContainerNode) error {
 	var allocations ext.ContainerAllocationList
 	if err := r.Client.List(ctx, &allocations, client.InNamespace(node.Namespace)); err != nil {

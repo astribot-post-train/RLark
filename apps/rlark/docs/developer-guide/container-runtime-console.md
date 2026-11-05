@@ -57,14 +57,28 @@ private controller enrollment profile, published artifacts and additive RBAC;
 real A/B/C installation and recovery acceptance is outstanding.
 
 Registration alone remains metadata-only. Stopped Notebooks must first be
-started in the cloud console. New instances or changed addresses are not
-silently adopted. GPU keepalive is not part of enrollment or the Agent package.
+started in the cloud console. GPU keepalive is not part of enrollment or the
+Agent package.
+
+A restarted Notebook is a new container with a new instance identity and
+private address. To bring it back, submit an enrollment with the node's name
+and SSH endpoint (update the address only if the endpoint changed). The newest
+SSH probe is authoritative: when the existing record of that name describes a
+different instance, private address or role, the controller retires it (the
+ContainerNode, then its native Node, each deleted with a UID precondition) and
+registers the probed container under the same name. A record still held by an
+allocation or upgrade is kept until the hold clears; the operation waits with
+`ReplacementBlocked` and resumes automatically. A same-name record of another
+cluster or tenant is never touched and fails with `NodeIdentityConflict`.
+Worker requests carry only name, role, SSH address and port; a Gateway keeps its
+record UID so a verified running gateway can be reused. Replacement requires
+the controller's `delete` permission on `containernodes` and `rlinf.io` `nodes`.
 
 After an enrollment succeeds, later SSH probes update the node's reachability
 and reason without rewriting the successful operation result or starting any
-services. `NotebookReplaced` and `PrivateAddressChanged` indicate that SSH
-responded but the observed identity no longer matches; they do not authorize
-adoption. `InvalidProbe` makes reachability unknown. The probe can recover on a
+services. `NotebookReplaced` and `PrivateAddressChanged` on a completed
+operation report that the node has since restarted; submit again to replace
+its record. `InvalidProbe` makes reachability unknown. The probe can recover on a
 later matching observation, even if the historical release has been removed.
 This behavior requires the updated enrollment controller; successful enrollment
 is historical evidence, not proof that the current node or Agent is ready.
@@ -214,8 +228,8 @@ keyboard-focusable tooltips. Create cluster, Notebook deploy/edit, node
 registration and Raw Job submission open in a side drawer; closing the drawer
 does not discard an unconfirmed request or its retained operation ID. Each node
 row offers **Edit IP / redeploy**, which opens the deploy drawer focused on that
-node's SSH address; the controller still validates address changes on joined
-nodes and never silently adopts a replacement. The **Enrollments** tab lists
+node's SSH address; resubmitting after a restart replaces the node's old record
+automatically (see above). The **Enrollments** tab lists
 every enrollment operation with per-node reachability and phase, and offers
 cancellation for operations still in progress (joined nodes are retained). The
 controller runs one cluster's enrollments in creation order, so while an
@@ -230,9 +244,9 @@ same and focuses that node's address. Request errors appear in a banner at the
 top of the drawer. When the newest operation has failed, the form shows why
 above the inputs, including per-node reasons such as an SSH address outside
 the enrollment profile's `allowedGatewayCIDRs` / `allowedWorkerCIDRs`
-(`SSHAddressDenied`) or a probed private address that no longer matches the
-joined record (`PrivateAddressChanged`); neither condition is relaxed by the
-UI. The deploy drawer opens even when enrollment is disabled so
+(`SSHAddressDenied`) or an old record still held by work (`ReplacementBlocked`).
+The SSH address column takes the endpoint A can reach (for example a
+platform-mapped address), not the machine's internal private IP. The deploy drawer opens even when enrollment is disabled so
 the administrator notice is visible; submission stays disabled. Narrow screens
 stack the charts;
 wide tables keep their own horizontal scroll region.

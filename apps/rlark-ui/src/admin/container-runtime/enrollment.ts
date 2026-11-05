@@ -48,13 +48,19 @@ const enrollmentReasons: Record<string, { zh: string; en: string }> = {
     zh: "SSH 地址不在控制器允许的网段内（接入配置的 allowedGatewayCIDRs / allowedWorkerCIDRs）；需管理员放行该地址后重新提交",
     en: "The SSH address is outside the controller's allowed ranges (allowedGatewayCIDRs / allowedWorkerCIDRs in the enrollment profile); an administrator must allow it before resubmitting",
   },
+  // Completed operations only report these; a new submission replaces the
+  // node's old record automatically.
   PrivateAddressChanged: {
-    zh: "节点探测到的私网地址与已接入记录不一致（例如重启后私网 IP 变化），控制器不会自动接管；需先由管理员移除该节点的旧记录再重新接入",
-    en: "The probed private address differs from the joined record (for example the private IP changed after a restart) and is never adopted; an administrator must remove the node's old record before re-enrolling",
+    zh: "节点私网地址已变化（例如重启），重新提交接入即可自动替换旧记录",
+    en: "The node's private address changed (for example after a restart); submit again to replace the old record",
   },
   NotebookReplaced: {
-    zh: "实例身份已变化，不会自动接管旧节点",
-    en: "The instance identity changed; the old node is not adopted",
+    zh: "节点已是新的实例（例如重启），重新提交接入即可自动替换旧记录",
+    en: "The node is a new instance (for example after a restart); submit again to replace the old record",
+  },
+  ReplacementBlocked: {
+    zh: "该节点的旧记录仍有任务或升级在占用，结束后会自动完成替换并继续接入",
+    en: "The node's old record is still held by a task or an upgrade; replacement continues automatically once it is released",
   },
   EarlierOperationPending: {
     zh: "排在更早的接入操作之后，等待其结束",
@@ -142,7 +148,14 @@ export function enrollmentIntent(
     operationID,
     clusterUID,
     release,
-    nodes: nodes.map((n) => ({ ...n })),
+    // Identity comes from the controller's probe, so a restarted node rejoins
+    // by name with only its SSH endpoint. A Gateway keeps its record UID so the
+    // controller can reuse an already running gateway instead of reinstalling.
+    nodes: nodes.map(({ name, role, address, port, nodeUID }) =>
+      role === "Gateway" && nodeUID
+        ? { name, role, address, port, nodeUID }
+        : { name, role, address, port },
+    ),
   };
 }
 

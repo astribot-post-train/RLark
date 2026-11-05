@@ -239,6 +239,11 @@ export function EnrollmentPanel({
               ))}
           </select>
         </label>
+        <p className="muted enroll-address-hint">
+          {zh
+            ? "SSH IP 地址填 A 能连到的 SSH 入口（例如平台映射地址），不是机器内部的私网 IP。节点重启后，只需按需更新这里的地址并重新提交，控制器会自动替换旧记录。"
+            : "SSH IP address is the SSH endpoint A can reach (such as a platform-mapped address), not the machine's internal private IP. After a node restarts, update this address if needed and submit again; the controller replaces the old record automatically."}
+        </p>
         <div className="table-scroll">
           <table>
             <thead>
@@ -258,7 +263,7 @@ export function EnrollmentPanel({
                     <input
                       aria-label={zh ? "节点名" : "Node name"}
                       value={node.name}
-                      readOnly={!!node.nodeUID}
+                      readOnly={node.role === "Gateway" && !!node.nodeUID}
                       onChange={(e) => update(i, { name: e.target.value })}
                     />
                   </td>
@@ -286,7 +291,7 @@ export function EnrollmentPanel({
                     <select
                       aria-label={zh ? "角色" : "Role"}
                       value={node.role}
-                      disabled={!!node.nodeUID}
+                      disabled={node.role === "Gateway" && !!node.nodeUID}
                       onChange={(e) =>
                         update(i, {
                           role: e.target.value as EnrollmentTarget["role"],

@@ -17,7 +17,8 @@ rules:
     verbs: ["get", "list", "watch"]
   - apiGroups: ["rlinf.io"]
     resources: ["nodes"]
-    verbs: ["get", "list", "watch", "patch"]
+    # delete retires the native Node of a replaced Notebook during re-enrollment.
+    verbs: ["get", "list", "watch", "patch", "delete"]
   - apiGroups: ["rlinf.io"]
     resources: ["nodes/status"]
     verbs: ["get", "patch"]
@@ -39,6 +40,10 @@ rules:
   - apiGroups: ["containers.rlark.io"]
     resources: ["containerclusters", "containernodes"]
     verbs: ["get", "list", "watch", "patch"]
+  - apiGroups: ["containers.rlark.io"]
+    resources: ["containernodes"]
+    # delete retires the record of a replaced Notebook during re-enrollment.
+    verbs: ["delete"]
   - apiGroups: ["containers.rlark.io"]
     resources: ["containerjobs", "agentreleases"]
     verbs: ["get", "list", "watch"]

@@ -97,7 +97,9 @@ GPU activity/keepalive and Notebook power management are excluded.
    addition of C when available.
 3. **Maintenance:** explicit UID-bound replacement/retirement checks all Job,
    allocation and upgrade references before revoking credentials. Unknown
-   cleanup blocks reuse. New instance/IP is never silently adopted. Node
+   cleanup blocks reuse. A restarted Notebook (new instance/IP) rejoins by
+   resubmitting enrollment for its name; the controller replaces the idle
+   stale record and waits (`ReplacementBlocked`) while work still holds it. Node
    services survive manager restarts; complete bundles are verified. Upgrade
    workers only while idle; A is busy while forwarding an active Job. Credentials
    renew using their exact identity; disruptive transport changes wait for idle.

@@ -402,24 +402,90 @@ func TestCancellationDuringPackageBuildFencesInstall(t *testing.T) {
 		t.Fatalf("cancelled package reached SSH: %d, %#v", runner.installs, op.Status)
 	}
 }
-func TestEnrollmentDetectsNotebookAndPrivateAddressReplacement(t *testing.T) {
+
+// restartNotebook simulates a Kingsoft Notebook restart of node b: a new
+// container identity, optionally with a new private address.
+func restartNotebook(r Reconciler, runner *testRunner, address bool) Reconciler {
+	later := r.now().Add(time.Minute)
+	r.Now = func() time.Time { return later }
+	runner.instances["b"] = strings.Repeat("c", 64)
+	if address {
+		runner.addresses["b"] = "10.1.2.4"
+	}
+	return r
+}
+func nodeRecord(t *testing.T, r Reconciler, name string) *ext.ContainerNode {
+	t.Helper()
+	nodes := &ext.ContainerNodeList{}
+	if err := r.Client.List(context.Background(), nodes); err != nil {
+		t.Fatal(err)
+	}
+	for i := range nodes.Items {
+		if nodes.Items[i].Name == name {
+			return &nodes.Items[i]
+		}
+	}
+	return nil
+}
+func TestEnrollmentReplacesRestartedNotebookByName(t *testing.T) {
 	for _, address := range []bool{false, true} {
 		r, req, runner := enrollmentFixture(t)
 		reconcileEnrollment(t, r, req, 10)
-		later := r.now().Add(time.Minute)
-		r.Now = func() time.Time { return later }
-		want := "NotebookReplaced"
-		if address {
-			runner.addresses["b"] = "10.1.2.4"
-			want = "PrivateAddressChanged"
-		} else {
-			runner.instances["b"] = strings.Repeat("c", 64)
+		old := nodeRecord(t, r, "b")
+		r = restartNotebook(r, runner, address)
+		reconcileEnrollment(t, r, req, 12)
+		readyEnrollment(t, r)
+		op := reconcileEnrollment(t, r, req, 3)
+		b := nodeRecord(t, r, "b")
+		if op.Status.Phase != "Succeeded" || b == nil || b.UID == old.UID || b.Spec.InstanceID != strings.Repeat("c", 64) || b.Spec.PrivateAddress != runner.addresses["b"] {
+			t.Fatalf("restarted Notebook did not rejoin with its probed identity (address=%v): %#v %#v", address, op.Status, b)
 		}
-		op := reconcileEnrollment(t, r, req, 1)
-		cond := meta.FindStatusCondition(op.Status.Conditions, "Completed")
-		if op.Status.Phase != "Failed" || cond.Reason != want {
-			t.Fatalf("replacement accepted: %#v", op.Status)
+		var nn native.Node
+		if err := r.Client.Get(context.Background(), client.ObjectKey{Namespace: b.Spec.Node.Namespace, Name: b.Spec.Node.Name}, &nn); err != nil || string(nn.UID) != b.Spec.Node.UID {
+			t.Fatalf("native Node not re-created for the new record: %v %#v", err, b.Spec.Node)
 		}
+	}
+}
+func TestEnrollmentReplacementWaitsWhileOldRecordIsHeld(t *testing.T) {
+	r, req, runner := enrollmentFixture(t)
+	reconcileEnrollment(t, r, req, 10)
+	old := nodeRecord(t, r, "b")
+	// The node finalizer keeps a record while allocations or upgrades remain.
+	old.Finalizers = []string{"containers.rlark.io/node-protection"}
+	if err := r.Client.Update(context.Background(), old); err != nil {
+		t.Fatal(err)
+	}
+	r = restartNotebook(r, runner, true)
+	op := reconcileEnrollment(t, r, req, 6)
+	cond := meta.FindStatusCondition(op.Status.Conditions, "Completed")
+	if op.Status.Phase != "Waiting" || cond == nil || cond.Reason != "ReplacementBlocked" {
+		t.Fatalf("held record was not reported as blocked: %#v", op.Status)
+	}
+	held := nodeRecord(t, r, "b")
+	held.Finalizers = nil
+	if err := r.Client.Update(context.Background(), held); err != nil {
+		t.Fatal(err)
+	}
+	reconcileEnrollment(t, r, req, 12)
+	readyEnrollment(t, r)
+	op = reconcileEnrollment(t, r, req, 3)
+	if b := nodeRecord(t, r, "b"); op.Status.Phase != "Succeeded" || b == nil || b.UID == old.UID {
+		t.Fatalf("replacement did not resume after the hold cleared: %#v %#v", op.Status, b)
+	}
+}
+func TestEnrollmentNeverReplacesForeignTenantRecord(t *testing.T) {
+	r, req, runner := enrollmentFixture(t)
+	reconcileEnrollment(t, r, req, 10)
+	b := nodeRecord(t, r, "b")
+	b.Labels[tenant.IDLabel] = "team-b"
+	if err := r.Client.Update(context.Background(), b); err != nil {
+		t.Fatal(err)
+	}
+	r = restartNotebook(r, runner, false)
+	op := reconcileEnrollment(t, r, req, 6)
+	cond := meta.FindStatusCondition(op.Status.Conditions, "Completed")
+	if cond == nil || cond.Reason != "NodeIdentityConflict" || nodeRecord(t, r, "b").UID != b.UID {
+		t.Fatalf("foreign record was replaced: %#v", op.Status)
 	}
 }
 func TestEnrollmentValidatesServiceReceipt(t *testing.T) {

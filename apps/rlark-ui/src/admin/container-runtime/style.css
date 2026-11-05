@@ -898,3 +898,9 @@
   }
 }
 
+
+.container-runtime-page .enroll-address-hint {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.55;
+}
