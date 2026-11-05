@@ -32,6 +32,7 @@ type fakeUpgradeTransport struct {
 	calls                 []string
 	hook                  func(UpgradeRequest, *UpgradeResponse) (*UpgradeResponse, error)
 	downloadHook          func([]byte) []byte
+	downloadContextHook   func(context.Context, []byte) ([]byte, error)
 	manifestHook          func(*ReleaseManifest) *ReleaseManifest
 }
 
@@ -83,11 +84,55 @@ func (f *fakeUpgradeTransport) TargetRelease(context.Context, string, string) (*
 	}
 	return &f.release, nil
 }
-func (f *fakeUpgradeTransport) DownloadRelease(context.Context, *ReleaseManifest) ([]byte, error) {
+func (f *fakeUpgradeTransport) DownloadRelease(ctx context.Context, _ *ReleaseManifest) ([]byte, error) {
+	if f.downloadContextHook != nil {
+		return f.downloadContextHook(ctx, f.data)
+	}
 	if f.downloadHook != nil {
 		return f.downloadHook(f.data), nil
 	}
 	return f.data, nil
+}
+
+func TestUpdaterSlowDownloadAllowsFurtherStepsAndCancelsWhenBusy(t *testing.T) {
+	fixture := setupUpdater(t)
+	started := make(chan struct{})
+	cancelled := make(chan struct{})
+	fixture.transport.downloadContextHook = func(ctx context.Context, _ []byte) ([]byte, error) {
+		close(started)
+		<-ctx.Done()
+		close(cancelled)
+		return nil, ctx.Err()
+	}
+	restarts := 0
+	updater := fixture.open(t, func(context.Context, string) error {
+		restarts++
+		return nil
+	}, "")
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := updater.Step(ctx, Observation{Version: "old"}); err != nil {
+		t.Fatalf("start download: %v", err)
+	}
+	select {
+	case <-started:
+	case <-ctx.Done():
+		t.Fatal("download did not start")
+	}
+	if err := updater.Step(ctx, Observation{Version: "old"}); err != nil || ctx.Err() != nil {
+		t.Fatalf("step blocked on download: %v, context: %v", err, ctx.Err())
+	}
+	if err := updater.Step(ctx, Observation{Version: "old", Busy: true}); err != nil {
+		t.Fatalf("cancel busy download: %v", err)
+	}
+	select {
+	case <-cancelled:
+	case <-ctx.Done():
+		t.Fatal("busy observation did not cancel download")
+	}
+	if restarts != 0 {
+		t.Fatal("busy node restarted during download")
+	}
 }
 
 func TestUpdaterPersistsInstallFailureAndResumesRollback(t *testing.T) {

@@ -9,6 +9,7 @@ import (
 	"net"
 	"reflect"
 	"slices"
+	"strings"
 	"time"
 
 	ext "github.com/astribot-post-train/rlark/extensions/container-runtime/core/api/v1alpha1"
@@ -28,6 +29,9 @@ import (
 
 //go:embed notebook_identity.py
 var identityScript string
+
+//go:embed gateway_reuse_probe.py
+var gatewayReuseProbe string
 
 // Probe hashes the current container PID namespace/start/boot identity. A replaced
 // Notebook must use explicit replacement; an old record cannot silently adopt it.
@@ -133,11 +137,13 @@ func (r Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resul
 		return r.fail(ctx, before, &op, "ClusterChanged", false)
 	}
 	var release ext.AgentRelease
-	if err := r.Client.Get(ctx, client.ObjectKey{Namespace: op.Spec.Release.Namespace, Name: op.Spec.Release.Name}, &release); err != nil {
-		return ctrl.Result{}, err
-	}
-	if ownership.MatchesNative(op.Spec.Release, &release) != nil || release.Namespace != op.Namespace || tenant.IDOf(&release) != op.Spec.TenantID || !reflect.DeepEqual(release.Spec, op.Spec.ReleaseSpec) || !release.Status.Available || release.Status.ObservedGeneration != release.Generation || !release.DeletionTimestamp.IsZero() {
-		return r.fail(ctx, before, &op, "ReleaseChanged", false)
+	if !completed {
+		if err := r.Client.Get(ctx, client.ObjectKey{Namespace: op.Spec.Release.Namespace, Name: op.Spec.Release.Name}, &release); err != nil {
+			return ctrl.Result{}, err
+		}
+		if ownership.MatchesNative(op.Spec.Release, &release) != nil || release.Namespace != op.Namespace || tenant.IDOf(&release) != op.Spec.TenantID || !reflect.DeepEqual(release.Spec, op.Spec.ReleaseSpec) || !release.Status.Available || release.Status.ObservedGeneration != release.Generation || !release.DeletionTimestamp.IsZero() {
+			return r.fail(ctx, before, &op, "ReleaseChanged", false)
+		}
 	}
 	// Deterministic queue prevents competing commands for a cluster. The elected
 	// controller processes one external effect at a time; current-state retries
@@ -204,11 +210,19 @@ func (r Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resul
 			}
 			if json.Unmarshal(output, &observed) != nil || len(observed.InstanceID) != 64 || net.ParseIP(observed.PrivateAddress) == nil || !net.ParseIP(observed.PrivateAddress).IsPrivate() {
 				status.Reachability = "Unknown"
+				status.Reason = "InvalidProbe"
+				if completed {
+					continue
+				}
 				return r.fail(ctx, before, &op, "InvalidProbe", true)
 			}
 			status.Reachability = "Reachable"
 			status.Reason = "SSHObserved"
 			if status.InstanceID != "" && status.InstanceID != observed.InstanceID {
+				status.Reason = "NotebookReplaced"
+				if completed {
+					continue
+				}
 				return r.fail(ctx, before, &op, "NotebookReplaced", false)
 			}
 			firstProbe := status.InstanceID == ""
@@ -217,9 +231,17 @@ func (r Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resul
 			// Pin the authenticated probe's private address independently from the
 			// immutable SSH endpoint; neither may drift on a retained operation.
 			if target.PrivateAddress != "" && target.PrivateAddress != observed.PrivateAddress {
+				status.Reason = "PrivateAddressChanged"
+				if completed {
+					continue
+				}
 				return r.fail(ctx, before, &op, "PrivateAddressChanged", false)
 			}
 			if status.PrivateAddress != "" && status.PrivateAddress != observed.PrivateAddress {
+				status.Reason = "PrivateAddressChanged"
+				if completed {
+					continue
+				}
 				return r.fail(ctx, before, &op, "PrivateAddressChanged", false)
 			}
 			status.PrivateAddress = observed.PrivateAddress
@@ -270,6 +292,31 @@ func (r Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resul
 		}
 		status.NodeUID = string(node.UID)
 		if status.Phase != "Started" && status.Phase != "Succeeded" {
+			if target.Role == ext.NodeRoleGateway && target.NodeUID != "" && node.Status.AgentVersion == release.Spec.Version {
+				if !enrollmentAgentReady(&node, release.Spec.Version, r.now()) {
+					return r.fail(ctx, before, &op, "ExistingAgentNotReady", true)
+				}
+				command := "python3 -c " + quote(identityScript+"\n"+gatewayReuseProbe)
+				for _, arg := range []string{r.Profile.InstallDirectory, r.Profile.StateDirectory, string(node.UID), node.Spec.InstanceID, node.Spec.PrivateAddress, release.Spec.SHA256} {
+					command += " " + quote(arg)
+				}
+				effectCtx, cancel := context.WithTimeout(ctx, 25*time.Second)
+				output, err := r.Runner.Run(effectCtx, Target{gateway, target}, command, nil)
+				cancel()
+				var observed struct {
+					Identity    string   `json:"identity"`
+					AgentSHA256 string   `json:"agentSHA256"`
+					Services    []string `json:"services"`
+				}
+				prefix := fmt.Sprintf("%s/%s/", node.UID, node.Spec.InstanceID)
+				if err != nil || json.Unmarshal(output, &observed) != nil || !strings.HasPrefix(observed.Identity, prefix) || len(observed.Identity) != len(prefix)+64 || observed.AgentSHA256 != release.Spec.SHA256 || !slices.Contains(observed.Services, "agent") || !slices.Contains(observed.Services, "task-manager") || !slices.Contains(observed.Services, "gateway") {
+					return r.fail(ctx, before, &op, "ExistingGatewayUnverified", true)
+				}
+				status.Services = observed.Services
+				status.Phase = "Started"
+				status.Reason = "ExistingServicesObserved"
+				return r.save(ctx, before, &op)
+			}
 			// No process is killed/reconfigured while work may own this node. New nodes
 			// cannot dispatch before their first authenticated observation.
 			if err := r.idle(ctx, &node); err != nil {
@@ -314,10 +361,7 @@ func (r Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resul
 			status.Reason = "ProcessesObserved"
 			return r.save(ctx, before, &op)
 		}
-		at := node.Status.LastHeartbeatTime
-		condition := meta.FindStatusCondition(node.Status.Conditions, "Ready")
-		ready := at != nil && !at.After(r.now()) && r.now().Sub(at.Time) <= 45*time.Second && node.Status.ObservedGeneration == node.Generation && node.Status.AgentCredentialID == node.Annotations[ext.AgentCredentialAnnotation] && node.Status.AgentVersion == release.Spec.Version && condition != nil && condition.Status == metav1.ConditionTrue && condition.ObservedGeneration == node.Generation
-		if ready {
+		if enrollmentAgentReady(&node, release.Spec.Version, r.now()) {
 			status.Phase = "Succeeded"
 			status.Reason = "AgentObserved"
 		} else {
@@ -338,6 +382,12 @@ func (r Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resul
 	}
 	meta.SetStatusCondition(&op.Status.Conditions, metav1.Condition{Type: "Completed", Status: truth, Reason: reason, Message: "Process startup and authenticated Agent heartbeat are checked independently", ObservedGeneration: op.Generation, LastTransitionTime: metav1.NewTime(r.now())})
 	return r.save(ctx, before, &op)
+}
+
+func enrollmentAgentReady(node *ext.ContainerNode, version string, now time.Time) bool {
+	at := node.Status.LastHeartbeatTime
+	condition := meta.FindStatusCondition(node.Status.Conditions, "Ready")
+	return at != nil && !at.After(now) && now.Sub(at.Time) <= 45*time.Second && node.Status.ObservedGeneration == node.Generation && node.Status.AgentCredentialID != "" && node.Status.AgentCredentialID == node.Annotations[ext.AgentCredentialAnnotation] && node.Status.AgentVersion == version && condition != nil && condition.Status == metav1.ConditionTrue && condition.ObservedGeneration == node.Generation
 }
 func (r Reconciler) idle(ctx context.Context, node *ext.ContainerNode) error {
 	var allocations ext.ContainerAllocationList

@@ -67,16 +67,30 @@ type testRunner struct {
 	bundle       *testBundle
 	fail         bool
 	wrongReceipt bool
+	invalidProbe bool
 	instances    map[string]string
 	addresses    map[string]string
 	installs     int
+	reuses       int
+	reuseInvalid bool
 }
 
-func (r *testRunner) Run(_ context.Context, t Target, _ string, input io.Reader) ([]byte, error) {
+func (r *testRunner) Run(_ context.Context, t Target, command string, input io.Reader) ([]byte, error) {
 	if r.fail {
 		return nil, errors.New("unavailable")
 	}
+	if strings.Contains(command, "REUSE_GATEWAY_PROBE_V1") {
+		r.reuses++
+		if r.reuseInvalid {
+			return []byte(`{"identity":"foreign"}`), nil
+		}
+		n := r.bundle.nodes[t.Node.Name]
+		return json.Marshal(map[string]any{"identity": string(n.UID) + "/" + n.Spec.InstanceID + "/" + strings.Repeat("b", 64), "agentSHA256": strings.Repeat("a", 64), "services": []string{"agent", "gateway", "task-manager"}})
+	}
 	if input == nil {
+		if r.invalidProbe && t.Node.Name == "b" {
+			return []byte("invalid probe"), nil
+		}
 		return json.Marshal(map[string]string{"instanceID": r.instances[t.Node.Name], "privateAddress": r.addresses[t.Node.Name]})
 	}
 	r.installs++
@@ -89,6 +103,64 @@ func (r *testRunner) Run(_ context.Context, t Target, _ string, input io.Reader)
 		services = []string{"agent"}
 	}
 	return json.Marshal(map[string]any{"identity": string(n.UID) + "/" + n.Spec.InstanceID + "/" + strings.Repeat("a", 64), "services": services})
+}
+
+func TestEnrollmentReusesOnlyVerifiedExplicitGateway(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		stale        bool
+		invalid      bool
+		wantReason   string
+		wantReuses   int
+		wantRecovery bool
+	}{
+		{name: "verified", wantReuses: 1},
+		{name: "stale heartbeat", stale: true, wantReason: "ExistingAgentNotReady", wantRecovery: true},
+		{name: "foreign receipt", invalid: true, wantReason: "ExistingGatewayUnverified", wantReuses: 1, wantRecovery: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r, req, runner := enrollmentFixture(t)
+			reconcileEnrollment(t, r, req, 10)
+			readyEnrollment(t, r)
+			if op := reconcileEnrollment(t, r, req, 2); op.Status.Phase != "Succeeded" {
+				t.Fatalf("initial enrollment: %#v", op.Status)
+			}
+			var cc ext.ContainerCluster
+			if err := r.Client.Get(context.Background(), client.ObjectKey{Namespace: req.Namespace, Name: "cloud"}, &cc); err != nil {
+				t.Fatal(err)
+			}
+			node := runner.bundle.nodes["a"]
+			op, err := (coreprovision.Service{Client: r.Client}).CreateEnrollment(context.Background(), coreprovision.EnrollmentRequest{OperationID: uuid.NewString(), Namespace: cc.Namespace, Cluster: cc.Name, ClusterUID: string(cc.UID), TenantID: "team-a", Nodes: []ext.EnrollmentNode{{Name: "a", NodeUID: string(node.UID), Role: ext.NodeRoleGateway, Address: "203.0.113.2", Port: 22}}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(op)}
+			if tc.stale {
+				later := r.now().Add(time.Minute)
+				r.Now = func() time.Time { return later }
+			}
+			runner.reuseInvalid = tc.invalid
+			installs := runner.installs
+			op = reconcileEnrollment(t, r, request, 2)
+			if runner.installs != installs || runner.reuses != tc.wantReuses {
+				t.Fatalf("gateway was reinstalled or incorrectly probed: installs=%d reuses=%d", runner.installs, runner.reuses)
+			}
+			if tc.wantReason != "" {
+				condition := meta.FindStatusCondition(op.Status.Conditions, "Completed")
+				if condition == nil || condition.Reason != tc.wantReason || op.Status.Phase != "Waiting" {
+					t.Fatalf("unexpected failure: %#v", op.Status)
+				}
+			}
+			if tc.wantRecovery {
+				runner.reuseInvalid = false
+				readyEnrollment(t, r)
+			}
+			op = reconcileEnrollment(t, r, request, 3)
+			if op.Status.Phase != "Succeeded" || runner.installs != installs {
+				t.Fatalf("reuse did not recover without installation: %#v", op.Status)
+			}
+		})
+	}
 }
 func enrollmentFixture(t *testing.T) (Reconciler, ctrl.Request, *testRunner) {
 	t.Helper()
@@ -176,6 +248,73 @@ func TestEnrollmentWaitsForHeartbeatAndNeverReinstallsCompletedOperation(t *test
 	op = reconcileEnrollment(t, r, req, 2)
 	if op.Status.Phase != "Succeeded" || runner.installs != 2 || op.Status.Nodes[0].Reachability != "Unreachable" {
 		t.Fatalf("completed operation restarted or concealed outage: %#v", op.Status)
+	}
+}
+
+func TestCompletedEnrollmentPreservesResultAcrossProbeChanges(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		modify func(*testRunner)
+		reason string
+	}{
+		{name: "replacement", modify: func(r *testRunner) { r.instances["b"] = strings.Repeat("c", 64) }, reason: "NotebookReplaced"},
+		{name: "address", modify: func(r *testRunner) { r.addresses["b"] = "10.1.2.4" }, reason: "PrivateAddressChanged"},
+		{name: "malformed probe", modify: func(r *testRunner) { r.invalidProbe = true }, reason: "InvalidProbe"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			r, req, runner := enrollmentFixture(t)
+			reconcileEnrollment(t, r, req, 10)
+			readyEnrollment(t, r)
+			op := reconcileEnrollment(t, r, req, 2)
+			if op.Status.Phase != "Succeeded" {
+				t.Fatalf("enrollment did not succeed: %#v", op.Status)
+			}
+			later := r.now().Add(time.Minute)
+			r.Now = func() time.Time { return later }
+			test.modify(runner)
+			op = reconcileEnrollment(t, r, req, 1)
+			condition := meta.FindStatusCondition(op.Status.Conditions, "Completed")
+			var observed *ext.EnrollmentNodeStatus
+			for i := range op.Status.Nodes {
+				if op.Status.Nodes[i].Name == "b" {
+					observed = &op.Status.Nodes[i]
+				}
+			}
+			if op.Status.Phase != "Succeeded" || condition == nil || condition.Status != metav1.ConditionTrue || observed == nil || observed.Reason != test.reason || runner.installs != 2 {
+				t.Fatalf("completed enrollment changed or restarted: %#v", op.Status)
+			}
+			runner.instances["b"] = strings.Repeat("b", 64)
+			runner.addresses["b"] = "10.1.2.3"
+			runner.invalidProbe = false
+			later = later.Add(time.Minute)
+			op = reconcileEnrollment(t, r, req, 1)
+			for _, node := range op.Status.Nodes {
+				if node.Name == "b" && (node.Reason != "SSHObserved" || node.Reachability != "Reachable") {
+					t.Fatalf("probe did not recover: %#v", node)
+				}
+			}
+		})
+	}
+}
+
+func TestCompletedEnrollmentCanProbeAfterReleaseDeletion(t *testing.T) {
+	r, req, runner := enrollmentFixture(t)
+	reconcileEnrollment(t, r, req, 10)
+	readyEnrollment(t, r)
+	op := reconcileEnrollment(t, r, req, 2)
+	var release ext.AgentRelease
+	if err := r.Client.Get(context.Background(), client.ObjectKey{Namespace: op.Spec.Release.Namespace, Name: op.Spec.Release.Name}, &release); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Client.Delete(context.Background(), &release); err != nil {
+		t.Fatal(err)
+	}
+	later := r.now().Add(time.Minute)
+	r.Now = func() time.Time { return later }
+	runner.fail = true
+	op = reconcileEnrollment(t, r, req, 1)
+	if op.Status.Phase != "Succeeded" || op.Status.Nodes[0].Reachability != "Unreachable" || runner.installs != 2 {
+		t.Fatalf("historical release blocked probe or restarted enrollment: %#v", op.Status)
 	}
 }
 func TestEnrollmentUsesObservedGatewayInsteadOfSSHAddress(t *testing.T) {

@@ -59,8 +59,29 @@ real A/B/C installation and recovery acceptance is outstanding.
 Registration alone remains metadata-only. Stopped Notebooks must first be
 started in the cloud console. New instances or changed addresses are not
 silently adopted. GPU keepalive is not part of enrollment or the Agent package.
+
+After an enrollment succeeds, later SSH probes update the node's reachability
+and reason without rewriting the successful operation result or starting any
+services. `NotebookReplaced` and `PrivateAddressChanged` indicate that SSH
+responded but the observed identity no longer matches; they do not authorize
+adoption. `InvalidProbe` makes reachability unknown. The probe can recover on a
+later matching observation, even if the historical release has been removed.
+This behavior requires the updated enrollment controller; successful enrollment
+is historical evidence, not proof that the current node or Agent is ready.
 Existing independently installed services are not changed by removing package
 support; check their ownership before any operational cleanup.
+
+When a new enrollment explicitly pins an existing Gateway's ContainerNode UID
+and its authenticated Agent reports the selected release version, the updated
+controller can reuse that Gateway without reinstalling or restarting it. It
+requires a fresh, current-generation Agent heartbeat and an SSH read-only check
+of the same Notebook instance, private address, private service configuration,
+PID/start-time receipts and running Agent executable digest. The Agent, gateway
+and task-manager must all be observed. A stale Agent yields
+`ExistingAgentNotReady`; an unverifiable service set yields
+`ExistingGatewayUnverified`. Both wait for recovery and never fall back to
+reinstalling that Gateway. This proves an observed service set, not data-plane
+or workload readiness. The updated controller must be deployed for this path.
 
 The enrollment package records the authenticated Notebook instance fingerprint
 (PID namespace, PID 1 start time and boot ID) and its private address. The local

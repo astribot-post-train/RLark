@@ -1,5 +1,6 @@
 """Exercise process receipt recovery with isolated CPU-only test services."""
 import importlib.util
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -12,6 +13,7 @@ import unittest
 from unittest.mock import patch
 
 from notebook_identity import instance_id, validate_instance
+from gateway_reuse_probe import verify as verify_gateway
 
 spec = importlib.util.spec_from_file_location("node_services", Path(__file__).with_name("node_services.py"))
 manager = importlib.util.module_from_spec(spec)
@@ -170,6 +172,94 @@ class ServiceRecovery(unittest.TestCase):
                 pass
             time.sleep(0.05)
         self.fail("service did not start")
+
+
+class GatewayReuse(unittest.TestCase):
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory(prefix='rlark-gateway-test-')
+        self.root = Path(self.temporary.name)
+        self.uid = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
+        self.instance = 'b' * 64
+        self.package_digest = 'c' * 64
+        self.identity = self.uid + '/' + self.instance + '/' + self.package_digest
+        self.install_root = self.root / 'install'
+        self.state_root = self.root / 'state'
+        self.package = self.install_root / self.uid / self.package_digest
+        self.state = self.state_root / self.uid / 'services'
+        self.proc = self.root / 'proc'
+        for directory in (self.package, self.state, self.proc):
+            directory.mkdir(parents=True, mode=0o700)
+        self.package.parent.chmod(0o700)
+        self.config = {'identity': self.identity, 'instanceID': self.instance,
+                       'privateAddress': '10.1.2.3', 'stateDirectory': str(self.state),
+                       'services': {'agent': ['start-agent'], 'gateway': ['gateway'], 'task-manager': ['start-supervisor']}}
+        self.digest = hashlib.sha256(json.dumps(self.config, sort_keys=True).encode()).hexdigest()
+        self.write(self.package / 'services.json', self.config)
+        binaries = {'agent': 'container-runtime-agent', 'gateway': 'container-runtime-gateway', 'task-manager': 'raw-supervisor'}
+        self.processes = {'identity': self.identity, 'digest': self.digest, 'processes': {}}
+        for index, (name, binary) in enumerate(binaries.items(), 1):
+            executable = self.package / binary
+            executable.write_bytes(name.encode())
+            pid = index + 100
+            started = str(index + 200)
+            directory = self.proc / str(pid)
+            directory.mkdir()
+            (directory / 'stat').write_text(str(pid) + ' (' + name + ') ' + ' '.join(['S'] + ['0'] * 18 + [started]))
+            (directory / 'exe').symlink_to(executable)
+            receipt = {'identity': self.identity, 'digest': self.digest, 'pid': pid, 'started': started}
+            self.write(self.state / (name + '.pid.json'), receipt)
+            self.processes['processes'][name] = {'pid': pid, 'started': started}
+        self.write(self.state / 'processes.json', self.processes)
+        self.status = {'identity': self.identity, 'digest': self.digest, 'sampledAt': 100, 'services': list(binaries)}
+        self.write(self.state / 'services-status.json', self.status)
+        self.agent_digest = hashlib.sha256(b'agent').hexdigest()
+
+    def tearDown(self):
+        self.temporary.cleanup()
+
+    def write(self, path, value):
+        path.write_text(json.dumps(value))
+        path.chmod(0o600)
+
+    def check(self):
+        return verify_gateway(str(self.install_root), str(self.state_root), self.uid, self.instance,
+                              '10.1.2.3', self.agent_digest, proc=self.proc, now=101)
+
+    def test_exact_receipts_and_digest(self):
+        self.assertEqual(self.check()['agentSHA256'], self.agent_digest)
+        self.agent_digest = 'd' * 64
+        with self.assertRaisesRegex(RuntimeError, 'release mismatch'):
+            self.check()
+
+    def test_stale_status_then_recovery(self):
+        self.status['sampledAt'] = 1
+        self.write(self.state / 'services-status.json', self.status)
+        with self.assertRaisesRegex(RuntimeError, 'not observed'):
+            self.check()
+        self.status['sampledAt'] = 100
+        self.write(self.state / 'services-status.json', self.status)
+        self.check()
+
+    def test_replaced_process_and_foreign_receipt(self):
+        self.processes['processes']['gateway']['started'] = 'wrong'
+        self.write(self.state / 'processes.json', self.processes)
+        with self.assertRaisesRegex(RuntimeError, 'receipt mismatch'):
+            self.check()
+        self.processes['identity'] = 'foreign'
+        self.write(self.state / 'processes.json', self.processes)
+        with self.assertRaisesRegex(RuntimeError, 'foreign gateway'):
+            self.check()
+
+    def test_rejects_untrusted_permissions_and_replaced_executable(self):
+        (self.state / 'agent.pid.json').chmod(0o644)
+        with self.assertRaisesRegex(RuntimeError, 'private service receipt'):
+            self.check()
+        (self.state / 'agent.pid.json').chmod(0o600)
+        executable = self.proc / '102' / 'exe'
+        executable.unlink()
+        executable.symlink_to(self.package / 'raw-supervisor')
+        with self.assertRaisesRegex(RuntimeError, 'executable mismatch'):
+            self.check()
 
 
 if __name__ == "__main__":

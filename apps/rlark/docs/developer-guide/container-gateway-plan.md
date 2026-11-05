@@ -123,11 +123,11 @@ a TUN-based WireGuard interface from this notebook environment. This does not
 rule out a future platform change that grants the required capability; it does
 rule out claiming that the current A installation can provide that overlay.
 
-Three-port cross-host Ray/RLinf traffic remains unverified and is not supported
-by this acceptance. The single-port transport prototype passed this isolated
-Ray/RLinf Channel test, without proxy environment variables and without
-changing the active Fleet cluster. This remains a process-scoped PoC using
-`LD_PRELOAD` and temporary credentials, not an RLark production capability.
+The isolated cross-host single-port Ray/RLinf Channel test passed, but it does
+not establish automatic RLark provisioning, a robot path or production support.
+It used no proxy environment variables and did not change the active Fleet
+cluster. This remains a process-scoped PoC using `LD_PRELOAD` and temporary
+credentials.
 
 A previous follow-up attempt was blocked because A:22 reset connections during
 SSH key exchange. After the host restart, SSH recovered and the test completed.

@@ -39,6 +39,20 @@ A/B/C 安装及恢复验收尚未完成。
 或新地址。接入和 Agent 包不包含 GPU 保活。移除包支持不会修改独立部署的既有
 服务，运维清理前必须确认归属。
 
+接入成功后，后续 SSH 探测只更新节点的可达性和原因，不改写该操作的成功结果，也不
+启动任何服务。`NotebookReplaced` 和 `PrivateAddressChanged` 表示 SSH 有响应但观测
+身份不匹配，并不授权接管；`InvalidProbe` 将可达性标为未知。后续匹配的观测可以恢复
+探测状态，即使历史版本已删除也能继续探测。此行为需要更新接入控制器；接入成功是
+历史结果，不能证明当前节点或 Agent 已就绪。
+
+新接入操作显式固定已有 Gateway 的 ContainerNode UID，且其认证 Agent 报告所选版本
+时，更新后的控制器可以复用该网关，不重新安装或重启。此路径要求当前 generation 的
+新鲜 Agent 心跳，并通过 SSH 只读检查 Notebook 实例、私网地址、私有服务配置、
+PID/启动时间回执和运行中 Agent 的二进制摘要；必须同时观测到 Agent、gateway 和
+task-manager。Agent 观测过期时返回 `ExistingAgentNotReady`；无法验证服务集合时返回
+`ExistingGatewayUnverified`。两者均等待恢复，不会退回到重新安装网关。该检查只证明
+当时观测到服务，不代表数据面或工作负载就绪；使用前必须部署更新后的控制器。
+
 接入安装包还会保存经 SSH 探测的 Notebook 实例指纹（PID namespace、PID 1
 启动时间和 boot ID）及容器私网地址。本地服务管理器在启动或接管进程回执前都会
 重新校验两者；指纹或地址改变时拒绝接管旧服务，必须执行显式替换操作并签发

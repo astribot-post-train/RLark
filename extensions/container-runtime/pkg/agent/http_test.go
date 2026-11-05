@@ -2,6 +2,7 @@ package agent
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
@@ -167,6 +168,42 @@ func TestReleaseMTLSManifestAndDownload(t *testing.T) {
 	_ = response.Body.Close()
 	if response.StatusCode != http.StatusOK || readErr != nil || !bytes.Equal(data, f.data) {
 		t.Fatalf("download status=%d bytes=%d err=%v", response.StatusCode, len(data), readErr)
+	}
+	for _, encoding := range []string{"identity", "gzip"} {
+		t.Run(encoding, func(t *testing.T) {
+			request, err := http.NewRequest(http.MethodPost, server.URL+"/v1/release", bytes.NewReader(payload))
+			if err != nil {
+				t.Fatal(err)
+			}
+			request.Header.Set("Content-Type", "application/json")
+			request.Header.Set("Accept-Encoding", encoding)
+			response, err := server.Client().Do(request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer response.Body.Close()
+			if response.StatusCode != http.StatusOK {
+				t.Fatalf("download status=%d", response.StatusCode)
+			}
+			var reader io.Reader = response.Body
+			if encoding == "gzip" {
+				if response.Header.Get("Content-Encoding") != "gzip" {
+					t.Fatalf("gzip response has encoding %q", response.Header.Get("Content-Encoding"))
+				}
+				compressed, err := gzip.NewReader(response.Body)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer compressed.Close()
+				reader = compressed
+			} else if response.Header.Get("Content-Encoding") != "" {
+				t.Fatalf("legacy response has encoding %q", response.Header.Get("Content-Encoding"))
+			}
+			data, err := io.ReadAll(reader)
+			if err != nil || !bytes.Equal(data, f.data) {
+				t.Fatalf("download bytes=%d err=%v", len(data), err)
+			}
+		})
 	}
 }
 
