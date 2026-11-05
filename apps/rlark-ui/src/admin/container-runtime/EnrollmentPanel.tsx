@@ -3,11 +3,15 @@ import type {
   Client,
   Detail,
   Enrollment,
+  EnrollmentNode,
   EnrollmentRequest,
   EnrollmentTarget,
 } from "./api";
 import {
+  currentEnrollment,
   enrollmentIntent,
+  lastFailedEnrollment,
+  enrollmentReasonText,
   enrollmentTargets,
   parseRetainedEnrollment,
   terminalEnrollmentPhases as terminalPhases,
@@ -67,7 +71,54 @@ export function EnrollmentPanel({
   }, [detail, retained]);
   useEffect(() => () => controller.current?.abort(), []);
   const root = useRef<HTMLElement>(null);
+  // Operations cancelled from this drawer are hidden immediately instead of
+  // waiting for the next 15-second refresh.
+  const [cancelled, setCancelled] = useState<Set<string>>(() => new Set());
+  const [localFocus, setLocalFocus] = useState<{ name: string; seq: number }>();
+  // The accepted operation is shown at once; the next detail refresh replaces
+  // it with the observed object of the same UID.
+  const [submitted, setSubmitted] = useState<Enrollment>();
+  const known = detail.enrollments.some((op) => op.uid === submitted?.uid);
+  // Newest first, matching the API order; the just-accepted operation is the
+  // newest until the refresh returns it.
+  const view = {
+    ...detail,
+    enrollments: [
+      ...(submitted && !known ? [submitted] : []),
+      ...detail.enrollments,
+    ].filter((op) => !cancelled.has(op.uid)),
+  };
+  const { active, queued } = currentEnrollment(view);
+  const lastFailed = active ? undefined : lastFailedEnrollment(view);
+  async function cancelOpen(thenEdit?: string) {
+    if (!active) return;
+    setBusy(true);
+    setError("");
+    const ctl = new AbortController();
+    controller.current = ctl;
+    try {
+      for (const op of [active, ...queued]) {
+        await client.cancelEnrollment(detail.cluster, op, ctl.signal);
+        if (ctl.signal.aborted) return;
+        setCancelled((s) => new Set(s).add(op.uid));
+      }
+      // Reopen the form with the cancelled operation's topology.
+      setNodes(active.targets.map((t) => ({ ...t })));
+      if (thenEdit) setLocalFocus({ name: thenEdit, seq: Date.now() });
+      onChanged();
+    } catch (e) {
+      if (!ctl.signal.aborted)
+        setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      if (!ctl.signal.aborted) setBusy(false);
+    }
+  }
+  const focus =
+    localFocus && (!focusNode || localFocus.seq > focusNode.seq)
+      ? localFocus
+      : focusNode;
   useEffect(() => {
+    const focusNode = focus;
     if (!focusNode) return;
     // Wait one frame so the drawer is visible before moving focus.
     const frame = requestAnimationFrame(() => {
@@ -81,7 +132,7 @@ export function EnrollmentPanel({
       input?.select();
     });
     return () => cancelAnimationFrame(frame);
-  }, [focusNode]);
+  }, [focus]);
   function update(index: number, patch: Partial<EnrollmentTarget>) {
     setNodes((current) =>
       current.map((n, i) => (i === index ? { ...n, ...patch } : n)),
@@ -110,24 +161,51 @@ export function EnrollmentPanel({
     }
     setBusy(true);
     setError("");
-    const active = new AbortController();
-    controller.current = active;
+    const requestCtl = new AbortController();
+    controller.current = requestCtl;
     try {
-      await client.startNodes(detail.cluster, request, active.signal);
-      if (active.signal.aborted) return;
+      const op = await client.startNodes(detail.cluster, request, requestCtl.signal);
+      if (requestCtl.signal.aborted) return;
+      setSubmitted(op);
       sessionStorage.removeItem(key);
       setRetained(undefined);
       onChanged();
     } catch (e) {
-      if (!active.signal.aborted)
+      if (!requestCtl.signal.aborted)
         setError(e instanceof Error ? e.message : String(e));
     } finally {
-      if (!active.signal.aborted) setBusy(false);
+      if (!requestCtl.signal.aborted) setBusy(false);
     }
   }
   const disabled = busy || !!retained;
+  const errorBanner = error && (
+    <p role="alert" className="error enroll-error">
+      {error}
+    </p>
+  );
+  // While an operation is running, show its progress instead of a form that
+  // would only queue another operation behind it.
+  if (active && !retained)
+    return (
+      <section className="enrollment-panel" ref={root}>
+        {errorBanner}
+        <EnrollmentProgress
+          op={active}
+          queued={queued.length}
+          zh={zh}
+          busy={busy}
+          canCancel={!blocked && detail.enrollmentEnabled}
+          onCancel={() => void cancelOpen()}
+          onEditNode={(name) => void cancelOpen(name)}
+        />
+      </section>
+    );
   return (
     <section className="enrollment-panel" ref={root}>
+      {errorBanner}
+      {lastFailed && !retained && (
+        <EnrollmentFailure op={lastFailed} zh={zh} />
+      )}
       <p className="muted enrollment-lead">
         {zh
           ? "A 为网关兼计算节点，B/C 经 A 的 SSH 接入。私钥不经页面传输。"
@@ -268,7 +346,6 @@ export function EnrollmentPanel({
           {retained.operationID}
         </p>
       )}
-      {error && <p role="alert">{error}</p>}
       <button
         className="primary"
         disabled={busy || blocked || !detail.enrollmentEnabled}
@@ -287,6 +364,148 @@ export function EnrollmentPanel({
               : "Save and start / join (all services)"}
       </button>
     </section>
+  );
+}
+
+function nodeTone(n?: EnrollmentNode): Tone {
+  if (n?.phase === "Succeeded") return "good";
+  if (n?.reachability === "Unreachable" || n?.phase === "Failed") return "bad";
+  if (n?.reachability === "Reachable") return "info";
+  return "neutral";
+}
+
+// Progress of the operation the controller is currently running. Per-node
+// "edit and retry" never mutates the running operation: it cancels it (joined
+// nodes are retained) and reopens the form so a new operation is submitted.
+function EnrollmentProgress({
+  op,
+  queued,
+  zh,
+  busy,
+  canCancel,
+  onCancel,
+  onEditNode,
+}: {
+  op: Enrollment;
+  queued: number;
+  zh: boolean;
+  busy: boolean;
+  canCancel: boolean;
+  onCancel: () => void;
+  onEditNode: (name: string) => void;
+}) {
+  const failing = op.targets.filter((t) => {
+    const s = op.nodes?.find((n) => n.name === t.name);
+    return s?.reachability === "Unreachable" || s?.phase === "Failed";
+  });
+  const reason = op.conditions?.find((c) => c.status === "False")?.reason;
+  return (
+    <div className="enroll-progress">
+      <div className={`enroll-banner ${failing.length ? "bad" : "info"}`} role="status">
+        <StatusDot
+          label={
+            failing.length
+              ? zh
+                ? `${failing.length} 个节点无法接入，操作仍在等待`
+                : `${failing.length} node(s) cannot join; the operation is still waiting`
+              : zh
+                ? `接入进行中 · ${op.phase || "Pending"}`
+                : `Enrollment in progress · ${op.phase || "Pending"}`
+          }
+          tone={failing.length ? "bad" : "info"}
+        />
+        <small>
+          {zh ? "版本" : "Release"} {op.releaseVersion || op.releaseName} ·{" "}
+          <code>{op.operationID}</code>
+          {queued > 0 &&
+            (zh
+              ? ` · 另有 ${queued} 个重复操作在排队`
+              : ` · ${queued} more operation(s) queued`)}
+          {" · "}
+          {zh ? "每 15 秒刷新" : "Refreshes every 15s"}
+        </small>
+        {reason && !failing.length && <small>{enrollmentReasonText(reason, zh)}</small>}
+      </div>
+      <ul className="enroll-nodes">
+        {op.targets.map((t) => {
+          const s = op.nodes?.find((n) => n.name === t.name);
+          const bad = s?.reachability === "Unreachable" || s?.phase === "Failed";
+          return (
+            <li key={t.name} className={bad ? "bad" : undefined}>
+              <div className="enroll-node-head">
+                <StatusDot
+                  label={t.name}
+                  tone={nodeTone(s)}
+                  detail={s?.probedAt ? `${zh ? "探测时间" : "Probed"} ${s.probedAt}` : undefined}
+                />
+                <span className="muted">
+                  {t.role === "Gateway" ? (zh ? "网关 + 计算" : "Gateway + compute") : "Worker"} ·{" "}
+                  {t.address}:{t.port}
+                </span>
+                <span className="enroll-node-state">
+                  {s?.reachability || (zh ? "未探测" : "Not probed")} · {s?.phase || "Pending"}
+                </span>
+              </div>
+              {s?.services?.length ? (
+                <small className="muted">
+                  {zh ? "已运行服务" : "Services"}: {s.services.join(", ")}
+                </small>
+              ) : null}
+              {s?.reason && !["AgentObserved", "SSHObserved"].includes(s.reason) && (
+                <p className="enroll-node-reason">{enrollmentReasonText(s.reason, zh)}</p>
+              )}
+              {bad && (
+                <button
+                  type="button"
+                  disabled={busy || !canCancel}
+                  onClick={() => onEditNode(t.name)}
+                >
+                  {zh ? "修改 IP / 端口并重试" : "Edit IP / port and retry"}
+                </button>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+      <div className="enroll-actions">
+        <button type="button" disabled={busy || !canCancel} onClick={onCancel}>
+          {zh ? "取消后重新提交" : "Cancel and resubmit"}
+        </button>
+        <small className="muted">
+          {zh
+            ? "取消会保留已接入的节点；当前和排队中的重复操作都会取消。"
+            : "Cancelling keeps joined nodes; the current and queued duplicate operations are cancelled."}
+        </small>
+      </div>
+    </div>
+  );
+}
+
+// Why the newest operation failed, shown above the form so a quick failure is
+// not mistaken for the form silently resetting.
+function EnrollmentFailure({ op, zh }: { op: Enrollment; zh: boolean }) {
+  const reason = op.conditions?.find((c) => c.status === "False")?.reason;
+  const nodes = op.targets
+    .map((t) => ({ t, s: op.nodes?.find((n) => n.name === t.name) }))
+    .filter(({ s }) => s?.reason && !["AgentObserved", "SSHObserved"].includes(s.reason));
+  return (
+    <div className="enroll-banner bad" role="alert">
+      <StatusDot
+        label={zh ? "上次提交的接入失败" : "The last enrollment failed"}
+        tone="bad"
+      />
+      {reason && <p className="enroll-node-reason">{enrollmentReasonText(reason, zh)}</p>}
+      {nodes.map(({ t, s }) =>
+        s?.reason === reason ? null : (
+          <small key={t.name}>
+            {t.name} ({t.address}:{t.port}): {enrollmentReasonText(s?.reason, zh)}
+          </small>
+        ),
+      )}
+      <small className="muted">
+        <code>{op.operationID}</code> · {zh ? "修改下方配置后可重新提交" : "Adjust the form below and resubmit"}
+      </small>
+    </div>
   );
 }
 

@@ -218,8 +218,23 @@ node's SSH address; the controller still validates address changes on joined
 nodes and never silently adopts a replacement. The **Enrollments** tab lists
 every enrollment operation with per-node reachability and phase, and offers
 cancellation for operations still in progress (joined nodes are retained). The
-deploy drawer opens even when enrollment is disabled so the administrator
-notice is visible; submission stays disabled. Narrow screens stack the charts;
+controller runs one cluster's enrollments in creation order, so while an
+operation is unfinished the deploy drawer shows its progress instead of the
+form: one row per node with reachability, phase, running services and an
+explained failure reason (for example, SSH from A to the node is unreachable),
+refreshed every 15 seconds, plus the count of queued duplicate operations. This
+prevents a second submission from silently queuing behind the first. **Cancel
+and resubmit** cancels the current and queued operations, keeps joined nodes,
+and reopens the form; **Edit IP / port and retry** on a failing node does the
+same and focuses that node's address. Request errors appear in a banner at the
+top of the drawer. When the newest operation has failed, the form shows why
+above the inputs, including per-node reasons such as an SSH address outside
+the enrollment profile's `allowedGatewayCIDRs` / `allowedWorkerCIDRs`
+(`SSHAddressDenied`) or a probed private address that no longer matches the
+joined record (`PrivateAddressChanged`); neither condition is relaxed by the
+UI. The deploy drawer opens even when enrollment is disabled so
+the administrator notice is visible; submission stays disabled. Narrow screens
+stack the charts;
 wide tables keep their own horizontal scroll region.
 
 Nodes appear in a summary table with private IP, native Node state, container

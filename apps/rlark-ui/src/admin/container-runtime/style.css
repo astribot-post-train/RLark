@@ -712,6 +712,85 @@
   width: 80px;
 }
 
+/* Enrollment progress view inside the deploy drawer */
+.container-runtime-page .enroll-error {
+  margin: 0;
+}
+
+.container-runtime-page .enroll-progress {
+  display: grid;
+  gap: 12px;
+}
+
+.container-runtime-page .enroll-banner {
+  display: grid;
+  gap: 4px;
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, var(--blue) 22%, var(--line));
+  border-radius: 10px;
+  background: var(--hover);
+}
+
+.container-runtime-page .enroll-banner.bad {
+  border-color: color-mix(in srgb, var(--red) 30%, var(--line));
+  background: color-mix(in srgb, var(--red) 7%, var(--panel));
+}
+
+.container-runtime-page .enroll-banner .status-dot {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.container-runtime-page .enroll-nodes {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.container-runtime-page .enroll-nodes li {
+  display: grid;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+
+.container-runtime-page .enroll-nodes li.bad {
+  border-color: color-mix(in srgb, var(--red) 35%, var(--line));
+}
+
+.container-runtime-page .enroll-node-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+}
+
+.container-runtime-page .enroll-node-state {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.container-runtime-page .enroll-node-reason {
+  color: var(--red);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.container-runtime-page .enroll-nodes li > button {
+  justify-self: start;
+}
+
+.container-runtime-page .enroll-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
 /* Enrollment operations tab */
 .container-runtime-page .enrollment-ops {
   min-width: 760px;

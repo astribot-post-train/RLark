@@ -1,5 +1,6 @@
 import type {
   Detail,
+  Enrollment,
   EnrollmentNode,
   EnrollmentRequest,
   EnrollmentTarget,
@@ -13,6 +14,75 @@ export function activeEnrollments(detail: Detail): number {
   return detail.enrollments.filter(
     (op) => !terminalEnrollmentPhases.includes(op.phase) && !op.cancelRequested,
   ).length;
+}
+
+// The console API lists a cluster's enrollments newest first, while the
+// controller runs them oldest first (later ones wait with
+// EarlierOperationPending). The running operation is therefore the oldest
+// unfinished one; newer unfinished operations are queued behind it.
+export function currentEnrollment(
+  detail: Detail,
+): { active?: Enrollment; queued: Enrollment[] } {
+  const open = detail.enrollments.filter(
+    (op) => !terminalEnrollmentPhases.includes(op.phase) && !op.cancelRequested,
+  );
+  return { active: open[open.length - 1], queued: open.slice(0, -1) };
+}
+
+// Newest finished operation when it failed, so the form can explain why the
+// last submission did not join every node. Returns undefined while an
+// operation is still running or when the newest one did not fail.
+export function lastFailedEnrollment(detail: Detail): Enrollment | undefined {
+  const newest = detail.enrollments.find((op) => !op.cancelRequested);
+  return newest?.phase === "Failed" ? newest : undefined;
+}
+
+// Operator-facing explanation for enrollment reasons. Unknown reasons are
+// returned verbatim so new controller reasons stay visible.
+const enrollmentReasons: Record<string, { zh: string; en: string }> = {
+  SSHUnavailable: {
+    zh: "A 到该节点的 SSH 不可达：请确认实例已启动、sshd 在运行、安全组放行该端口，且 A 与该地址网络互通",
+    en: "SSH from A to this node is unreachable: check the instance is running, sshd is up, the security group allows the port, and A can route to the address",
+  },
+  SSHAddressDenied: {
+    zh: "SSH 地址不在控制器允许的网段内（接入配置的 allowedGatewayCIDRs / allowedWorkerCIDRs）；需管理员放行该地址后重新提交",
+    en: "The SSH address is outside the controller's allowed ranges (allowedGatewayCIDRs / allowedWorkerCIDRs in the enrollment profile); an administrator must allow it before resubmitting",
+  },
+  PrivateAddressChanged: {
+    zh: "节点探测到的私网地址与已接入记录不一致（例如重启后私网 IP 变化），控制器不会自动接管；需先由管理员移除该节点的旧记录再重新接入",
+    en: "The probed private address differs from the joined record (for example the private IP changed after a restart) and is never adopted; an administrator must remove the node's old record before re-enrolling",
+  },
+  NotebookReplaced: {
+    zh: "实例身份已变化，不会自动接管旧节点",
+    en: "The instance identity changed; the old node is not adopted",
+  },
+  EarlierOperationPending: {
+    zh: "排在更早的接入操作之后，等待其结束",
+    en: "Queued behind an earlier enrollment operation",
+  },
+  ExistingAgentNotReady: {
+    zh: "已有 Agent 尚未就绪",
+    en: "The existing Agent is not ready",
+  },
+  PackageUnavailable: {
+    zh: "Agent 安装包不可用",
+    en: "The Agent package is unavailable",
+  },
+  ServiceStartFailed: { zh: "服务启动失败", en: "A service failed to start" },
+  NodeUnavailable: { zh: "节点不可用", en: "The node is unavailable" },
+  ReleaseChanged: {
+    zh: "固定的 Agent 版本已变化",
+    en: "The pinned Agent release changed",
+  },
+};
+
+export function enrollmentReasonText(
+  reason: string | undefined,
+  zh: boolean,
+): string {
+  if (!reason) return "";
+  const label = enrollmentReasons[reason];
+  return label ? (zh ? label.zh : label.en) : reason;
 }
 
 export function enrollmentTargets(detail: Detail): EnrollmentTarget[] {
