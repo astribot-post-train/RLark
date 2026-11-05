@@ -6,6 +6,15 @@ import type {
   Node,
 } from "./api";
 
+export const terminalEnrollmentPhases = ["Succeeded", "Failed", "Cancelled"];
+
+// Enrollment operations still in progress (not terminal, not cancelling).
+export function activeEnrollments(detail: Detail): number {
+  return detail.enrollments.filter(
+    (op) => !terminalEnrollmentPhases.includes(op.phase) && !op.cancelRequested,
+  ).length;
+}
+
 export function enrollmentTargets(detail: Detail): EnrollmentTarget[] {
   const latest = new Map<string, EnrollmentTarget>();
   for (const op of detail.enrollments) {

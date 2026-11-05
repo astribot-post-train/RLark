@@ -1,54 +1,37 @@
+/* Container cluster console. Only shared theme tokens are used so light and
+   dark themes stay in sync with the rest of RLark. */
 .container-runtime-page {
   min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
   color: var(--ink);
 }
-
-.container-runtime-page .enrollment-panel fieldset {
-  border: 0;
-  padding: 0;
-  margin: 12px 0;
-  min-width: 0;
-}
-.container-runtime-page .enrollment-panel input:not([type="checkbox"]) { width: 100%; min-width: 100px; padding: 7px; }
-.container-runtime-page .enrollment-panel input[type="number"] { max-width: 100px; }
-.container-runtime-page .enrollment-panel .notice { margin-top: 10px; overflow-wrap: anywhere; }
 
 .container-runtime-page > .section-heading {
   align-items: center;
   gap: 16px;
-  margin-bottom: 12px;
+  margin-bottom: 0;
 }
 
 .container-runtime-page > .section-heading h1 {
-  margin: 0 0 5px;
-  color: var(--ink);
-  font-size: 25px;
-  line-height: 1.25;
-}
-
-.container-runtime-page > .section-heading h2 {
-  margin: 0 0 5px;
-  color: var(--ink);
-  font-size: 25px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 4px;
+  font-size: 22px;
   line-height: 1.25;
 }
 
 .container-runtime-page h2,
 .container-runtime-page h3 {
-  margin: 0 0 10px;
+  margin: 0;
   color: var(--ink);
-}
-
-.container-runtime-page h2 {
-  font-size: 16px;
-}
-
-.container-runtime-page h3 {
   font-size: 15px;
 }
 
 .container-runtime-page p {
-  margin: 0 0 8px;
+  margin: 0;
 }
 
 .container-runtime-page .muted,
@@ -58,331 +41,416 @@
 }
 
 .container-runtime-page .actions,
-.container-runtime-page .hero,
-.container-runtime-page .target,
 .container-runtime-page .row {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
+  gap: 8px;
 }
-
-.container-runtime-page .actions h2,
-.container-runtime-page .actions h3 {
-  margin: 0;
-}
-
+/* Controls: one height and type scale for buttons, selects and inputs. */
 .container-runtime-page button,
 .container-runtime-page select,
 .container-runtime-page input,
 .container-runtime-page textarea {
   min-width: 0;
   border: 1px solid var(--line-strong);
-  border-radius: 7px;
+  border-radius: 8px;
   background: var(--panel);
   color: var(--ink);
   font: inherit;
+  font-size: 13px;
 }
 
 .container-runtime-page button,
-.container-runtime-page select {
-  min-height: 36px;
-  padding: 7px 11px;
+.container-runtime-page select,
+.container-runtime-page input {
+  height: 36px;
+  padding: 0 12px;
+}
+
+.container-runtime-page textarea {
+  width: 100%;
+  padding: 8px 10px;
+  resize: vertical;
 }
 
 .container-runtime-page button {
   cursor: pointer;
+  white-space: nowrap;
 }
 
 .container-runtime-page button:hover:not(:disabled) {
   border-color: var(--blue);
+  color: var(--blue);
 }
 
-.container-runtime-page button:focus-visible,
-.container-runtime-page select:focus-visible,
-.container-runtime-page input:focus-visible,
-.container-runtime-page textarea:focus-visible {
+.container-runtime-page :is(button, select, input, textarea):focus-visible {
   outline: 2px solid color-mix(in srgb, var(--blue) 42%, transparent);
   outline-offset: 2px;
 }
 
 .container-runtime-page button:disabled {
-  opacity: 0.55;
+  opacity: 0.5;
   cursor: not-allowed;
 }
 
 .container-runtime-page .primary {
-  border-color: #7c3aed;
-  background: #7c3aed;
-  color: #fff;
-}
-
-.theme-dark .container-runtime-page .primary {
   border-color: var(--blue);
   background: var(--blue);
-  color: #151d2b;
+  color: #fff;
+}
+.container-runtime-page .primary:hover:not(:disabled) {
+  color: #fff;
+  filter: brightness(1.06);
 }
 
-.container-runtime-page .notice {
-  padding: 12px 14px;
-  border: 1px solid color-mix(in srgb, var(--blue) 15%, var(--line));
-  border-radius: 7px;
-  background: var(--hover);
-  color: var(--ink);
-  font-size: 12px;
-  line-height: 1.65;
+.theme-dark .container-runtime-page .primary,
+.theme-dark .container-runtime-page .primary:hover:not(:disabled) {
+  color: var(--panel);
 }
 
-.container-runtime-page .layout {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: 16px;
-  margin-top: 16px;
-}
-
+/* Cards share the global surface, radius and shadow. */
 .container-runtime-page .container-cluster-picker,
-.container-runtime-page .panel,
 .container-runtime-page .hero,
-.container-runtime-page .metric,
+.container-runtime-page .table-card,
+.container-runtime-page .chart-card,
 .container-runtime-page .empty {
   min-width: 0;
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: 12px;
   background: var(--panel);
+  box-shadow: var(--shadow-soft);
+}
+
+.container-runtime-page .layout,
+.container-runtime-page .content {
+  display: grid;
+  min-width: 0;
+  gap: 14px;
 }
 
 .container-runtime-page .container-cluster-picker,
-.container-runtime-page .panel,
 .container-runtime-page .hero {
   padding: 16px;
 }
 
-.container-runtime-page .container-cluster-picker > .actions {
-  margin-bottom: 12px;
+.container-runtime-page .container-cluster-picker {
+  padding-block: 10px;
 }
 
 .container-runtime-page .cluster-options {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(min(240px, 100%), 1fr));
+  display: flex;
+  flex-wrap: wrap;
   gap: 8px;
 }
 
 .container-runtime-page .cluster {
-  display: grid;
-  align-content: start;
-  justify-items: start;
-  gap: 5px;
-  width: 100%;
-  min-height: 88px;
-  padding: 11px 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  height: 34px;
   border-color: var(--line);
-  text-align: left;
+  border-radius: 999px;
+}
+
+.container-runtime-page .cluster > span:not(.status-dot) {
+  color: var(--muted);
+  font-size: 12px;
 }
 
 .container-runtime-page .cluster.selected {
   border-color: var(--blue);
   background: var(--hover);
 }
-
-.container-runtime-page .cluster strong {
-  max-width: 100%;
-  overflow-wrap: anywhere;
-  font-size: 13px;
-}
-
-.container-runtime-page .cluster > span:not(.pill) {
-  color: var(--muted);
-  font-size: 11px;
-}
-
-.container-runtime-page .pill {
-  display: inline-flex;
+/* Overview: identity on the left, target release control on the right. */
+.container-runtime-page .hero {
+  display: flex;
   align-items: center;
-  width: fit-content;
-  max-width: 100%;
-  padding: 3px 7px;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--muted) 12%, transparent);
-  color: var(--muted);
-  font-size: 11px;
-  line-height: 1.4;
-}
-
-.container-runtime-page .pill.ready {
-  background: color-mix(in srgb, var(--green) 14%, transparent);
-  color: var(--green);
-}
-
-.container-runtime-page .pill.online {
-  background: color-mix(in srgb, var(--green) 14%, transparent);
-  color: var(--green);
-}
-
-.container-runtime-page .pill.offline,
-.container-runtime-page .pill.invalid {
-  background: color-mix(in srgb, var(--red) 13%, transparent);
-  color: var(--red);
-}
-
-.container-runtime-page .pill.unknown {
-  background: color-mix(in srgb, var(--muted) 12%, transparent);
-  color: var(--muted);
-}
-
-.container-runtime-page .pill.stale,
-.container-runtime-page .pill.degraded,
-.container-runtime-page .pill.held {
-  background: color-mix(in srgb, var(--orange) 15%, transparent);
-  color: var(--orange);
-}
-
-.container-runtime-page .pill.deleting {
-  background: color-mix(in srgb, var(--red) 13%, transparent);
-  color: var(--red);
-}
-
-.container-runtime-page .content {
-  display: grid;
-  min-width: 0;
+  justify-content: space-between;
+  flex-wrap: wrap;
   gap: 16px;
 }
 
-.container-runtime-page .hero {
-  align-items: flex-start;
+.container-runtime-page .hero-identity {
+  min-width: 0;
 }
 
 .container-runtime-page .hero h2 {
-  margin-bottom: 5px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 4px;
   font-size: 18px;
 }
 
-.container-runtime-page .hero code {
-  display: inline-block;
-  margin-top: 4px;
-}
-
-.container-runtime-page .cards {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 10px;
-}
-
-.container-runtime-page .metric {
-  display: grid;
-  align-content: start;
-  gap: 6px;
-  padding: 14px 16px;
-}
-
-.container-runtime-page .metric strong {
-  color: var(--ink);
-  font-size: 21px;
-  line-height: 1.2;
-}
-
 .container-runtime-page .target {
-  justify-content: flex-start;
+  display: flex;
+  align-items: center;
   flex-wrap: wrap;
-  margin: 12px 0;
+  gap: 8px;
 }
 
-.container-runtime-page .target select {
-  flex: 1 1 280px;
-  max-width: 480px;
-}
-
-.container-runtime-page .create {
-  display: grid;
-  gap: 12px;
-  max-width: 620px;
-  margin-top: 14px;
-}
-
-.container-runtime-page .create label {
-  display: grid;
-  gap: 6px;
+.container-runtime-page .target-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   color: var(--muted);
   font-size: 12px;
 }
 
-.container-runtime-page input,
-.container-runtime-page textarea {
-  width: 100%;
-  padding: 9px 10px;
+.container-runtime-page .target select {
+  width: min(360px, 100%);
 }
 
-.container-runtime-page textarea {
-  resize: vertical;
+/* Chart strip */
+.container-runtime-page .chart-strip {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
 }
 
-.container-runtime-page .node-table {
-  min-width: 980px;
+.container-runtime-page .chart-card {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  margin: 0;
+  padding: 14px 16px;
 }
-
-.container-runtime-page .node-table th,
-.container-runtime-page .node-detail-table th {
-  padding: 10px 8px;
-  border-bottom: 1px solid var(--line);
+.container-runtime-page .chart-card figcaption {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
   color: var(--muted);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
-  text-align: left;
-  white-space: nowrap;
 }
 
-.container-runtime-page .node-table td {
-  padding: 9px 8px;
-}
-
-.container-runtime-page .node-summary-row:hover {
-  background: var(--hover);
-}
-
-.container-runtime-page .node-expand-button {
-  min-height: 30px;
-  padding: 4px 6px;
-  border-color: transparent;
-  background: transparent;
+.container-runtime-page .chart-headline {
+  overflow: hidden;
   color: var(--ink);
-  text-align: left;
+  font-size: 14px;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.container-runtime-page .node-detail-row > td {
-  padding: 8px 14px 14px;
-  background: color-mix(in srgb, var(--hover) 55%, var(--panel));
+.container-runtime-page .chart-body {
+  display: flex;
+  align-items: center;
+  gap: 14px;
 }
 
-.container-runtime-page .node-detail-table {
-  width: 100%;
-  table-layout: fixed;
+.container-runtime-page .donut {
+  width: 72px;
+  height: 72px;
+  flex: none;
+  transform: rotate(-90deg);
 }
 
-.container-runtime-page .node-detail-table th {
-  width: 180px;
-  border-bottom: 1px solid var(--line);
-  white-space: normal;
+.container-runtime-page .donut-track,
+.container-runtime-page .donut-arc {
+  fill: none;
+  stroke-width: 8;
 }
 
-.container-runtime-page .node-detail-table td {
-  border-bottom: 1px solid var(--line);
-  overflow-wrap: anywhere;
-  word-break: break-word;
+.container-runtime-page .donut-track {
+  stroke: var(--line);
 }
 
-.container-runtime-page .node-scheduling-hint {
-  margin: 9px 0 0;
+.container-runtime-page .donut-arc {
+  stroke: currentColor;
+}
+
+.container-runtime-page .donut-center {
+  transform: rotate(90deg);
+  transform-origin: 32px 32px;
+  fill: var(--ink);
+  font-size: 12px;
+  font-weight: 700;
+  text-anchor: middle;
+  dominant-baseline: central;
+}
+.container-runtime-page .segment-bar {
+  display: flex;
+  gap: 2px;
+  height: 10px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--line);
+}
+
+.container-runtime-page .segment {
+  min-width: 4px;
+  background: currentColor;
+}
+
+.container-runtime-page .segment-empty {
+  flex: 1;
+}
+
+.container-runtime-page .chart-legend {
+  display: grid;
+  flex: 1;
+  gap: 4px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 12px;
+}
+
+.container-runtime-page .chart-legend li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.container-runtime-page .chart-legend span {
+  flex: 1;
+  overflow: hidden;
+  color: var(--muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.container-runtime-page .chart-legend b {
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.container-runtime-page .chart-legend i,
+.container-runtime-page .status-dot > i {
+  width: 8px;
+  height: 8px;
+  flex: none;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.container-runtime-page .chart-foot {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Status tones (reserved status colors, always paired with a text label). */
+.container-runtime-page .tone-good { color: var(--green); }
+.container-runtime-page .tone-warn { color: var(--orange); }
+.container-runtime-page .tone-bad { color: var(--red); }
+.container-runtime-page .tone-info { color: var(--blue); }
+.container-runtime-page .tone-neutral { color: var(--soft); }
+
+.container-runtime-page .status-dot {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--ink);
+  font-size: 12px;
+  white-space: nowrap;
 }
 
 .container-runtime-page .conditions {
-  margin-top: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
 }
 
-.container-runtime-page .conditions small {
-  display: inline;
-  margin-right: 12px;
+/* Tooltip shared by status dots and ⓘ hints. */
+.container-runtime-page .hint {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  color: var(--soft);
+  font-size: 13px;
+  font-weight: 400;
+  cursor: help;
 }
 
+.container-runtime-page .tip {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 6px);
+  left: 0;
+  width: max-content;
+  max-width: 320px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.5;
+  white-space: normal;
+  visibility: hidden;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+
+.container-runtime-page :is(.hint, .status-dot):is(:hover, :focus-visible) > .tip {
+  visibility: visible;
+  opacity: 1;
+}
+/* Tabbed table card */
+.container-runtime-page .table-card {
+  overflow: hidden;
+}
+
+.container-runtime-page .table-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--line);
+}
+
+.container-runtime-page .tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.container-runtime-page .tabs button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  border-color: transparent;
+  background: transparent;
+  color: var(--muted);
+}
+
+.container-runtime-page .tabs button.active {
+  background: var(--hover);
+  color: var(--blue);
+  font-weight: 600;
+}
+
+.container-runtime-page .tabs b {
+  min-width: 20px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--muted) 14%, transparent);
+  font-size: 11px;
+  text-align: center;
+}
+
+.container-runtime-page .tab-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 10px 16px 0;
+}
+
+.container-runtime-page .table-empty {
+  padding: 28px 16px;
+  text-align: center;
+}
 .container-runtime-page .table-scroll {
   max-width: 100%;
   overflow-x: auto;
@@ -395,30 +463,58 @@
   font-size: 12px;
 }
 
-.container-runtime-page td {
-  padding: 11px 8px;
+.container-runtime-page .table-card table th,
+.container-runtime-page .table-card table td {
+  padding: 10px 12px;
+  text-align: left;
+  vertical-align: middle;
+}
+
+.container-runtime-page .table-card table th:first-child,
+.container-runtime-page .table-card table td:first-child {
+  padding-left: 16px;
+}
+
+.container-runtime-page .table-card table th:last-child,
+.container-runtime-page .table-card table td:last-child {
+  padding-right: 16px;
+}
+
+.container-runtime-page .table-card thead th {
+  border-bottom: 1px solid var(--line);
+  background: var(--canvas);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.container-runtime-page .table-card tbody > tr > td {
   border-top: 1px solid var(--line);
-  vertical-align: top;
 }
 
-.container-runtime-page td:first-child {
-  padding-left: 0;
+.container-runtime-page .table-card tbody > tr:first-child > td {
+  border-top: 0;
 }
 
-.container-runtime-page td:last-child {
-  padding-right: 0;
+.container-runtime-page .table-card tbody > tr:hover > td {
+  background: var(--hover);
+}
+
+.container-runtime-page .col-actions {
+  text-align: right !important;
 }
 
 .container-runtime-page td button {
-  min-height: 30px;
-  margin: 4px 6px 0 0;
-  padding: 5px 8px;
-  font-size: 11px;
+  height: 30px;
+  margin: 2px 6px 2px 0;
+  padding: 0 10px;
+  font-size: 12px;
 }
 
-.container-runtime-page small {
+.container-runtime-page td small {
   display: block;
-  margin-top: 4px;
+  margin-top: 2px;
   overflow-wrap: anywhere;
 }
 
@@ -426,33 +522,244 @@
   font-size: 11px;
   overflow-wrap: anywhere;
 }
-
-.container-runtime-page .log-viewer {
-  min-width: 0;
-  margin-top: 12px;
-  padding: 12px;
-  border: 1px solid var(--line);
-  border-radius: 7px;
-  background: var(--canvas);
+/* Node table with expandable detail rows */
+.container-runtime-page .node-table {
+  min-width: 980px;
 }
 
-.container-runtime-page .log-viewer pre {
-  max-height: 360px;
-  overflow: auto;
-  white-space: pre-wrap;
+.container-runtime-page .node-expand-button {
+  height: 28px;
+  padding: 0 4px;
+  border-color: transparent;
+  background: transparent;
+  font-weight: 600;
+}
+
+.container-runtime-page .node-detail-row > td {
+  padding: 4px 16px 14px !important;
+  background: color-mix(in srgb, var(--hover) 55%, var(--panel));
+}
+
+.container-runtime-page .node-detail-table {
+  width: 100%;
+  table-layout: fixed;
+}
+
+.container-runtime-page .node-detail-table th,
+.container-runtime-page .node-detail-table td {
+  padding: 6px 8px !important;
+  border-top: 0 !important;
+  border-bottom: 1px solid var(--line);
+  background: transparent !important;
   overflow-wrap: anywhere;
-  padding: 12px;
-  border-radius: 5px;
-  background: #101522;
-  color: #eef2ff;
+}
+
+.container-runtime-page .node-detail-table th {
+  width: 180px;
+  color: var(--muted);
   font-size: 11px;
+  font-weight: 600;
+}
+
+.container-runtime-page .node-scheduling-hint {
+  margin-top: 8px;
+}
+
+/* Pills (kept for state badges in table cells) */
+.container-runtime-page .pill {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--muted) 12%, transparent);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+
+.container-runtime-page .pill:is(.ready, .online) {
+  background: color-mix(in srgb, var(--green) 14%, transparent);
+  color: var(--green);
+}
+
+.container-runtime-page .pill:is(.offline, .invalid, .deleting) {
+  background: color-mix(in srgb, var(--red) 13%, transparent);
+  color: var(--red);
+}
+
+.container-runtime-page .pill:is(.stale, .degraded, .held) {
+  background: color-mix(in srgb, var(--orange) 15%, transparent);
+  color: var(--orange);
+}
+/* Drawer for forms */
+.container-runtime-page .drawer-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+}
+
+.container-runtime-page .drawer-layer[hidden] {
+  display: none;
+}
+
+.container-runtime-page .drawer-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(15, 22, 35, 0.32);
+}
+
+.container-runtime-page .drawer {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  flex-direction: column;
+  width: min(640px, 100%);
+  background: var(--panel);
+  box-shadow: var(--shadow);
+  outline: none;
+}
+
+.container-runtime-page .drawer-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--line);
+}
+
+.container-runtime-page .drawer-head h2 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 16px;
+}
+
+.container-runtime-page .drawer-head button {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border-color: transparent;
+  font-size: 18px;
+}
+
+.container-runtime-page .drawer-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 18px 20px;
+}
+/* Forms inside drawers */
+.container-runtime-page .create {
+  display: grid;
+  gap: 14px;
+}
+
+.container-runtime-page .create label,
+.container-runtime-page .enrollment-panel fieldset > label {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.container-runtime-page .create input,
+.container-runtime-page .create select {
+  width: 100%;
+}
+
+.container-runtime-page .create .primary {
+  justify-self: start;
+}
+
+.container-runtime-page .enrollment-panel {
+  display: grid;
+  gap: 12px;
+}
+
+.container-runtime-page .enrollment-panel fieldset {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.container-runtime-page .enrollment-panel table th {
+  padding: 6px 4px;
+  color: var(--muted);
+  font-size: 11px;
+  text-align: left;
+}
+
+.container-runtime-page .enrollment-panel table td {
+  padding: 4px;
+}
+
+.container-runtime-page .enrollment-panel td input,
+.container-runtime-page .enrollment-panel td select {
+  width: 100%;
+  height: 32px;
+  font-size: 12px;
+}
+
+.container-runtime-page .enrollment-panel td input[type="number"] {
+  width: 80px;
+}
+
+/* Enrollment operations tab */
+.container-runtime-page .enrollment-ops {
+  min-width: 760px;
+}
+
+.container-runtime-page .op-nodes {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.container-runtime-page .op-nodes li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+}
+
+.container-runtime-page .op-nodes span {
+  color: var(--muted);
+}
+
+.container-runtime-page .tab-alert {
+  margin: 10px 16px 0;
+}
+
+.container-runtime-page .tabs .tab-pulse {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+}
+/* Notices and errors */
+.container-runtime-page .notice {
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--blue) 18%, var(--line));
+  border-radius: 8px;
+  background: var(--hover);
+  color: var(--ink);
+  font-size: 12px;
+  line-height: 1.55;
 }
 
 .container-runtime-page .error {
-  margin: 0 0 14px;
   padding: 10px 12px;
   border: 1px solid color-mix(in srgb, var(--red) 28%, var(--line));
-  border-radius: 7px;
+  border-radius: 8px;
   background: color-mix(in srgb, var(--red) 8%, var(--panel));
   color: var(--red);
   font-size: 12px;
@@ -460,7 +767,7 @@
 
 .container-runtime-page .empty {
   display: grid;
-  min-height: 120px;
+  min-height: 160px;
   place-items: center;
   padding: 24px;
   color: var(--muted);
@@ -468,38 +775,47 @@
   font-size: 13px;
 }
 
-@media (max-width: 900px) {
-  .container-runtime-page .cards {
+/* Diagnostic log viewers kept from the original layout. */
+.container-runtime-page .log-viewer {
+  margin: 12px 16px 16px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--canvas);
+}
+
+.container-runtime-page .log-viewer .actions {
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.container-runtime-page .log-viewer pre {
+  max-height: 320px;
+  margin: 0;
+  overflow: auto;
+  padding: 10px;
+  border-radius: 6px;
+  background: #101522;
+  color: #eef2ff;
+  font-size: 11px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 1100px) {
+  .container-runtime-page .chart-strip {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
-@media (max-width: 560px) {
-  .container-runtime-page > .section-heading {
-    align-items: flex-start;
+@media (max-width: 640px) {
+  .container-runtime-page .chart-strip {
+    grid-template-columns: minmax(0, 1fr);
   }
-
-  .container-runtime-page > .section-heading h1 {
-    font-size: 21px;
-  }
-
-  .container-runtime-page .container-cluster-picker,
-  .container-runtime-page .panel,
-  .container-runtime-page .hero {
-    padding: 12px;
-  }
-
-  .container-runtime-page .cards {
-    gap: 8px;
-  }
-
-  .container-runtime-page .metric {
-    padding: 11px;
-  }
-
   .container-runtime-page .hero,
-  .container-runtime-page .row {
+  .container-runtime-page .table-card-head {
     align-items: flex-start;
-    flex-wrap: wrap;
+    flex-direction: column;
   }
 }
+

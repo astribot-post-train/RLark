@@ -203,11 +203,24 @@ Do not log credentials or task payloads. No arbitrary Kubernetes proxy is expose
 
 ## UI behavior and failure handling
 
-The page uses the shared RLark content viewport for vertical scrolling. Cluster
-selection spans the content area, followed by the selected cluster summary,
-resource metrics, release target, Raw Jobs, registration, nodes and operational
-tables. Narrow screens wrap the cluster choices and metrics; wide tables keep
-their own horizontal scroll region.
+The page uses the shared RLark content viewport for vertical scrolling. A
+compact cluster selector sits under the page heading, followed by an overview
+card (identity, state and the release target control), a strip of four charts
+(node readiness, A-to-node reachability, Raw Job outcomes and rollout
+conditions) and one tabbed table for Nodes, Raw Jobs, allocations, releases and
+upgrades. Chart segments always show a text label and count, so state is not
+conveyed by color alone. Helper text and condition reason/message appear as
+keyboard-focusable tooltips. Create cluster, Notebook deploy/edit, node
+registration and Raw Job submission open in a side drawer; closing the drawer
+does not discard an unconfirmed request or its retained operation ID. Each node
+row offers **Edit IP / redeploy**, which opens the deploy drawer focused on that
+node's SSH address; the controller still validates address changes on joined
+nodes and never silently adopts a replacement. The **Enrollments** tab lists
+every enrollment operation with per-node reachability and phase, and offers
+cancellation for operations still in progress (joined nodes are retained). The
+deploy drawer opens even when enrollment is disabled so the administrator
+notice is visible; submission stays disabled. Narrow screens stack the charts;
+wide tables keep their own horizontal scroll region.
 
 Nodes appear in a summary table with private IP, native Node state, container
 Agent readiness, Agent version, schedulability and heartbeat age. Expand a row

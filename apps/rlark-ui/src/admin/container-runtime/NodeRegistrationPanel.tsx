@@ -25,20 +25,16 @@ export function NodeRegistrationPanel({
   t,
   writing,
   blocked,
-  open,
   intent,
   result,
-  onToggle,
   onSubmit,
 }: {
   detail: Detail;
   t: Labels;
   writing: boolean;
   blocked: boolean;
-  open: boolean;
   intent?: NodeRegistration;
   result?: RegisteredNode;
-  onToggle: () => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
 }) {
   if (!detail.nodeRegistrationEnabled && !intent && !result) return null;
@@ -50,25 +46,12 @@ export function NodeRegistrationPanel({
     ["networkScope", t.networkScope],
   ] as const;
   return (
-    <section className="panel">
-      <div className="actions">
-        <h3>{t.registerNode}</h3>
-        <button
-          disabled={
-            writing || blocked || (!detail.nodeRegistrationEnabled && !intent)
-          }
-          onClick={onToggle}
-        >
-          {open ? t.close : t.registerNode}
-        </button>
-      </div>
-      <p className="muted">{t.registrationHint}</p>
+    <div className="registration-panel">
       {intent && (
-        <p role="status">
+        <p role="status" className="notice">
           {t.registrationPending} <code>{intent.operationID}</code>
         </p>
       )}
-      {open && (
         <form
           className="create"
           onSubmit={onSubmit}
@@ -118,7 +101,6 @@ export function NodeRegistrationPanel({
             {intent ? t.retry : t.registerNode}
           </button>
         </form>
-      )}
       {result && result.clusterUID === detail.cluster.uid && (
         <div role="status">
           <p>{t.registrationDone}</p>
@@ -137,6 +119,6 @@ export function NodeRegistrationPanel({
           </pre>
         </div>
       )}
-    </section>
+    </div>
   );
 }

@@ -10,7 +10,9 @@ import {
   enrollmentIntent,
   enrollmentTargets,
   parseRetainedEnrollment,
+  terminalEnrollmentPhases as terminalPhases,
 } from "./enrollment";
+import { StatusDot, type Tone } from "./Charts";
 
 export function EnrollmentPanel({
   detail,
@@ -18,12 +20,15 @@ export function EnrollmentPanel({
   lang,
   onChanged,
   blocked,
+  focusNode,
 }: {
   detail: Detail;
   client: Client;
   lang: "zh" | "en";
   onChanged: () => void;
   blocked: boolean;
+  // Node name whose SSH address input should receive focus (row shortcut).
+  focusNode?: { name: string; seq: number };
 }) {
   const zh = lang === "zh";
   const key = `rlark.enrollment.${detail.cluster.uid}`;
@@ -61,6 +66,22 @@ export function EnrollmentPanel({
     );
   }, [detail, retained]);
   useEffect(() => () => controller.current?.abort(), []);
+  const root = useRef<HTMLElement>(null);
+  useEffect(() => {
+    if (!focusNode) return;
+    // Wait one frame so the drawer is visible before moving focus.
+    const frame = requestAnimationFrame(() => {
+      const input = [
+        ...(root.current?.querySelectorAll<HTMLInputElement>(
+          "input[data-enroll-address]",
+        ) ?? []),
+      ].find((el) => el.dataset.enrollAddress === focusNode.name);
+      input?.scrollIntoView({ block: "center" });
+      input?.focus();
+      input?.select();
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [focusNode]);
   function update(index: number, patch: Partial<EnrollmentTarget>) {
     setNodes((current) =>
       current.map((n, i) => (i === index ? { ...n, ...patch } : n)),
@@ -105,28 +126,12 @@ export function EnrollmentPanel({
     }
   }
   const disabled = busy || !!retained;
-  async function cancel(operation: Enrollment) {
-    setBusy(true);
-    setError("");
-    const active = new AbortController();
-    controller.current = active;
-    try {
-      await client.cancelEnrollment(detail.cluster, operation, active.signal);
-      if (!active.signal.aborted) onChanged();
-    } catch (e) {
-      if (!active.signal.aborted)
-        setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      if (!active.signal.aborted) setBusy(false);
-    }
-  }
   return (
-    <section className="panel enrollment-panel">
-      <h3>{zh ? "Notebook 启动接入" : "Notebook start / join"}</h3>
-      <p className="muted">
+    <section className="enrollment-panel" ref={root}>
+      <p className="muted enrollment-lead">
         {zh
-          ? "A 为网关兼计算节点，B/C 经 A 的 SSH 接入。预配置私钥不经页面传输；保存后安装并启动所需服务。"
-          : "A is the gateway and compute node; workers join through A over SSH. Preconfigured private keys never pass through this page. Save to install and start required services."}
+          ? "A 为网关兼计算节点，B/C 经 A 的 SSH 接入。私钥不经页面传输。"
+          : "A is the gateway and compute node; workers join through A over SSH. Private keys never pass through this page."}
       </p>
       {!detail.enrollmentEnabled && (
         <p className="notice">
@@ -182,6 +187,7 @@ export function EnrollmentPanel({
                   <td>
                     <input
                       aria-label={zh ? "SSH IP 地址" : "SSH IP address"}
+                      data-enroll-address={node.name}
                       value={node.address}
                       onChange={(e) => update(i, { address: e.target.value })}
                     />
@@ -280,49 +286,135 @@ export function EnrollmentPanel({
               ? "保存并启动接入（全部服务）"
               : "Save and start / join (all services)"}
       </button>
-      {detail.enrollments.map((op) => (
-        <div className="notice" key={op.uid}>
-          <strong>
-            {op.cancelRequested
-              ? zh
-                ? "取消中/已取消"
-                : "Cancellation requested"
-              : op.phase || (zh ? "待处理" : "Pending")}{" "}
-            · {op.releaseVersion}
-          </strong>
-          <div>
-            <code>{op.operationID}</code>
-          </div>
-          {op.targets.map((target) => {
-            const status = op.nodes?.find((n) => n.name === target.name);
-            return (
-              <div key={target.name}>
-                {target.name} · {target.role} · {target.address} ·{" "}
-                {status?.reachability || "Unknown"} ·{" "}
-                {status?.phase || "Pending"} · {status?.reason} ·{" "}
-                {status?.services?.join(", ")}
-              </div>
-            );
-          })}
-          {op.conditions?.map((c) => (
-            <div key={c.type}>
-              {c.reason}: {c.message}
-            </div>
-          ))}
-          {!["Succeeded", "Failed", "Cancelled"].includes(op.phase) &&
-            !op.cancelRequested && (
-              <button
-                type="button"
-                disabled={busy || blocked || !detail.enrollmentEnabled}
-                onClick={() => void cancel(op)}
-              >
-                {zh
-                  ? "取消本次接入（保留已接入节点）"
-                  : "Cancel enrollment (retain joined nodes)"}
-              </button>
-            )}
-        </div>
-      ))}
     </section>
+  );
+}
+
+function phaseTone(op: Enrollment): Tone {
+  if (op.cancelRequested || op.phase === "Cancelled") return "neutral";
+  if (op.phase === "Succeeded") return "good";
+  if (op.phase === "Failed") return "bad";
+  return "info";
+}
+// Enrollment operations as a table. Cancellation keeps its own request state
+// so it is independent from the drawer form; the API call is unchanged.
+export function EnrollmentOperations({
+  detail,
+  client,
+  lang,
+  onChanged,
+  blocked,
+}: {
+  detail: Detail;
+  client: Client;
+  lang: "zh" | "en";
+  onChanged: () => void;
+  blocked: boolean;
+}) {
+  const zh = lang === "zh";
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const controller = useRef<AbortController | undefined>(undefined);
+  useEffect(() => () => controller.current?.abort(), []);
+  async function cancel(operation: Enrollment) {
+    setBusy(true);
+    setError("");
+    const active = new AbortController();
+    controller.current = active;
+    try {
+      await client.cancelEnrollment(detail.cluster, operation, active.signal);
+      if (!active.signal.aborted) onChanged();
+    } catch (e) {
+      if (!active.signal.aborted)
+        setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      if (!active.signal.aborted) setBusy(false);
+    }
+  }
+  if (!detail.enrollments.length)
+    return (
+      <p className="muted table-empty">
+        {zh ? "暂无接入操作" : "No enrollment operations"}
+      </p>
+    );
+  const head = zh
+    ? ["操作 ID", "版本", "阶段", "节点进度", "操作"]
+    : ["Operation", "Release", "Phase", "Node progress", "Actions"];
+  return (
+    <>
+      {error && (
+        <p role="alert" className="error tab-alert">
+          {error}
+        </p>
+      )}
+      <div className="table-scroll">
+        <table className="enrollment-ops">
+          <thead>
+            <tr>
+              {head.map((s, i) => (
+                <th key={s} className={i === head.length - 1 ? "col-actions" : undefined}>
+                  {s}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {detail.enrollments.map((op) => (
+              <tr key={op.uid}>
+                <td>
+                  <code>{op.operationID}</code>
+                </td>
+                <td>{op.releaseVersion || op.releaseName}</td>
+                <td>
+                  <StatusDot
+                    label={
+                      op.cancelRequested
+                        ? zh ? "取消中/已取消" : "Cancellation requested"
+                        : op.phase || (zh ? "待处理" : "Pending")
+                    }
+                    tone={phaseTone(op)}
+                    detail={
+                      op.conditions?.length
+                        ? op.conditions.map((c) => `${c.reason}: ${c.message}`).join(" · ")
+                        : undefined
+                    }
+                  />
+                </td>
+                <td>
+                  <ul className="op-nodes">
+                    {op.targets.map((target) => {
+                      const status = op.nodes?.find((n) => n.name === target.name);
+                      return (
+                        <li key={target.name}>
+                          <b>{target.name}</b>
+                          <span>{target.role} · {target.address}</span>
+                          <span>
+                            {status?.reachability || "Unknown"} · {status?.phase || "Pending"}
+                            {status?.reason ? ` · ${status.reason}` : ""}
+                            {status?.services?.length ? ` · ${status.services.join(", ")}` : ""}
+                          </span>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </td>
+                <td className="col-actions">
+                  {!terminalPhases.includes(op.phase) && !op.cancelRequested && (
+                    <button
+                      type="button"
+                      disabled={busy || blocked || !detail.enrollmentEnabled}
+                      title={zh ? "保留已接入节点" : "Joined nodes are retained"}
+                      onClick={() => void cancel(op)}
+                    >
+                      {zh ? "取消接入" : "Cancel"}
+                    </button>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </>
   );
 }

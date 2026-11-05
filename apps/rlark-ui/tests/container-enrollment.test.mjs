@@ -2,12 +2,29 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { Client } from "../dist/test/admin/container-runtime/api.js";
 import {
+  activeEnrollments,
   enrollmentIntent,
   enrollmentTargets,
   nodeProbe,
   parseRetainedEnrollment,
   probeState,
 } from "../dist/test/admin/container-runtime/enrollment.js";
+
+test("active enrollment count excludes terminal and cancelling operations", () => {
+  const op = (phase, cancelRequested = false) => ({ phase, cancelRequested });
+  const detail = {
+    enrollments: [
+      op("Provisioning"),
+      op(""),
+      op("Running", true),
+      op("Succeeded"),
+      op("Failed"),
+      op("Cancelled"),
+    ],
+  };
+  assert.equal(activeEnrollments(detail), 2);
+  assert.equal(activeEnrollments({ enrollments: [] }), 0);
+});
 
 globalThis.sessionStorage = { getItem: () => "admin", removeItem: () => {} };
 globalThis.window = { dispatchEvent: () => {} };

@@ -34,11 +34,13 @@ import {
   canReadDiagnostic,
   diagnosticInventory,
 } from "./models";
-import { JobsPanel } from "./JobsPanel";
+import { JobForm, JobsPanel } from "./JobsPanel";
+import { Drawer } from "./Drawer";
 import { NodeRegistrationPanel } from "./NodeRegistrationPanel";
-import { EnrollmentPanel } from "./EnrollmentPanel";
-import { nodeProbe, probeState } from "./enrollment";
+import { EnrollmentOperations, EnrollmentPanel } from "./EnrollmentPanel";
+import { activeEnrollments, nodeProbe, probeState } from "./enrollment";
 import type { EnrollmentNode } from "./api";
+import { Donut, Hint, SegmentBar, StatusDot, type Tone } from "./Charts";
 import "./style.css";
 const labels = {
   zh: {
@@ -178,6 +180,24 @@ const labels = {
     jobHint: "首版只提交单进程 Raw 作业；GPU 由节点授权和调度器分配。",
     noJobs: "暂无 Raw 作业",
     retryJob: "重试同一作业",
+    enroll: "部署 / 修改节点",
+    redeploy: "修改 IP / 重新部署",
+    redeployHint: "打开部署表单并定位到该节点。已接入节点的地址变化由控制器校验，不会静默接管。",
+    enrollments: "接入操作",
+    jobName: "作业名称",
+    phase: "状态",
+    chartNodes: "节点就绪",
+    chartReach: "网络可达",
+    chartJobs: "作业结果",
+    chartRollout: "升级状态",
+    reachable: "可达",
+    unreachable: "不可达",
+    notReady: "未就绪",
+    succeeded: "成功",
+    failed: "失败",
+    running: "运行中",
+    other: "其他",
+    noTarget: "无目标",
   },
   en: {
     title: "Container clusters",
@@ -318,6 +338,24 @@ const labels = {
       "The preview submits one Raw process; GPU placement remains controlled by node authorization and the scheduler.",
     noJobs: "No Raw jobs",
     retryJob: "Retry same job",
+    enroll: "Deploy / edit nodes",
+    redeploy: "Edit IP / redeploy",
+    redeployHint: "Opens the deploy form at this node. Address changes on joined nodes are validated by the controller and never silently adopted.",
+    enrollments: "Enrollments",
+    jobName: "Job",
+    phase: "Phase",
+    chartNodes: "Node readiness",
+    chartReach: "Reachability",
+    chartJobs: "Job outcomes",
+    chartRollout: "Rollout",
+    reachable: "Reachable",
+    unreachable: "Unreachable",
+    notReady: "Not ready",
+    succeeded: "Succeeded",
+    failed: "Failed",
+    running: "Running",
+    other: "Other",
+    noTarget: "No target",
   },
 };
 type Lang = keyof typeof labels;
@@ -386,6 +424,11 @@ export function ContainerClustersPage({
   const [showJob, setShowJob] = useState(false);
   const [jobIntent, setJobIntent] = useState<RawJobRequest>();
   const [showNodeRegistration, setShowNodeRegistration] = useState(false);
+  const [showEnroll, setShowEnroll] = useState(false);
+  const [enrollFocus, setEnrollFocus] = useState<{ name: string; seq: number }>();
+  const [tab, setTab] = useState<
+    "nodes" | "jobs" | "enrollments" | "allocations" | "releases" | "upgrades"
+  >("nodes");
   const [nodeIntent, setNodeIntent] = useState<NodeRegistration>();
   const [registeredNode, setRegisteredNode] = useState<RegisteredNode>();
   const logRequest = useRef<AbortController | undefined>(undefined);
@@ -447,7 +490,9 @@ export function ContainerClustersPage({
     setJobs(undefined);
     setShowJob(false);
     setShowNodeRegistration(false);
+    setShowEnroll(false);
     setRegisteredNode(undefined);
+    setTab("nodes");
     observedTarget.current = undefined;
     setTarget("");
   }, [client, selection]);
@@ -749,7 +794,6 @@ export function ContainerClustersPage({
         if (signal.aborted) return;
         setRegisteredNode(result);
         setNodeIntent(undefined);
-        setShowNodeRegistration(false);
       } catch (e) {
         // Only API validation before provisioning has no possible effects.
         if (!signal.aborted && e instanceof APIError && e.status === 400)
@@ -758,11 +802,28 @@ export function ContainerClustersPage({
       }
     });
   };
+  const tabs: [typeof tab, string, number][] = detail
+    ? [
+        ["nodes", t.nodes, detail.nodes.length],
+        ...(detail.jobSubmissionEnabled || jobIntent
+          ? [["jobs", t.jobsTitle, jobs?.length ?? 0] as [typeof tab, string, number]]
+          : []),
+        ["allocations", t.allocations, detail.allocations.length],
+        ["releases", t.releases, detail.releases.length],
+        ["upgrades", t.upgrades, detail.upgrades.length],
+      ]
+    : [];
+  if (detail && (detail.enrollmentEnabled || detail.enrollments.length))
+    tabs.splice(tabs[1]?.[0] === "jobs" ? 2 : 1, 0, ["enrollments", t.enrollments, detail.enrollments.length]);
+  const pendingEnrollments = detail ? activeEnrollments(detail) : 0;
   return (
     <div className="page-content resource-page container-runtime-page">
       <header className="section-heading">
         <div>
-          <h1>{t.title}</h1>
+          <h1>
+            {t.title}
+            <Hint text={t.onboarding} />
+          </h1>
           <p className="muted">{t.subtitle}</p>
         </div>
         <div className="actions">
@@ -772,6 +833,13 @@ export function ContainerClustersPage({
           >
             {t.refresh}
           </button>
+          <button
+            className="primary"
+            disabled={writing || !!jobIntent || !!nodeIntent}
+            onClick={() => setShowCreate(true)}
+          >
+            ＋ {t.create}
+          </button>
         </div>
       </header>
       {error && (
@@ -780,18 +848,8 @@ export function ContainerClustersPage({
         </div>
       )}
       <>
-        <div className="notice">{t.onboarding}</div>
         <section className="layout">
-          <aside className="container-cluster-picker">
-            <div className="actions">
-              <h2>{t.title}</h2>
-              <button
-                disabled={writing || !!jobIntent || !!nodeIntent}
-                onClick={() => setShowCreate((v) => !v)}
-              >
-                ＋
-              </button>
-            </div>
+          <nav className="container-cluster-picker" aria-label={t.title}>
             <div className="cluster-options">
               {loading ? (
                 <p className="muted">{t.loading}</p>
@@ -811,28 +869,27 @@ export function ContainerClustersPage({
                       setSelection({ namespace: c.namespace, name: c.name });
                     }}
                   >
-                    <strong>{c.name}</strong>
+                    <StatusDot
+                      label={c.name}
+                      tone={clusterTone(clusterState(c))}
+                      detail={t[clusterState(c)]}
+                    />
                     <span>
-                      {c.runtime} · {c.readyNodes}/{c.nodeCount} {t.nodes}
-                    </span>
-                    <span className={`pill ${clusterState(c)}`}>
-                      {t[clusterState(c)]}
+                      {c.runtime} · {c.readyNodes}/{c.nodeCount}
                     </span>
                   </button>
                 ))
               )}
             </div>
-          </aside>
+          </nav>
           <div className="content">
-            {showCreate && (
-              <section className="panel">
-                <div className="actions">
-                  <h2>{t.create}</h2>
-                  <button onClick={() => setShowCreate(false)}>
-                    {t.close}
-                  </button>
-                </div>
-                <p className="muted">{intent ? t.remembered : t.createHint}</p>
+            <Drawer
+              open={showCreate}
+              title={t.create}
+              hint={intent ? t.remembered : t.createHint}
+              closeLabel={t.close}
+              onClose={() => setShowCreate(false)}
+            >
                 <form className="create" onSubmit={create}>
                   <label>
                     {t.name}
@@ -878,44 +935,32 @@ export function ContainerClustersPage({
                     {intent ? t.retry : t.create}
                   </button>
                 </form>
-              </section>
-            )}
+            </Drawer>
             {!selection ? (
               <div className="empty">{t.select}</div>
             ) : !detail ? (
               <div className="empty">{error ? t.unavailable : t.loading}</div>
             ) : (
               <>
-                <div className="hero">
-                  <div>
-                    <h2>{detail.cluster.name}</h2>
-                    <p className="muted">
-                      {detail.cluster.namespace} · {detail.cluster.tenantID}
+                <section className="hero">
+                  <div className="hero-identity">
+                    <h2>
+                      {detail.cluster.name}
+                      <span className={`pill ${clusterState(detail.cluster)}`}>
+                        {t[clusterState(detail.cluster)]}
+                      </span>
+                    </h2>
+                    <p className="muted" title={`UID ${detail.cluster.uid}`}>
+                      {detail.cluster.runtime} · {detail.cluster.namespace} ·{" "}
+                      {detail.cluster.tenantID} · {t.gpu}{" "}
+                      {detail.cluster.gpuCount}
                     </p>
-                    <code className="muted">UID {detail.cluster.uid}</code>
                   </div>
-                  <span className={`pill ${clusterState(detail.cluster)}`}>
-                    {t[clusterState(detail.cluster)]}
-                  </span>
-                </div>
-                <div className="cards">
-                  <Metric
-                    title={t.nodes}
-                    value={`${detail.cluster.readyNodes}/${detail.cluster.nodeCount}`}
-                  />
-                  <Metric title={t.gpu} value={`${detail.cluster.gpuCount}`} />
-                  <Metric
-                    title={t.allocations}
-                    value={`${detail.allocations.length}`}
-                  />
-                  <Metric
-                    title={t.upgrades}
-                    value={`${detail.upgrades.length}`}
-                  />
-                </div>
-                <section className="panel">
-                  <h3>{t.target}</h3>
                   <div className="target">
+                    <span className="target-label">
+                      {t.target}
+                      <Hint text={t.targetHint} />
+                    </span>
                     <select
                       aria-label={t.target}
                       value={target}
@@ -962,27 +1007,64 @@ export function ContainerClustersPage({
                       {t.apply}
                     </button>
                   </div>
-                  <p className="muted">{t.targetHint}</p>
-                  {detail.cluster.lastAgentUpgrade && (
-                    <p className="muted">
-                      {t.rollout}:{" "}
-                      {detail.cluster.lastAgentUpgrade.nodeRecord.name} →{" "}
-                      {detail.cluster.lastAgentUpgrade.release.name} ·{" "}
-                      {detail.cluster.lastAgentUpgrade.completedAt}
-                    </p>
-                  )}
-                  <Conditions items={detail.cluster.conditions} />
                 </section>
+                <OverviewCharts detail={detail} jobs={jobs} t={t} />
+                <section className="table-card">
+                  <div className="table-card-head">
+                    <div className="tabs" role="tablist">
+                      {tabs.map(([key, label, count]) => (
+                        <button
+                          key={key}
+                          type="button"
+                          role="tab"
+                          aria-selected={tab === key}
+                          className={tab === key ? "active" : ""}
+                          onClick={() => setTab(key)}
+                        >
+                          {label}
+                          <b>{count}</b>
+                          {key === "enrollments" && pendingEnrollments > 0 && (
+                            <i
+                              className="tab-pulse tone-info"
+                              aria-label={`${pendingEnrollments} ${t.running}`}
+                            />
+                          )}
+                        </button>
+                      ))}
+                    </div>
+                    {tab === "nodes" && (
+                      <div className="actions">
+                        {detail.nodeRegistrationEnabled && (
+                          <button
+                            type="button"
+                            disabled={writing || !!jobIntent || !!intent}
+                            onClick={() => setShowNodeRegistration(true)}
+                          >
+                            {t.registerNode}
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          className="primary"
+                          onClick={() => {
+                            setEnrollFocus(undefined);
+                            setShowEnroll(true);
+                          }}
+                        >
+                          ＋ {t.enroll}
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                  <div hidden={tab !== "jobs"}>
                 <JobsPanel
                   detail={detail}
                   t={t}
                   writing={writing || !!nodeIntent || !!intent}
-                  showJob={showJob}
                   jobIntent={jobIntent}
                   jobsLoading={jobsLoading}
                   jobs={jobs}
-                  onToggle={() => setShowJob((v) => !v)}
-                  onSubmit={submitJob}
+                  onOpen={() => setShowJob(true)}
                   onSuspend={(job) => {
                     if (client && selection)
                       void mutate(async (signal) => {
@@ -995,20 +1077,48 @@ export function ContainerClustersPage({
                       });
                   }}
                 />
-                <EnrollmentPanel key={detail.cluster.uid} detail={detail} client={client} lang={lang} blocked={writing || !!jobIntent || !!nodeIntent || !!intent} onChanged={()=>setRevision(v=>v+1)} />
-                <NodeRegistrationPanel
-                  detail={detail}
-                  t={t}
-                  writing={writing}
-                  blocked={!!jobIntent || !!intent}
+                  </div>
+                <Drawer
+                  open={showJob}
+                  title={t.submitJob}
+                  hint={t.jobHint}
+                  closeLabel={t.close}
+                  onClose={() => setShowJob(false)}
+                >
+                  <JobForm
+                    detail={detail}
+                    t={t}
+                    writing={writing || !!nodeIntent || !!intent}
+                    jobIntent={jobIntent}
+                    onSubmit={submitJob}
+                  />
+                </Drawer>
+                <Drawer
+                  open={showEnroll}
+                  title={t.enroll}
+                  closeLabel={t.close}
+                  onClose={() => setShowEnroll(false)}
+                >
+                  <EnrollmentPanel key={detail.cluster.uid} focusNode={showEnroll ? enrollFocus : undefined} detail={detail} client={client} lang={lang} blocked={writing || !!jobIntent || !!nodeIntent || !!intent} onChanged={()=>setRevision(v=>v+1)} />
+                </Drawer>
+                <Drawer
                   open={showNodeRegistration}
-                  intent={nodeIntent}
-                  result={registeredNode}
-                  onToggle={() => setShowNodeRegistration((v) => !v)}
-                  onSubmit={registerNode}
-                />
-                <section className="panel">
-                  <h3>{t.nodes}</h3>
+                  title={t.registerNode}
+                  hint={t.registrationHint}
+                  closeLabel={t.close}
+                  onClose={() => setShowNodeRegistration(false)}
+                >
+                  <NodeRegistrationPanel
+                    detail={detail}
+                    t={t}
+                    writing={writing}
+                    blocked={!!jobIntent || !!intent}
+                    intent={nodeIntent}
+                    result={registeredNode}
+                    onSubmit={registerNode}
+                  />
+                </Drawer>
+                <div hidden={tab !== "nodes"}>
                   {!detail.nodes.length ? (
                     <p className="muted">{t.noRecords}</p>
                   ) : (
@@ -1052,6 +1162,10 @@ export function ContainerClustersPage({
                                 detail.cluster.deleting ||
                                 !detail.cluster.bindingValid
                               }
+                              onRedeploy={() => {
+                                setEnrollFocus({ name: n.name, seq: Date.now() });
+                                setShowEnroll(true);
+                              }}
                               onScheduling={() => {
                                 if (client)
                                   void mutate((signal) =>
@@ -1069,9 +1183,8 @@ export function ContainerClustersPage({
                       </table>
                     </div>
                   )}
-                </section>
-                <section className="panel">
-                  <h3>{t.releases}</h3>
+                </div>
+                <div hidden={tab !== "releases"}>
                   <Table
                     empty={t.noRecords}
                     rows={detail.releases.map((r) => (
@@ -1096,9 +1209,8 @@ export function ContainerClustersPage({
                       </tr>
                     ))}
                   />
-                </section>
-                <section className="panel">
-                  <h3>{t.allocations}</h3>
+                </div>
+                <div hidden={tab !== "allocations"}>
                   <Table
                     empty={t.noRecords}
                     rows={detail.allocations.map((a) => (
@@ -1185,9 +1297,17 @@ export function ContainerClustersPage({
                       {logText.note && <small>{logText.note}</small>}
                     </div>
                   )}
-                </section>
-                <section className="panel">
-                  <h3>{t.upgrades}</h3>
+                </div>
+                <div hidden={tab !== "enrollments"}>
+                  <EnrollmentOperations
+                    detail={detail}
+                    client={client}
+                    lang={lang}
+                    blocked={writing || !!jobIntent || !!nodeIntent || !!intent}
+                    onChanged={() => setRevision((v) => v + 1)}
+                  />
+                </div>
+                <div hidden={tab !== "upgrades"}>
                   <Table
                     empty={t.noRecords}
                     rows={detail.upgrades.map((u) => (
@@ -1197,12 +1317,15 @@ export function ContainerClustersPage({
                           {u.nodeName} → {u.releaseName}
                         </td>
                         <td>
-                          {u.phase || "Pending"}
-                          <Conditions items={u.conditions} />
+                          <Conditions
+                            items={u.conditions}
+                            fallback={u.phase || "Pending"}
+                          />
                         </td>
                       </tr>
                     ))}
                   />
+                </div>
                 </section>
               </>
             )}
@@ -1219,6 +1342,7 @@ function NodeCard({
   t,
   disabled,
   onScheduling,
+  onRedeploy,
   expanded,
   onExpand,
 }: {
@@ -1228,6 +1352,7 @@ function NodeCard({
   t: typeof labels.en;
   disabled: boolean;
   onScheduling: () => void;
+  onRedeploy: () => void;
   expanded: boolean;
   onExpand: (open: boolean) => void;
 }) {
@@ -1316,7 +1441,14 @@ function NodeCard({
         <td>{n.agentVersion || "—"}</td>
         <td>{n.schedulable ? t.yes : t.no}</td>
         <td>{heartbeatAge(n.lastHeartbeatTime)}</td>
-        <td>
+        <td className="col-actions">
+          <button
+            type="button"
+            title={t.redeployHint}
+            onClick={onRedeploy}
+          >
+            {t.redeploy}
+          </button>
           <button
             type="button"
             disabled={
@@ -1361,28 +1493,112 @@ function NodeCard({
     </>
   );
 }
-function Conditions({ items }: { items: Detail["cluster"]["conditions"] }) {
+// Conditions render as labelled dots; reason, message and generation move
+// into the focusable tooltip so the table stays scannable.
+function Conditions({
+  items,
+  fallback,
+}: {
+  items: Detail["cluster"]["conditions"];
+  fallback?: string;
+}) {
+  const list = items ?? [];
+  if (!list.length && fallback)
+    return <StatusDot label={fallback} tone={phaseTone(fallback)} />;
   return (
     <div className="conditions">
-      {(items ?? []).map((c) => (
-        <p className="muted" key={c.type}>
-          <strong>
-            {c.type}: {c.status}
-          </strong>{" "}
-          · {c.reason} {c.message}{" "}
-          <small>generation {c.observedGeneration ?? "—"}</small>
-        </p>
+      {fallback && <StatusDot label={fallback} tone={phaseTone(fallback)} />}
+      {list.map((c) => (
+        <StatusDot
+          key={c.type}
+          label={c.type}
+          tone={c.status === "True" ? "good" : c.status === "False" ? "bad" : "neutral"}
+          detail={`${c.status} · ${c.reason || "—"}${c.message ? ` · ${c.message}` : ""} · generation ${c.observedGeneration ?? "—"}`}
+        />
       ))}
     </div>
   );
 }
-function Metric({ title, value }: { title: string; value: string }) {
+function OverviewCharts({
+  detail,
+  jobs,
+  t,
+}: {
+  detail: Detail;
+  jobs?: JobSummary[];
+  t: typeof labels.en;
+}) {
+  const ready = detail.nodes.filter((n) => nodeState(n) === "ready").length;
+  const held = detail.nodes.filter((n) => nodeState(n) === "held").length;
+  const reach = { Reachable: 0, Unreachable: 0, Unknown: 0 };
+  for (const n of detail.nodes) {
+    const s = probeState(nodeProbe(detail, n));
+    if (s === "Reachable") reach.Reachable++;
+    else if (s === "Unreachable") reach.Unreachable++;
+    else reach.Unknown++;
+  }
+  const jobCount = (phases: string[]) =>
+    (jobs ?? []).filter((j) => phases.includes(j.phase)).length;
+  const succeeded = jobCount(["Succeeded"]);
+  const failed = jobCount(["Failed", "Stopped"]);
+  const running = jobCount(["Running"]);
+  const otherJobs = (jobs?.length ?? 0) - succeeded - failed - running;
+  const last = detail.cluster.lastAgentUpgrade;
   return (
-    <div className="metric">
-      <span className="muted">{title}</span>
-      <strong>{value}</strong>
+    <div className="chart-strip">
+      <Donut
+        title={t.chartNodes}
+        center={`${ready}/${detail.nodes.length}`}
+        segments={[
+          { label: t.ready, value: ready, tone: "good" },
+          { label: t.held, value: held, tone: "info" },
+          { label: t.notReady, value: detail.nodes.length - ready - held, tone: "bad" },
+        ]}
+      />
+      <SegmentBar
+        title={t.chartReach}
+        center={`${reach.Reachable}/${detail.nodes.length}`}
+        segments={[
+          { label: t.reachable, value: reach.Reachable, tone: "good" },
+          { label: t.unreachable, value: reach.Unreachable, tone: "bad" },
+          { label: t.reachabilityUnknown, value: reach.Unknown, tone: "neutral" },
+        ]}
+      />
+      <Donut
+        title={t.chartJobs}
+        center={`${jobs?.length ?? 0}`}
+        segments={[
+          { label: t.succeeded, value: succeeded, tone: "good" },
+          { label: t.failed, value: failed, tone: "bad" },
+          { label: t.running, value: running, tone: "info" },
+          { label: t.other, value: otherJobs, tone: "neutral" },
+        ]}
+      />
+      <figure className="chart-card">
+        <figcaption>
+          {t.chartRollout}
+          <strong className="chart-headline">
+            {detail.cluster.targetAgentRelease || t.noTarget}
+          </strong>
+        </figcaption>
+        <Conditions items={detail.cluster.conditions} />
+        {last && (
+          <p className="muted chart-foot" title={last.completedAt}>
+            {t.rollout}: {last.nodeRecord.name} → {last.release.name}
+          </p>
+        )}
+      </figure>
     </div>
   );
+}
+function clusterTone(state: ReturnType<typeof clusterState>): Tone {
+  return state === "ready" ? "good" : state === "degraded" ? "warn" : "bad";
+}
+function phaseTone(phase: string): Tone {
+  if (["Succeeded", "Completed", "Ready"].includes(phase)) return "good";
+  if (["Failed", "Stopped", "Cancelled"].includes(phase)) return "bad";
+  if (["Running", "Applying", "Active"].includes(phase)) return "info";
+  return "neutral";
 }
 function Table({ rows, empty }: { rows: ReactNode[]; empty: string }) {
   return rows.length ? (
