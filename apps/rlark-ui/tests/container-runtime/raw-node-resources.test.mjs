@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { rawResourceState } from "../dist/test/utils/rawNodeResources.js";
-import { getNodeResourceSummary } from "../dist/test/utils/nodeResources.js";
-import { nativeResourceNode } from "../dist/test/admin/container-runtime/api.js";
+import { rawResourceState } from "../../dist/test/admin/container-runtime/rawNodeResources.js";
+import { getNodeResourceSummary } from "../../dist/test/utils/nodeResources.js";
+import { nativeResourceNode } from "../../dist/test/admin/container-runtime/api.js";
 
 function node(now = Date.now()) {
   return {

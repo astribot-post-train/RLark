@@ -188,7 +188,6 @@ export interface CRDNode {
   kind: string;
   metadata: {
     name: string;
-    generation?: number;
     namespace?: string;
     labels?: Record<string, string>;
     annotations?: Record<string, string>;
@@ -199,19 +198,11 @@ export interface CRDNode {
     unschedulable?: boolean;
   };
   status?: {
-    conditions?: Array<{
-      type: string;
-      status: string;
-      reason?: string;
-      message?: string;
-      observedGeneration?: number;
-    }>;
     phase?: string;
     reason?: string;
     lastHeartbeatTime?: string;
     lastStatusChangeTime?: string;
     nodeInfo?: {
-      incarnation?: string;
       architecture?: string;
       kernelVersion?: string;
       agentVersion?: string;

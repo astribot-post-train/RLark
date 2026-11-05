@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { Client } from "../dist/test/admin/container-runtime/api.js";
+import { Client } from "../../dist/test/admin/container-runtime/api.js";
 import {
   activeEnrollments,
   enrollmentIntent,
@@ -8,7 +8,7 @@ import {
   nodeProbe,
   parseRetainedEnrollment,
   probeState,
-} from "../dist/test/admin/container-runtime/enrollment.js";
+} from "../../dist/test/admin/container-runtime/enrollment.js";
 
 test("active enrollment count excludes terminal and cancelling operations", () => {
   const op = (phase, cancelRequested = false) => ({ phase, cancelRequested });

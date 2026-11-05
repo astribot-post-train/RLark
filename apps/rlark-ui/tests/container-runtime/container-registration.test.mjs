@@ -7,8 +7,8 @@ globalThis.sessionStorage = {
 globalThis.window = { dispatchEvent: () => {} };
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { APIError, Client } from "../dist/test/admin/container-runtime/api.js";
-import { nodeRegistrationIntent } from "../dist/test/admin/container-runtime/models.js";
+import { APIError, Client } from "../../dist/test/admin/container-runtime/api.js";
+import { nodeRegistrationIntent } from "../../dist/test/admin/container-runtime/models.js";
 
 const fields = {
   name: "gpu-2",

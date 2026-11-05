@@ -7,7 +7,7 @@ globalThis.sessionStorage = {
 globalThis.window = { dispatchEvent: () => {} };
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { Client, APIError } from "../dist/test/admin/container-runtime/api.js";
+import { Client, APIError } from "../../dist/test/admin/container-runtime/api.js";
 import {
   LoadGate,
   nodeState,
@@ -16,7 +16,7 @@ import {
   clusterState,
   logText,
   clusterIntentFromForm,
-} from "../dist/test/admin/container-runtime/models.js";
+} from "../../dist/test/admin/container-runtime/models.js";
 
 test("cluster form preserves each runtime and refuses an unknown runtime", async () => {
   const fields = {
@@ -343,7 +343,7 @@ test("Docker stats reads preserve exact identity, cancellation and canonical uin
 
 test("diagnostic scope changes on allocation replacement, cleanup and capability revocation", async () => {
   const { canReadDiagnostic, diagnosticInventory } =
-    await import("../dist/test/admin/container-runtime/models.js");
+    await import("../../dist/test/admin/container-runtime/models.js");
   const allocation = {
     uid: "allocation",
     taskUID: "task",

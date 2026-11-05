@@ -9,9 +9,9 @@ import {
   Server,
   Download,
 } from "lucide-react";
-import type { Phase } from "../data";
-import type { Copy } from "../i18n";
-import type { CRDNode } from "../types";
+import type { Phase } from "../../data";
+import type { Copy } from "../../i18n";
+import type { CRDNode } from "../../types";
 import {
   categoryLabels,
   formatResourceQuantity,
@@ -24,10 +24,10 @@ import {
   getResourceUsagePercent,
   nodeStatusReasonLabel,
   parseResourceQuantity,
-} from "../utils/nodes";
-import { rawResourceState } from "../utils/rawNodeResources";
-import { StatusBadge } from "./shared";
-import { formatChinaDateTime } from "../utils/time";
+} from "../../utils/nodes";
+import { rawResourceState } from "./rawNodeResources";
+import { StatusBadge } from "../../components/shared";
+import { formatChinaDateTime } from "../../utils/time";
 
 // formatBytes converts a byte count into a human-readable string (B/KB/MB/GB).
 function formatBytes(bytes: number): string {
@@ -41,7 +41,10 @@ function formatBytes(bytes: number): string {
   return bytes + "B";
 }
 
-export function NodeOverview({
+// Node card for Raw nodes on the shared Nodes page. Clusters.tsx renders this
+// instead of its own card when node.spec.agentType is "Raw"; Kubernetes nodes
+// keep the upstream card unchanged.
+export function RawNodeDetail({
   node,
   copy: c,
   requestedFallback = {},

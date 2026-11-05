@@ -7,8 +7,8 @@ globalThis.sessionStorage = {
 globalThis.window = { dispatchEvent: () => {} };
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { Client, APIError } from "../dist/test/admin/container-runtime/api.js";
-import { rawJobIntent } from "../dist/test/admin/container-runtime/models.js";
+import { Client, APIError } from "../../dist/test/admin/container-runtime/api.js";
+import { rawJobIntent } from "../../dist/test/admin/container-runtime/models.js";
 
 const summary = {
   name: "raw-operation",

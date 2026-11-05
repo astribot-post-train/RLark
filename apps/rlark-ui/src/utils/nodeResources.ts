@@ -1,4 +1,4 @@
-import { rawResourceState } from "./rawNodeResources.js";
+import { rawResourceState } from "../admin/container-runtime/rawNodeResources.js";
 import type { CRDNode } from "../types";
 
 export type NodeResourceLine = {

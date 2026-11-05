@@ -1,4 +1,14 @@
 import type { CRDNode } from "../../types";
+
+// Raw/Docker-only Node fields stay local to the extension so the shared
+// CRDNode type in src/types.ts matches upstream.
+type NativeNodeInfo = NonNullable<NonNullable<CRDNode["status"]>["nodeInfo"]> & {
+  incarnation?: string;
+};
+export type RawCRDNode = CRDNode & {
+  metadata: CRDNode["metadata"] & { generation?: number };
+  status?: NonNullable<CRDNode["status"]> & { conditions?: Condition[] };
+};
 import { requestJson, ApiError as SharedApiError } from "../../api.js";
 export type Condition = {
   type: string;
@@ -40,7 +50,7 @@ export type NativeResources = {
   capacity: Record<string, string> | null;
   allocatable: Record<string, string> | null;
   used: Record<string, string> | null;
-  nodeInfo: NonNullable<CRDNode["status"]>["nodeInfo"];
+  nodeInfo: NativeNodeInfo | undefined;
   addresses: Array<{ type: string; address: string }> | null;
   conditions: Condition[] | null;
 };
@@ -340,7 +350,7 @@ function nativeResources(value: unknown): boolean {
 export function nativeResourceNode(
   node: Node,
   runtime: "Raw" | "Docker",
-): CRDNode | undefined {
+): RawCRDNode | undefined {
   const r = node.resources;
   if (!r) return undefined;
   return {

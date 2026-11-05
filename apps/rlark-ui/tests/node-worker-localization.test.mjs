@@ -16,19 +16,9 @@ test("maps node status reasons to localized labels", async () => {
 });
 
 test("renders node status reasons through the localized label", async () => {
-  // The node card moved out of Clusters.tsx into the shared NodeOverview.
-  const nodeOverview = await read("../src/components/NodeOverview.tsx");
-  assert.match(
-    nodeOverview,
-    /nodeStatusReasonLabel\(node\.status\??\.reason, zh\)/,
-  );
-  for (const source of [
-    nodeOverview,
-    await read("../src/pages/Clusters.tsx"),
-  ]) {
-    assert.doesNotMatch(source, /\{node\.status\??\.reason\}/);
-    assert.doesNotMatch(source, /: node\.status\??\.reason\}/);
-  }
+  const clusters = await read("../src/pages/Clusters.tsx");
+  assert.match(clusters, /nodeStatusReasonLabel\(node\.status\.reason, zh\)/);
+  assert.doesNotMatch(clusters, /\{node\.status\.reason\}/);
 
   const overview = await read("../src/pages/Overview.tsx");
   assert.match(overview, /nodeStatusReasonLabel\(n\.status\?\.reason, isZh\)/);
