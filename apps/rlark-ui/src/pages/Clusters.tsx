@@ -58,6 +58,7 @@ import {
 } from "../components/shared";
 import { NodeResourceBrowser } from "../components/NodeResourceBrowser";
 import { formatChinaDateTime } from "../utils/time";
+import { RawNodeDetail } from "../admin/container-runtime/RawNodeDetail";
 
 type NodeWorker = {
   id: string;
@@ -576,15 +577,24 @@ export function ClusterDetailReal({
   );
 }
 
-export function NodeDetailReal({
-  node,
-  copy: c,
-  onTaskNavigate,
-}: {
+type NodeDetailProps = {
   node: CRDNode;
   copy: Copy;
   onTaskNavigate?: (name: string) => void;
-}) {
+};
+
+// Extension hook: Raw nodes render the container-runtime card.
+export function NodeDetailReal(props: NodeDetailProps) {
+  if (props.node.spec.agentType === "Raw")
+    return <RawNodeDetail node={props.node} copy={props.copy} />;
+  return <KubernetesNodeDetail {...props} />;
+}
+
+function KubernetesNodeDetail({
+  node,
+  copy: c,
+  onTaskNavigate,
+}: NodeDetailProps) {
   const zh = c.nav.overview === "总览";
   const [nodeWorkers, setNodeWorkers] = useState<NodeWorker[]>([]);
   useAutoRefresh(

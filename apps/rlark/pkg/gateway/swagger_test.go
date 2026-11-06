@@ -44,7 +44,9 @@ func TestSwaggerOperationsAreRegisteredRoutes(t *testing.T) {
 			if _, ok := registered[method+" "+path]; !ok {
 				t.Errorf("OpenAPI operation is not registered by Gateway.RegisterRoutes: %s %s", method, path)
 			}
-			if _, ok := operation.Responses["401"]; ok {
+			// API routes now use requireJWT; only the public metrics listener
+			// cannot return the Gateway's authentication response.
+			if _, ok := operation.Responses["401"]; ok && path == "/metrics" {
 				t.Errorf("OpenAPI operation declares unsupported 401 response: %s %s", method, path)
 			}
 		}
@@ -97,24 +99,38 @@ func registeredRoutes(t *testing.T) map[string]struct{} {
 // Do not add entries without documenting why. Removing entries by documenting
 // the route in docs/api/swagger.yaml is the intended direction of travel.
 var routesUndocumentedInSwagger = map[string]struct{}{
-	"POST /api/v1/auth/login":                           {},
-	"GET /api/v1/api-reference":                         {},
-	"GET /api/v1/users/me":                              {},
-	"GET /api/v1/users/{id}":                            {},
-	"GET /api/v1/users":                                 {},
-	"GET /api/v1/tenants":                               {},
-	"GET /api/v1/tenants/{id}":                          {},
-	"GET /api/v1/rlinf.io/v1alpha1/workflows":           {},
-	"POST /api/v1/rlinf.io/v1alpha1/workflows":          {},
-	"GET /api/v1/rlinf.io/v1alpha1/workflows/{name}":    {},
-	"PUT /api/v1/rlinf.io/v1alpha1/workflows/{name}":    {},
-	"PATCH /api/v1/rlinf.io/v1alpha1/workflows/{name}":  {},
-	"DELETE /api/v1/rlinf.io/v1alpha1/workflows/{name}": {},
-	"GET /api/v1/rlinf.io/v1alpha1/jobs/tags":           {},
-	"GET /api/v1/rlinf.io/v1alpha1/pods":                {},
-	"GET /api/v1/rlinf.io/v1alpha1/pods/{name}":         {},
-	"PATCH /api/v1/rlinf.io/v1alpha1/pods/{name}":       {},
-	"GET /api/v1/rlinf.io/v1alpha1/pods/{name}/events":  {},
+	// Preview container-runtime routes return unavailable unless explicitly enabled;
+	// their typed contract is documented with the extension deployment guide.
+	"GET /api/v1/container-runtime/clusters":                                         {},
+	"POST /api/v1/container-runtime/clusters":                                        {},
+	"GET /api/v1/container-runtime/clusters/{namespace}/{name}":                      {},
+	"PATCH /api/v1/container-runtime/clusters/{namespace}/{name}":                    {},
+	"POST /api/v1/container-runtime/clusters/{namespace}/{name}/start":               {},
+	"POST /api/v1/container-runtime/clusters/{namespace}/{name}/nodes":               {},
+	"PATCH /api/v1/container-runtime/clusters/{namespace}/{name}/nodes/{node}":       {},
+	"GET /api/v1/container-runtime/clusters/{namespace}/{name}/jobs":                 {},
+	"POST /api/v1/container-runtime/clusters/{namespace}/{name}/jobs":                {},
+	"PATCH /api/v1/container-runtime/clusters/{namespace}/{name}/jobs/{job}/suspend": {},
+	"GET /api/v1/container-runtime/logs":                                             {},
+	"GET /api/v1/container-runtime/stats":                                            {},
+	"POST /api/v1/auth/login":                                                        {},
+	"GET /api/v1/api-reference":                                                      {},
+	"GET /api/v1/users/me":                                                           {},
+	"GET /api/v1/users/{id}":                                                         {},
+	"GET /api/v1/users":                                                              {},
+	"GET /api/v1/tenants":                                                            {},
+	"GET /api/v1/tenants/{id}":                                                       {},
+	"GET /api/v1/rlinf.io/v1alpha1/workflows":                                        {},
+	"POST /api/v1/rlinf.io/v1alpha1/workflows":                                       {},
+	"GET /api/v1/rlinf.io/v1alpha1/workflows/{name}":                                 {},
+	"PUT /api/v1/rlinf.io/v1alpha1/workflows/{name}":                                 {},
+	"PATCH /api/v1/rlinf.io/v1alpha1/workflows/{name}":                               {},
+	"DELETE /api/v1/rlinf.io/v1alpha1/workflows/{name}":                              {},
+	"GET /api/v1/rlinf.io/v1alpha1/jobs/tags":                                        {},
+	"GET /api/v1/rlinf.io/v1alpha1/pods":                                             {},
+	"GET /api/v1/rlinf.io/v1alpha1/pods/{name}":                                      {},
+	"PATCH /api/v1/rlinf.io/v1alpha1/pods/{name}":                                    {},
+	"GET /api/v1/rlinf.io/v1alpha1/pods/{name}/events":                               {},
 	// Websocket upgrade, not expressible as an OpenAPI 3.0 operation.
 	"GET /api/v1/rlinf.io/v1alpha1/pods/{name}/terminal": {},
 	"GET /api/v1/rlinf.io/v1alpha1/domains":              {},

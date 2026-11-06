@@ -1,3 +1,4 @@
+import { rawResourceState } from "../admin/container-runtime/rawNodeResources.js";
 import type { CRDNode } from "../types";
 
 export type NodeResourceLine = {
@@ -206,7 +207,16 @@ export function getNodeResourceSummary(
       metadataValue(node, "rlark.io/gpu-model") ||
       metadataValue(node, "rlark.io/model") ||
       (zh ? "未标注" : "Unlabeled");
-    const amount = `${formatResourceNumber(available)} / ${formatResourceNumber(gpuTotal)} GPU`;
+    const rawState = rawResourceState(node);
+    const free =
+      node.spec.agentType === "Raw"
+        ? !rawState.current || used[gpuKey] === undefined
+          ? "—"
+          : rawState.schedulable
+            ? formatResourceNumber(available)
+            : "0"
+        : formatResourceNumber(available);
+    const amount = `${free} / ${formatResourceNumber(gpuTotal)} GPU`;
     lines.push({
       key: gpuKey,
       kind: "gpu",

@@ -35,6 +35,8 @@ import {
   UNAUTHORIZED_EVENT,
 } from "../api";
 import { authApi } from "../backend";
+import { ContainerRuntimeRoute } from "./container-runtime";
+import { containerRuntimePage } from "./container-runtime/routes";
 
 export function AdminLogin({
   lang,
@@ -400,6 +402,9 @@ export function AdminApp() {
             onSelectNode={(name: string) => navigate("clusters-nodes", name)}
             adminMode
           />
+        )}
+        {adminPage === containerRuntimePage && (
+          <ContainerRuntimeRoute lang={lang} sub={adminSub} setSub={setAdminSub} />
         )}
         {adminPage === "jobs" && (
           <JobsPage

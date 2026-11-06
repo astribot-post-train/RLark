@@ -55,10 +55,11 @@ type Gateway struct {
 	imagesMu sync.RWMutex
 	images   map[string]imageUsage
 
-	serverTransport *http.Transport
-	jwtSigningKey   []byte
-	users           userProvider
-	tenants         tenant.Provider
+	serverTransport  *http.Transport
+	jwtSigningKey    []byte
+	users            userProvider
+	tenants          tenant.Provider
+	containerRuntime http.Handler
 }
 
 func (g *Gateway) managementNamespace() string {
@@ -113,6 +114,9 @@ func (g *Gateway) init(ctx context.Context) error {
 	g.users = secretUserProvider{client: g.rawClient, namespace: g.managementNamespace()}
 	if err := g.loadJWTSigningKey(ctx); err != nil {
 		return fmt.Errorf("load JWT signing key: %w", err)
+	}
+	if err := g.initContainerRuntime(restConfig); err != nil {
+		return fmt.Errorf("initialize container runtime extension: %w", err)
 	}
 
 	// init pod informer/lister for cached Pod lookups (used by the

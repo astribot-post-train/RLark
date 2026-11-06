@@ -1,6 +1,8 @@
 go 1.26.5
 
 use (
+	./extensions/container-runtime
+	./extensions/container-runtime/core
 	./api
 	./apps/embodied-runtime
 	./apps/rlark

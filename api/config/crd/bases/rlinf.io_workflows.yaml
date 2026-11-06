@@ -123,6 +123,73 @@ spec:
                                 description: TaskPlacementSpec describes scheduling
                                   constraints for the workload.
                                 properties:
+                                  binding:
+                                    description: |-
+                                      Binding is a controller-owned, UID-fenced Raw execution assignment.
+                                      It does not authorize execution without a matching Node reservation.
+                                    properties:
+                                      allocationID:
+                                        type: string
+                                      clusterUID:
+                                        type: string
+                                      executionID:
+                                        type: string
+                                      groupDigest:
+                                        type: string
+                                      incarnation:
+                                        type: string
+                                      jobUID:
+                                        type: string
+                                      nodeName:
+                                        type: string
+                                      nodeUID:
+                                        type: string
+                                      taskUID:
+                                        type: string
+                                    required:
+                                    - allocationID
+                                    - clusterUID
+                                    - executionID
+                                    - groupDigest
+                                    - incarnation
+                                    - jobUID
+                                    - nodeName
+                                    - nodeUID
+                                    type: object
+                                  dockerBinding:
+                                    description: |-
+                                      DockerBinding is a controller-owned, UID-fenced Docker execution assignment.
+                                      It is intentionally separate from the Raw contract so the two runtimes
+                                      cannot accidentally consume each other's reservations.
+                                    properties:
+                                      allocationID:
+                                        type: string
+                                      clusterUID:
+                                        type: string
+                                      incarnation:
+                                        type: string
+                                      jobUID:
+                                        type: string
+                                      nodeName:
+                                        type: string
+                                      nodeUID:
+                                        type: string
+                                      taskUID:
+                                        type: string
+                                    required:
+                                    - allocationID
+                                    - clusterUID
+                                    - incarnation
+                                    - jobUID
+                                    - nodeName
+                                    - nodeUID
+                                    type: object
+                                  environment:
+                                    description: |-
+                                      Environment selects the observed Raw node environment/profile. It is
+                                      required for Raw Tasks so a placement cannot silently cross image or
+                                      dependency boundaries.
+                                    type: string
                                   nodeSelector:
                                     additionalProperties:
                                       type: string

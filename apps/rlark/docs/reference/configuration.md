@@ -87,6 +87,10 @@ API gateway. Handles all REST API requests including cluster management, job man
 | `--kube-qps` | float32 | `5000` | Kubernetes client QPS |
 | `--kube-burst` | int | `8000` | Kubernetes client burst |
 | `--kube-timeout` | duration | `0` | Kubernetes client request timeout |
+| `--enable-container-runtime` | bool | `false` | Enable preview Container Clusters management; requires extension CRDs and additive RBAC |
+| `--container-runtime-enable-node-registration` | bool | `false` | Enable administrator node registration; requires additive registration RBAC |
+| `--container-runtime-enable-job-submission` | bool | `false` | Enable single-process Raw Job submission; requires additive Job RBAC |
+| `--container-runtime-diagnostics-origin` | string | `""` | Optional literal-loopback HTTP origin for bounded logs/stats proxying |
 
 **Example:**
 
@@ -96,6 +100,8 @@ rlark-gateway \
   --db-config=/etc/rlark/db-config.yaml \
   --server-address=https://rlark-server:8443
 ```
+
+The preview Container Clusters page is part of the main RLark UI and uses the same Gateway session. See [Container runtime management console](../developer-guide/container-runtime-console.md) for additive RBAC, enablement order and module boundaries.
 
 ## rlark-controller-manager
 
@@ -154,6 +160,7 @@ Data plane agent. Deployed on each cluster or node. Manages node registration, T
 | `--ca-cert` | string | `""` | CA certificate path |
 | `--insecure-skip-tls-verify` | bool | `false` | Skip TLS certificate verification |
 | `--agent-type` | string | `Kubernetes` | Agent type: Kubernetes, Docker, Raw |
+| `--raw-supervisor-socket` | string | unset | Private Unix socket for the independent Raw supervisor; required for `Raw` agents |
 | `--mode` | string | `cluster` | Agent mode: cluster, node, both |
 | `--leader-election` | bool | `false` | Enable agent leader election |
 | `--leader-election-key` | string | `default/rlark-agent` | Leader election key (namespace/name) |
@@ -298,12 +305,12 @@ These names are the exact YAML keys accepted by `rlarkadm`.
 | `db` | DBConfig | unset | Database configuration; enables PostgreSQL components in `rlarkadm` deployments |
 | `kubernetes` | KubernetesEnv | unset | Kubernetes deployment environment |
 | `docker` | DockerEnv | unset | Docker deployment environment |
-| `raw` | RawEnv | unset | Raw deployment environment |
+| `raw` | RawEnv | unset | Raw deployment environment; experimental single-node process path only |
 | `cert` | CertConfig | unset | Certificate configuration; required for the data plane |
 | `insecure-skip-tls-verify` | bool | `false` | Skip Server TLS verification |
 
 !!! warning "Runtime support"
-    The configuration schema retains `kubernetes`, `docker`, and `raw`, but the current supported workload path is Kubernetes only. Do not use Docker or Raw for current deployments; they are not recommended or supported workload paths. For a Kubernetes data plane, also provide `control-plane-address` and `cert`.
+    The configuration schema retains `kubernetes`, `docker`, and `raw`. Docker is a preview data-plane Agent path for Ray/RLinf v1 and requires the host Docker socket, root privileges, and private host networking. Raw requires the explicit Agent flags and administrator-provisioned Node/certificate contract documented in the Raw runtime plan; it is experimental and single-node only. For a Kubernetes data plane, also provide `control-plane-address` and `cert`.
 
 ### DBConfig
 
@@ -341,10 +348,28 @@ These names are the exact YAML keys accepted by `rlarkadm`.
 !!! tip "Image priority"
     A component-specific image such as `gateway-image` takes priority over `image`.
 
+The independently built companion Agent has separate flags: `--runtime=docker`,
+`--docker-host`, `--enable-task-execution` (default false), and `--state-directory`
+(required for execution). It uses the extension API and supports one immutable
+container Task with bounded on-demand logs/stats, not Ray groups. See [Docker Agent](../developer-guide/docker-agent-observation.md).
+
+
+Container diagnostics use these independent-extension settings (defaults are disabled):
+
+| Component | Setting | Contract |
+| --- | --- | --- |
+| Docker Agent | `--enable-docker-diagnostics=true` | Requires task execution and private persistent journal; advertises `docker-diagnostics-v1` |
+| Offline package | `enableDockerDiagnostics: true` | Docker-only; also set `enableExecution: true`; `enableLogReads` remains Raw-only |
+| API | `--log-read-addr=127.0.0.1:9446` | Literal loopback HTTP listener for administrator logs and stats; requires `--enable-task-execution` and `--gateway-jwt-key-file` |
+| RLark Gateway | `--container-runtime-diagnostics-origin=http://127.0.0.1:9446` | Fixed logs/stats proxy to the same API instance used by Agent polling |
+
+These are preview settings, not native Agent/rlarkadm fields. Diagnostics are
+transient reads; they do not add historical logs or a metrics database.
+
 ### DockerEnv
 
-!!! warning "Not currently supported"
-    These fields remain in the schema for compatibility, but Docker is not a supported workload path and is not recommended for deployment.
+!!! warning "Preview"
+    These fields configure the control-plane deployment environment. Docker workload Agents additionally require `--docker-host` and `--docker-node-ip`; no Docker-in-Docker setup is supported.
 
 | Field | Type | Description |
 | ------- | ------ | ------------- |
@@ -361,7 +386,7 @@ These names are the exact YAML keys accepted by `rlarkadm`.
 ### RawEnv
 
 !!! warning "Not currently supported"
-    These fields remain in the schema for compatibility, but Raw is not a supported workload path and is not recommended for deployment. Use Kubernetes.
+    These fields remain in the schema for compatibility. Raw deployment requires the explicit `raw-*` Agent flags and an independently managed supervisor; this section is not a Docker configuration or container creation interface.
 
 | Field | Type | Description |
 | ------- | ------ | ------------- |

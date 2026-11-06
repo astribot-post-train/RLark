@@ -4,17 +4,18 @@ package tenant
 import (
 	"context"
 	"fmt"
+	identity "github.com/rlinf/rlark/api/metadata"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 const (
 	// DefaultID is assigned logically to resources created before tenant metadata existed.
-	DefaultID = "default"
+	DefaultID = identity.DefaultID
 	// DefaultNamespace preserves the historical data-plane workload namespace.
 	DefaultNamespace = "rlark-system"
 
-	IDLabel             = "rlark.io/tenant-id"
+	IDLabel             = identity.IDLabel
 	CreatedByAnnotation = "rlark.io/created-by"
 )
 
@@ -67,12 +68,7 @@ func (p StaticProvider) ResolveNamespace(ctx context.Context, tenantID, clusterI
 }
 
 // IDOf returns the explicit tenant label or the backwards-compatible default.
-func IDOf(object metav1.Object) string {
-	if object != nil && object.GetLabels()[IDLabel] != "" {
-		return object.GetLabels()[IDLabel]
-	}
-	return DefaultID
-}
+func IDOf(object metav1.Object) string { return identity.IDOf(object) }
 
 // SetIdentity writes normalized tenant and creator metadata to an object.
 func SetIdentity(object metav1.Object, tenantID, createdBy string) {

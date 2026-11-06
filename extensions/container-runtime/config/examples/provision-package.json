@@ -1,0 +1,27 @@
+{
+  "node": {
+    "namespace": "ksyun-container-agents",
+    "name": "ksyun-test-1",
+    "uid": "REPLACE_WITH_CONTAINER_NODE_UID",
+    "tenantID": "team-a",
+    "credentialID": "530dbb60-13d0-4a2e-af70-d40bffb80f20"
+  },
+  "endpoint": "https://container-api.example.internal:9444",
+  "agentCA": "/private/issuer/agent-ca.crt",
+  "agentCAKey": "/private/issuer/agent-ca.key",
+  "serverCA": "/private/issuer/api-server-ca.crt",
+  "agentBinary": "/workspace/RLark/extensions/container-runtime/bin/container-runtime-agent",
+  "supervisorBinary": "/workspace/RLark/extensions/container-runtime/bin/raw-supervisor",
+  "version": "preview-v1",
+  "architecture": "amd64",
+  "validityHours": 24,
+  "outputDirectory": "/private/export/ksyun-test-1",
+  "installDirectory": "/opt/rlark-container",
+  "stateDirectory": "/var/lib/rlark-supervisor",
+  "executables": ["/opt/conda/bin/python3.11"],
+  "workDirectories": ["/workspace/training"],
+  "logBytes": 10485760,
+  "enableExecution": false,
+  "enableLogReads": false,
+  "enableUpgrades": false
+}

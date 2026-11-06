@@ -66,6 +66,13 @@ type StatusWriter interface {
 	WriteStatus(context.Context, *rlarkv1alpha1.Task, StatusIntent) error
 }
 
+// TaskClient is the metadata boundary used by Host. A node-scoped transport
+// need not implement discovery, lists, arbitrary resources or status access.
+type TaskClient interface {
+	Get(context.Context, client.ObjectKey, client.Object, ...client.GetOption) error
+	Patch(context.Context, client.Object, client.Patch, ...client.PatchOption) error
+}
+
 // KubernetesStatusWriter patches only the compatibility status fields owned by
 // the Task Host and fences stale Task incarnations and generations.
 type KubernetesStatusWriter struct {
@@ -117,17 +124,18 @@ func (w KubernetesStatusWriter) WriteStatus(ctx context.Context, task *rlarkv1al
 	if reflect.DeepEqual(task.Status, desired.Status) {
 		return nil
 	}
-	if err := w.Client.Status().Patch(ctx, desired, client.MergeFrom(task)); err != nil {
+	if err := w.Client.Status().Patch(ctx, desired, client.MergeFromWithOptions(task, client.MergeFromWithOptimisticLock{})); err != nil {
 		return fmt.Errorf("patch Task status: %w", err)
 	}
 	task.Status = desired.Status
+	task.ResourceVersion = desired.ResourceVersion
 	return nil
 }
 
 // Host owns Task claim, finalizer, lifecycle dispatch, and Status. Runtime
 // objects are mutated only through Executor.
 type Host struct {
-	Tasks       client.Client
+	Tasks       TaskClient
 	Bundle      Bundle
 	Eligibility Eligibility
 	Status      StatusWriter
@@ -153,8 +161,19 @@ func (h *Host) Validate() error {
 		return errors.New("task claimant identity is required")
 	}
 	parts := strings.Split(h.Claimant, "/")
-	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
-		return errors.New("task claimant identity must be namespace/runtime-kind")
+	if len(parts) != 2 && len(parts) != 3 {
+		return errors.New("task claimant identity must be namespace/runtime-kind[/node-uid]")
+	}
+	for _, part := range parts {
+		if part == "" {
+			return errors.New("task claimant identity contains an empty component")
+		}
+	}
+	if (parts[1] == "Raw" || parts[1] == "Docker") && len(parts) != 3 {
+		return errors.New("node-scoped task claimant requires a node UID")
+	}
+	if len(parts) == 3 && parts[1] != "Raw" && parts[1] != "Docker" {
+		return errors.New("node-scoped task claimants are supported only for Raw or Docker")
 	}
 	return nil
 }
@@ -181,6 +200,9 @@ func (h *Host) ShouldReconcile(task *rlarkv1alpha1.Task) bool {
 	}
 	// A claimant-less legacy finalizer can be adopted only when deletion
 	// requires cleanup or this Host can safely realize the current Task.
+	if strings.Contains(h.Claimant, "/Raw/") {
+		return false
+	}
 	return task.DeletionTimestamp != nil ||
 		(h.Eligibility.Matches(task) && h.Eligibility.ValidationMessage(task) == "")
 }
@@ -218,7 +240,7 @@ func (h *Host) Reconcile(ctx context.Context, key types.NamespacedName) (result 
 
 	// Adopt an unambiguous legacy finalizer only for deletion or when this Host
 	// can realize the Task. Other claimant-less Tasks remain untouched.
-	if claimantMissing && (task.DeletionTimestamp != nil || canRealize) {
+	if claimantMissing && !strings.Contains(h.Claimant, "/Raw/") && (task.DeletionTimestamp != nil || canRealize) {
 		var selector coordination.WorkloadSelector
 		var carrier coordination.CarrierSelector
 		if snapshot, err := h.decodeRegisteredTask(&task); err == nil {
@@ -734,7 +756,7 @@ func (h *Host) isClaimant(task *rlarkv1alpha1.Task) bool {
 	}
 	parts := strings.Split(claimant, "/")
 	want := strings.Split(h.Claimant, "/")
-	return len(parts) == 3 && len(want) == 2 && parts[0] == want[0] && parts[1] == want[1]
+	return len(parts) == 3 && len(want) == 2 && want[1] != "Raw" && parts[0] == want[0] && parts[1] == want[1]
 }
 
 func claimedWorkloadSelector(task *rlarkv1alpha1.Task) coordination.WorkloadSelector {

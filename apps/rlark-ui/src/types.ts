@@ -141,6 +141,7 @@ export interface CRDNodeLite {
     annotations?: Record<string, string>;
   };
   spec?: {
+    agentType?: string;
     unschedulable?: boolean;
   };
   status?: {

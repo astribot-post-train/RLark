@@ -1,11 +1,13 @@
 import { useEffect, useState } from "react";
 import type { Page } from "../types";
+import { containerRuntimePages } from "../admin/container-runtime/routes.js";
 
 export type AdminRoute = { page: string; sub: string };
 
 const adminPages = new Set([
   "dashboard",
   "clusters-list",
+  ...containerRuntimePages,
   "create-cluster",
   "clusters-nodes",
   "addons",

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -14,6 +15,7 @@ import (
 	"github.com/rlinf/rlark/apps/rlark/pkg/auth/cert"
 	"github.com/rlinf/rlark/apps/rlark/pkg/db"
 	"github.com/rlinf/rlark/apps/rlark/pkg/log"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 )
 
 // Constants used by the package.
@@ -33,10 +35,11 @@ func GetCertMetaFromContext(ctx *gin.Context) map[string]string {
 
 // SignRequest represents a request.
 type SignRequest struct {
-	Role     string `json:"role"`                // 证书角色，例如 "agent" 等
-	ClientID string `json:"client_id,omitempty"` // 可选的客户端 ID
-	DomainID string `json:"domain_id,omitempty"` // 可选的域 ID
-	KeyID    string `json:"key_id,omitempty"`    // 可选的密钥 ID
+	Role     string              `json:"role"`                // 证书角色，例如 "agent" 等
+	ClientID string              `json:"client_id,omitempty"` // 可选的客户端 ID
+	DomainID string              `json:"domain_id,omitempty"` // 可选的域 ID
+	KeyID    string              `json:"key_id,omitempty"`    // 可选的密钥 ID
+	RawNode  *RawNodeSignRequest `json:"raw_node,omitempty"`
 }
 
 // SignResponse represents a response.
@@ -127,8 +130,24 @@ func (s *Server) handleSignCertificate(ctx *gin.Context) {
 		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
 		return
 	}
-	signType, meta, err := s.parseSignRequest(&req)
+	var signType string
+	var meta map[string]string
+	var err error
+	if req.Role == "raw-node" {
+		signType = "x509"
+		meta, err = s.prepareRawNodeCertificate(ctx.Request.Context(), req.RawNode)
+	} else {
+		signType, meta, err = s.parseSignRequest(&req)
+	}
 	if err != nil {
+		if req.Role == "raw-node" {
+			if apierrors.IsConflict(err) {
+				ctx.JSON(http.StatusConflict, gin.H{"error": "Raw node enrollment precondition changed"})
+			} else {
+				ctx.JSON(http.StatusBadRequest, gin.H{"error": "Raw node enrollment rejected or unavailable"})
+			}
+			return
+		}
 		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -168,7 +187,7 @@ func (s *Server) checkCertRevoked(ctx context.Context, certType, serialNumber, s
 
 func (s *Server) handleCertCheck(ctx *gin.Context) {
 	var meta map[string]string
-	if len(ctx.Request.TLS.PeerCertificates) > 0 {
+	if ctx.Request.TLS != nil && len(ctx.Request.TLS.PeerCertificates) > 0 {
 		clientCert := ctx.Request.TLS.PeerCertificates[0]
 		subjectKeyID := fmt.Sprintf("%x", clientCert.SubjectKeyId)
 		if s.checkCertRevoked(ctx, "x509", clientCert.SerialNumber.String(), subjectKeyID) {
@@ -184,6 +203,13 @@ func (s *Server) handleCertCheck(ctx *gin.Context) {
 	}
 
 	if meta != nil {
+		// Raw certificates have no general proxy, tunnel, signing or SSH rights,
+		// even if an issuer accidentally includes legacy permission metadata.
+		if meta[apis.MetaCertRole] == "raw-node" && !strings.HasPrefix(ctx.Request.URL.Path, "/api/raw/") {
+			ctx.JSON(http.StatusForbidden, gin.H{"error": "Raw node endpoint required"})
+			ctx.Abort()
+			return
+		}
 		ctx.Set(ContextKeyCertMeta, meta)
 	}
 	ctx.Next()

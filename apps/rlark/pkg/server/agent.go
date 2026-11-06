@@ -246,38 +246,49 @@ func (s *Server) migrateClusterNodes(ctx context.Context, cluster *rlarkv1alpha1
 }
 
 func (s *Server) startAgentBroadcaster(ctx context.Context, agentID, role, connID string) error {
-	// 主 Agent 的 Lease 表示集群连接状态；节点 Agent 的 Lease 表示单个节点连接状态。
-	id := "heartbeat"
+	// A normal cluster agent owns the cluster Lease; a node agent owns only
+	// its node Lease. Docker cluster agents own both because their Node CR is
+	// served by the cluster-mode process.
+	ids := []string{"heartbeat"}
 	if role != "" {
-		nodeName, ok := strings.CutPrefix(role, "node-agent:")
-		if !ok || nodeName == "" {
+		switch {
+		case strings.HasPrefix(role, "node-agent:"):
+			name := strings.TrimPrefix(role, "node-agent:")
+			if name == "" {
+				return nil
+			}
+			ids = []string{"node-heartbeat-" + name}
+		case strings.HasPrefix(role, "docker-agent:"):
+			name := strings.TrimPrefix(role, "docker-agent:")
+			if name == "" {
+				return nil
+			}
+			ids = append(ids, "node-heartbeat-"+name)
+		default:
 			return nil
 		}
-		id = "node-heartbeat-" + nodeName
 	}
-
 	namespace := apis.RLarkAgentNamespacePrefix + agentID
-	leConfig := configs.DefaultLeaderElectionConfig()
-	leConfig.Key = namespace + "/" + id
-	leConfig.Identity = connID
-	leConfig.LeaseDuration = 45 * time.Second
-	leConfig.RenewDeadline = 30 * time.Second
-	leConfig.RetryPeriod = 15 * time.Second
-	electionConfig, err := leConfig.Build(s.kubeClient, namespace, leaderelection.LeaderCallbacks{
-		OnStartedLeading: func(ctx context.Context) {
-			<-ctx.Done()
-		},
-		OnStoppedLeading: func() {},
-		OnNewLeader:      func(identity string) {},
-	})
-	if err != nil {
-		return fmt.Errorf("build leader election config: %w", err)
+	for _, id := range ids {
+		leConfig := configs.DefaultLeaderElectionConfig()
+		leConfig.Key = namespace + "/" + id
+		leConfig.Identity = connID
+		leConfig.LeaseDuration = 45 * time.Second
+		leConfig.RenewDeadline = 30 * time.Second
+		leConfig.RetryPeriod = 15 * time.Second
+		electionConfig, err := leConfig.Build(s.kubeClient, namespace, leaderelection.LeaderCallbacks{
+			OnStartedLeading: func(ctx context.Context) { <-ctx.Done() },
+			OnStoppedLeading: func() {},
+			OnNewLeader:      func(identity string) {},
+		})
+		if err != nil {
+			return fmt.Errorf("build leader election config for %s: %w", id, err)
+		}
+		le, err := leaderelection.NewLeaderElector(electionConfig)
+		if err != nil {
+			return fmt.Errorf("create leader elector for %s: %w", id, err)
+		}
+		go le.Run(ctx)
 	}
-	le, err := leaderelection.NewLeaderElector(electionConfig)
-	if err != nil {
-		return fmt.Errorf("create leader elector: %w", err)
-	}
-
-	go le.Run(ctx)
 	return nil
 }

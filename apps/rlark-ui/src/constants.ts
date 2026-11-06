@@ -14,6 +14,7 @@ import {
   Terminal,
 } from "lucide-react";
 import type { NavParent, AdminNavItem } from "./types";
+import { containerRuntimeNavItem } from "./admin/container-runtime/nav";
 
 export const navItems: NavParent[] = [
   { id: "overview", icon: LayoutDashboard },
@@ -51,6 +52,7 @@ export const adminNavItems: AdminNavItem[] = [
         en: "Cluster List",
       },
       { id: "clusters-nodes", icon: Server, zh: "节点管理", en: "Nodes" },
+      containerRuntimeNavItem,
       { id: "addons", icon: Package, zh: "组件市场", en: "Addons" },
     ],
   },

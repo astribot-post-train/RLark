@@ -45,7 +45,11 @@ import type { CRDNode, NodeEventEntry } from "../types";
 import type { CRDTask } from "../crdModels";
 import { useAutoRefresh } from "../hooks";
 import { copyText } from "../utils/clipboard";
-import { crdToJob, describeVolumeSource } from "../utils/crd";
+import {
+  convertJobList,
+  crdToJob,
+  describeVolumeSource,
+} from "../utils/crd";
 import { effectiveJobPhase, type JobDisplayPhase } from "../utils/jobPhase";
 import { formatChinaDateTime } from "../utils/time";
 import { resolveSSHKeyOwners, type SSHUserKey } from "../utils/sshKeys";
@@ -182,6 +186,7 @@ export function JobsPage({
   const [tagFilterOpen, setTagFilterOpen] = useState(false);
   const [tagFilterAnchor, setTagFilterAnchor] = useState<DOMRect | null>(null);
   const [realJobs, setRealJobs] = useState<Job[]>([]);
+  const [invalidJobs, setInvalidJobs] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [listRefreshing, setListRefreshing] = useState(false);
   const [copiedJobId, setCopiedJobId] = useState("");
@@ -225,7 +230,9 @@ export function JobsPage({
         jobsApi.list({ tagSelector: tagSelector || undefined }),
         jobsApi.listTags(),
       ]);
-      setRealJobs(items.map(crdToJob));
+      const converted = convertJobList(items);
+      setRealJobs(converted.jobs);
+      setInvalidJobs(converted.invalidJobs);
       setAllJobTags(tags);
     } catch (e) {
       setRealJobs([]);
@@ -608,6 +615,14 @@ export function JobsPage({
       {error && (
         <div className="cert-error" style={{ marginBottom: 12 }}>
           {error}
+        </div>
+      )}
+      {invalidJobs.length > 0 && (
+        <div className="cert-error" role="alert" style={{ marginBottom: 12 }}>
+          {zh
+            ? "以下任务数据不完整或无法解析，已从列表中隐藏。请检查 Job API 返回数据并联系管理员："
+            : "The following jobs have incomplete or unreadable data and are hidden. Check the Job API response and contact an administrator: "}
+          {invalidJobs.join(", ")}
         </div>
       )}
       <div

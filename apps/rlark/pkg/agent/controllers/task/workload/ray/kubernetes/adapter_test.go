@@ -297,6 +297,39 @@ func TestRayKubernetesAdapterConsumesHeadTaskName(t *testing.T) {
 	}
 }
 
+func TestRayKubernetesWorkerExplicitHeadAddress(t *testing.T) {
+	for _, address := range []string{"10.1.2.32", "invalid", "10.1.2.32:6379", "0.0.0.0", "224.0.0.1", "::1", "10.1.2.32\n"} {
+		t.Run(address, func(t *testing.T) {
+			task := compileTask(kubernetesworkload.CarrierStatefulSet)
+			parameters, err := json.Marshal(taskapi.RayExecutionParametersV1{Role: taskapi.RayRoleWorker, HeadTaskName: "logical-head", HeadAddress: address})
+			if err != nil {
+				t.Fatal(err)
+			}
+			task.Spec.Workload.Parameters.Raw = parameters
+			plan, err := kubernetesworkload.NewAdapter(workload.TypeID(taskapi.WorkloadTypeRay), namespace).Compile(context.Background(), workload.CompileRequest{Task: mustSnapshot(t, task), Runtime: agentruntime.Info{Kind: compatibility.RuntimeKindKubernetes}})
+			if address != "10.1.2.32" {
+				if err == nil {
+					t.Fatal("invalid explicit address accepted")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			var object appsv1.StatefulSet
+			if err := json.Unmarshal(findObject(t, plan.Objects, "workload").Manifest.Object, &object); err != nil {
+				t.Fatal(err)
+			}
+			for _, env := range object.Spec.Template.Spec.Containers[0].Env {
+				if env.Name == "RLARK_HEAD_ADDRESS" && env.Value == address {
+					return
+				}
+			}
+			t.Fatal("worker did not use the explicitly resolved head address")
+		})
+	}
+}
+
 func TestRayKubernetesAdapterUsesNetworkDomainForHeadDiscovery(t *testing.T) {
 	task := compileTask(kubernetesworkload.CarrierStatefulSet)
 	parameters, err := json.Marshal(taskapi.RayExecutionParametersV1{Role: taskapi.RayRoleWorker, HeadTaskName: "training-head"})

@@ -27,14 +27,19 @@ import (
 // NodeStatusApplyConfiguration represents a declarative configuration of the NodeStatus type for use
 // with apply.
 type NodeStatusApplyConfiguration struct {
+	// Raw is Agent-owned capability observation. Reservations are controller-owned.
+	Raw                *RawNodeStatusApplyConfiguration          `json:"raw,omitempty"`
+	Reservation        *RawNodeReservationApplyConfiguration     `json:"reservation,omitempty"`
+	DockerReservations []DockerNodeReservationApplyConfiguration `json:"dockerReservations,omitempty"`
 	// Phase 是节点连通性聚合阶段，由数据面 node-agent 上报。
 	Phase *rlarkiov1alpha1.NodePhase `json:"phase,omitempty"`
 	// Reason 是 Phase 的机器可读原因（CamelCase），与 Conditions 中
 	// ConditionTypeReady 的 Reason 同源，供列表视图直接展示。
 	// 该字段与 Conditions 均由数据面 node-agent 独占写入。
 	Reason *string `json:"reason,omitempty"`
-	// Conditions 记录节点的结构化状态结论，当前仅包含 ConditionTypeReady。
-	// 它由观测（而非 Spec）驱动，因此不填写 ObservedGeneration。
+	// Conditions records independently owned observations. Core owns Ready;
+	// the container extension owns RawResourcesReady and RawSchedulingReady.
+	// Ready is observation-driven and does not set ObservedGeneration.
 	Conditions []v1.ConditionApplyConfiguration `json:"conditions,omitempty"`
 	// LastHeartbeatTime 是控制面 Node Reconciler 从 Agent Lease 读取到的最近一次
 	// 心跳续约时间；数据面不写入本字段。
@@ -49,7 +54,7 @@ type NodeStatusApplyConfiguration struct {
 	DiskPressure *bool                                `json:"diskPressure,omitempty"`
 	Storage      *NodeStorageStatusApplyConfiguration `json:"storage,omitempty"`
 	Allocatable  *corev1.ResourceList                 `json:"allocatable,omitempty"`
-	// 需要预留系统组件 agent
+	// Runtime-reported scheduling upper bounds; active reservations belong in Used.
 	Capacity *corev1.ResourceList `json:"capacity,omitempty"`
 	Used     *corev1.ResourceList `json:"used,omitempty"`
 	// PullProgress 是节点上正在进行的镜像拉取进度，由 node-agent 上报。
@@ -65,6 +70,35 @@ type NodeStatusApplyConfiguration struct {
 // apply.
 func NodeStatus() *NodeStatusApplyConfiguration {
 	return &NodeStatusApplyConfiguration{}
+}
+
+// WithRaw sets the Raw field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the Raw field is set to the value of the last call.
+func (b *NodeStatusApplyConfiguration) WithRaw(value *RawNodeStatusApplyConfiguration) *NodeStatusApplyConfiguration {
+	b.Raw = value
+	return b
+}
+
+// WithReservation sets the Reservation field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the Reservation field is set to the value of the last call.
+func (b *NodeStatusApplyConfiguration) WithReservation(value *RawNodeReservationApplyConfiguration) *NodeStatusApplyConfiguration {
+	b.Reservation = value
+	return b
+}
+
+// WithDockerReservations adds the given value to the DockerReservations field in the declarative configuration
+// and returns the receiver, so that objects can be build by chaining "With" function invocations.
+// If called multiple times, values provided by each call will be appended to the DockerReservations field.
+func (b *NodeStatusApplyConfiguration) WithDockerReservations(values ...*DockerNodeReservationApplyConfiguration) *NodeStatusApplyConfiguration {
+	for i := range values {
+		if values[i] == nil {
+			panic("nil value passed to WithDockerReservations")
+		}
+		b.DockerReservations = append(b.DockerReservations, *values[i])
+	}
+	return b
 }
 
 // WithPhase sets the Phase field in the declarative configuration to the given value

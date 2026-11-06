@@ -1,0 +1,26 @@
+# Optional workload permissions for --container-runtime-enable-job-submission.
+# Apply alongside the base Gateway management RBAC only to trusted administrator services.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: container-runtime-management-jobs
+rules:
+  - apiGroups: ["rlinf.io"]
+    resources: ["jobs"]
+    verbs: ["get", "create", "patch"]
+  - apiGroups: ["containers.rlark.io"]
+    resources: ["containerjobs"]
+    verbs: ["get", "list", "create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: container-runtime-management-jobs
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: container-runtime-management-jobs
+subjects:
+  - kind: ServiceAccount
+    name: rlark-gateway
+    namespace: rlark-system

@@ -98,6 +98,11 @@ func (c *Controller) fastCandidate(ctx context.Context, key types.NamespacedName
 	if err := c.ManagementClient.Get(ctx, key, &task); err != nil {
 		return fastExecution{}, false
 	}
+	// Target admission depends on current Cluster state, which is not part of
+	// the cached execution evidence. Use the full lifecycle for pinned Tasks.
+	if hasKubernetesTarget(&task) {
+		return fastExecution{}, false
+	}
 	snapshot, err := compatibility.DecodeTask(&task)
 	if err != nil {
 		return fastExecution{}, false

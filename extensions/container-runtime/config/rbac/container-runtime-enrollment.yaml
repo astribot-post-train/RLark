@@ -1,0 +1,53 @@
+# Preview SSH start/join. Gateway never reads SSH private keys or issuer keys.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: container-runtime-management-enrollment
+rules:
+  - apiGroups: ["containers.rlark.io"]
+    resources: ["nodeenrollments"]
+    verbs: ["get", "list", "create", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: container-runtime-management-enrollment
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: container-runtime-management-enrollment
+subjects:
+  - kind: ServiceAccount
+    name: rlark-gateway
+    namespace: rlark-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: container-runtime-controller-enrollment
+rules:
+  - apiGroups: ["containers.rlark.io"]
+    resources: ["nodeenrollments"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["containers.rlark.io"]
+    resources: ["nodeenrollments/status"]
+    verbs: ["get", "patch"]
+  - apiGroups: ["containers.rlark.io"]
+    resources: ["containernodes"]
+    verbs: ["create"]
+  - apiGroups: ["rlinf.io"]
+    resources: ["nodes"]
+    verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: container-runtime-controller-enrollment
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: container-runtime-controller-enrollment
+subjects:
+  - kind: ServiceAccount
+    name: container-runtime-controller
+    namespace: rlark-system

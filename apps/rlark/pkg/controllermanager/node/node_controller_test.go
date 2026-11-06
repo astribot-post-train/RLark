@@ -141,3 +141,41 @@ func newTestScheme(t *testing.T) *runtime.Scheme {
 func request(namespace, name string) ctrl.Request {
 	return ctrl.Request{NamespacedName: types.NamespacedName{Namespace: namespace, Name: name}}
 }
+
+func TestRawLeaseFencesReplacedNodeAndRotatedCredentials(t *testing.T) {
+	for _, mode := range []string{"current", "rotated", "replacement", "node-recreated", "unowned"} {
+		t.Run(mode, func(t *testing.T) {
+			now := time.Now()
+			node := &rlarkv1alpha1.Node{ObjectMeta: metav1.ObjectMeta{Name: "raw", Namespace: "agents", UID: "node", Annotations: map[string]string{"raw.rlark.io/credential-id": "key"}}, Spec: rlarkv1alpha1.NodeSpec{AgentType: rlarkv1alpha1.AgentTypeRaw}, Status: rlarkv1alpha1.NodeStatus{Raw: &rlarkv1alpha1.RawNodeStatus{Incarnation: "container"}}}
+			holder := "node/container/key"
+			renew := metav1.NewMicroTime(now)
+			lease := &coordinationv1.Lease{ObjectMeta: metav1.ObjectMeta{Name: nodeHeartbeatLeaseName(node.Name), Namespace: node.Namespace, OwnerReferences: []metav1.OwnerReference{*metav1.NewControllerRef(node, rlarkv1alpha1.GroupVersion.WithKind("Node"))}}, Spec: coordinationv1.LeaseSpec{HolderIdentity: &holder, RenewTime: &renew}}
+			switch mode {
+			case "rotated":
+				node.Annotations["raw.rlark.io/credential-id"] = "new-key"
+			case "replacement":
+				node.Status.Raw.Incarnation = "new-container"
+			case "node-recreated":
+				node.UID = "new-node"
+			case "unowned":
+				lease.OwnerReferences = nil
+			}
+			c := fake.NewClientBuilder().WithScheme(newTestScheme(t)).WithStatusSubresource(node).WithObjects(node, lease).Build()
+			reconciler := &Reconciler{Client: c, Now: func() time.Time { return now }}
+			if _, err := reconciler.Reconcile(context.Background(), request(node.Namespace, node.Name)); err != nil {
+				t.Fatal(err)
+			}
+			var current rlarkv1alpha1.Node
+			if err := c.Get(context.Background(), types.NamespacedName{Namespace: node.Namespace, Name: node.Name}, &current); err != nil {
+				t.Fatal(err)
+			}
+			if mode == "current" {
+				if current.Status.Phase != rlarkv1alpha1.NodeOnline {
+					t.Fatalf("current Lease rejected: %+v", current.Status)
+				}
+			} else if current.Status.Phase != rlarkv1alpha1.NodeOffline || current.Status.LastHeartbeatTime != nil || current.Status.Reason != "RawNodeLeaseIdentityMismatch" {
+				t.Fatalf("stale Lease accepted: %+v", current.Status)
+			}
+		})
+	}
+}

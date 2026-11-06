@@ -5,14 +5,14 @@
 RLark 是一个面向跨集群具身智能场景的云原生纳管平台，核心设计目标：
 
 1. **云端到端侧的工作负载编排**：从云端 GPU 训练（RL/LLM）到端侧部署（机械臂、传感器、摄像头），统一的声明式抽象覆盖具身智能全链路
-2. **多运行时数据面**：以 Kubernetes 运行时统一纳管云端 GPU 集群与端侧设备，形成云端训练、跨集群协同和具身设备部署的完整链路；后续将通过 Docker 和 Raw 运行时扩展更多轻量端侧场景
+2. **多运行时数据面**：以 Kubernetes 运行时统一纳管云端 GPU 集群与端侧设备；Docker 预览路径在固定主机上运行 Ray/RLinf v1 容器，Raw 为更多轻量环境提供实验性的可信进程路径
 3. **跨集群资源池化**：将分布在不同地域的 GPU 集群和端侧设备统一管理，形成逻辑上的单一资源池
 4. **Pod 间直接网络通信**：具身智能场景中训练进程与端侧机器人之间需要实时通信，要求跨集群 Pod 能够直接建立 TCP 连接
 5. **安全隔离**：多租户下的具身智能任务需要网络隔离，不同团队/项目的设备和数据不能互相访问
 
 ## 2. 总体架构
 
-RLark 采用**控制面—数据面**分离架构，控制面使用 kcp 作为兼容 Kubernetes 的 API Server，Agent 将云端 GPU 集群与端侧 Kubernetes 节点统一接入控制面。可选的 **embodied-runtime** Device Plugin 部署到配有机械臂（ROS 1/2）或摄像头硬件的 Kubernetes 节点，将这些设备作为 Kubernetes 资源暴露；后续将通过 Docker 和 Raw 数据面运行时适配更多轻量端侧环境。
+RLark 采用**控制面—数据面**分离架构，控制面使用 kcp 作为兼容 Kubernetes 的 API Server，Agent 将云端 GPU 集群、固定 Docker 主机与端侧 Kubernetes 节点统一接入控制面。可选的 **embodied-runtime** Device Plugin 部署到配有机械臂（ROS 1/2）或摄像头硬件的 Kubernetes 节点，将这些设备作为 Kubernetes 资源暴露。
 
 ![系统架构](../images/architecture-zh.svg)
 

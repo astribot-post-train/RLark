@@ -14,6 +14,17 @@ type TaskRole string
 // TaskPlacementSpec describes scheduling constraints for the workload.
 type TaskPlacementSpec struct {
 	NodeSelector map[string]string `json:"nodeSelector,omitempty"`
+	// Environment selects the observed Raw node environment/profile. It is
+	// required for Raw Tasks so a placement cannot silently cross image or
+	// dependency boundaries.
+	Environment string `json:"environment,omitempty"`
+	// Binding is a controller-owned, UID-fenced Raw execution assignment.
+	// It does not authorize execution without a matching Node reservation.
+	Binding *RawTaskBinding `json:"binding,omitempty"`
+	// DockerBinding is a controller-owned, UID-fenced Docker execution assignment.
+	// It is intentionally separate from the Raw contract so the two runtimes
+	// cannot accidentally consume each other's reservations.
+	DockerBinding *DockerTaskBinding `json:"dockerBinding,omitempty"`
 }
 
 // RuntimeKind 表示负责执行 Task 工作负载的 Runtime 类型。
@@ -138,4 +149,29 @@ type TaskList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
 	Items           []Task `json:"items"`
+}
+
+// RawTaskBinding identifies one exclusive reservation for an existing container.
+// This preview contract is not used by the Kubernetes runtime.
+type RawTaskBinding struct {
+	TaskUID      string `json:"taskUID,omitempty"`
+	NodeName     string `json:"nodeName"`
+	NodeUID      string `json:"nodeUID"`
+	Incarnation  string `json:"incarnation"`
+	ExecutionID  string `json:"executionID"`
+	AllocationID string `json:"allocationID"`
+	ClusterUID   string `json:"clusterUID"`
+	GroupDigest  string `json:"groupDigest"`
+	JobUID       string `json:"jobUID"`
+}
+
+// DockerTaskBinding identifies one exclusive Docker host allocation.
+type DockerTaskBinding struct {
+	TaskUID      string `json:"taskUID,omitempty"`
+	NodeName     string `json:"nodeName"`
+	NodeUID      string `json:"nodeUID"`
+	Incarnation  string `json:"incarnation"`
+	JobUID       string `json:"jobUID"`
+	ClusterUID   string `json:"clusterUID"`
+	AllocationID string `json:"allocationID"`
 }

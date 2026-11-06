@@ -131,7 +131,7 @@ func NewKubernetesHost(controller *Controller, execution *coordinator.Coordinato
 		AfterExecution:  controller.recordVerifiedExecution,
 	}
 	status := host.KubernetesStatusWriter{Client: controller.ManagementClient}
-	result := &host.Host{Tasks: controller.ManagementClient, Bundle: bundle, Eligibility: kubernetesEligibility{agentType: controller.AgentType}, Status: status, Claimant: controller.ManagementNamespace + "/" + controller.AgentType}
+	result := &host.Host{Tasks: kubernetesTaskClient{Client: controller.ManagementClient, namespace: controller.ManagementNamespace}, Bundle: bundle, Eligibility: kubernetesEligibility{agentType: controller.AgentType}, Status: status, Claimant: controller.ManagementNamespace + "/" + controller.AgentType}
 	if err := result.Validate(); err != nil {
 		return nil, err
 	}

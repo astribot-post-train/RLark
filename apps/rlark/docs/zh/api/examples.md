@@ -10,7 +10,7 @@
 - CRD API 根路径：`/api/v1/rlinf.io/v1alpha1`。
 - `nodes`、`tasks` 等命名空间级资源可在查询字符串中指定 `namespace=<namespace>`。未指定 `namespace` 时，Node 列表只包含当前被某个 Cluster 的 `spec.agentNamespace` 认领的命名空间中的 Node；孤儿 Node 会被排除。
 - `jobs` 等集群级资源不使用命名空间查询参数。
-- `spec.runtime.kind` 是开放的 Runtime 标识；目前仅实现 `Kubernetes`。写入 `Docker`、`Raw` 或未知值不代表支持，Agent 必须在产生外部副作用前拒绝。
+- `spec.runtime.kind` 是开放的 Runtime 标识。`Kubernetes` 是通用运行时；`Docker` 以预览成熟度支持 Ray/RLinf v1，要求 root Agent、直接访问宿主机 Docker socket 和 Docker 主机间私网 host network；`Raw` 是实验性单节点进程路径，不会创建 Docker 容器。未知值必须在产生外部副作用前被拒绝。
 - `spec.role` 为必填字段，可取 `Actor`、`Rollout` 或 `Env`。
 - 在通用 Task CRD 合同中，`spec.workload.template` 是可选的 Kubernetes `corev1.PodTemplateSpec`。所选 Workload Adapter 与 Runtime 负责校验它是否必需以及支持哪些字段。当前内置 Ray-on-Kubernetes 实现要求提供该模板，并且其中必须且只能有一个名为 `main` 的普通容器；自定义实现不受这一实现级规则约束。
 - `spec.workload.kind` 与 `spec.workload.version` 选择 Adapter 合同，`spec.workload.parameters` 携带由该 Adapter 校验的任意 JSON。`spec.workload.carrier` 通过 `type`、`version` 和任意 JSON `parameters` 独立选择 Runtime carrier。
