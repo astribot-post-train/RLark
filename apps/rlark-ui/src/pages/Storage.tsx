@@ -35,6 +35,13 @@ import {
   useColumnFilter,
 } from "../components/shared";
 import { ColumnFilterPopover } from "../components/ColumnFilterPopover";
+import { SmbStorageFields } from "../components/SmbStorageFields";
+import {
+  normalizeStorageType,
+  smbLocation,
+  storageLocation,
+  storageProviderLabel,
+} from "../utils/smbStorage";
 import { formatChinaDateTime } from "../utils/time";
 
 type StorageClassFormState = {
@@ -76,39 +83,6 @@ const storageClassFieldLabels: Record<string, { zh: string; en: string }> = {
   username: { zh: "用户名", en: "Username" },
   password: { zh: "密码", en: "Password" },
 };
-
-function normalizeStorageType(value: unknown): StorageType {
-  return value === "smb" ? "smb" : "s3";
-}
-
-/** 列表和详情中“提供商”一栏：SMB 类型统一显示 SMB。 */
-function storageProviderLabel(
-  storageClass: Pick<StorageClass, "type" | "provider">,
-): string {
-  return storageClass.type === "smb" ? "SMB" : storageClass.provider;
-}
-
-/** 列表和详情中“位置”一栏：S3 显示存储桶，SMB 显示共享路径。 */
-function storageLocation(
-  storageClass: Pick<
-    StorageClass,
-    "type" | "bucket" | "host" | "share" | "subPath"
-  >,
-): string {
-  return storageClass.type === "smb"
-    ? smbLocation(storageClass)
-    : storageClass.bucket;
-}
-
-/** SMB 存储类展示为 //host/share/subPath。 */
-function smbLocation(
-  storageClass: Pick<StorageClass, "host" | "share" | "subPath">,
-): string {
-  const path = [storageClass.share, storageClass.subPath]
-    .filter(Boolean)
-    .join("/");
-  return `//${storageClass.host}${path ? `/${path}` : ""}`;
-}
 
 function storageClassSubmissionError(
   error: unknown,
@@ -963,88 +937,13 @@ export function StorageClassCreatePage({
             </div>
           </div>
           {isSMB && (
-            <div className="form-section">
-              <strong>{c.storageClass.connection}</strong>
-              <div className="form-grid">
-                <label>
-                  {c.storageClass.host} *
-                  <input
-                    required
-                    value={form.host}
-                    onChange={(e) => setForm({ ...form, host: e.target.value })}
-                    placeholder="10.0.0.10"
-                  />
-                </label>
-                <label>
-                  {c.storageClass.share} *
-                  <input
-                    required
-                    value={form.share}
-                    onChange={(e) =>
-                      setForm({ ...form, share: e.target.value })
-                    }
-                    placeholder="shared"
-                  />
-                </label>
-                <label>
-                  {c.storageClass.subPath}
-                  <input
-                    value={form.sub_path}
-                    onChange={(e) =>
-                      setForm({ ...form, sub_path: e.target.value })
-                    }
-                    placeholder={
-                      zh ? "可选，例如 team/data" : "Optional, e.g. team/data"
-                    }
-                  />
-                </label>
-                <label>
-                  {c.storageClass.domain}
-                  <input
-                    value={form.domain}
-                    onChange={(e) =>
-                      setForm({ ...form, domain: e.target.value })
-                    }
-                    placeholder={
-                      zh
-                        ? "可选，例如 corp.example.com"
-                        : "Optional, e.g. corp.example.com"
-                    }
-                  />
-                </label>
-                <label>
-                  {c.storageClass.username} *
-                  <input
-                    required
-                    autoComplete="off"
-                    value={form.username}
-                    onChange={(e) =>
-                      setForm({ ...form, username: e.target.value })
-                    }
-                  />
-                </label>
-                <label>
-                  {c.storageClass.password} *
-                  <input
-                    required={!isEdit}
-                    type="password"
-                    autoComplete="new-password"
-                    value={form.password}
-                    onChange={(e) =>
-                      setForm({ ...form, password: e.target.value })
-                    }
-                    placeholder={
-                      isEdit
-                        ? zh
-                          ? "留空则保持原密码"
-                          : "Leave blank to keep the existing password"
-                        : "••••••••••••"
-                    }
-                  />
-                </label>
-              </div>
-              <p className="muted">{c.storageClass.smbHint}</p>
-            </div>
+            <SmbStorageFields
+              copy={c}
+              zh={zh}
+              isEdit={isEdit}
+              value={form}
+              onChange={(patch) => setForm({ ...form, ...patch })}
+            />
           )}
           {!isSMB && (
             <div className="form-section">
