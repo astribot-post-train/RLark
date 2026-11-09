@@ -7,3 +7,5 @@ Before changing an API type, a controller status write, or a Gateway endpoint, r
 Developer documentation is API-, CRD-, CLI-, source-, and debugging-first and does not depend on Web UI screenshots. User-facing capabilities must keep UI and API semantics aligned.
 
 See [Runtime, Workload, and Environment Boundary](runtime-provider.md) for the internal execution architecture and compatibility rules.
+
+For the proposed development, robot, and cloud storage layout, see the [Shared Storage and Registry Plan](shared-storage-registry-plan.md). It is a deployment plan, not a supported or completed installation.

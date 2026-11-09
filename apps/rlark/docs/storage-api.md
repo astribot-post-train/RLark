@@ -92,10 +92,39 @@ Validation failures use stable machine-readable error codes and non-sensitive st
 
 Clients must use `code` and `details.fields` for localized field feedback instead of translating the human-readable `message`.
 
+#### SMB (NAS) StorageClasses
+
+Set `type` to `smb` to mount an SMB/CIFS share instead of object storage. `type` defaults to `s3`, and records written before this field existed are read as `s3`. SMB classes use the same rclone CSI driver (`rclone.csi.veloxpack.io`) through rclone's `smb` backend, so no additional driver is required. Example request:
+
+```json
+{
+  "name": "nas-post-train",
+  "clusters": ["rlark-local-dev-gpu"],
+  "type": "smb",
+  "host": "10.0.0.10",
+  "share": "shared",
+  "sub_path": "team/data",
+  "username": "user",
+  "password": "********",
+  "domain": "corp.example.com"
+}
+```
+
+| Field | Required | Notes |
+|-------|----------|-------|
+| `host` | Yes | Hostname or IP only; a leading `//` or `smb://` is stripped. Ports and paths are rejected. |
+| `share` | Yes | A single share name. |
+| `sub_path` | No | Directory inside the share to mount; leading and trailing `/` are trimmed and `.`/`..` segments are rejected. |
+| `username` | Yes | Returned in list responses; it is not treated as secret. |
+| `password` | Yes on create | Never returned. Stored in the control-plane declaration and rendered into the data-plane rclone config in rclone's obscured form. Obscuring is not encryption; protect the Secrets accordingly. |
+| `domain` | No | Windows/AD domain. |
+
+For SMB classes the S3 fields (`provider`, `endpoint`, `bucket`, `region`, `path_style`, access keys) are ignored and the provider catalog does not apply. The StorageClass is rendered with `remote: smb` and `remotePath: <share>/<sub_path>`. Validation only checks that TCP port 445 on `host` is reachable within the timeout; the Gateway does not log in to the share, so wrong credentials surface when a Pod mounts the volume. The file browser routes (sections 6–9) return `400` for SMB classes.
+
 ### 4. Update a StorageClass
 **PUT** `/api/v1/storage/storageclass/{name}`
 
-Updates the object storage configuration and target clusters for the specified StorageClass declaration. The `clusters` field is the desired final target-cluster set; the distribution workflow cleans up resources from clusters omitted from that set. During an update, `access_key_id` and `access_key_secret` may be left empty; the Gateway reads and reuses the corresponding stored values, so credentials are not replaced with empty values. A listed `accessKeyId` is masked with five asterisks; clients must treat any submitted `access_key_id` containing `*****` as unchanged rather than as a replacement. When credentials are retained, the Gateway validates the updated connection with the previously stored Access Key ID and secret.
+Updates the object storage configuration and target clusters for the specified StorageClass declaration. The `clusters` field is the desired final target-cluster set; the distribution workflow cleans up resources from clusters omitted from that set. During an update, `access_key_id` and `access_key_secret` may be left empty; the Gateway reads and reuses the corresponding stored values, so credentials are not replaced with empty values. A listed `accessKeyId` is masked with five asterisks; clients must treat any submitted `access_key_id` containing `*****` as unchanged rather than as a replacement. When credentials are retained, the Gateway validates the updated connection with the previously stored Access Key ID and secret. For SMB classes, an empty `password` keeps the stored password. The storage `type` cannot be changed on update; create a new StorageClass instead.
 
 ### 5. Delete a StorageClass
 **DELETE** `/api/v1/storage/storageclass/{name}`

@@ -92,10 +92,39 @@ Gateway 在存储前会对 S3 配置做规范化和校验：
 
 客户端必须使用 `code` 和 `details.fields` 生成本地化字段提示，而不是翻译面向人类的 `message` 文本。
 
+#### SMB（NAS）StorageClass
+
+将 `type` 设为 `smb` 即可挂载 SMB/CIFS 共享，而不是对象存储。`type` 默认为 `s3`，该字段出现前写入的历史记录读取时按 `s3` 处理。SMB 存储类通过 rclone 的 `smb` 后端使用同一个 rclone CSI 驱动（`rclone.csi.veloxpack.io`），不需要额外安装驱动。请求示例：
+
+```json
+{
+  "name": "nas-post-train",
+  "clusters": ["rlark-local-dev-gpu"],
+  "type": "smb",
+  "host": "10.0.0.10",
+  "share": "shared",
+  "sub_path": "team/data",
+  "username": "user",
+  "password": "********",
+  "domain": "corp.example.com"
+}
+```
+
+| 字段 | 必填 | 说明 |
+|------|------|------|
+| `host` | 是 | 只填主机名或 IP；开头的 `//` 或 `smb://` 会被去掉。带端口或路径会被拒绝。 |
+| `share` | 是 | 单个共享名。 |
+| `sub_path` | 否 | 要挂载的共享内目录；首尾的 `/` 会被去掉，`.`、`..` 段会被拒绝。 |
+| `username` | 是 | 列表接口会返回，不视为机密。 |
+| `password` | 创建时必填 | 不会返回。保存在控制面声明中，下发到数据面的 rclone 配置里使用 rclone 的混淆（obscure）形式。混淆不等于加密，请按机密妥善保护相关 Secret。 |
+| `domain` | 否 | Windows/AD 域。 |
+
+SMB 存储类会忽略 S3 字段（`provider`、`endpoint`、`bucket`、`region`、`path_style`、访问密钥），也不使用提供商目录。生成的 StorageClass 参数为 `remote: smb`、`remotePath: <share>/<sub_path>`。校验只检查 `host` 的 TCP 445 端口能否在超时时间内连通；Gateway 不会登录共享，因此账号密码错误要到 Pod 挂载卷时才会暴露。文件浏览接口（第 6–9 节）对 SMB 存储类返回 `400`。
+
 ### 4. 更新 StorageClass
 **PUT** `/api/v1/storage/storageclass/{name}`
 
-更新指定 StorageClass 声明的对象存储配置和目标集群。请求中的 `clusters` 是期望的最终目标集群集合；分发流程会从未包含的集群清理资源。更新时 `access_key_id` 和 `access_key_secret` 均可留空；Gateway 会读取并复用相应的已存储值，不会将凭据替换为空值。列表返回的 `accessKeyId` 使用五个星号掩码；客户端提交的 `access_key_id` 只要包含 `*****`，Gateway 就会将其视为未变更，而不是替换值。保留凭据时，Gateway 会使用之前存储的 Access Key ID 和 Secret 校验更新后的连接。
+更新指定 StorageClass 声明的对象存储配置和目标集群。请求中的 `clusters` 是期望的最终目标集群集合；分发流程会从未包含的集群清理资源。更新时 `access_key_id` 和 `access_key_secret` 均可留空；Gateway 会读取并复用相应的已存储值，不会将凭据替换为空值。列表返回的 `accessKeyId` 使用五个星号掩码；客户端提交的 `access_key_id` 只要包含 `*****`，Gateway 就会将其视为未变更，而不是替换值。保留凭据时，Gateway 会使用之前存储的 Access Key ID 和 Secret 校验更新后的连接。对于 SMB 存储类，`password` 留空表示保留已存储的密码。更新时不能修改存储 `type`，如需更换请新建存储类。
 
 ### 5. 删除 StorageClass
 **DELETE** `/api/v1/storage/storageclass/{name}`
