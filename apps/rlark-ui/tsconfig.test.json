@@ -22,6 +22,8 @@
     "src/utils/nodeBatchMetadata.ts",
     "src/utils/nodeResources.ts",
     "src/utils/nodeVisibility.ts",
+    "src/utils/registryCommands.ts",
+    "src/utils/registryTagPreviews.ts",
     "src/utils/resourceAvailability.ts",
     "src/utils/route.ts",
     "src/utils/sshKeys.ts",

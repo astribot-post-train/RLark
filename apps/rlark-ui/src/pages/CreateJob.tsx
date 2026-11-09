@@ -6,31 +6,6 @@ type ImageUsage = {
   lastUsedAt: string;
 };
 
-function formatImageUsage(usedAt: string, useCount: number, zh: boolean) {
-  const seconds = Math.max(
-    0,
-    Math.floor((Date.now() - Date.parse(usedAt)) / 1000),
-  );
-  const relative =
-    seconds < 60
-      ? zh
-        ? "刚刚"
-        : "just now"
-      : seconds < 3600
-        ? zh
-          ? `${Math.floor(seconds / 60)} 分钟前`
-          : `${Math.floor(seconds / 60)}m ago`
-        : seconds < 86400
-          ? zh
-            ? `${Math.floor(seconds / 3600)} 小时前`
-            : `${Math.floor(seconds / 3600)}h ago`
-          : zh
-            ? `${Math.floor(seconds / 86400)} 天前`
-            : `${Math.floor(seconds / 86400)}d ago`;
-  return zh
-    ? `${relative}使用 · ${useCount} 次`
-    : `${relative} · used ${useCount} times`;
-}
 import { Check, ChevronDown, Plus, Trash2, X } from "lucide-react";
 import {
   storageClasses as mockStorageClasses,
@@ -58,6 +33,7 @@ import { describeVolumeSource } from "../utils/crd";
 import { useNodeLabels } from "../utils/nodes";
 import { imageReferenceHasWhitespace } from "../utils/imageReference";
 import { RoleNameInput } from "../components/create";
+import { RegistryImagePicker } from "../components/RegistryImagePicker";
 import { CodeEditorField } from "../components/CodeEditor";
 import { TagEditor } from "../components/TagEditor";
 import { ResourcePlacementPicker } from "../components/ResourcePlacementPicker";
@@ -296,7 +272,6 @@ export function CreateJobModal({
   const [storageClassFetched, setStorageClassFetched] = useState(false);
   const [clustersLoaded, setClustersLoaded] = useState(false);
   const [recentImages, setRecentImages] = useState<ImageUsage[]>([]);
-  const [imagePickerRole, setImagePickerRole] = useState<string | null>(null);
   const lastFetchedStorageClusterRef = useRef<string>("");
   const inferenceDoneRef = useRef(false);
 
@@ -1345,71 +1320,16 @@ export function CreateJobModal({
                           <div className="form-section-head">
                             <small>{zh ? "镜像" : "Image"}</small>
                           </div>
-                          <div className="image-picker">
-                            <input
-                              value={rr.image}
-                              onFocus={() => setImagePickerRole(role)}
-                              onChange={(e) => {
-                                updateRR(role, "image", e.target.value);
-                                setImagePickerRole(role);
-                              }}
-                              onBlur={() =>
-                                window.setTimeout(
-                                  () => setImagePickerRole(null),
-                                  150,
-                                )
-                              }
-                              className={
-                                imageHasWhitespace ? "input-invalid" : undefined
-                              }
-                              aria-invalid={imageHasWhitespace}
-                              aria-describedby={
-                                imageHasWhitespace ? imageErrorId : undefined
-                              }
-                              placeholder={
-                                zh
-                                  ? "例如：docker.io/library/ubuntu:22.04（需确保集群可访问）"
-                                  : "Example: docker.io/library/ubuntu:22.04 (must be cluster-accessible)"
-                              }
-                            />
-                            {imagePickerRole === role &&
-                              recentImages.length > 0 && (
-                                <div
-                                  className="image-picker-list"
-                                  role="listbox"
-                                >
-                                  {recentImages
-                                    .filter((item) =>
-                                      item.image
-                                        .toLowerCase()
-                                        .includes(
-                                          rr.image.trim().toLowerCase(),
-                                        ),
-                                    )
-                                    .map((item) => (
-                                      <button
-                                        type="button"
-                                        className="image-picker-option"
-                                        key={item.image}
-                                        onMouseDown={(event) => {
-                                          event.preventDefault();
-                                          updateRR(role, "image", item.image);
-                                          setImagePickerRole(null);
-                                        }}
-                                      >
-                                        <strong>{item.image}</strong>
-                                        <small>
-                                          {formatImageUsage(
-                                            item.lastUsedAt,
-                                            item.useCount,
-                                            zh,
-                                          )}
-                                        </small>
-                                      </button>
-                                    ))}
-                                </div>
-                              )}
-                          </div>
+                          <RegistryImagePicker
+                            zh={zh}
+                            value={rr.image}
+                            onChange={(image) => updateRR(role, "image", image)}
+                            disabled={false}
+                            recentImages={recentImages.map((item) => ({
+                              ...item,
+                              lastUsedAt: new Date(item.lastUsedAt),
+                            }))}
+                          />
                           {imageHasWhitespace && (
                             <small
                               className="field-validation-error"

@@ -16,9 +16,43 @@ import {
   apiReferenceApi,
   clustersApi,
   domainsApi,
+  imageRegistriesApi,
   nodesApi,
   systemConfigApi,
 } from "../dist/test/backend.js";
+
+test("registry browse API encodes parameters and forwards cancellation", async () => {
+  globalThis.sessionStorage = storage();
+  globalThis.window = { dispatchEvent() {} };
+  const calls = [];
+  globalThis.fetch = async (input, init) => {
+    calls.push({ input: String(input), init });
+    return new Response(
+      JSON.stringify({ items: [], next: "", digest: "sha256:test" }),
+      {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      },
+    );
+  };
+  const controller = new AbortController();
+  await imageRegistriesApi.repositories("id/a", "a/b", controller.signal);
+  await imageRegistriesApi.tags("id/a", "a/b", "v1", controller.signal);
+  await imageRegistriesApi.manifest("id/a", "a/b", "v1", controller.signal);
+  assert.equal(
+    calls[0].input,
+    "/api/v1/image-registries/id%2Fa/repositories?last=a%2Fb",
+  );
+  assert.equal(
+    calls[1].input,
+    "/api/v1/image-registries/id%2Fa/tags?repository=a%2Fb&last=v1",
+  );
+  assert.equal(
+    calls[2].input,
+    "/api/v1/image-registries/id%2Fa/manifest?repository=a%2Fb&tag=v1",
+  );
+  assert.ok(calls.every((call) => call.init.signal === controller.signal));
+});
 
 function storage() {
   const values = new Map();

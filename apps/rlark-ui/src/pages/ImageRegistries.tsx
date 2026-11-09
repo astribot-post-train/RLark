@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import type { Copy } from "../i18n";
 import { PageToolbar, RefreshOverlay } from "../components/shared";
+import { RegistryBrowser } from "./RegistryBrowser";
 
 type ClusterSelectionMode = "None" | "Selected" | "All";
 type ClusterSelection = { mode: ClusterSelectionMode; clusters: string[] };
@@ -496,6 +497,7 @@ function ImageRegistryDetailPage({
           </div>
         </section>
       </div>
+      <RegistryBrowser key={item.id} item={item} zh={zh} copy={c} />
     </div>
   );
 }
