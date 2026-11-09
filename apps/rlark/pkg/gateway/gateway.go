@@ -56,9 +56,11 @@ type Gateway struct {
 	images   map[string]imageUsage
 
 	serverTransport *http.Transport
-	jwtSigningKey   []byte
-	users           userProvider
-	tenants         tenant.Provider
+	// registryHTTPClient overrides the registry browsing client (tests).
+	registryHTTPClient *http.Client
+	jwtSigningKey      []byte
+	users              userProvider
+	tenants            tenant.Provider
 }
 
 func (g *Gateway) managementNamespace() string {

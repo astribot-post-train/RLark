@@ -39,12 +39,18 @@ type StorageClassData struct {
 	StorageClassName string   `json:"storageClassName"`
 	Clusters         []string `json:"clusters"`
 	Description      string   `json:"description"`
+	Type             string   `json:"type"`
 	Bucket           string   `json:"bucket"`
 	Provider         string   `json:"provider"`
 	Endpoint         string   `json:"endpoint"`
 	Region           string   `json:"region"`
 	PathStyle        bool     `json:"pathStyle"`
 	AccessKeyId      string   `json:"accessKeyId"`
+	Host             string   `json:"host,omitempty"`
+	Share            string   `json:"share,omitempty"`
+	SubPath          string   `json:"subPath,omitempty"`
+	Username         string   `json:"username,omitempty"`
+	Domain           string   `json:"domain,omitempty"`
 	TenantID         string   `json:"tenantID"`
 	CreatedBy        string   `json:"createdBy,omitempty"`
 	CreatedAt        string   `json:"createdAt"`
@@ -81,11 +87,16 @@ func (g *Gateway) listStorageClass(c *gin.Context) {
 				continue
 			}
 		}
-		data[stored.Name] = &StorageClassData{
-			Name: stored.Name, StorageClassName: id, Clusters: clusters, Description: stored.Description, Bucket: stored.Bucket,
-			Provider: stored.Provider, Endpoint: stored.Endpoint, Region: stored.Region, PathStyle: stored.PathStyle,
-			AccessKeyId: maskStorageAccessKeyID(stored.AccessKeyID), TenantID: tenant.IDOf(&secrets[i]), CreatedBy: secrets[i].Annotations[tenant.CreatedByAnnotation], CreatedAt: secrets[i].CreationTimestamp.UTC().Format(time.RFC3339),
+		entry := &StorageClassData{
+			Name: stored.Name, StorageClassName: id, Clusters: clusters, Description: stored.Description, Type: stored.Type,
+			Bucket: stored.Bucket, Provider: stored.Provider, Endpoint: stored.Endpoint, Region: stored.Region, PathStyle: stored.PathStyle,
+			Host: stored.Host, Share: stored.Share, SubPath: stored.SubPath, Username: stored.Username, Domain: stored.Domain,
+			TenantID: tenant.IDOf(&secrets[i]), CreatedBy: secrets[i].Annotations[tenant.CreatedByAnnotation], CreatedAt: secrets[i].CreationTimestamp.UTC().Format(time.RFC3339),
 		}
+		if stored.Type == storageTypeS3 {
+			entry.AccessKeyId = maskStorageAccessKeyID(stored.AccessKeyID)
+		}
+		data[stored.Name] = entry
 	}
 	c.JSON(http.StatusOK, gin.H{"data": data, "success": true})
 }
@@ -151,7 +162,11 @@ const (
 	storageClassValidationTimeout = 10 * time.Second
 	storageClassNamespacePrefix   = "rlark-"
 	storageClassReplicationLabel  = "rlark.io/storageclass-replication"
-	storageClassDeliveryLabel     = "rlark.io/storageclass-delivery"
+
+	// storageTypeS3 is the default for records written before types existed.
+	storageTypeS3             = "s3"
+	storageTypeSMB            = "smb"
+	storageClassDeliveryLabel = "rlark.io/storageclass-delivery"
 
 	CodeStorageClassRequiredFields = "STORAGE_CLASS_REQUIRED_FIELDS"
 )
@@ -163,13 +178,22 @@ type storedStorageClass struct {
 	Name        string   `json:"name"`
 	Description string   `json:"description"`
 	Clusters    []string `json:"clusters"`
-	Provider    string   `json:"provider"`
-	Endpoint    string   `json:"endpoint"`
-	AccessKeyID string   `json:"access_key_id"`
-	AccessKey   string   `json:"access_key_secret"`
-	Bucket      string   `json:"bucket"`
-	Region      string   `json:"region"`
-	PathStyle   bool     `json:"path_style"`
+	// Type is "s3" or "smb". Records written before SMB support omit it and
+	// are read back as "s3"; all new fields are optional to stay on v1.
+	Type        string `json:"type,omitempty"`
+	Provider    string `json:"provider"`
+	Endpoint    string `json:"endpoint"`
+	AccessKeyID string `json:"access_key_id"`
+	AccessKey   string `json:"access_key_secret"`
+	Bucket      string `json:"bucket"`
+	Region      string `json:"region"`
+	PathStyle   bool   `json:"path_style"`
+	Host        string `json:"host,omitempty"`
+	Share       string `json:"share,omitempty"`
+	SubPath     string `json:"sub_path,omitempty"`
+	Username    string `json:"username,omitempty"`
+	Password    string `json:"password,omitempty"`
+	Domain      string `json:"domain,omitempty"`
 }
 
 func newStorageClassID() string {
@@ -189,8 +213,10 @@ func parseStorageClassID(name string) (string, bool) {
 }
 
 // CreateStorageClassRequest defines the payload for creating a rclone-backed
-// StorageClass across one or more clusters. The S3-compatible remote config is
-// stored in a per-class Secret referenced by the StorageClass.
+// StorageClass across one or more clusters. Type selects the rclone remote:
+// "s3" (default) for S3-compatible object storage or "smb" for an SMB/CIFS
+// share. The remote config is stored in a per-class Secret referenced by the
+// StorageClass.
 type CreateStorageClassRequest struct {
 	Name        string `json:"name"`
 	Namespace   string `json:"namespace"`
@@ -205,6 +231,14 @@ type CreateStorageClassRequest struct {
 	Bucket          string `json:"bucket"`
 	Region          string `json:"region"`
 	PathStyle       bool   `json:"path_style"`
+
+	Type     string `json:"type"`
+	Host     string `json:"host"`
+	Share    string `json:"share"`
+	SubPath  string `json:"sub_path"`
+	Username string `json:"username"`
+	Password string `json:"password"`
+	Domain   string `json:"domain"`
 }
 
 // ssSecretTemplate is the rclone remote config rendered into the StorageClass
@@ -224,6 +258,13 @@ no_check_bucket = true
 `
 
 var ssSecretTmpl = template.Must(template.New("ss-secret").Parse(ssSecretTemplate))
+
+// s3MountOptions and smbMountOptions are rclone VFS flags for the CSI mount.
+// fast-list only applies to bucket-based remotes, so SMB omits it.
+var (
+	s3MountOptions  = []string{"vfs-cache-mode=writes", "dir-cache-time=5m", "attr-timeout=1m", "poll-interval=5s", "vfs-write-back=1s", "vfs-cache-max-age=10m", "buffer-size=64M", "transfers=8", "checkers=16", "fast-list"}
+	smbMountOptions = []string{"vfs-cache-mode=writes", "dir-cache-time=5m", "attr-timeout=1m", "poll-interval=5s", "vfs-write-back=1s", "vfs-cache-max-age=10m", "buffer-size=64M", "transfers=8", "checkers=8"}
+)
 
 // createStorageClass stores a Replication declaration. The Replication and
 // Delivery controllers apply the StorageClass bundle to selected clusters.
@@ -279,7 +320,12 @@ func (g *Gateway) updateStorageClass(c *gin.Context) {
 		respondError(c, http.StatusBadRequest, CodeInvalidRequest, "storage class name cannot be changed")
 		return
 	}
-	if req.AccessKeyId == "" || isMaskedStorageAccessKeyID(req.AccessKeyId) || req.AccessKeySecret == "" {
+	isSMB := normalizeStorageType(req.Type) == storageTypeSMB
+	needsExisting := req.Password == ""
+	if !isSMB {
+		needsExisting = req.AccessKeyId == "" || isMaskedStorageAccessKeyID(req.AccessKeyId) || req.AccessKeySecret == ""
+	}
+	if needsExisting {
 		secret, err := getStorageClassSecretByName(c.Request.Context(), g.rawClient, g.managementNamespace(), name)
 		if err != nil {
 			if errors.IsNotFound(err) {
@@ -294,11 +340,20 @@ func (g *Gateway) updateStorageClass(c *gin.Context) {
 			respondKubeError(c, fmt.Sprintf("decode storage class replication: %v", err), err)
 			return
 		}
-		if req.AccessKeyId == "" || isMaskedStorageAccessKeyID(req.AccessKeyId) {
-			req.AccessKeyId = existing.AccessKeyID
+		if existing.Type != normalizeStorageType(req.Type) {
+			respondError(c, http.StatusBadRequest, CodeInvalidRequest, "storage class type cannot be changed")
+			return
 		}
-		if req.AccessKeySecret == "" {
-			req.AccessKeySecret = existing.AccessKey
+		if isSMB {
+			// An empty password on update keeps the stored one.
+			req.Password = existing.Password
+		} else {
+			if req.AccessKeyId == "" || isMaskedStorageAccessKeyID(req.AccessKeyId) {
+				req.AccessKeyId = existing.AccessKeyID
+			}
+			if req.AccessKeySecret == "" {
+				req.AccessKeySecret = existing.AccessKey
+			}
 		}
 	}
 	stored, err := normalizeStorageClass(req)
@@ -343,6 +398,7 @@ func (g *Gateway) deleteStorageClass(c *gin.Context) {
 		respondKubeError(c, fmt.Sprintf("delete storage class replication: %v", err), err)
 		return
 	}
+	g.invalidateStorageClients(name)
 	c.JSON(http.StatusOK, gin.H{"success": true})
 }
 
@@ -358,6 +414,16 @@ func requiredStorageClassFields(req CreateStorageClassRequest) []string {
 	var fields []string
 	if strings.TrimSpace(req.Name) == "" {
 		fields = append(fields, "name")
+	}
+	if normalizeStorageType(req.Type) == storageTypeSMB {
+		for _, field := range []struct{ name, value string }{
+			{"host", req.Host}, {"share", req.Share}, {"username", req.Username}, {"password", req.Password},
+		} {
+			if strings.TrimSpace(field.value) == "" {
+				fields = append(fields, field.name)
+			}
+		}
+		return fields
 	}
 	if strings.TrimSpace(req.Bucket) == "" {
 		fields = append(fields, "bucket")
@@ -378,6 +444,9 @@ func respondStorageClassValidationError(c *gin.Context, err error) {
 }
 
 var validateStorageClassCredentials = func(ctx context.Context, stored storedStorageClass) error {
+	if stored.Type == storageTypeSMB {
+		return validateSMBReachable(ctx, stored.Host)
+	}
 	config := storage.DefaultConfig()
 	config.Provider = stored.Provider
 	config.Endpoint = stored.Endpoint
@@ -400,11 +469,19 @@ var validateStorageClassCredentials = func(ctx context.Context, stored storedSto
 
 func respondStorageClassCredentialValidationError(c *gin.Context, err error) {
 	log.FromContext(c.Request.Context()).Error(err, "storage credential validation failed")
-	respondError(c, http.StatusBadRequest, CodeInvalidRequest, "storage credentials cannot access the configured bucket")
+	message := "storage credentials cannot access the configured bucket"
+	if strings.Contains(err.Error(), "connect smb server") {
+		message = "smb server is not reachable on port " + smbDialPort
+	}
+	respondError(c, http.StatusBadRequest, CodeInvalidRequest, message)
 }
 
 func normalizeStorageClass(req CreateStorageClassRequest) (storedStorageClass, error) {
 	name := strings.TrimSpace(req.Name)
+	storageType := normalizeStorageType(req.Type)
+	if storageType != storageTypeS3 && storageType != storageTypeSMB {
+		return storedStorageClass{}, fmt.Errorf("unsupported storage type %q", req.Type)
+	}
 	if fields := requiredStorageClassFields(req); len(fields) != 0 {
 		return storedStorageClass{}, &storageClassValidationError{fields: fields}
 	}
@@ -424,6 +501,13 @@ func normalizeStorageClass(req CreateStorageClassRequest) (storedStorageClass, e
 	}
 	sort.Strings(clusters)
 	clusters = slices.Compact(clusters)
+	if storageType == storageTypeSMB {
+		stored := storedStorageClass{Version: storageClassVersion, Name: name, Description: req.Description, Clusters: clusters}
+		if err := normalizeSMBFields(req, &stored); err != nil {
+			return storedStorageClass{}, err
+		}
+		return stored, nil
+	}
 	// Provider 必须来自已知目录: rclone 对未知 provider 只记录告警并回退到通用
 	// 配置, 错误取值在数据面只表现为挂载后的 I/O 错误. 这里同时把历史客户端提交
 	// 的展示名(如 "Aliyun OSS")改写为 canonical 取值.
@@ -438,7 +522,7 @@ func normalizeStorageClass(req CreateStorageClassRequest) (storedStorageClass, e
 		return storedStorageClass{}, err
 	}
 	return storedStorageClass{
-		Version: storageClassVersion, Name: name, Description: req.Description, Clusters: clusters,
+		Version: storageClassVersion, Name: name, Description: req.Description, Clusters: clusters, Type: storageTypeS3,
 		Provider: provider.Value, Endpoint: endpoint, AccessKeyID: req.AccessKeyId, AccessKey: req.AccessKeySecret,
 		Bucket: req.Bucket, Region: strings.TrimSpace(req.Region),
 		PathStyle: storage.EffectivePathStyle(provider.Value, req.PathStyle),
@@ -451,15 +535,30 @@ func buildStorageClassReplicationSecret(namespace, id string, stored storedStora
 		Provider: stored.Provider, Endpoint: stored.Endpoint, AccessKeyId: stored.AccessKeyID, AccessKeySecret: stored.AccessKey,
 		Bucket: stored.Bucket, Region: stored.Region, PathStyle: stored.PathStyle,
 	}
+	remote, remotePath, mountOptions := "s3", req.Bucket, s3MountOptions
 	var config strings.Builder
-	if err := ssSecretTmpl.Execute(&config, req); err != nil {
-		return nil, fmt.Errorf("render secret config: %w", err)
+	switch stored.Type {
+	case storageTypeSMB:
+		// rclone's smb backend only accepts an obscured password.
+		pass, err := storage.RcloneObscure(stored.Password)
+		if err != nil {
+			return nil, fmt.Errorf("obscure smb password: %w", err)
+		}
+		data := struct{ Host, User, Pass, Domain string }{stored.Host, stored.Username, pass, stored.Domain}
+		if err := smbSecretTmpl.Execute(&config, data); err != nil {
+			return nil, fmt.Errorf("render secret config: %w", err)
+		}
+		remote, remotePath, mountOptions = "smb", smbRemotePath(stored), smbMountOptions
+	default:
+		if err := ssSecretTmpl.Execute(&config, req); err != nil {
+			return nil, fmt.Errorf("render secret config: %w", err)
+		}
 	}
 	secretName := id + "-secret"
 	storageSecret := v1.Secret{
 		TypeMeta:   metav1.TypeMeta{APIVersion: "v1", Kind: "Secret"},
 		ObjectMeta: metav1.ObjectMeta{Name: secretName, Namespace: req.Namespace, Labels: map[string]string{"controller": "rlark"}},
-		StringData: map[string]string{"remote": "s3", "remotePath": req.Bucket, "configData": config.String()},
+		StringData: map[string]string{"remote": remote, "remotePath": remotePath, "configData": config.String()},
 	}
 	annotations := map[string]string{annoStorageClassDescription: req.Description}
 	if problems := validation.IsValidLabelValue(req.Name); len(problems) == 0 {
@@ -473,11 +572,11 @@ func buildStorageClassReplicationSecret(namespace, id string, stored storedStora
 		Provisioner: "rclone.csi.veloxpack.io", ReclaimPolicy: ptr.To(v1.PersistentVolumeReclaimRetain),
 		VolumeBindingMode: ptr.To(storagev1.VolumeBindingImmediate), AllowVolumeExpansion: ptr.To(true),
 		Parameters: map[string]string{
-			"remote": "s3", "remotePath": req.Bucket,
+			"remote": remote, "remotePath": remotePath,
 			"csi.storage.k8s.io/node-publish-secret-name":      secretName,
 			"csi.storage.k8s.io/node-publish-secret-namespace": req.Namespace,
 		},
-		MountOptions: []string{"vfs-cache-mode=writes", "dir-cache-time=5m", "attr-timeout=1m", "poll-interval=5s", "vfs-write-back=1s", "vfs-cache-max-age=10m", "buffer-size=64M", "transfers=8", "checkers=16", "fast-list"},
+		MountOptions: slices.Clone(mountOptions),
 	}
 	storageManifests, err := yaml.Marshal([]any{storageSecret, storageClass})
 	if err != nil {
@@ -535,6 +634,10 @@ func storageClassFromSecret(secret *v1.Secret) (string, storedStorageClass, erro
 	}
 	if stored.Version != storageClassVersion {
 		return "", storedStorageClass{}, fmt.Errorf("unsupported storage class version %q", stored.Version)
+	}
+	stored.Type = normalizeStorageType(stored.Type)
+	if stored.Type != storageTypeS3 {
+		return id, stored, nil
 	}
 	// 读取历史记录时把 provider 的展示名改写为 canonical 取值, 并按该 provider
 	// 实际支持的寻址方式修正 path_style, 使旧记录与新写入的记录行为一致.
@@ -599,11 +702,8 @@ func (g *Gateway) updateStorageClassByName(ctx context.Context, name string, sto
 func (g *Gateway) invalidateStorageClients(name string) {
 	g.storageClientsMu.Lock()
 	defer g.storageClientsMu.Unlock()
-	for cacheKey := range g.storageClients {
-		if strings.HasSuffix(cacheKey, "/"+name) {
-			delete(g.storageClients, cacheKey)
-		}
-	}
+	// getStorageClient caches by storage class name.
+	delete(g.storageClients, name)
 }
 
 func (g *Gateway) getStorageClient(ctx context.Context, name string) (*storage.Client, error) {
@@ -622,6 +722,9 @@ func (g *Gateway) getStorageClient(ctx context.Context, name string) (*storage.C
 	_, stored, err := storageClassFromSecret(secret)
 	if err != nil {
 		return nil, fmt.Errorf("decode storage class declaration: %w", err)
+	}
+	if stored.Type != storageTypeS3 {
+		return nil, errStorageBrowsingUnsupported
 	}
 	config := storage.DefaultConfig()
 	config.Provider = stored.Provider
@@ -648,7 +751,7 @@ func (g *Gateway) listStorageClassFiles(c *gin.Context) {
 
 	client, err := g.getStorageClient(c.Request.Context(), name)
 	if err != nil {
-		respondError(c, http.StatusInternalServerError, CodeUpstreamUnavailable, err.Error())
+		respondStorageClientError(c, err)
 		return
 	}
 
@@ -698,7 +801,7 @@ func (g *Gateway) uploadStorageClassFile(c *gin.Context) {
 
 	client, err := g.getStorageClient(c.Request.Context(), name)
 	if err != nil {
-		respondError(c, http.StatusInternalServerError, CodeUpstreamUnavailable, err.Error())
+		respondStorageClientError(c, err)
 		return
 	}
 
@@ -734,7 +837,7 @@ func (g *Gateway) getStorageClassObject(c *gin.Context) {
 
 	client, err := g.getStorageClient(c.Request.Context(), name)
 	if err != nil {
-		respondError(c, http.StatusInternalServerError, CodeUpstreamUnavailable, err.Error())
+		respondStorageClientError(c, err)
 		return
 	}
 
@@ -766,7 +869,7 @@ func (g *Gateway) deleteStorageClassObject(c *gin.Context) {
 
 	client, err := g.getStorageClient(c.Request.Context(), name)
 	if err != nil {
-		respondError(c, http.StatusInternalServerError, CodeUpstreamUnavailable, err.Error())
+		respondStorageClientError(c, err)
 		return
 	}
 

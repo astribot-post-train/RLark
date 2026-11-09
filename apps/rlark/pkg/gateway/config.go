@@ -33,6 +33,9 @@ type Config struct {
 	// 默认已同步的资源：jobs, tasks, workflows, nodes。
 	// 未列出的资源（如 pods, domains, addons）走 KCP 查询。
 	SyncResources []string
+
+	// RegistryBrowseAllowedHosts limits the registry origins the Gateway may query.
+	RegistryBrowseAllowedHosts []string
 }
 
 // DefaultConfig returns a Config with sensible defaults.
@@ -54,6 +57,7 @@ func (c *Config) SetupFlags(fs *pflag.FlagSet) {
 	fs.DurationVar(&c.JWTTokenTTL, "jwt-token-ttl", c.JWTTokenTTL, "The lifetime of UI JWT access tokens.")
 	fs.BoolVar(&c.EnableSecretBackend, "enable-secret-backend", c.EnableSecretBackend, "Use Kubernetes Secret as persistence backend (test/CI mode, only when PostgreSQL is not configured).")
 	fs.StringSliceVar(&c.SyncResources, "sync-resources", c.SyncResources, "Resources that query from persistence backend (jobs, tasks, workflows, nodes). Others query from KCP.")
+	fs.StringSliceVar(&c.RegistryBrowseAllowedHosts, "registry-browse-allowed-hosts", c.RegistryBrowseAllowedHosts, "Exact host[:port] values permitted for read-only HTTPS registry browsing; empty disables browsing.")
 
 	c.KubeClientConfig.SetupFlags(fs)
 }

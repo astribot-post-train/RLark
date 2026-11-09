@@ -147,6 +147,9 @@ func (g *Gateway) RegisterRoutes(r gin.IRouter) {
 		imageRegistries.GET("/:id", g.handleGetImageRegistry)
 		imageRegistries.PUT("/:id", g.handleUpdateImageRegistry)
 		imageRegistries.DELETE("/:id", g.handleDeleteImageRegistry)
+		imageRegistries.GET("/:id/repositories", g.handleRegistryRepositories)
+		imageRegistries.GET("/:id/tags", g.handleRegistryTags)
+		imageRegistries.GET("/:id/manifest", g.handleRegistryManifest)
 	}
 
 	// System Config APIs

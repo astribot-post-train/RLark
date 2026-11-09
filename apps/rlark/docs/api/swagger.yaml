@@ -49,6 +49,73 @@ paths:
               schema:
                 $ref: '#/components/schemas/ImageUsageList'
 
+  /api/v1/image-registries/{id}/repositories:
+    get:
+      tags: [Image]
+      summary: List a registry's repositories (administrator only)
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string}}
+        - {name: last, in: query, schema: {type: string}}
+      responses:
+        '200':
+          description: A page of repository names and an optional next cursor
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items: {type: array, items: {type: string}}
+                  next: {type: string}
+        '400': {description: Invalid parameter}
+        '403': {description: Administrator role required}
+        '404': {description: Registry not found}
+        '502': {description: Registry unavailable, unsupported, or not allowlisted}
+
+  /api/v1/image-registries/{id}/tags:
+    get:
+      tags: [Image]
+      summary: List registry repository tags (administrator only)
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string}}
+        - {name: repository, in: query, required: true, schema: {type: string}}
+        - {name: last, in: query, schema: {type: string}}
+      responses:
+        '200':
+          description: A page of tags and an optional next cursor
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items: {type: array, items: {type: string}}
+                  next: {type: string}
+        '400': {description: Invalid parameter}
+        '403': {description: Administrator role required}
+        '404': {description: Registry not found}
+        '502': {description: Registry unavailable, unsupported, or not allowlisted}
+
+  /api/v1/image-registries/{id}/manifest:
+    get:
+      tags: [Image]
+      summary: Read the manifest digest for a tag (administrator only)
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string}}
+        - {name: repository, in: query, required: true, schema: {type: string}}
+        - {name: tag, in: query, required: true, schema: {type: string}}
+      responses:
+        '200':
+          description: Manifest digest
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  digest: {type: string}
+        '400': {description: Invalid parameter}
+        '403': {description: Administrator role required}
+        '404': {description: Registry not found}
+        '502': {description: Registry unavailable, unsupported, or not allowlisted}
+
   /metrics:
     get:
       tags: [Observability]
