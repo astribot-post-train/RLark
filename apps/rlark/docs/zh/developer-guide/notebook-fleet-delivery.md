@@ -257,5 +257,59 @@ packages，并设置 600 秒进程时限。其 Task 在 B 上运行，在 166.82
 须先核验新的容器实例、地址、GPU 归属、Agent 注册和 checkpoint，再尝试分发；
 不能把保留的历史节点 UID 或此前成功的合成 Job 当作当前就绪证据。
 
+### 2026-11-06 机器人中继链路
+
+A 的管理网关现在在同一进程里同时提供 30001 端口的 Ray TCP 中继：接入配置的
+`gatewayArgv` 传入 `--ray-config=/opt/rlark-ray-gateway/ray-gateway.json`，
+A 只停掉 RLark 自己的服务后重新接入，A 上独立的 Fleet/Ray 和训练任务未受影响。
+同时签发了有效期 30 天的新中继 CA、网关证书和 peer 证书，peer 按叶子证书做 pin。
+
+机器人 x86 经机器人 Orin 桥接到本地路由器再出外网。x86 的 `enp2s0` 上有两个
+地址：机器人局域网的 `192.168.0.10/24` 和路由器网段的 `192.168.31.250/32`。
+只有 `192.168.31.0/24` 这条路由写了 `src 192.168.31.250`，默认路由没有指定
+源地址，所以内核用 `192.168.0.10` 发起外网连接，路由器不会为这个地址做 NAT。
+因此 x86 上访问公网 TCP 和已配置的公网 DNS 都会超时；把 socket 绑定到
+`192.168.31.250` 后，同样的目标都能连通。开发机直接在路由器网段上，所以能访问 A。
+
+中继 peer 不改系统路由，只用 `localAddress: 192.168.31.250` 绑定它到网关的
+连接；按此配置，机器人 peer 已建立到 `36.103.180.181:30001` 的会话。若要在主机
+层面解决，可给 x86 默认路由加上 `src 192.168.31.250`
+（`ip route replace default via 192.168.0.11 dev enp2s0 src 192.168.31.250`），
+并写入主机网络配置使其持久化。这一改动**尚未执行**，它会影响机器人上所有进程，
+包括 DNS。
+
+机器人部署注意事项：
+
+- 机器人 Env 镜像 `fleet-runtime-cpu:4090-20261027-numpy2.2.6` 基于
+  Ubuntu 20.04，glibc 为 2.31。连接 shim 必须针对该 glibc 编译（构建机 2.35
+  编出的版本要求 `GLIBC_2.34`），中继二进制使用 `CGO_ENABLED=0` 构建。
+- `/run` 以 `noexec` 挂载；中继二进制要放在可执行的主机目录，例如
+  `/var/lib/rlark-ray-transport`。
+- Secret 投影出来的文件是软链接，中继会拒绝这样的私钥；启动 peer 前先复制成
+  私有的普通文件。
+- 机器人上的 RLark Agent 镜像早于 `headAddress` 和目标 Cluster UID 校验。
+  Fleet Env 容器自己读取 `RAY_ADDRESS`，因此混合 Job 在 Pod 模板里设置该变量；
+  在升级该 Agent 之前，原生的目标校验不会生效。
+
+B 和机器人的 peer 都已与 A:30001 建立会话。这条链路上还没有运行过 Ray 进程、
+Fleet 服务、混合 Job，也没有执行过任何机器人动作。
+
+### 2026-11-06 Pod 网络上的混合 Job
+
+2026-11-06 晚（北京时间），先把机器人 Agent 升级到 `20261106-agent-67eaa39`，再以共享方式提交混合 Job `fleet-mixed-b-s1u-20261106-2`。提交顺序是：先建挂起的 Job，再建 `ContainerJob` 绑定，最后带 UID 和 resourceVersion 前置条件激活。Raw rollout 跑在 B 上，B 重启后私网地址是 `10.1.2.196`；Kubernetes Env 跑在 `s1u-01-x86` 上。这是运维人员手工组装的预览，中继还不是 RLark 自动注入的。
+
+- **Env 改用 Pod 网络**：之前用 `hostNetwork` 时，Env 固定使用的 Ray 端口 `41001`/`41002` 和机器人主机上独立的 Ray 冲突。现在 Env 改用 Pod 网络，用 Calico 注解 `cni.projectcalico.org/ipAddrs` 固定地址 `10.242.164.100`。网关的 peer 表必须写明确的 IP，所以这个地址不能变。中继 peer 作为 sidecar 和 Env 共享同一个网络命名空间。主机上的 Ray 没有动。
+- **不改路由也能出网**：Calico 的 NAT 跟随默认路由走，而默认路由没有 `src`，所以 Pod 访问 A:30001 会超时，原因和主机一样。解决办法是加一个 `hostNetwork` 的 Deployment `rlk-relay-forward`：
+  - 只监听 `192.168.0.10:31030`；
+  - 用 `192.168.31.250` 作为源地址，把原始 TCP 转发到 A:30001；
+  - mTLS 和证书 pin 仍然是 peer 和 A 端到端的。
+
+  机器人的默认路由仍然没有改。
+- **Driver 拓扑**：Fleet Driver 只在 bootstrap 时读一次 RLinf 拓扑。所以 B 的启动脚本要等所有 Ray 成员都 Alive，才启动 Driver。另外 RLinf 要求 `RLINF_NODE_RANK` 要么每个节点都设置、要么都不设置，Env 设了 rank `1`，所以 head 设 rank `0`。没有这两处改动时，Driver 只看到 1 个节点，bootstrap 失败。
+- **GPU 共用**：Notebook 上的 `gpu_keepalive` 一直保持运行，rollout 配置里设了 `allow_shared_accelerators: true`。Fleet 启动后，keepalive 会从约 40 GiB 降到很小的占用。
+- **节点选择**：接入流程和原生 Node 都不会设置 `rlark.io/node-name` 标签。所以要把 Raw Task 固定到某个 Notebook 上，需要手工给原生 Node 加这个标签，并带 UID 和 resourceVersion 前置条件。
+
+观测到的结果：Driver 报告 `num_nodes: 2`，rank 0 是 `10.1.2.196`，rank 1 是 `10.242.164.100`；rollout 已经在 keepalive 旁边加载完权重。机器人只有在运维人员从 Fleet UI 发起 rollout 时才会动。这还不是第 7 项要求的 10 分钟 Passive 验收。
+
 当前合同见[控制台](container-runtime-console.md)、[网关](container-gateway-plan.md)
 和[混合 Job 预览](mixed-container-job-preview.md)。

@@ -76,6 +76,7 @@ func newRayLauncherCommand() *cobra.Command {
 	var role, ray, bash, python string
 	var prepared bool
 	var waitNetwork bool
+	var sharedHost bool
 	cmd := &cobra.Command{Use: "ray-launcher", Short: "Start a Ray workload process", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
 		self, err := os.Executable()
 		if err != nil {
@@ -83,7 +84,7 @@ func newRayLauncherCommand() *cobra.Command {
 		}
 		ctx, cancel := signal.NotifyContext(cmd.Context(), syscall.SIGINT, syscall.SIGTERM)
 		defer cancel()
-		err = raylauncher.Run(ctx, raylauncher.Config{Role: role, RayBinary: ray, BashBinary: bash, PythonBinary: python, Prepared: prepared, WaitNetwork: waitNetwork, SelfBinary: self})
+		err = raylauncher.Run(ctx, raylauncher.Config{Role: role, RayBinary: ray, BashBinary: bash, PythonBinary: python, Prepared: prepared, WaitNetwork: waitNetwork, SelfBinary: self, SharedHost: sharedHost})
 		if ctx.Err() != nil {
 			return nil
 		}
@@ -96,6 +97,7 @@ func newRayLauncherCommand() *cobra.Command {
 	cmd.Flags().BoolVar(&prepared, "prepared", false, "Internal continuation after the compatibility prepare script")
 	_ = cmd.Flags().MarkHidden("prepared")
 	cmd.Flags().BoolVar(&waitNetwork, "wait-network", false, "Wait for the RLark virtual network before starting Ray")
+	cmd.Flags().BoolVar(&sharedHost, "shared-host", false, "Run Ray as this launcher's own process group and never run a host-wide `ray stop` (Raw nodes)")
 	return cmd
 }
 

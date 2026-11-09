@@ -251,6 +251,12 @@ the administrator notice is visible; submission stays disabled. Narrow screens
 stack the charts;
 wide tables keep their own horizontal scroll region.
 
+The page refreshes in the background every 15 seconds and keeps the loaded
+content on screen while it does; a loading placeholder appears only on the
+first load. The **A-to-node probe** column shows the most recent SSH probe of
+that node record across all enrollments and reports it as not probed once it is
+older than 3 minutes (the controller re-probes about once a minute).
+
 Nodes appear in a summary table with private IP, native Node state, container
 Agent readiness, Agent version, schedulability and heartbeat age. Expand a row
 to inspect identity, native addresses and node information, environment,

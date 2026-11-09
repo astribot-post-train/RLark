@@ -17,6 +17,7 @@ Agent 运行在每个数据面集群中。`rlarkadm` 创建的 Kubernetes 部署
 - 能够出方向访问 Server HTTPS/WSS 端口，通常为 8443。
 - 为该集群签发的 CA 证书、Agent 证书和 Agent 私钥。
 - Server TLS 证书包含实际使用的主机名或 IP。
+- 具备 cluster-admin 权限，用于创建 Agent 的 ServiceAccount、ClusterRole 和 ClusterRoleBinding。详见下文“集群权限”一节。
 
 ### 使用 rlarkadm 安装（推荐）
 
@@ -56,6 +57,48 @@ rlarkadm install -f deploy-data-plane.yaml
 `rlarkadm` 为节点 Agent 分配独立的 `rlark-agent-node` ServiceAccount。本地集群 RBAC 仅允许读取当前 Node 以及列出和监听 Node Event，不会继承集群 Agent 的资源管理权限。
 
 Docker 和 Raw Agent 在最终准入前通过 Server 的受限 Kubernetes 代理读取所属 Cluster 和 Job。Agent ServiceAccount 不会获得集群范围的 `jobs` 或 `clusters` RBAC；代理只返回该 Agent 命名空间对应的唯一 Cluster，以及存在控制器归属且绑定匹配 Task 的 Job。这个只读校验会在产生外部工作负载副作用前重新执行。
+
+### 集群权限
+
+集群 Agent 使用 `rlark-system` 命名空间下的 `rlark-agent` ServiceAccount 操作本地 Kubernetes 集群，权限通过同名的 `rlark-agent` ClusterRole 和 ClusterRoleBinding 授予。角色内容取决于安装方式：
+
+| 安装方式 | `rlark-agent` ClusterRole | 说明 |
+|---------|---------------------------|------|
+| `rlarkadm install` | 所有 API 组、资源和动作均为 `*` | 重新执行 `rlarkadm install` 会把角色改写回该值。 |
+| 手工安装或 quickstart，使用 [`agent-rbac.yaml`](../../examples/agent-rbac.yaml) | 下表列出的显式规则 | 之后用 `kubectl patch` 或 `kubectl edit` 追加的规则可能被再次 apply 覆盖，自定义规则请写进自己的清单。 |
+
+`agent-rbac.yaml` 授予的权限：
+
+| API 组 | 资源 | 动作 | 用途 |
+|--------|------|------|------|
+| core | `nodes`、`pods`、`pods/log`、`services`、`configmaps`、`secrets`、`namespaces`、`persistentvolumeclaims`、`events` | 除 `deletecollection` 外全部 | Task 工作负载、Pod 和 Node 观测状态，以及通过 `pods/log` 回退读取 Job 日志 |
+| core | `pods/exec` | `get`、`create` | 控制台 WebTerminal。SPDY 方式的 exec 按 `create` 鉴权，WebSocket 方式按 `get` 鉴权。 |
+| `apps` | `deployments`、`replicasets`、`statefulsets`、`daemonsets` | 除 `deletecollection` 外全部 | Task 工作负载 |
+| `batch` | `jobs` | 除 `deletecollection` 外全部 | Task 工作负载 |
+| `coordination.k8s.io` | `leases` | 除 `deletecollection` 外全部 | Leader 选举 |
+
+该文件还会创建 `rlark-agent-addons` ClusterRole，用于安装 `csi-driver-rclone` addon 和交付 RLark 管理的 StorageClass。它绑定到同一个 ServiceAccount，单独定义是为了便于独立审查和回滚。
+
+节点 Agent 使用独立的 `rlark-agent-node` ServiceAccount，只能读取当前 Node 以及列出和监听 Node Event。
+
+检查集群 Agent 的实际权限。子资源必须通过 `--subresource` 指定；`kubectl auth can-i create pods/exec` 检查的是名为 `exec` 的 Pod，即使 exec 被拒绝也可能返回 `yes`。
+
+```bash
+kubectl auth can-i create pods --subresource=exec -n rlark-system \
+  --as=system:serviceaccount:rlark-system:rlark-agent
+kubectl auth can-i --list --as=system:serviceaccount:rlark-system:rlark-agent
+```
+
+!!! warning "仅限开发集群"
+    如需让手工安装的 Agent 获得与 `rlarkadm` 相同的不受限权限，可以追加一条通配规则。操作前先备份角色，之后可用 `kubectl replace -f` 恢复。放开后，任何能通过该 Agent 打开 WebTerminal 或提交 Task 的用户都等同于拥有集群级权限，因此不要在共享集群或生产集群上使用。
+
+    ```bash
+    kubectl get clusterrole rlark-agent -o yaml > rlark-agent-clusterrole.backup.yaml
+    kubectl patch clusterrole rlark-agent --type=json \
+      -p='[{"op":"add","path":"/rules/-","value":{"apiGroups":["*"],"resources":["*"],"verbs":["*"]}}]'
+    ```
+
+RBAC 变更立即生效，无需重启 Agent。
 
 ### 验证
 

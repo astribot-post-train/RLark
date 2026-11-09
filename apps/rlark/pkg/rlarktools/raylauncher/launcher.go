@@ -28,6 +28,10 @@ type Config struct {
 	Prepared     bool
 	WaitNetwork  bool
 	SelfBinary   string
+	// SharedHost is set where the launcher does not own the whole host (a Raw
+	// node): Ray runs as the launcher's own child process group and is stopped
+	// through it, never by a host-wide `ray stop`.
+	SharedHost bool
 }
 
 // ExitError preserves the exit status of a user compatibility script or Ray
@@ -47,6 +51,23 @@ var commandRunner = run
 var headStarter = startHead
 var executableChecker = checkExecutable
 var hostResolver = net.LookupHost
+
+// ownedStarter starts a process group that the launcher stops itself; the
+// returned function waits for it. Cancelling ctx sends SIGTERM to the group.
+var ownedStarter = startOwned
+
+// gpuIndexer maps GPU UUIDs to nvidia-smi indices.
+var gpuIndexer = nvidiaSMIIndices
+
+// portReady reports whether the Ray GCS accepts connections.
+var portReady = func(address string) bool {
+	conn, err := net.DialTimeout("tcp", address, time.Second)
+	if err != nil {
+		return false
+	}
+	_ = conn.Close()
+	return true
+}
 
 //go:embed files/prepare_and_exec.sh
 var prepareAndExecScript string
@@ -77,7 +98,7 @@ func Run(ctx context.Context, config Config) error {
 	if err := config.Validate(); err != nil {
 		return err
 	}
-	if err := setNodeRank(); err != nil {
+	if err := setNodeRank(config.Role); err != nil {
 		return err
 	}
 	if !config.Prepared {
@@ -91,6 +112,9 @@ func Run(ctx context.Context, config Config) error {
 			if config.WaitNetwork {
 				args = append(args, "--wait-network")
 			}
+			if config.SharedHost {
+				args = append(args, "--shared-host")
+			}
 			if err := runPrepared(ctx, config, script, args); err != nil {
 				return preserveExit("prepare script", err)
 			}
@@ -98,14 +122,27 @@ func Run(ctx context.Context, config Config) error {
 		}
 	}
 	setRayDefaults()
+	if err := normalizeVisibleGPUs(); err != nil {
+		return err
+	}
 	if err := executableChecker(config.RayBinary); err != nil {
 		return err
 	}
+	extra, err := rayStartArgs()
+	if err != nil {
+		return err
+	}
+	if config.SharedHost {
+		if config.Role == RoleHead {
+			return runSharedHead(ctx, config, extra)
+		}
+		return runSharedWorker(ctx, config, extra)
+	}
 	if config.Role == RoleHead {
 		stopStaleRay(config.RayBinary)
-		return runHead(ctx, config)
+		return runHead(ctx, config, extra)
 	}
-	return runWorker(ctx, config)
+	return runWorker(ctx, config, extra)
 }
 
 func waitForNetwork(ctx context.Context, role string) error {
@@ -154,9 +191,7 @@ func runPrepared(ctx context.Context, config Config, script string, args []strin
 	return commandRunner(ctx, config.BashBinary, argv...)
 }
 
-func runHead(ctx context.Context, config Config) error {
-	port := getenv("RLARK_RAY_PORT", "6379")
-	temp := getenv("RAY_TEMP_DIR", "/tmp/ray")
+func headNodeIP(ctx context.Context) string {
 	nodeIP := os.Getenv("RLARK_NODE_IP")
 	if nodeIP == "" {
 		nodeIP = firstHostIP()
@@ -166,7 +201,14 @@ func runHead(ctx context.Context, config Config) error {
 			nodeIP = resolved
 		}
 	}
-	if err := headStarter(ctx, config.RayBinary, nodeIP, port, temp); err != nil {
+	return nodeIP
+}
+
+func runHead(ctx context.Context, config Config, extra []string) error {
+	port := getenv("RLARK_RAY_PORT", "6379")
+	temp := getenv("RAY_TEMP_DIR", "/tmp/ray")
+	nodeIP := headNodeIP(ctx)
+	if err := headStarter(ctx, config.RayBinary, nodeIP, port, temp, extra); err != nil {
 		return preserveExit("start Ray head", err)
 	}
 	defer stopRay(config.RayBinary)
@@ -183,15 +225,16 @@ func runHead(ctx context.Context, config Config) error {
 	return ctx.Err()
 }
 
-func startHead(ctx context.Context, binary, nodeIP, port, temp string) error {
-	return run(ctx, binary, "start", "--head", "--dashboard-host=0.0.0.0", "--disable-usage-stats", "--node-ip-address="+nodeIP, "--port="+port, "--temp-dir", temp)
+func startHead(ctx context.Context, binary, nodeIP, port, temp string, extra []string) error {
+	args := append([]string{"start", "--head", "--dashboard-host=0.0.0.0", "--disable-usage-stats", "--node-ip-address=" + nodeIP, "--port=" + port, "--temp-dir", temp}, extra...)
+	return run(ctx, binary, args...)
 }
 
 func waitForCluster(ctx context.Context, python, address, nodes string) {
 	_ = commandRunner(ctx, python, "-u", "-c", clusterCheckProgram, address, nodes)
 }
 
-func runWorker(ctx context.Context, config Config) error {
+func runWorker(ctx context.Context, config Config, extra []string) error {
 	port := getenv("RLARK_RAY_PORT", "6379")
 	temp := getenv("RAY_TEMP_DIR", "/tmp/ray")
 	head := os.Getenv("RLARK_HEAD_ADDRESS")
@@ -200,7 +243,8 @@ func runWorker(ctx context.Context, config Config) error {
 	}
 	address := waitForHead(ctx, head, port, 120)
 	defer stopRay(config.RayBinary)
-	if err := commandRunner(ctx, config.RayBinary, "start", "--address="+address, "--temp-dir", temp, "--block"); err != nil {
+	args := append([]string{"start", "--address=" + address, "--temp-dir", temp, "--block"}, extra...)
+	if err := commandRunner(ctx, config.RayBinary, args...); err != nil {
 		return preserveExit("start Ray worker", err)
 	}
 	return nil
@@ -285,7 +329,20 @@ func setRayDefaults() {
 	}
 }
 
-func setNodeRank() error {
+// setNodeRank sets RLINF_NODE_RANK. RLinf requires every node or no node to set
+// it, so a worker that has a rank forces the head to have one too.
+//
+// Precedence: an explicit RLARK_NODE_RANK (a Raw process has no Pod ordinal);
+// then RLARK_NODE_RANK_START plus the Pod ordinal (Kubernetes replicas); then,
+// for a head without a Pod name, RLARK_NODE_RANK_START (0 by default).
+func setNodeRank(role string) error {
+	if explicit := os.Getenv("RLARK_NODE_RANK"); explicit != "" {
+		rank, err := strconv.Atoi(explicit)
+		if err != nil || rank < 0 {
+			return fmt.Errorf("invalid RLARK_NODE_RANK %q: must be a non-negative integer", explicit)
+		}
+		return exportRank(rank)
+	}
 	startValue := os.Getenv("RLARK_NODE_RANK_START")
 	start, err := strconv.Atoi(startValue)
 	if err != nil && startValue != "" {
@@ -294,10 +351,20 @@ func setNodeRank() error {
 	pod := os.Getenv("POD_NAME")
 	if index := strings.LastIndexByte(pod, '-'); index >= 0 {
 		ordinal, _ := strconv.Atoi(pod[index+1:])
-		rank := strconv.Itoa(start + ordinal)
-		_ = os.Setenv("RLINF_NODE_RANK", rank)
-		_, _ = fmt.Fprintf(os.Stdout, "RLINF_NODE_RANK: %s\n", rank)
+		return exportRank(start + ordinal)
 	}
+	if pod == "" && role == RoleHead {
+		return exportRank(start)
+	}
+	return nil
+}
+
+func exportRank(rank int) error {
+	value := strconv.Itoa(rank)
+	if err := os.Setenv("RLINF_NODE_RANK", value); err != nil {
+		return fmt.Errorf("set RLINF_NODE_RANK: %w", err)
+	}
+	_, _ = fmt.Fprintf(os.Stdout, "RLINF_NODE_RANK: %s\n", value)
 	return nil
 }
 

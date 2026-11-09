@@ -42,6 +42,9 @@ type Config struct {
 	// ContainerRuntimeDiagnosticsOrigin is a literal loopback HTTP origin of
 	// the Agent API's diagnostic listener, in the same network namespace.
 	ContainerRuntimeDiagnosticsOrigin string
+
+	// RegistryBrowseAllowedHosts limits the registry origins the Gateway may query.
+	RegistryBrowseAllowedHosts []string
 }
 
 // DefaultConfig returns a Config with sensible defaults.
@@ -68,6 +71,7 @@ func (c *Config) SetupFlags(fs *pflag.FlagSet) {
 	fs.BoolVar(&c.ContainerRuntimeNodeRegistration, "container-runtime-enable-node-registration", c.ContainerRuntimeNodeRegistration, "Enable administrator runtime node registration (requires additive RBAC).")
 	fs.BoolVar(&c.ContainerRuntimeJobSubmission, "container-runtime-enable-job-submission", c.ContainerRuntimeJobSubmission, "Enable preview single-process Raw Job submission (requires additive RBAC).")
 	fs.StringVar(&c.ContainerRuntimeDiagnosticsOrigin, "container-runtime-diagnostics-origin", c.ContainerRuntimeDiagnosticsOrigin, "Optional loopback HTTP diagnostic origin of container-runtime-api.")
+	fs.StringSliceVar(&c.RegistryBrowseAllowedHosts, "registry-browse-allowed-hosts", c.RegistryBrowseAllowedHosts, "Exact host[:port] values permitted for read-only HTTPS registry browsing; empty disables browsing.")
 
 	c.KubeClientConfig.SetupFlags(fs)
 }

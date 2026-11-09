@@ -30,6 +30,7 @@
 | Agent 无法连接 | `kubectl logs -n rlark-system deploy/rlark-agent` | 验证 TLS 证书和 Server 地址 |
 | Agent 心跳缺失 | 检查到控制面的网络连通性 | 验证防火墙规则、DNS 解析 |
 | 节点未出现 | `kubectl get nodes -l rlark.io/cluster-id` | 确认节点标签已应用 |
+| WebTerminal 报 `exec error: ... "system:serviceaccount:rlark-system:rlark-agent" cannot create resource "pods/exec"` | `kubectl auth can-i create pods --subresource=exec -n <命名空间> --as=system:serviceaccount:rlark-system:rlark-agent` | 为 `rlark-agent` ClusterRole 授予 `pods/exec` 的 `get` 和 `create` 权限，例如重新 apply [`agent-rbac.yaml`](../../examples/agent-rbac.yaml)。详见 [Agent 安装与升级](agent.md)中的“集群权限”一节 |
 
 ### 任务
 

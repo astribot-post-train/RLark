@@ -14,6 +14,11 @@ rules:
 - apiGroups: [""]
   resources: ["nodes", "pods", "pods/log", "services", "configmaps", "secrets", "namespaces", "persistentvolumeclaims", "events"]
   verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+# Console WebTerminal: the agent execs into workload Pods on the user's behalf.
+# SPDY exec is authorized as "create"; WebSocket exec upgrades are authorized as "get".
+- apiGroups: [""]
+  resources: ["pods/exec"]
+  verbs: ["get", "create"]
 - apiGroups: ["apps"]
   resources: ["deployments", "replicasets", "statefulsets", "daemonsets"]
   verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
@@ -39,3 +44,51 @@ subjects:
 - kind: ServiceAccount
   name: rlark-agent
   namespace: rlark-system
+---
+# Extra permissions so rlark-agent can install the csi-driver-rclone addon
+# and deliver RLark-managed StorageClasses. Kept separate from the base
+# rlark-agent ClusterRole so it can be reviewed and rolled back on its own.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: rlark-agent-addons
+rules:
+  - apiGroups: ["storage.k8s.io"]
+    resources: ["csidrivers", "storageclasses"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # The agent must hold every permission it grants in the addon's ClusterRole
+  # (escalate scoped by resourceNames is not honored on create), so mirror the
+  # csi-driver-rclone role here instead of granting escalate.
+  - apiGroups: ["storage.k8s.io"]
+    resources: ["volumeattachments"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["storage.k8s.io"]
+    resources: ["volumeattachments/status"]
+    verbs: ["get", "list", "watch", "update", "patch"]
+  - apiGroups: [""]
+    resources: ["persistentvolumes"]
+    verbs: ["get", "list", "watch", "create", "delete", "update", "patch"]
+  - apiGroups: [""]
+    resources: ["serviceaccounts"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # create cannot be restricted by resourceNames.
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["clusterroles", "clusterrolebindings"]
+    verbs: ["create"]
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["clusterroles", "clusterrolebindings"]
+    resourceNames: ["csi-driver-rclone"]
+    verbs: ["get", "list", "watch", "update", "patch", "delete", "bind"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: rlark-agent-addons
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: rlark-agent-addons
+subjects:
+  - kind: ServiceAccount
+    name: rlark-agent
+    namespace: rlark-system

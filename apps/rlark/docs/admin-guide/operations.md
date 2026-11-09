@@ -30,6 +30,7 @@ Check the system from control plane to data plane in this order:
 | Agent not connecting | `kubectl logs -n rlark-system deploy/rlark-agent` | Verify TLS certificates and server address |
 | Agent heartbeat missing | Check network connectivity to control plane | Verify firewall rules, DNS resolution |
 | Nodes not appearing | `kubectl get nodes -l rlark.io/cluster-id` | Verify node labels are applied |
+| WebTerminal shows `exec error: ... "system:serviceaccount:rlark-system:rlark-agent" cannot create resource "pods/exec"` | `kubectl auth can-i create pods --subresource=exec -n <namespace> --as=system:serviceaccount:rlark-system:rlark-agent` | Grant `get` and `create` on `pods/exec` to the `rlark-agent` ClusterRole, for example by re-applying [`agent-rbac.yaml`](../examples/agent-rbac.yaml). See [Cluster Permissions](agent.md#cluster-permissions) |
 
 ### Jobs
 

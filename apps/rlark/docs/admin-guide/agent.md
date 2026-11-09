@@ -13,6 +13,7 @@ The Agent runs in each data-plane cluster. A Kubernetes installation created by 
 - Outbound connectivity to the Server HTTPS/WSS port, normally 8443.
 - A CA certificate, Agent certificate, and Agent private key issued for the cluster.
 - The Server hostname or IP included in its TLS certificate.
+- Cluster-admin access to create the Agent ServiceAccounts, ClusterRoles, and ClusterRoleBindings. See [Cluster Permissions](#cluster-permissions).
 
 ### Install with rlarkadm (Recommended)
 
@@ -52,6 +53,48 @@ Do not combine cluster and node modes in one Deployment for a multi-node Kuberne
 `rlarkadm` assigns the node Agent a dedicated `rlark-agent-node` ServiceAccount. Its local-cluster RBAC is limited to reading the current Node and listing/watching Node events; it does not inherit the cluster Agent's resource-management permissions.
 
 Docker and Raw agents use the Server's scoped Kubernetes proxy for their final admission read of the owning Cluster and Job. The agent ServiceAccount does not receive cluster-wide `jobs` or `clusters` RBAC; the proxy returns only the single Cluster assigned to that agent namespace and a Job with a controller-owned, matching Task binding. This read-only check is repeated immediately before an external workload effect.
+
+### Cluster Permissions
+
+The cluster Agent acts on the local Kubernetes cluster with the `rlark-agent` ServiceAccount in `rlark-system`, bound through the `rlark-agent` ClusterRole and ClusterRoleBinding. What that role contains depends on how the Agent was installed:
+
+| Install method | `rlark-agent` ClusterRole | Notes |
+|----------------|---------------------------|-------|
+| `rlarkadm install` | `*` on all API groups, resources, and verbs | Re-running `rlarkadm install` rewrites the role to this value. |
+| Manual or quickstart, using [`agent-rbac.yaml`](../examples/agent-rbac.yaml) | Explicit rules listed below | Rules added later with `kubectl patch` or `kubectl edit` can be overwritten by a later apply. Keep custom rules in your own manifest. |
+
+`agent-rbac.yaml` grants:
+
+| API group | Resources | Verbs | Used for |
+|-----------|-----------|-------|----------|
+| core | `nodes`, `pods`, `pods/log`, `services`, `configmaps`, `secrets`, `namespaces`, `persistentvolumeclaims`, `events` | all except `deletecollection` | Task workloads, observed Pod and Node state, and Job log fallback through `pods/log` |
+| core | `pods/exec` | `get`, `create` | Console WebTerminal. SPDY exec is authorized as `create`; WebSocket exec as `get`. |
+| `apps` | `deployments`, `replicasets`, `statefulsets`, `daemonsets` | all except `deletecollection` | Task workloads |
+| `batch` | `jobs` | all except `deletecollection` | Task workloads |
+| `coordination.k8s.io` | `leases` | all except `deletecollection` | Leader election |
+
+The same file also creates `rlark-agent-addons`, an extra ClusterRole for installing the `csi-driver-rclone` addon and RLark-managed StorageClasses. It is bound to the same ServiceAccount and kept separate so it can be reviewed and removed independently.
+
+The node Agent uses its own `rlark-agent-node` ServiceAccount, which can only read the current Node and list and watch Node events.
+
+Check what the cluster Agent can do. Subresources must be passed with `--subresource`; `kubectl auth can-i create pods/exec` checks a Pod named `exec` and can report `yes` even when exec is denied.
+
+```bash
+kubectl auth can-i create pods --subresource=exec -n rlark-system \
+  --as=system:serviceaccount:rlark-system:rlark-agent
+kubectl auth can-i --list --as=system:serviceaccount:rlark-system:rlark-agent
+```
+
+!!! warning "Development clusters only"
+    To give a hand-installed Agent the same unrestricted access that `rlarkadm` grants, append a wildcard rule. Back up the role first so it can be restored with `kubectl replace -f`. Any user who can open a WebTerminal or submit a Task through this Agent can then act with cluster-wide privileges, so do not use this on shared or production clusters.
+
+    ```bash
+    kubectl get clusterrole rlark-agent -o yaml > rlark-agent-clusterrole.backup.yaml
+    kubectl patch clusterrole rlark-agent --type=json \
+      -p='[{"op":"add","path":"/rules/-","value":{"apiGroups":["*"],"resources":["*"],"verbs":["*"]}}]'
+    ```
+
+RBAC changes take effect immediately; the Agent does not need a restart.
 
 ### Verification
 

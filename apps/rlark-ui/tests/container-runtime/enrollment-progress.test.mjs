@@ -76,3 +76,22 @@ test("re-enrollment sends only the SSH endpoint; identity comes from the probe",
   // A restarted worker must not carry its previous identity.
   assert.deepEqual(req.nodes[1], { name: "ksyun-b", role: "Worker", address: "10.0.3.85", port: 22 });
 });
+
+test("node reachability uses the freshest probe across enrollments", async () => {
+  const { nodeProbe, probeState } = await import(
+    "../../dist/test/admin/container-runtime/enrollment.js"
+  );
+  const at = (ago) => new Date(Date.now() - ago).toISOString();
+  const node = { name: "ksyun-a", uid: "a-uid" };
+  const detail = {
+    // Newest operation first, as the API lists them; its probe is older.
+    enrollments: [
+      { nodes: [{ name: "ksyun-a", nodeUID: "a-uid", reachability: "Unreachable", probedAt: at(90000) }] },
+      { nodes: [{ name: "ksyun-a", nodeUID: "a-uid", reachability: "Reachable", probedAt: at(5000) }] },
+      { nodes: [{ name: "ksyun-a", nodeUID: "old-uid", reachability: "Reachable", probedAt: at(1000) }] },
+    ],
+  };
+  assert.equal(probeState(nodeProbe(detail, node)), "Reachable");
+  // A probe from about a minute ago is still current at the controller's cadence.
+  assert.equal(probeState({ reachability: "Reachable", probedAt: at(90000) }), "Reachable");
+});

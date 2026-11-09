@@ -358,5 +358,93 @@ its new container instance, address, GPU ownership, Agent registration and
 checkpoint before attempting dispatch. Do not treat the retained historical
 node UID or the previous successful synthetic Job as current readiness.
 
+### Robot relay path on 2026-11-06
+
+A's management gateway now also serves the Ray TCP relay on 30001 from the
+same process: the enrollment profile's `gatewayArgv` passes
+`--ray-config=/opt/rlark-ray-gateway/ray-gateway.json`, and A was re-enrolled
+with only its RLark services stopped. Independent Fleet/Ray and training work on
+A kept running. A new 30-day relay CA, gateway and peer certificates were
+issued; peers are pinned by leaf certificate.
+
+The robot x86 reaches the cloud through the robot Orin, which bridges to the
+local router. The x86 holds two addresses on `enp2s0`: `192.168.0.10/24` on the
+robot LAN and `192.168.31.250/32` on the router network. Only the
+`192.168.31.0/24` route names `src 192.168.31.250`; the default route does not,
+so the kernel sources Internet traffic from `192.168.0.10`, which the router
+does not translate. Public TCP and the configured public DNS servers therefore
+time out from the x86, while the same destinations succeed when the socket is
+bound to `192.168.31.250`. The development host reaches A because it sits
+directly on the router network.
+
+The relay peer avoids a system route change by binding only its gateway
+connection with `localAddress: 192.168.31.250`; with that setting the robot
+peer established its session to `36.103.180.181:30001`. A host-wide fix is to
+add `src 192.168.31.250` to the x86 default route
+(`ip route replace default via 192.168.0.11 dev enp2s0 src 192.168.31.250`)
+and persist it in the host network configuration. That change was **not**
+applied; it affects every process on the robot, including DNS.
+
+Robot deployment notes:
+
+- The robot Env image `fleet-runtime-cpu:4090-20261027-numpy2.2.6` uses
+  Ubuntu 20.04 with glibc 2.31. The connect shim must be built against that
+  glibc (the build host's 2.35 output requires `GLIBC_2.34`), and the relay
+  binary is built with `CGO_ENABLED=0`.
+- `/run` is mounted `noexec`; keep the relay binary under an exec-capable
+  host directory such as `/var/lib/rlark-ray-transport`.
+- Projected Secret files are symlinks, which the relay rejects for its private
+  key; copy them to private regular files before starting the peer.
+- The robot's RLark Agent image predates `headAddress` and target-Cluster UID
+  enforcement. The Fleet Env container reads `RAY_ADDRESS` itself, so the
+  mixed Job sets it in the Pod template; the native fence is not exercised
+  until that Agent is upgraded.
+
+Both B and the robot peer hold sessions to A:30001. No Ray process, Fleet
+service, mixed Job or robot action has run over this path yet.
+
+### Mixed Job on the Pod network, 2026-11-06
+
+On the evening of 2026-11-06 (Beijing time), the robot Agent was upgraded to
+`20261106-agent-67eaa39`. Mixed Job `fleet-mixed-b-s1u-20261106-2` was then
+submitted in shared mode: suspended Job, `ContainerJob` binding, and
+activation with UID and resourceVersion preconditions. The Raw rollout runs
+on B (private address `10.1.2.196` after a restart). The Kubernetes Env runs
+on `s1u-01-x86`. This is an operator-assembled preview; the relay is not yet
+injected by RLark.
+
+- **Env on the Pod network.** With `hostNetwork`, the Env's fixed Ray ports
+  `41001`/`41002` collided with an independent Ray on the robot host. The Env
+  now uses the Pod network with a fixed Calico address `10.242.164.100`
+  (`cni.projectcalico.org/ipAddrs`). The gateway peer table needs an explicit
+  IP, so the address must not change. The relay peer is a sidecar in the same
+  network namespace. Host Ray was not touched.
+- **Egress without changing routes.** Calico NAT follows the default route,
+  which has no `src`, so Pod traffic to A:30001 times out for the same reason
+  host traffic did. The fix is a `hostNetwork` Deployment, `rlk-relay-forward`:
+  - it listens only on `192.168.0.10:31030`;
+  - it forwards raw TCP to A:30001 from `192.168.31.250`;
+  - mTLS and certificate pins remain end to end between the peer and A.
+
+  The robot's default route is still unchanged.
+- **Driver topology.** The Fleet Driver reads the RLinf topology once at
+  bootstrap. The B launcher therefore waits until every Ray member is alive
+  before it starts the Driver. RLinf requires `RLINF_NODE_RANK` on every node
+  or on none, so the head sets rank `0` because the Env sets rank `1`.
+  Without these two changes, the Driver reported one node and bootstrap
+  failed.
+- **GPU sharing.** The Notebook's `gpu_keepalive` keeps running. The rollout
+  config sets `allow_shared_accelerators: true`. When Fleet starts, the
+  keepalive drops from about 40 GiB to its small hold.
+- **Node selection.** Neither enrollment nor the native Node sets the
+  `rlark.io/node-name` label. Pinning a Raw Task to a Notebook therefore needs
+  that label added to the native Node by hand, guarded by UID and
+  resourceVersion.
+
+Observed: the Driver reports `num_nodes: 2`, with rank 0 `10.1.2.196` and
+rank 1 `10.242.164.100`. The rollout loaded its weights next to the
+keepalive. The robot moves only when an operator starts a rollout from the
+Fleet UI. This is not yet the 10-minute Passive acceptance in item 7.
+
 See [console](container-runtime-console.md), [gateway](container-gateway-plan.md)
 and [mixed Job preview](mixed-container-job-preview.md) for current contracts.

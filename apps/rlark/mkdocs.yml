@@ -77,6 +77,7 @@ plugins:
             "Local Development and Debugging": 本地开发与调试
             "Project Layout": 项目结构
             "Project Design Principles": 项目设计原则
+            "Shared Storage and Registry Plan": "共享存储与镜像仓库计划"
             "API Conventions": "API 约定"
             "Raw Container Runtime Plan": "固定 GPU 容器接入计划"
             "Container Runtime Management Console": "容器运行时管理控制台"
@@ -129,6 +130,7 @@ nav:
   - Developer Guide:
     - Developer Guide Overview: developer-guide/index.md
     - Project Design Principles: developer-guide/design-principles.md
+    - Shared Storage and Registry Plan: developer-guide/shared-storage-registry-plan.md
     - Raw Container Runtime Plan: developer-guide/raw-container-runtime-plan.md
     - Container Runtime Management Console: developer-guide/container-runtime-console.md
     - Notebook Fleet Delivery: developer-guide/notebook-fleet-delivery.md

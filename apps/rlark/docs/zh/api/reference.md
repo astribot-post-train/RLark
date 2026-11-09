@@ -73,6 +73,9 @@ Gateway 虽注册了 `POST /api/v1/certificates/revoke`，但该接口尚未实�
 | `GET` | `/api/v1/images` |
 | `GET, POST` | `/api/v1/image-registries` |
 | `GET, PUT, DELETE` | `/api/v1/image-registries/{id}` |
+| `GET` | `/api/v1/image-registries/{id}/repositories` |
+| `GET` | `/api/v1/image-registries/{id}/tags?repository={name}` |
+| `GET` | `/api/v1/image-registries/{id}/manifest?repository={name}&tag={tag}` |
 | `GET, PUT` | `/api/v1/system-config` |
 
 系统配置分为 `ssh` 和 `log` 两类。`ssh.jumpHost` 必须是不含协议、用户、路径和端口的主机名或 IP；设置 `ssh.jumpPort` 时，其值必须为 1 到 65535 之间的整数。将 `log.backend` 设置为 `none` 可关闭历史日志查询，设置为 `sls` 时必须提供完整的 SLS 连接参数。响应中的 SLS 敏感凭据显示为 `****`，将该占位符原样提交表示保留已存储值。`PUT` 成功后返回最终生效且已掩码的配置。
@@ -86,6 +89,8 @@ Gateway 虽注册了 `POST /api/v1/certificates/revoke`，但该接口尚未实�
 ```
 
 `clusterSelection.mode` 可为 `None`（仅保存）、`Selected`（一个或多个逻辑集群名）或 `All`（当前及未来集群）。`None` 和 `All` 模式下 `clusters` 必须为空。响应不返回密码，但会返回 `id`。`POST` 返回 `201 Created`。执行 `PUT` 时，省略 `password` 表示保留原密码，显式空密码非法。`DELETE` 返回 `202 Accepted`，因为 Replication 和 Delivery 会异步删除已分发的 Secret。
+
+三个只读浏览接口仅限管理员。Gateway 需配置 `--registry-browse-allowed-hosts=registry.example.com:5443`（多个精确 `host[:port]` 以逗号分隔）；默认空列表关闭浏览。只访问显式允许的 HTTPS 地址，不跟随重定向或使用代理，保存的凭证不返回给浏览器。Gateway 必须能访问仓库，并通过系统 CA 信任其证书；私有 CA 应在 Gateway 启动前加入其运行环境，不要关闭证书校验。仓库必须支持目录、分页标签查询、返回 `sha256` 摘要的 manifest HEAD 和 Basic 认证；暂不支持 token 认证或不提供目录接口的仓库。目录和标签每页最多 50 项，使用返回的 `next` 作为下一次请求的 `last`。仓库失败返回 502，不视为空结果。已有 `GET /api/v1/images` 是 Job 镜像使用历史，不是仓库库存。查询期间标签和摘要可能变化，发布时应固定经过验证的摘要。
 
 ## 存储
 

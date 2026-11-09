@@ -465,11 +465,15 @@ export function ContainerClustersPage({
     const gate = listGate.current;
     const valid = gate.begin();
     setLoading(true);
-    setError("");
     void client
       .list(controller.signal)
       .then((value) => {
-        if (valid()) setClusters(value);
+        if (valid()) {
+          setClusters(value);
+          // Clear a prior error only once the refresh succeeds, so a banner
+          // does not blink away and back on every periodic refresh.
+          setError("");
+        }
       })
       .catch((e) => {
         if (valid() && !controller.signal.aborted) {
@@ -828,7 +832,7 @@ export function ContainerClustersPage({
         </div>
         <div className="actions">
           <button
-            disabled={writing || loading}
+            disabled={writing || (loading && clusters === undefined)}
             onClick={() => setRevision((v) => v + 1)}
           >
             {t.refresh}
@@ -851,7 +855,9 @@ export function ContainerClustersPage({
         <section className="layout">
           <nav className="container-cluster-picker" aria-label={t.title}>
             <div className="cluster-options">
-              {loading ? (
+              {/* Keep the loaded list during background refreshes; the
+                  placeholder is only for the first load. */}
+              {loading && clusters === undefined ? (
                 <p className="muted">{t.loading}</p>
               ) : clusters === undefined ? (
                 <p className="muted">{t.unavailable}</p>
@@ -1062,7 +1068,7 @@ export function ContainerClustersPage({
                   t={t}
                   writing={writing || !!nodeIntent || !!intent}
                   jobIntent={jobIntent}
-                  jobsLoading={jobsLoading}
+                  jobsLoading={jobsLoading && jobs === undefined}
                   jobs={jobs}
                   onOpen={() => setShowJob(true)}
                   onSuspend={(job) => {

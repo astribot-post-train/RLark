@@ -73,6 +73,9 @@ The authenticated API reference metadata endpoint returns localized section titl
 | `GET` | `/api/v1/images` |
 | `GET, POST` | `/api/v1/image-registries` |
 | `GET, PUT, DELETE` | `/api/v1/image-registries/{id}` |
+| `GET` | `/api/v1/image-registries/{id}/repositories` |
+| `GET` | `/api/v1/image-registries/{id}/tags?repository={name}` |
+| `GET` | `/api/v1/image-registries/{id}/manifest?repository={name}&tag={tag}` |
 | `GET, PUT` | `/api/v1/system-config` |
 
 System configuration is split into `ssh` and `log` categories. `ssh.jumpHost` must be a hostname or IP address without a scheme, user, path, or port; `ssh.jumpPort`, when set, must be an integer from 1 to 65535. Set `log.backend` to `none` to disable historical log queries, or to `sls` with the required SLS connection fields. Sensitive SLS credentials are returned as `****`; sending that placeholder back preserves the stored value. A successful `PUT` returns the effective masked configuration.
@@ -86,6 +89,8 @@ Image registry credentials use an immutable `ir-<16 lowercase hexadecimal charac
 ```
 
 `clusterSelection.mode` is `None` (store only), `Selected` (one or more logical cluster names), or `All` (current and future clusters). `clusters` must be empty for `None` and `All`. Responses omit the password and include `id`. `POST` returns `201 Created`. On `PUT`, omitting `password` preserves it; an explicitly empty password is invalid. `DELETE` returns `202 Accepted` because Replication and Delivery remove distributed Secrets asynchronously.
+
+The three read-only browse endpoints require an administrator. Configure the Gateway with `--registry-browse-allowed-hosts=registry.example.com:5443` (comma-separated exact `host[:port]` values); the default empty list disables browsing. Only explicitly allowed HTTPS origins are contacted, redirects and proxies are not followed, and stored credentials remain on the Gateway. The Gateway must be able to reach the registry and trust its TLS certificate using its system CA store; install a private CA in the Gateway environment before starting it. Do not disable certificate verification. Registry catalog, paginated tags and manifest HEAD with a `sha256` digest and Basic authentication are required; token-authentication challenges and registries that omit catalog support are not supported. Each catalog/tag page has at most 50 entries; pass the returned `next` value as `last` for the next page. Registry failures return 502, not an empty result. Existing `GET /api/v1/images` is Job image usage history, not registry inventory. Image references and digests can change between requests; pin verified digests for releases.
 
 ## Storage
 

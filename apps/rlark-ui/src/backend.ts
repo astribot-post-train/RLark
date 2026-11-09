@@ -308,6 +308,30 @@ export const imageRegistriesApi = {
       method: "DELETE",
     });
   },
+  repositories(id: string, last = "", signal?: AbortSignal) {
+    const query = new URLSearchParams(last ? { last } : {});
+    return requestJson<{ items: string[]; next: string }>(
+      `/api/v1/image-registries/${encodeURIComponent(id)}/repositories?${query}`,
+      { signal },
+    );
+  },
+  tags(id: string, repository: string, last = "", signal?: AbortSignal) {
+    const query = new URLSearchParams({
+      repository,
+      ...(last ? { last } : {}),
+    });
+    return requestJson<{ items: string[]; next: string }>(
+      `/api/v1/image-registries/${encodeURIComponent(id)}/tags?${query}`,
+      { signal },
+    );
+  },
+  manifest(id: string, repository: string, tag: string, signal?: AbortSignal) {
+    const query = new URLSearchParams({ repository, tag });
+    return requestJson<{ digest: string }>(
+      `/api/v1/image-registries/${encodeURIComponent(id)}/manifest?${query}`,
+      { signal },
+    );
+  },
 };
 
 export const storageClassesApi = {

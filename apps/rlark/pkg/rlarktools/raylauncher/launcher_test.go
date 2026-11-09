@@ -153,7 +153,7 @@ func TestHeadWithoutRunScriptStaysAliveUntilCancellation(t *testing.T) {
 	t.Setenv("RLARK_NODE_IP", "10.0.0.1")
 	oldRunner, oldStarter := commandRunner, headStarter
 	defer func() { commandRunner, headStarter = oldRunner, oldStarter }()
-	headStarter = func(context.Context, string, string, string, string) error { return nil }
+	headStarter = func(context.Context, string, string, string, string, []string) error { return nil }
 	commandRunner = func(context.Context, string, ...string) error { return nil }
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)

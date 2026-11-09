@@ -54,7 +54,8 @@ const isSchedulable = (resource: NodeResource) =>
   resource.node.status?.phase !== "Offline" &&
   !resource.node.spec?.unschedulable &&
   (!resource.node.spec?.agentType ||
-    resource.node.spec.agentType === "Kubernetes");
+    resource.node.spec.agentType === "Kubernetes" ||
+    resource.node.spec.agentType === "Raw");
 
 const quantity = (value?: string) => {
   const parsed = Number.parseFloat(value ?? "0");
@@ -172,6 +173,7 @@ export function ResourcePlacementPicker({
   zh,
   cluster,
   nodes,
+  clusterNodes,
   loading,
   reclaimableResources = {},
   nodeSelector,
@@ -185,6 +187,7 @@ export function ResourcePlacementPicker({
   zh: boolean;
   cluster: string;
   nodes: CRDNodeLite[];
+  clusterNodes?: CRDNodeLite[];
   loading: boolean;
   reclaimableResources?: ReclaimableResources;
   nodeSelector: string;
@@ -233,10 +236,9 @@ export function ResourcePlacementPicker({
 
   const resources = useMemo(
     () =>
-      nodes
-        .filter((node) => node.metadata.namespace === cluster)
+      (clusterNodes ?? nodes.filter((node) => node.metadata.namespace === cluster))
         .flatMap((node) => nodeResources(node, reclaimableResources)),
-    [cluster, nodes, reclaimableResources],
+    [cluster, clusterNodes, nodes, reclaimableResources],
   );
   const resourceOptions = useMemo<ResourceOption[]>(() => {
     const groups = new Map<string, NodeResource[]>();

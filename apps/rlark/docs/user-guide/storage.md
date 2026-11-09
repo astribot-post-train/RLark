@@ -25,9 +25,17 @@ The Job editor can create two storage choices: a host directory or a PVC-backed 
 - Select a cluster first; the dropdown lists StorageClass declarations configured to target that cluster
 - Each worker Pod receives its own PVC
 
+## SMB / NAS Shares
+
+- Choose **SMB / NAS share** as the storage type when creating a storage class, then enter the server, share name, optional sub path, username, password, and optional domain
+- Jobs select an SMB storage class exactly like an object-storage class; the PVC mounts the share (or its sub path) through the rclone CSI driver
+- Creation only checks that the server's port 445 is reachable. Wrong credentials are reported when a task mounts the volume, so check the Pod events if a mount fails
+- SMB storage classes do not support online file browsing
+- Leave the password empty when editing to keep the stored password; the storage type cannot be changed after creation
+
 ## Managing Storage Classes
 
-Open **Storage** to review object-storage configurations, target clusters, providers, and buckets. Creating or updating a storage class stores its declaration in the control plane; the generated rclone CSI StorageClass and Secret are then distributed asynchronously to target clusters. Create the required storage class and wait for delivery before configuring a PVC mount for a Worker.
+Open **Storage** to review object-storage and SMB configurations, target clusters, providers, and locations (a bucket, or `//server/share/path` for SMB). Creating or updating a storage class stores its declaration in the control plane; the generated rclone CSI StorageClass and Secret are then distributed asynchronously to target clusters. Create the required storage class and wait for delivery before configuring a PVC mount for a Worker.
 
 Before using a storage class, confirm the target cluster has the rclone CSI driver installed and can reach the object storage service. If a PVC remains `Pending`, check the distribution status, driver, credentials, and network connectivity.
 

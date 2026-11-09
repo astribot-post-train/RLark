@@ -39,17 +39,14 @@ import {
   type PullProgressEntry,
   type Worker as WorkerItem,
 } from "../data";
+import { rawWorkerRows } from "../admin/container-runtime/rawWorkers";
 import { storageClassesApi } from "../backend";
 import type { Copy as CopyType } from "../i18n";
 import type { CRDNode, NodeEventEntry } from "../types";
 import type { CRDTask } from "../crdModels";
 import { useAutoRefresh } from "../hooks";
 import { copyText } from "../utils/clipboard";
-import {
-  convertJobList,
-  crdToJob,
-  describeVolumeSource,
-} from "../utils/crd";
+import { convertJobList, crdToJob, describeVolumeSource } from "../utils/crd";
 import { effectiveJobPhase, type JobDisplayPhase } from "../utils/jobPhase";
 import { formatChinaDateTime } from "../utils/time";
 import { resolveSSHKeyOwners, type SSHUserKey } from "../utils/sshKeys";
@@ -2233,72 +2230,99 @@ export function JobDetailPage({
     return failed ? jobFailureMessage(message, zh) : message;
   };
 
-  const fallbackWorkers: WorkerItem[] = [];
+  // Raw Tasks run as supervised processes without Pods; list them from the
+  // Task itself so their node placement is visible next to Pod Workers.
+  const rawWorkers: WorkerItem[] = rawWorkerRows(
+    tasks,
+    new Set(pods.map((pod) => pod.taskName)),
+  ).map((row) => {
+    const resource = job.resources.find(
+      (r) => taskResourceName(job.name, r.role) === row.taskName,
+    );
+    const role = resource?.role ?? row.taskName;
+    const phase = row.phase as Phase;
+    return {
+      id: `${row.namespace}/${row.taskName}`,
+      name: row.taskName,
+      jobId: job.id,
+      role,
+      node: row.node,
+      cluster: row.namespace || "—",
+      phase,
+      cpu: resource?.cpu ?? "",
+      memory: resource?.memory ?? "",
+      gpu: resource?.gpu,
+      logs: row.message ? [row.message] : [],
+      statusMessage:
+        phase === "Failed" ? jobFailureMessage(row.message, zh) : row.message,
+      taskName: row.taskName,
+    };
+  });
   const resourceForTask = (taskName: string) =>
     job.resources.find(
       (resource) => taskResourceName(job.name, resource.role) === taskName,
     );
-  const jobWorkers: WorkerItem[] =
-    pods.length > 0
-      ? pods.map((pod, index) => {
-          const resource = resourceForTask(pod.taskName);
-          const role = resource?.role ?? pod.taskName;
-          const phase = (pod.phase || "Pending") as Phase;
-          // When the worker is still Pending, query the hosting node's
-          // pullProgress (reported by node-agent) so the StatusBadge "i"
-          // hover surfaces live image pull progress for this worker.
-          const nodePullProgress =
-            phase === "Pending" && pod.node
-              ? (nodePullProgressMap[pod.node] ?? []).filter(
-                  (progress) => progress.image === resource?.image,
-                )
-              : [];
-          // 同样从 Node.status.events 取节点 warning 事件；当 pod.node
-          // 缺失时回退到 Task.status.events，让 Pending worker 行 tooltip
-          // 在调度前就能展示 DiskPressure 等原因。
-          const workerEvents =
-            phase === "Pending" || phase === "Failed"
-              ? (podEventsMap[pod.name] ?? []).length > 0
-                ? (podEventsMap[pod.name] ?? [])
-                : pod.node && (nodeEventsMap[pod.node] ?? []).length > 0
-                  ? (nodeEventsMap[pod.node] ?? [])
-                  : (taskEventsMap[pod.taskName?.toLowerCase() ?? ""] ?? [])
-              : [];
-          // pod.node 非空即表示 kube-scheduler 已完成绑定，此后 Pending 只可能
-          // 来自容器创建或镜像拉取；把绑定前的 FailedScheduling 拆到
-          // resolvedEvents，避免首条调度失败事件被当成当前阻塞原因。
-          const scheduled = Boolean(pod.node);
-          const { active: activeWorkerEvents, resolved: resolvedWorkerEvents } =
-            partitionWorkerEvents(workerEvents, scheduled);
-          return {
-            id: `${pod.namespace}/${pod.podNamespace}/${pod.podName}`,
-            name: pod.podName || `${role}-${index}`,
-            jobId: job.id,
-            role,
-            node: pod.node || "—",
-            cluster: pod.taskNamespace || pod.namespace || "—",
-            phase: (pod.phase || "Pending") as Phase,
-            cpu: resource?.cpu ?? "",
-            memory: resource?.memory ?? "",
-            gpu: resource?.gpu,
-            logs: pod.message
-              ? [pod.message]
-              : [
-                  `${role}: worker state synced`,
-                  `${role}: waiting for runtime heartbeat`,
-                ],
-            statusMessage: workerStatusSummary(
-              pod.message,
-              workerEvents,
-              phase === "Failed",
-              scheduled,
-            ),
-            pullProgress: nodePullProgress,
-            events: activeWorkerEvents,
-            resolvedEvents: resolvedWorkerEvents,
-          };
-        })
-      : fallbackWorkers;
+  const jobWorkers: WorkerItem[] = [
+    ...pods.map((pod, index) => {
+      const resource = resourceForTask(pod.taskName);
+      const role = resource?.role ?? pod.taskName;
+      const phase = (pod.phase || "Pending") as Phase;
+      // When the worker is still Pending, query the hosting node's
+      // pullProgress (reported by node-agent) so the StatusBadge "i"
+      // hover surfaces live image pull progress for this worker.
+      const nodePullProgress =
+        phase === "Pending" && pod.node
+          ? (nodePullProgressMap[pod.node] ?? []).filter(
+              (progress) => progress.image === resource?.image,
+            )
+          : [];
+      // 同样从 Node.status.events 取节点 warning 事件；当 pod.node
+      // 缺失时回退到 Task.status.events，让 Pending worker 行 tooltip
+      // 在调度前就能展示 DiskPressure 等原因。
+      const workerEvents =
+        phase === "Pending" || phase === "Failed"
+          ? (podEventsMap[pod.name] ?? []).length > 0
+            ? (podEventsMap[pod.name] ?? [])
+            : pod.node && (nodeEventsMap[pod.node] ?? []).length > 0
+              ? (nodeEventsMap[pod.node] ?? [])
+              : (taskEventsMap[pod.taskName?.toLowerCase() ?? ""] ?? [])
+          : [];
+      // pod.node 非空即表示 kube-scheduler 已完成绑定，此后 Pending 只可能
+      // 来自容器创建或镜像拉取；把绑定前的 FailedScheduling 拆到
+      // resolvedEvents，避免首条调度失败事件被当成当前阻塞原因。
+      const scheduled = Boolean(pod.node);
+      const { active: activeWorkerEvents, resolved: resolvedWorkerEvents } =
+        partitionWorkerEvents(workerEvents, scheduled);
+      return {
+        id: `${pod.namespace}/${pod.podNamespace}/${pod.podName}`,
+        name: pod.podName || `${role}-${index}`,
+        jobId: job.id,
+        role,
+        node: pod.node || "—",
+        cluster: pod.taskNamespace || pod.namespace || "—",
+        phase: (pod.phase || "Pending") as Phase,
+        cpu: resource?.cpu ?? "",
+        memory: resource?.memory ?? "",
+        gpu: resource?.gpu,
+        logs: pod.message
+          ? [pod.message]
+          : [
+              `${role}: worker state synced`,
+              `${role}: waiting for runtime heartbeat`,
+            ],
+        statusMessage: workerStatusSummary(
+          pod.message,
+          workerEvents,
+          phase === "Failed",
+          scheduled,
+        ),
+        pullProgress: nodePullProgress,
+        events: activeWorkerEvents,
+        resolvedEvents: resolvedWorkerEvents,
+      };
+    }),
+    ...rawWorkers,
+  ];
   const runningWorkerCount = jobWorkers.filter(
     (worker) => worker.phase === "Running",
   ).length;

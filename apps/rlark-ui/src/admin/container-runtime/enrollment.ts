@@ -190,24 +190,35 @@ export function parseRetainedEnrollment(
   return undefined;
 }
 
+// Several enrollments may probe the same node record independently; the most
+// recent probe describes current reachability, regardless of which operation
+// made it.
 export function nodeProbe(
   detail: Detail,
   node: Node,
 ): EnrollmentNode | undefined {
+  let freshest: EnrollmentNode | undefined;
   for (const op of detail.enrollments) {
     const status = op.nodes?.find(
       (n) => n.name === node.name && n.nodeUID === node.uid,
     );
-    if (status) return status;
+    const at = Date.parse(status?.probedAt ?? "");
+    if (status && (!freshest || at > Date.parse(freshest.probedAt ?? "")))
+      freshest = status;
   }
+  return freshest;
 }
+
+// The controller re-probes each node about once a minute, so a probe stays
+// current for a few probe intervals before it is reported as unknown.
+export const probeFreshnessMs = 180000;
 
 export function probeState(
   probe: EnrollmentNode | undefined,
   now = Date.now(),
 ): string {
   const at = Date.parse(probe?.probedAt ?? "");
-  return !Number.isFinite(at) || at > now || now - at > 60000
+  return !Number.isFinite(at) || at > now || now - at > probeFreshnessMs
     ? "Unknown"
     : probe?.reachability || "Unknown";
 }

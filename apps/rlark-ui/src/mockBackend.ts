@@ -543,12 +543,18 @@ export function installMockBackend() {
           payload.clusters ||
           storageClasses.find((item) => item.name === name)?.clusters ||
           [],
-        provider: payload.provider || "MinIO",
+        type: payload.type === "smb" ? "smb" : "s3",
+        provider: payload.type === "smb" ? "" : payload.provider || "MinIO",
         endpoint: payload.endpoint || "",
         region: payload.region || "",
         bucket: payload.bucket || "",
         accessKeyId: payload.access_key_id || payload.accessKeyId || "",
         pathStyle: Boolean(payload.path_style ?? payload.pathStyle),
+        host: payload.host || "",
+        share: payload.share || "",
+        subPath: payload.sub_path || payload.subPath || "",
+        username: payload.username || "",
+        domain: payload.domain || "",
         description: payload.description || "",
         createdAt:
           storageClasses.find((item) => item.name === name)?.createdAt ||
@@ -587,10 +593,17 @@ export function installMockBackend() {
       return json(item, 201);
     }
     if (path.startsWith("/api/v1/image-registries/")) {
-      const id = decodeURIComponent(path.split("/").pop() || "");
+      const segments = path.split("/");
+      const id = decodeURIComponent(segments[4] || "");
       const index = imageRegistries.findIndex((item) => item.id === id);
       if (index < 0)
         return json({ code: "RESOURCE_NOT_FOUND", message: "not found" }, 404);
+      if (method === "GET" && segments[5] === "repositories")
+        return json({ items: ["example/image"], next: "" });
+      if (method === "GET" && segments[5] === "tags")
+        return json({ items: ["demo"], next: "" });
+      if (method === "GET" && segments[5] === "manifest")
+        return json({ digest: `sha256:${"a".repeat(64)}` });
       if (method === "GET") return json(imageRegistries[index]);
       if (method === "PUT") {
         const payload = await request.json();

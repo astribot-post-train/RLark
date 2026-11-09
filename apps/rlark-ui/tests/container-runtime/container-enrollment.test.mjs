@@ -110,7 +110,7 @@ test("enrollment uses retained SSH topology and fresh UID-bound probes", () => {
   assert.equal(
     probeState({
       reachability: "Reachable",
-      probedAt: new Date(Date.now() - 61000).toISOString(),
+      probedAt: new Date(Date.now() - 181000).toISOString(),
     }),
     "Unknown",
   );

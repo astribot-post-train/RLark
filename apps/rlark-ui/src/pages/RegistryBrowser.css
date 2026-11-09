@@ -1,0 +1,131 @@
+.registry-browser-panel {
+  margin-top: 16px;
+}
+
+.registry-browser-heading h3,
+.registry-browser-panel h3 {
+  color: var(--ink);
+  font-size: 15px;
+  margin: 0 0 8px;
+}
+
+.registry-browser-heading p {
+  margin: 0;
+}
+
+.registry-browser-panel .page-toolbar {
+  margin: 16px 0;
+}
+
+.registry-browser-panel .table-panel {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+
+.registry-browser-panel .table-panel table {
+  width: 100%;
+  min-width: 480px;
+}
+
+.registry-tag-previews {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.registry-tag-chip {
+  display: inline-block;
+  max-width: 100%;
+  padding: 4px 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  overflow-wrap: anywhere;
+}
+
+.registry-tag-preview-error {
+  color: var(--danger, #c2414b);
+}
+
+.registry-expanded-row > td {
+  background: var(--surface-subtle, transparent);
+}
+
+.registry-tag-details {
+  padding: 8px 12px;
+}
+
+.registry-tag-details h4 {
+  margin: 0 0 12px;
+}
+
+.registry-tag-row {
+  padding: 10px 0;
+  border-top: 1px solid var(--line);
+  overflow-wrap: anywhere;
+}
+
+.registry-tag-row-main,
+.registry-tag-actions,
+.registry-tag-digest {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.registry-tag-row-main {
+  justify-content: space-between;
+  gap: 10px 16px;
+}
+
+.registry-tag-row-main > code {
+  min-width: 0;
+}
+
+.registry-copy-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.registry-copy-status-text {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.registry-tag-digest {
+  margin-top: 10px;
+  color: var(--muted);
+}
+
+.registry-tag-digest code {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.registry-command {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 10px 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+
+.registry-command code {
+  overflow-wrap: anywhere;
+}
+
+.registry-command > span {
+  flex-shrink: 0;
+}

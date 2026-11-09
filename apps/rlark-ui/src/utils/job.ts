@@ -174,6 +174,12 @@ export function generateJobCRD(opts: {
   headerRole: string;
   roles: string[];
   roleResources: Record<string, RoleResource>;
+  rawRoles?: Record<string, {
+    environment: string;
+    argv: string[];
+    env: string[];
+    directory: string;
+  }>;
   runScript: string;
   domain: string;
   tensorBoardDir?: string;
@@ -182,6 +188,37 @@ export function generateJobCRD(opts: {
 }): CRDJob {
   const tasks = opts.roles
     .map((role) => {
+      // Check if this is a Raw role
+      const rawConfig = opts.rawRoles?.[role];
+      if (rawConfig) {
+        const taskName = toResourceName(role);
+        const res = opts.roleResources[role];
+        return {
+          name: taskName,
+          role: "Actor",
+          placement: {
+            nodeSelector: parseNodeSelector(res?.nodeSelector ?? ""),
+            environment: rawConfig.environment,
+          },
+          runtime: { kind: "Raw" },
+          workload: {
+            kind: "raw.rlark.io/process",
+            version: "v1",
+            carrier: {
+              type: "raw.rlark.io/process",
+              version: "v1",
+            },
+            parameters: {
+              argv: rawConfig.argv,
+              env: rawConfig.env,
+              directory: rawConfig.directory,
+            },
+          },
+          replicas: res?.replicas ?? 1,
+        };
+      }
+
+      // Otherwise, generate a Kubernetes task as before
       const res = opts.roleResources[role];
       if (!res?.image) return null;
       const isHead = role === opts.headerRole;

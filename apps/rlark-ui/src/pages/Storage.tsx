@@ -21,7 +21,11 @@ import {
   Upload,
   X,
 } from "lucide-react";
-import { type StorageClass, type StorageProvider } from "../data";
+import {
+  type StorageClass,
+  type StorageProvider,
+  type StorageType,
+} from "../data";
 import { copy, type Copy } from "../i18n";
 import {
   ColumnFilterButton,
@@ -36,6 +40,7 @@ import { formatChinaDateTime } from "../utils/time";
 type StorageClassFormState = {
   name: string;
   clusters: string[];
+  type: StorageType;
   provider: StorageProvider;
   endpoint: string;
   region: string;
@@ -43,6 +48,12 @@ type StorageClassFormState = {
   access_key_id: string;
   access_key_secret: string;
   path_style: boolean;
+  host: string;
+  share: string;
+  sub_path: string;
+  username: string;
+  password: string;
+  domain: string;
   description: string;
 };
 
@@ -60,7 +71,44 @@ const storageClassFieldLabels: Record<string, { zh: string; en: string }> = {
   name: { zh: "名称", en: "Name" },
   bucket: { zh: "存储桶", en: "Bucket" },
   access_key_secret: { zh: "Access Key Secret", en: "Access Key Secret" },
+  host: { zh: "服务器地址", en: "Server" },
+  share: { zh: "共享名", en: "Share" },
+  username: { zh: "用户名", en: "Username" },
+  password: { zh: "密码", en: "Password" },
 };
+
+function normalizeStorageType(value: unknown): StorageType {
+  return value === "smb" ? "smb" : "s3";
+}
+
+/** 列表和详情中“提供商”一栏：SMB 类型统一显示 SMB。 */
+function storageProviderLabel(
+  storageClass: Pick<StorageClass, "type" | "provider">,
+): string {
+  return storageClass.type === "smb" ? "SMB" : storageClass.provider;
+}
+
+/** 列表和详情中“位置”一栏：S3 显示存储桶，SMB 显示共享路径。 */
+function storageLocation(
+  storageClass: Pick<
+    StorageClass,
+    "type" | "bucket" | "host" | "share" | "subPath"
+  >,
+): string {
+  return storageClass.type === "smb"
+    ? smbLocation(storageClass)
+    : storageClass.bucket;
+}
+
+/** SMB 存储类展示为 //host/share/subPath。 */
+function smbLocation(
+  storageClass: Pick<StorageClass, "host" | "share" | "subPath">,
+): string {
+  const path = [storageClass.share, storageClass.subPath]
+    .filter(Boolean)
+    .join("/");
+  return `//${storageClass.host}${path ? `/${path}` : ""}`;
+}
 
 function storageClassSubmissionError(
   error: unknown,
@@ -97,12 +145,18 @@ function normalizeStorageClass(raw: any): StorageClass {
     name,
     namespace: raw?.namespace ?? "default",
     clusters: Array.isArray(raw?.clusters) ? raw.clusters : [],
+    type: normalizeStorageType(raw?.type),
     provider: (raw?.provider ?? "") as StorageProvider,
     endpoint: raw?.endpoint ?? "",
     region: raw?.region ?? "",
     bucket: raw?.bucket ?? "",
     accessKeyId: raw?.accessKeyId ?? raw?.access_key_id ?? "",
     pathStyle: Boolean(raw?.pathStyle ?? raw?.path_style),
+    host: raw?.host ?? "",
+    share: raw?.share ?? "",
+    subPath: raw?.subPath ?? raw?.sub_path ?? "",
+    username: raw?.username ?? "",
+    domain: raw?.domain ?? "",
     description: raw?.description ?? "",
     createdAt: raw?.createdAt ?? raw?.created_at ?? "",
   };
@@ -119,6 +173,7 @@ function storageClassToForm(
   return {
     name: storageClass?.name ?? "",
     clusters: storageClass?.clusters ?? [],
+    type: storageClass?.type ?? "s3",
     provider: storageClass?.provider ?? "",
     endpoint: storageClass?.endpoint ?? "",
     region: storageClass?.region ?? "",
@@ -126,6 +181,12 @@ function storageClassToForm(
     access_key_id: accessKeyID,
     access_key_secret: "",
     path_style: storageClass?.pathStyle ?? false,
+    host: storageClass?.host ?? "",
+    share: storageClass?.share ?? "",
+    sub_path: storageClass?.subPath ?? "",
+    username: storageClass?.username ?? "",
+    password: "",
+    domain: storageClass?.domain ?? "",
     description: storageClass?.description ?? "",
   };
 }
@@ -218,13 +279,16 @@ export function StorageClassesPage({
     const query = search.toLowerCase();
     const matchesSearch =
       sc.name.toLowerCase().includes(query) ||
-      sc.provider.toLowerCase().includes(query) ||
-      sc.bucket.toLowerCase().includes(query);
+      storageProviderLabel(sc).toLowerCase().includes(query) ||
+      storageLocation(sc).toLowerCase().includes(query);
     const providerHit =
-      providerFilter.length === 0 || providerFilter.includes(sc.provider);
+      providerFilter.length === 0 ||
+      providerFilter.includes(storageProviderLabel(sc));
     return matchesSearch && providerHit;
   });
-  const providers = Array.from(new Set(realClasses.map((sc) => sc.provider)));
+  const providers = Array.from(
+    new Set(realClasses.map((sc) => storageProviderLabel(sc))),
+  );
   // 列表页列不再支持排序，按名称做稳定 tiebreak 即可
   const sortedClasses = [...filtered].sort((a, b) =>
     a.name.localeCompare(b.name, zh ? "zh-CN" : "en", { numeric: true }),
@@ -350,10 +414,12 @@ export function StorageClassesPage({
                   </button>
                 </td>
                 <td>
-                  <span className="storage-provider-chip">{sc.provider}</span>
+                  <span className="storage-provider-chip">
+                    {storageProviderLabel(sc)}
+                  </span>
                 </td>
                 <td>
-                  <code className="inline-code">{sc.bucket}</code>
+                  <code className="inline-code">{storageLocation(sc)}</code>
                 </td>
                 <td>
                   <span className="storage-description">
@@ -362,16 +428,18 @@ export function StorageClassesPage({
                 </td>
                 <td className="storage-actions-col">
                   <div className="row-actions">
-                    <button
-                      className="icon-button"
-                      title={c.files.eyebrow}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onBrowseFiles(sc.id);
-                      }}
-                    >
-                      <FolderOpen size={14} />
-                    </button>
+                    {sc.type !== "smb" && (
+                      <button
+                        className="icon-button"
+                        title={c.files.eyebrow}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onBrowseFiles(sc.id);
+                        }}
+                      >
+                        <FolderOpen size={14} />
+                      </button>
+                    )}
                     <button
                       className="icon-button"
                       title={zh ? "编辑存储类" : "Edit storage class"}
@@ -463,18 +531,21 @@ export function StorageClassDetailPage({
           </span>
           <h2>{storageClass.name}</h2>
           <p>
-            {storageClass.provider} · {storageClass.bucket}
+            {storageProviderLabel(storageClass)} ·{" "}
+            {storageLocation(storageClass)}
           </p>
           <div className="storage-detail-badges">
             <span>{storageClass.namespace}</span>
             <span>
-              {storageClass.pathStyle
-                ? zh
-                  ? "Path Style 已启用"
-                  : "Path Style enabled"
-                : zh
-                  ? "标准访问模式"
-                  : "Standard access"}
+              {storageClass.type === "smb"
+                ? "SMB / NAS"
+                : storageClass.pathStyle
+                  ? zh
+                    ? "Path Style 已启用"
+                    : "Path Style enabled"
+                  : zh
+                    ? "标准访问模式"
+                    : "Standard access"}
             </span>
           </div>
         </div>
@@ -493,16 +564,31 @@ export function StorageClassDetailPage({
           <div className="node-detail-grid storage-detail-info-grid">
             <div>
               <span className="muted">{c.storageClass.provider}</span>
-              <strong>{storageClass.provider}</strong>
+              <strong>{storageProviderLabel(storageClass)}</strong>
             </div>
-            <div>
-              <span className="muted">{c.storageClass.bucket}</span>
-              <strong>{storageClass.bucket}</strong>
-            </div>
-            <div>
-              <span className="muted">{c.storageClass.region}</span>
-              <strong>{storageClass.region || "—"}</strong>
-            </div>
+            {storageClass.type === "smb" ? (
+              <>
+                <div>
+                  <span className="muted">{c.storageClass.share}</span>
+                  <strong>{smbLocation(storageClass)}</strong>
+                </div>
+                <div>
+                  <span className="muted">{c.storageClass.username}</span>
+                  <strong>{storageClass.username || "—"}</strong>
+                </div>
+              </>
+            ) : (
+              <>
+                <div>
+                  <span className="muted">{c.storageClass.bucket}</span>
+                  <strong>{storageClass.bucket}</strong>
+                </div>
+                <div>
+                  <span className="muted">{c.storageClass.region}</span>
+                  <strong>{storageClass.region || "—"}</strong>
+                </div>
+              </>
+            )}
             <div>
               <span className="muted">{c.storageClass.createdAt}</span>
               <strong>{storageClass.createdAt || "—"}</strong>
@@ -518,22 +604,37 @@ export function StorageClassDetailPage({
             {zh ? "访问端点与连接方式" : "Endpoint and connection mode"}
           </p>
           <div className="node-detail-grid storage-detail-info-grid">
-            <div>
-              <span className="muted">{c.storageClass.endpoint}</span>
-              <strong>{storageClass.endpoint || "—"}</strong>
-            </div>
-            <div>
-              <span className="muted">{c.storageClass.pathStyle}</span>
-              <strong>
-                {storageClass.pathStyle
-                  ? zh
-                    ? "启用"
-                    : "Enabled"
-                  : zh
-                    ? "禁用"
-                    : "Disabled"}
-              </strong>
-            </div>
+            {storageClass.type === "smb" ? (
+              <>
+                <div>
+                  <span className="muted">{c.storageClass.host}</span>
+                  <strong>{storageClass.host || "—"}</strong>
+                </div>
+                <div>
+                  <span className="muted">{c.storageClass.domain}</span>
+                  <strong>{storageClass.domain || "—"}</strong>
+                </div>
+              </>
+            ) : (
+              <>
+                <div>
+                  <span className="muted">{c.storageClass.endpoint}</span>
+                  <strong>{storageClass.endpoint || "—"}</strong>
+                </div>
+                <div>
+                  <span className="muted">{c.storageClass.pathStyle}</span>
+                  <strong>
+                    {storageClass.pathStyle
+                      ? zh
+                        ? "启用"
+                        : "Enabled"
+                      : zh
+                        ? "禁用"
+                        : "Disabled"}
+                  </strong>
+                </div>
+              </>
+            )}
             <div>
               <span className="muted">{c.storageClass.description}</span>
               <strong>{storageClass.description || "—"}</strong>
@@ -647,20 +748,41 @@ export function StorageClassCreatePage({
     return () => document.removeEventListener("keydown", handleKeyDown);
   }, [clustersMenuOpen, onBack, submitting]);
 
+  const isSMB = form.type === "smb";
+
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
-    if (!isEdit && !form.access_key_secret.trim()) {
+    if (!isEdit && !isSMB && !form.access_key_secret.trim()) {
       setError(
         zh ? "Access Key Secret 不能为空。" : "Access Key Secret is required.",
       );
       return;
     }
+    if (!isEdit && isSMB && !form.password) {
+      setError(zh ? "密码不能为空。" : "Password is required.");
+      return;
+    }
     setSubmitting(true);
     setError("");
+    // 只提交当前类型用到的字段，避免把另一类型的空值写进存储类。
+    const payload = isSMB
+      ? {
+          name: form.name,
+          clusters: form.clusters,
+          description: form.description,
+          type: "smb" as const,
+          host: form.host,
+          share: form.share,
+          sub_path: form.sub_path,
+          username: form.username,
+          password: form.password,
+          domain: form.domain,
+        }
+      : { ...form, type: "s3" as const };
     try {
       if (isEdit)
-        await storageClassesApi.update(initialStorageClass!.name, form);
-      else await storageClassesApi.create(form);
+        await storageClassesApi.update(initialStorageClass!.name, payload);
+      else await storageClassesApi.create(payload);
       onCreated?.();
       onBack();
     } catch (err) {
@@ -725,29 +847,47 @@ export function StorageClassCreatePage({
                 />
               </label>
               <label>
-                {c.storageClass.provider} *
+                {c.storageClass.type} *
                 <select
                   required
-                  value={form.provider}
+                  disabled={isEdit}
+                  value={form.type}
                   onChange={(e) =>
-                    setForm({
-                      ...form,
-                      provider: e.target.value as StorageProvider,
-                    })
+                    setForm({ ...form, type: e.target.value as StorageType })
                   }
                 >
-                  <option value="">{zh ? "请选择" : "Select"}</option>
-                  {providerOptions.map((p, index) => (
-                    <option key={`${p.value}-${index}`} value={p.value}>
-                      {p.name}
-                    </option>
-                  ))}
-                  {form.provider &&
-                    !providerOptions.some((p) => p.value === form.provider) && (
-                      <option value={form.provider}>{form.provider}</option>
-                    )}
+                  <option value="s3">{c.storageClass.typeS3}</option>
+                  <option value="smb">{c.storageClass.typeSMB}</option>
                 </select>
               </label>
+              {!isSMB && (
+                <label>
+                  {c.storageClass.provider} *
+                  <select
+                    required
+                    value={form.provider}
+                    onChange={(e) =>
+                      setForm({
+                        ...form,
+                        provider: e.target.value as StorageProvider,
+                      })
+                    }
+                  >
+                    <option value="">{zh ? "请选择" : "Select"}</option>
+                    {providerOptions.map((p, index) => (
+                      <option key={`${p.value}-${index}`} value={p.value}>
+                        {p.name}
+                      </option>
+                    ))}
+                    {form.provider &&
+                      !providerOptions.some(
+                        (p) => p.value === form.provider,
+                      ) && (
+                        <option value={form.provider}>{form.provider}</option>
+                      )}
+                  </select>
+                </label>
+              )}
             </div>
           </div>
           <div className="form-section">
@@ -822,87 +962,177 @@ export function StorageClassCreatePage({
               )}
             </div>
           </div>
-          <div className="form-section">
-            <strong>{c.storageClass.connection}</strong>
-            <div className="form-grid">
-              <label>
-                {c.storageClass.endpoint} *
-                <input
-                  required
-                  value={form.endpoint}
-                  onChange={(e) =>
-                    setForm({ ...form, endpoint: e.target.value })
-                  }
-                  placeholder="https://s3.amazonaws.com"
-                />
-              </label>
-              <label>
-                {c.storageClass.region} *
-                <input
-                  required
-                  value={form.region}
-                  onChange={(e) => setForm({ ...form, region: e.target.value })}
-                  placeholder="us-east-1"
-                />
-              </label>
-              <label>
-                {c.storageClass.bucket} *
-                <input
-                  required
-                  value={form.bucket}
-                  onChange={(e) => setForm({ ...form, bucket: e.target.value })}
-                  placeholder="my-bucket"
-                />
-              </label>
-              <label>
-                {c.storageClass.pathStyle}
-                <input
-                  type="checkbox"
-                  checked={form.path_style}
-                  onChange={(e) =>
-                    setForm({ ...form, path_style: e.target.checked })
-                  }
-                />
-              </label>
-              <label>
-                {c.storageClass.accessKeyId} *
-                <input
-                  required={!isEdit}
-                  autoComplete="off"
-                  value={form.access_key_id}
-                  onChange={(e) =>
-                    setForm({ ...form, access_key_id: e.target.value })
-                  }
-                  placeholder={
-                    isEdit
-                      ? zh
-                        ? "留空则保持原 Access Key ID"
-                        : "Leave blank to keep the existing Access Key ID"
-                      : "AKIAIOSFODNN7EXAMPLE"
-                  }
-                />
-              </label>
-              <label>
-                {c.storageClass.accessKeySecret} *
-                <input
-                  required={!isEdit}
-                  type="password"
-                  autoComplete="new-password"
-                  value={form.access_key_secret}
-                  onChange={(e) =>
-                    setForm({ ...form, access_key_secret: e.target.value })
-                  }
-                  placeholder={
-                    isEdit
-                      ? zh
-                        ? "留空则保持原密钥"
-                        : "Leave blank to keep the existing secret"
-                      : "••••••••••••"
-                  }
-                />
-              </label>
+          {isSMB && (
+            <div className="form-section">
+              <strong>{c.storageClass.connection}</strong>
+              <div className="form-grid">
+                <label>
+                  {c.storageClass.host} *
+                  <input
+                    required
+                    value={form.host}
+                    onChange={(e) => setForm({ ...form, host: e.target.value })}
+                    placeholder="10.0.0.10"
+                  />
+                </label>
+                <label>
+                  {c.storageClass.share} *
+                  <input
+                    required
+                    value={form.share}
+                    onChange={(e) =>
+                      setForm({ ...form, share: e.target.value })
+                    }
+                    placeholder="shared"
+                  />
+                </label>
+                <label>
+                  {c.storageClass.subPath}
+                  <input
+                    value={form.sub_path}
+                    onChange={(e) =>
+                      setForm({ ...form, sub_path: e.target.value })
+                    }
+                    placeholder={
+                      zh ? "可选，例如 team/data" : "Optional, e.g. team/data"
+                    }
+                  />
+                </label>
+                <label>
+                  {c.storageClass.domain}
+                  <input
+                    value={form.domain}
+                    onChange={(e) =>
+                      setForm({ ...form, domain: e.target.value })
+                    }
+                    placeholder={
+                      zh
+                        ? "可选，例如 corp.example.com"
+                        : "Optional, e.g. corp.example.com"
+                    }
+                  />
+                </label>
+                <label>
+                  {c.storageClass.username} *
+                  <input
+                    required
+                    autoComplete="off"
+                    value={form.username}
+                    onChange={(e) =>
+                      setForm({ ...form, username: e.target.value })
+                    }
+                  />
+                </label>
+                <label>
+                  {c.storageClass.password} *
+                  <input
+                    required={!isEdit}
+                    type="password"
+                    autoComplete="new-password"
+                    value={form.password}
+                    onChange={(e) =>
+                      setForm({ ...form, password: e.target.value })
+                    }
+                    placeholder={
+                      isEdit
+                        ? zh
+                          ? "留空则保持原密码"
+                          : "Leave blank to keep the existing password"
+                        : "••••••••••••"
+                    }
+                  />
+                </label>
+              </div>
+              <p className="muted">{c.storageClass.smbHint}</p>
             </div>
-          </div>
+          )}
+          {!isSMB && (
+            <div className="form-section">
+              <strong>{c.storageClass.connection}</strong>
+              <div className="form-grid">
+                <label>
+                  {c.storageClass.endpoint} *
+                  <input
+                    required
+                    value={form.endpoint}
+                    onChange={(e) =>
+                      setForm({ ...form, endpoint: e.target.value })
+                    }
+                    placeholder="https://s3.amazonaws.com"
+                  />
+                </label>
+                <label>
+                  {c.storageClass.region} *
+                  <input
+                    required
+                    value={form.region}
+                    onChange={(e) =>
+                      setForm({ ...form, region: e.target.value })
+                    }
+                    placeholder="us-east-1"
+                  />
+                </label>
+                <label>
+                  {c.storageClass.bucket} *
+                  <input
+                    required
+                    value={form.bucket}
+                    onChange={(e) =>
+                      setForm({ ...form, bucket: e.target.value })
+                    }
+                    placeholder="my-bucket"
+                  />
+                </label>
+                <label>
+                  {c.storageClass.pathStyle}
+                  <input
+                    type="checkbox"
+                    checked={form.path_style}
+                    onChange={(e) =>
+                      setForm({ ...form, path_style: e.target.checked })
+                    }
+                  />
+                </label>
+                <label>
+                  {c.storageClass.accessKeyId} *
+                  <input
+                    required={!isEdit}
+                    autoComplete="off"
+                    value={form.access_key_id}
+                    onChange={(e) =>
+                      setForm({ ...form, access_key_id: e.target.value })
+                    }
+                    placeholder={
+                      isEdit
+                        ? zh
+                          ? "留空则保持原 Access Key ID"
+                          : "Leave blank to keep the existing Access Key ID"
+                        : "AKIAIOSFODNN7EXAMPLE"
+                    }
+                  />
+                </label>
+                <label>
+                  {c.storageClass.accessKeySecret} *
+                  <input
+                    required={!isEdit}
+                    type="password"
+                    autoComplete="new-password"
+                    value={form.access_key_secret}
+                    onChange={(e) =>
+                      setForm({ ...form, access_key_secret: e.target.value })
+                    }
+                    placeholder={
+                      isEdit
+                        ? zh
+                          ? "留空则保持原密钥"
+                          : "Leave blank to keep the existing secret"
+                        : "••••••••••••"
+                    }
+                  />
+                </label>
+              </div>
+            </div>
+          )}
           <div className="form-section">
             <label>
               {c.storageClass.description}

@@ -55,11 +55,12 @@ type Gateway struct {
 	imagesMu sync.RWMutex
 	images   map[string]imageUsage
 
-	serverTransport  *http.Transport
-	jwtSigningKey    []byte
-	users            userProvider
-	tenants          tenant.Provider
-	containerRuntime http.Handler
+	serverTransport    *http.Transport
+	registryHTTPClient *http.Client
+	jwtSigningKey      []byte
+	users              userProvider
+	tenants            tenant.Provider
+	containerRuntime   http.Handler
 }
 
 func (g *Gateway) managementNamespace() string {

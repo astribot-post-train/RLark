@@ -33,7 +33,6 @@ function formatImageUsage(usedAt: string, useCount: number, zh: boolean) {
 }
 import { Check, ChevronDown, Plus, Trash2, X } from "lucide-react";
 import {
-  storageClasses as mockStorageClasses,
   type Cluster,
   clusters,
   type Job,
@@ -61,6 +60,14 @@ import { RoleNameInput } from "../components/create";
 import { CodeEditorField } from "../components/CodeEditor";
 import { TagEditor } from "../components/TagEditor";
 import { ResourcePlacementPicker } from "../components/ResourcePlacementPicker";
+import { RegistryImagePicker } from "../components/RegistryImagePicker";
+import { RawRoleFields, extractEnvironments } from "../components/RawRoleFields";
+import {
+  isRawCluster,
+  nodesForCluster,
+  runtimeMapFromContainerClusters,
+  type ClusterRuntimeInfo,
+} from "../utils/clusterRuntime";
 import {
   availableResource,
   reclaimableResourcesForTasks,
@@ -294,10 +301,14 @@ export function CreateJobModal({
   >([]);
   const [storageClassLoading, setStorageClassLoading] = useState(false);
   const [storageClassFetched, setStorageClassFetched] = useState(false);
+  const [storageClassError, setStorageClassError] = useState("");
   const [clustersLoaded, setClustersLoaded] = useState(false);
   const [recentImages, setRecentImages] = useState<ImageUsage[]>([]);
   const [imagePickerRole, setImagePickerRole] = useState<string | null>(null);
-  const lastFetchedStorageClusterRef = useRef<string>("");
+  const [runtimeMap, setRuntimeMap] = useState<Map<string, ClusterRuntimeInfo>>(new Map());
+  const [rawRoleConfigs, setRawRoleConfigs] = useState<
+    Record<string, { environment: string; argv: string; env: string; directory: string }>
+  >({});
   const inferenceDoneRef = useRef(false);
 
   useEffect(() => {
@@ -305,6 +316,18 @@ export function CreateJobModal({
       .list<ImageUsage>()
       .then(setRecentImages)
       .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    // Raw clusters keep their Node objects in an agent namespace that differs
+    // from the cluster ID; the container-runtime API reports that mapping.
+    // Non-admin users get 403 here and every cluster stays Kubernetes.
+    const controller = new AbortController();
+    import("../admin/container-runtime/api")
+      .then((mod) => new mod.Client().list(controller.signal))
+      .then((items) => setRuntimeMap(runtimeMapFromContainerClusters(items)))
+      .catch(() => {});
+    return () => controller.abort();
   }, []);
 
   useEffect(() => {
@@ -415,17 +438,17 @@ export function CreateJobModal({
       .catch(() => {});
   }, []);
 
+  // Refs, not state: several call sites fire in the same render, and state
+  // guards read stale values there. The sequence number lets only the newest
+  // request write results, so an older failure cannot overwrite a newer list.
+  const storageClassSeqRef = useRef(0);
+  const storageClassOkClusterRef = useRef<string | null>(null);
   const fetchStorageClasses = async (cluster?: string) => {
-    if (storageClassLoading) return;
     const clusterKey = cluster ?? "";
-    if (
-      storageClassFetched &&
-      lastFetchedStorageClusterRef.current === clusterKey
-    )
-      return;
-    lastFetchedStorageClusterRef.current = clusterKey;
+    if (storageClassOkClusterRef.current === clusterKey) return;
+    const seq = ++storageClassSeqRef.current;
     setStorageClassLoading(true);
-    setStorageClassFetched(false);
+    setStorageClassError("");
     try {
       const data = await storageClassesApi.list<{
         storageClassName: string;
@@ -433,26 +456,27 @@ export function CreateJobModal({
         description?: string;
         bucket?: string;
       }>(cluster);
-      const storageClassList = Object.values(data).map((sc) => ({
-        id: sc.storageClassName,
-        name: sc.name,
-        description: sc.description || "",
-        bucket: sc.bucket || "",
-      }));
-      setStorageClasses(storageClassList);
-    } catch (e) {
-      console.warn("Failed to fetch storage classes:", e);
+      if (seq !== storageClassSeqRef.current) return;
       setStorageClasses(
-        mockStorageClasses.map(({ id, name, description, bucket }) => ({
-          id,
-          name,
-          description,
-          bucket,
+        Object.values(data).map((sc) => ({
+          id: sc.storageClassName,
+          name: sc.name,
+          description: sc.description || "",
+          bucket: sc.bucket || "",
         })),
       );
+      storageClassOkClusterRef.current = clusterKey;
+    } catch (e) {
+      if (seq !== storageClassSeqRef.current) return;
+      console.warn("Failed to fetch storage classes:", e);
+      setStorageClasses([]);
+      setStorageClassError(e instanceof Error ? e.message : String(e));
+      storageClassOkClusterRef.current = null;
     } finally {
-      setStorageClassLoading(false);
-      setStorageClassFetched(true);
+      if (seq === storageClassSeqRef.current) {
+        setStorageClassLoading(false);
+        setStorageClassFetched(true);
+      }
     }
   };
 
@@ -816,6 +840,22 @@ export function CreateJobModal({
       roles
         .filter((entry) => entry.name.trim())
         .map((entry) => [entry.name.trim(), roleResources[entry.id]]),
+    ),
+    rawRoles: Object.fromEntries(
+      roles
+        .filter((entry) => entry.name.trim() && rawRoleConfigs[entry.id])
+        .map((entry) => {
+          const config = rawRoleConfigs[entry.id];
+          return [
+            entry.name.trim(),
+            {
+              environment: config.environment,
+              argv: config.argv.split("\n").map((s) => s.trim()).filter(Boolean),
+              env: config.env.split("\n").map((s) => s.trim()).filter(Boolean),
+              directory: config.directory,
+            },
+          ];
+        }),
     ),
     runScript,
     domain: automaticDomain,
@@ -1306,6 +1346,7 @@ export function CreateJobModal({
                           zh={zh}
                           cluster={rr.cluster}
                           nodes={allNodes}
+                          clusterNodes={nodesForCluster(allNodes, rr.cluster, runtimeMap)}
                           loading={nodesLoading}
                           reclaimableResources={reclaimableResources}
                           nodeSelector={rr.nodeSelector}
@@ -1341,75 +1382,56 @@ export function CreateJobModal({
                             </small>
                           </div>
                         </header>
+                        {isRawCluster(rr.cluster, runtimeMap) ? (
+                          <RawRoleFields
+                            zh={zh}
+                            disabled={false}
+                            environment={rawRoleConfigs[role]?.environment ?? ""}
+                            onEnvironmentChange={(env) =>
+                              setRawRoleConfigs((prev) => ({
+                                ...prev,
+                                [role]: { ...prev[role], environment: env, argv: prev[role]?.argv ?? "/usr/bin/python3", env: prev[role]?.env ?? "", directory: prev[role]?.directory ?? "/workspace" },
+                              }))
+                            }
+                            argv={rawRoleConfigs[role]?.argv ?? "/usr/bin/python3"}
+                            onArgvChange={(argv) =>
+                              setRawRoleConfigs((prev) => ({
+                                ...prev,
+                                [role]: { ...prev[role], argv, environment: prev[role]?.environment ?? "", env: prev[role]?.env ?? "", directory: prev[role]?.directory ?? "/workspace" },
+                              }))
+                            }
+                            env={rawRoleConfigs[role]?.env ?? ""}
+                            onEnvChange={(env) =>
+                              setRawRoleConfigs((prev) => ({
+                                ...prev,
+                                [role]: { ...prev[role], env, environment: prev[role]?.environment ?? "", argv: prev[role]?.argv ?? "/usr/bin/python3", directory: prev[role]?.directory ?? "/workspace" },
+                              }))
+                            }
+                            directory={rawRoleConfigs[role]?.directory ?? "/workspace"}
+                            onDirectoryChange={(directory) =>
+                              setRawRoleConfigs((prev) => ({
+                                ...prev,
+                                [role]: { ...prev[role], directory, environment: prev[role]?.environment ?? "", argv: prev[role]?.argv ?? "/usr/bin/python3", env: prev[role]?.env ?? "" },
+                              }))
+                            }
+                            availableEnvironments={extractEnvironments(nodesForCluster(allNodes, rr.cluster, runtimeMap))}
+                          />
+                        ) : (
+                          <>
                         <div className="form-section" style={{ marginTop: 12 }}>
                           <div className="form-section-head">
                             <small>{zh ? "镜像" : "Image"}</small>
                           </div>
-                          <div className="image-picker">
-                            <input
-                              value={rr.image}
-                              onFocus={() => setImagePickerRole(role)}
-                              onChange={(e) => {
-                                updateRR(role, "image", e.target.value);
-                                setImagePickerRole(role);
-                              }}
-                              onBlur={() =>
-                                window.setTimeout(
-                                  () => setImagePickerRole(null),
-                                  150,
-                                )
-                              }
-                              className={
-                                imageHasWhitespace ? "input-invalid" : undefined
-                              }
-                              aria-invalid={imageHasWhitespace}
-                              aria-describedby={
-                                imageHasWhitespace ? imageErrorId : undefined
-                              }
-                              placeholder={
-                                zh
-                                  ? "例如：docker.io/library/ubuntu:22.04（需确保集群可访问）"
-                                  : "Example: docker.io/library/ubuntu:22.04 (must be cluster-accessible)"
-                              }
-                            />
-                            {imagePickerRole === role &&
-                              recentImages.length > 0 && (
-                                <div
-                                  className="image-picker-list"
-                                  role="listbox"
-                                >
-                                  {recentImages
-                                    .filter((item) =>
-                                      item.image
-                                        .toLowerCase()
-                                        .includes(
-                                          rr.image.trim().toLowerCase(),
-                                        ),
-                                    )
-                                    .map((item) => (
-                                      <button
-                                        type="button"
-                                        className="image-picker-option"
-                                        key={item.image}
-                                        onMouseDown={(event) => {
-                                          event.preventDefault();
-                                          updateRR(role, "image", item.image);
-                                          setImagePickerRole(null);
-                                        }}
-                                      >
-                                        <strong>{item.image}</strong>
-                                        <small>
-                                          {formatImageUsage(
-                                            item.lastUsedAt,
-                                            item.useCount,
-                                            zh,
-                                          )}
-                                        </small>
-                                      </button>
-                                    ))}
-                                </div>
-                              )}
-                          </div>
+                          <RegistryImagePicker
+                            zh={zh}
+                            value={rr.image}
+                            onChange={(image) => updateRR(role, "image", image)}
+                            disabled={false}
+                            recentImages={recentImages.map((item) => ({
+                              ...item,
+                              lastUsedAt: new Date(item.lastUsedAt),
+                            }))}
+                          />
                           {imageHasWhitespace && (
                             <small
                               className="field-validation-error"
@@ -1614,14 +1636,17 @@ export function CreateJobModal({
                                       }
                                     >
                                       <option value="">
-                                        {storageClassFetched &&
-                                        storageClasses.length === 0
-                                          ? zh
-                                            ? "无可用存储类"
-                                            : "No storage classes"
-                                          : zh
-                                            ? "选择存储类"
-                                            : "Select storage class"}
+                                        {storageClassLoading
+                                          ? zh ? "加载中…" : "Loading…"
+                                          : storageClassError
+                                            ? `${zh ? "加载失败" : "Load failed"}: ${storageClassError}`
+                                            : storageClassFetched && storageClasses.length === 0
+                                              ? zh
+                                                ? "该集群没有可用存储类"
+                                                : "No storage classes for this cluster"
+                                              : zh
+                                                ? "选择存储类"
+                                                : "Select storage class"}
                                       </option>
                                       {storageClasses.map((sc) => (
                                         <option key={sc.id} value={sc.id}>
@@ -1719,6 +1744,8 @@ export function CreateJobModal({
                             ),
                           )}
                         </div>
+                          </>
+                        )}
                       </section>
                     </div>
                   );

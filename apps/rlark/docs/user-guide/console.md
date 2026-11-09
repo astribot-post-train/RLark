@@ -36,6 +36,8 @@ RLark has two login entry points:
 
 The **Image Registries** page stores private-registry credentials and selects their distribution scope: store only, selected clusters, or all current and future clusters. Display names may be duplicated and edited; RLark uses an internal ID to identify each credential. Distribution and deletion are asynchronous. Delivered credentials are placed in `rlark-system` on each selected Kubernetes data plane.
 
+For administrators, a registry detail page can also browse repository names, tags and manifest digests, and copy image references or Docker pull commands. Browsing is read-only and requires Gateway configuration, HTTPS trust and registry support as described in the [API reference](../api/reference.md#images-image-registries-and-system-configuration). Search filters only the current repository page; use the next-page control for more results. The table loads the first tag page for each listed repository with at most four concurrent requests and displays up to three tags. Open **View details** to expand tags directly under that row, use the actions beside each tag to copy its reference or pull command or view its digest, and page through additional tags. Tag loading failures appear on the affected row; refresh the table or retry in the expanded details. The push/pull guide shows login, tag, push and pull examples; replace the example image and enter the password interactively. The client must separately reach the registry and trust its CA. The console does not build, push, pull or delete images.
+
 > **Screenshot note:** Screenshots are from an example environment. Resource names and data are illustrative; your environment will differ.
 
 ![Console overview](../images/ui/console-overview.png)
@@ -63,6 +65,10 @@ The language switch in the header applies to both Chinese and English. Besides s
 ### Long Values in Node Tables
 
 In the node detail Worker table, long instance names are truncated with an ellipsis, and in the expanded Pod sub-table the network domain is truncated the same way. Hover over a truncated value to see the full text in a tooltip. This keeps the status column visible without horizontal scrolling.
+
+### Raw Workers in Job Details
+
+The Job details Workers tab lists Kubernetes Pods and, for container-runtime (Raw) Tasks, one row per Task. A Raw Task runs as a supervised process on a container node and has no Pod, so its row shows the Task name, the Task phase, and the node it is scheduled to. The node comes from the controller's allocation target for that Task; it is `—` until the Task is scheduled or when the target cannot be read. In a mixed Job, the Kubernetes member keeps its Pod row and the Raw member is listed once next to it. A Raw row reflects scheduling and Task status only; it does not prove that the process is healthy or that its members joined the same Ray cluster.
 
 ### Filtering Jobs by Tag
 
