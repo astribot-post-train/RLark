@@ -26,6 +26,7 @@
     "src/utils/nodeResources.ts",
     "src/utils/nodeVisibility.ts",
     "src/utils/registryCommands.ts",
+    "src/utils/registryPicker.ts",
     "src/utils/registryTagPreviews.ts",
     "src/utils/resourceAvailability.ts",
     "src/utils/route.ts",

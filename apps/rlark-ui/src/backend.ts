@@ -375,8 +375,8 @@ export const imageRegistriesApi = {
   password(id: string, signal?: AbortSignal) {
     return requestJson<{ password: string }>(`/api/v1/image-registries/${encodeURIComponent(id)}/password`, { signal });
   },
-  list() {
-    return requestJson<ImageRegistryItem[]>("/api/v1/image-registries");
+  list(signal?: AbortSignal) {
+    return requestJson<ImageRegistryItem[]>("/api/v1/image-registries", { signal });
   },
   create(body: object) {
     return request("/api/v1/image-registries", { method: "POST", body });

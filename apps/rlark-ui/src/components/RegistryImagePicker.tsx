@@ -1,11 +1,11 @@
-/**
- * Registry image picker: lists images from the private registry and recent job history.
- * Uses the same CSS classes (.image-picker / .image-picker-list / .image-picker-option)
- * as the original CreateJob image input, so the dropdown is visually identical.
- */
-
-import { useCallback, useEffect, useRef, useState, type ReactElement } from "react";
-import { imageRegistriesApi } from "../backend";
+import { useEffect, useState, type ReactElement } from "react";
+import { ApiError } from "../api";
+import { imageRegistriesApi, type ImageRegistryItem } from "../backend";
+import {
+  imageRegistryReference,
+  nextRegistryPage,
+  previousRegistryPage,
+} from "../utils/registryPicker";
 
 type ImageUsage = {
   image: string;
@@ -21,25 +21,47 @@ export type Props = {
   recentImages: ImageUsage[];
 };
 
-type RegistryImage = {
-  repository: string;
-  tag: string;
-  ref: string;
-};
+type Page = { items: string[]; next: string };
 
-const PRIVATE_REGISTRY = "192.168.31.2:5443";
-
-function formatImageUsage(lastUsedAt: Date, useCount: number, zh: boolean): string {
-  const seconds = Math.max(0, Math.floor((Date.now() - lastUsedAt.getTime()) / 1000));
+function formatImageUsage(
+  lastUsedAt: Date,
+  useCount: number,
+  zh: boolean,
+): string {
+  const seconds = Math.max(
+    0,
+    Math.floor((Date.now() - lastUsedAt.getTime()) / 1000),
+  );
   const relative =
     seconds < 60
-      ? zh ? "刚刚" : "just now"
+      ? zh
+        ? "刚刚"
+        : "just now"
       : seconds < 3600
-        ? zh ? `${Math.floor(seconds / 60)} 分钟前` : `${Math.floor(seconds / 60)}m ago`
+        ? zh
+          ? `${Math.floor(seconds / 60)} 分钟前`
+          : `${Math.floor(seconds / 60)}m ago`
         : seconds < 86400
-          ? zh ? `${Math.floor(seconds / 3600)} 小时前` : `${Math.floor(seconds / 3600)}h ago`
-          : zh ? `${Math.floor(seconds / 86400)} 天前` : `${Math.floor(seconds / 86400)}d ago`;
-  return zh ? `${relative}使用 · ${useCount} 次` : `${relative} · used ${useCount} times`;
+          ? zh
+            ? `${Math.floor(seconds / 3600)} 小时前`
+            : `${Math.floor(seconds / 3600)}h ago`
+          : zh
+            ? `${Math.floor(seconds / 86400)} 天前`
+            : `${Math.floor(seconds / 86400)}d ago`;
+  return zh
+    ? `${relative}使用 · ${useCount} 次`
+    : `${relative} · used ${useCount} times`;
+}
+
+function registryError(error: unknown, zh: boolean): string {
+  if (error instanceof ApiError && error.status === 403) {
+    return zh
+      ? "浏览镜像仓库需要管理员权限，请手动输入镜像地址。"
+      : "Registry browsing requires administrator access. Enter an image reference manually.";
+  }
+  return zh
+    ? "加载失败，请检查 Gateway 允许列表、HTTPS 信任、仓库配置和网络后重试。"
+    : "Loading failed. Check the Gateway allowlist, HTTPS trust, registry configuration and network, then retry.";
 }
 
 export function RegistryImagePicker({
@@ -49,134 +71,261 @@ export function RegistryImagePicker({
   disabled,
   recentImages,
 }: Props): ReactElement {
-  const [open, setOpen] = useState(false);
-  const [registryImages, setRegistryImages] = useState<RegistryImage[]>([]);
-  const [registryLoading, setRegistryLoading] = useState(false);
-  const [registryLoaded, setRegistryLoaded] = useState(false);
-  const [registryError, setRegistryError] = useState<string>("");
-  const cancelRef = useRef(false);
-
-  // Filtered recent images matching the current input value
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [browserOpen, setBrowserOpen] = useState(false);
+  const [registries, setRegistries] = useState<ImageRegistryItem[]>([]);
+  const [registryId, setRegistryId] = useState("");
+  const [repository, setRepository] = useState("");
+  const [cursors, setCursors] = useState<string[]>([""]);
+  const [page, setPage] = useState<Page | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [retry, setRetry] = useState(0);
+  const selectedRegistry = registries.find((item) => item.id === registryId);
   const filteredRecent = recentImages.filter((item) =>
     item.image.toLowerCase().includes(value.trim().toLowerCase()),
   );
 
-  const loadRegistry = useCallback(async () => {
-    if (registryLoaded || registryLoading) return;
-    cancelRef.current = false;
-    setRegistryLoading(true);
-    setRegistryError("");
-    try {
-      const registries = await imageRegistriesApi.list();
-      const reg = registries.find((r) => r.registry === PRIVATE_REGISTRY);
-      if (!reg) {
-        setRegistryError(zh ? "未配置私有仓库" : "Private registry not configured");
-        return;
-      }
-      const ac = new AbortController();
-      const reposData = await imageRegistriesApi.repositories(reg.id, "", ac.signal);
-      const repositories: string[] = reposData.items || [];
-      const images: RegistryImage[] = [];
-      for (const repo of repositories.slice(0, 10)) {
-        if (cancelRef.current) break;
-        try {
-          const tagsData = await imageRegistriesApi.tags(reg.id, repo, "", new AbortController().signal);
-          for (const tag of (tagsData.items || []).slice(0, 8)) {
-            images.push({ repository: repo, tag, ref: `${PRIVATE_REGISTRY}/${repo}:${tag}` });
-          }
-        } catch {
-          // single repo failure is non-fatal
-        }
-      }
-      if (!cancelRef.current) {
-        setRegistryImages(images);
-        setRegistryLoaded(true);
-      }
-    } catch {
-      if (!cancelRef.current) {
-        setRegistryError(zh ? "加载仓库镜像失败" : "Failed to load registry images");
-      }
-    } finally {
-      if (!cancelRef.current) setRegistryLoading(false);
-    }
-  }, [registryLoaded, registryLoading, zh]);
+  useEffect(() => {
+    if (!browserOpen || registryId) return;
+    const controller = new AbortController();
+    setLoading(true);
+    setError("");
+    imageRegistriesApi
+      .list(controller.signal)
+      .then((items) => {
+        if (!controller.signal.aborted) setRegistries(items);
+      })
+      .catch((cause: unknown) => {
+        if (!controller.signal.aborted) setError(registryError(cause, zh));
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoading(false);
+      });
+    return () => controller.abort();
+  }, [browserOpen, registryId, zh, retry]);
 
-  useEffect(() => () => { cancelRef.current = true; }, []);
+  useEffect(() => {
+    if (!browserOpen || !registryId) return;
+    const controller = new AbortController();
+    const cursor = cursors[cursors.length - 1];
+    setPage(null);
+    setLoading(true);
+    setError("");
+    const request = repository
+      ? imageRegistriesApi.tags(
+          registryId,
+          repository,
+          cursor,
+          controller.signal,
+        )
+      : imageRegistriesApi.repositories(registryId, cursor, controller.signal);
+    request
+      .then((result) => {
+        if (!controller.signal.aborted) setPage(result);
+      })
+      .catch((cause: unknown) => {
+        if (!controller.signal.aborted) setError(registryError(cause, zh));
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoading(false);
+      });
+    return () => controller.abort();
+  }, [browserOpen, registryId, repository, cursors, zh, retry]);
 
-  const visibleRegistryImages = registryImages.filter((img) =>
-    value.trim() === "" || img.ref.toLowerCase().includes(value.trim().toLowerCase()),
-  );
+  function resetBrowser() {
+    setRegistryId("");
+    setRepository("");
+    setCursors([""]);
+    setPage(null);
+    setError("");
+  }
 
-  const showDropdown = open && (filteredRecent.length > 0 || registryImages.length > 0 || registryLoading || registryError !== "");
+  function chooseRepository(name: string) {
+    setRepository(name);
+    setCursors([""]);
+    setPage(null);
+  }
 
   return (
     <div className="image-picker">
-      <input
-        value={value}
-        onFocus={() => setOpen(true)}
-        onChange={(e) => { onChange(e.target.value); setOpen(true); }}
-        onBlur={() => window.setTimeout(() => setOpen(false), 150)}
+      <div
+        className="image-picker-input"
+        onBlur={(event) => {
+          if (!event.currentTarget.contains(event.relatedTarget))
+            setHistoryOpen(false);
+        }}
+      >
+        <input
+          value={value}
+          onFocus={() => setHistoryOpen(true)}
+          onChange={(event) => {
+            onChange(event.target.value);
+            setHistoryOpen(true);
+          }}
+          disabled={disabled}
+          placeholder={
+            zh
+              ? "例如：docker.io/library/ubuntu:22.04（需确保集群可访问）"
+              : "Example: docker.io/library/ubuntu:22.04 (must be cluster-accessible)"
+          }
+        />
+        {historyOpen && filteredRecent.length > 0 && (
+          <div className="image-picker-list">
+            <div className="image-picker-heading">
+              {zh
+                ? "最近使用（可能已失效，请确认地址）"
+                : "Recently used (may be stale; verify the reference)"}
+            </div>
+            {filteredRecent.map((item) => (
+              <button
+                key={item.image}
+                type="button"
+                className="image-picker-option"
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => {
+                  onChange(item.image);
+                  setHistoryOpen(false);
+                }}
+              >
+                <strong>{item.image}</strong>
+                <small>
+                  {formatImageUsage(item.lastUsedAt, item.useCount, zh)}
+                </small>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+      <button
+        type="button"
+        className="secondary-button image-picker-browse"
         disabled={disabled}
-        placeholder={
-          zh
-            ? "例如：docker.io/library/ubuntu:22.04（需确保集群可访问）"
-            : "Example: docker.io/library/ubuntu:22.04 (must be cluster-accessible)"
-        }
-      />
-      {/* Registry load trigger (shown below input when focused or open) */}
-      {!disabled && !registryLoaded && open && (
-        <div className="image-picker-list">
-          {filteredRecent.map((item) => (
-            <button
-              key={item.image}
-              type="button"
-              className="image-picker-option"
-              onMouseDown={(e) => { e.preventDefault(); onChange(item.image); setOpen(false); }}
+        aria-expanded={browserOpen}
+        onClick={() => {
+          resetBrowser();
+          setRegistries([]);
+          setBrowserOpen((open) => !open);
+        }}
+      >
+        {browserOpen
+          ? zh
+            ? "关闭仓库浏览"
+            : "Close registry browser"
+          : zh
+            ? "浏览已配置镜像仓库"
+            : "Browse configured registries"}
+      </button>
+      {browserOpen && (
+        <div className="image-picker-browser">
+          <label>
+            {zh ? "镜像仓库" : "Registry"}
+            <select
+              value={registryId}
+              onChange={(event) => {
+                resetBrowser();
+                setRegistryId(event.target.value);
+              }}
             >
-              <strong>{item.image}</strong>
-              <small>{formatImageUsage(item.lastUsedAt, item.useCount, zh)}</small>
-            </button>
-          ))}
-          <button
-            type="button"
-            className="image-picker-option"
-            style={{ color: "var(--muted)", fontStyle: "italic" }}
-            onMouseDown={(e) => { e.preventDefault(); void loadRegistry(); }}
-          >
-            <strong style={{ color: "var(--muted)" }}>
-              {registryLoading
-                ? (zh ? "加载私有仓库…" : "Loading private registry…")
-                : (zh ? `从 ${PRIVATE_REGISTRY} 加载镜像列表` : `Load images from ${PRIVATE_REGISTRY}`)}
-            </strong>
-            {registryError && <small style={{ color: "#c93f5c" }}>{registryError}</small>}
-          </button>
-        </div>
-      )}
-      {/* After registry loaded, show combined list */}
-      {showDropdown && registryLoaded && (
-        <div className="image-picker-list">
-          {filteredRecent.map((item) => (
+              <option value="">
+                {zh ? "请选择仓库" : "Select a registry"}
+              </option>
+              {registries.map((item) => (
+                <option key={item.id} value={item.id}>
+                  {item.name} · {item.registry}
+                </option>
+              ))}
+            </select>
+          </label>
+          {loading && <p role="status">{zh ? "加载中…" : "Loading…"}</p>}
+          {error && (
+            <div role="alert">
+              <p>{error}</p>
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={() => setRetry((count) => count + 1)}
+              >
+                {zh ? "重试" : "Retry"}
+              </button>
+            </div>
+          )}
+          {!loading && !error && registries.length === 0 && (
+            <p>
+              {zh
+                ? "没有已配置的镜像仓库，请手动输入镜像地址。"
+                : "No registries are configured. Enter an image reference manually."}
+            </p>
+          )}
+          {selectedRegistry && repository && (
             <button
-              key={item.image}
               type="button"
-              className="image-picker-option"
-              onMouseDown={(e) => { e.preventDefault(); onChange(item.image); setOpen(false); }}
+              className="secondary-button"
+              onClick={() => chooseRepository("")}
             >
-              <strong>{item.image}</strong>
-              <small>{formatImageUsage(item.lastUsedAt, item.useCount, zh)}</small>
+              {zh ? "返回镜像列表" : "Back to repositories"}
             </button>
-          ))}
-          {visibleRegistryImages.map((img) => (
-            <button
-              key={img.ref}
-              type="button"
-              className="image-picker-option"
-              onMouseDown={(e) => { e.preventDefault(); onChange(img.ref); setOpen(false); }}
-            >
-              <strong>{img.ref}</strong>
-              <small>{img.repository}:{img.tag}</small>
-            </button>
-          ))}
+          )}
+          {selectedRegistry && page && !loading && !error && (
+            <>
+              <div className="image-picker-heading">
+                {repository
+                  ? `${zh ? "标签" : "Tags"}: ${repository}`
+                  : zh
+                    ? "仓库镜像"
+                    : "Repository images"}
+              </div>
+              {page.items.length === 0 && (
+                <p>{zh ? "当前页没有内容。" : "This page is empty."}</p>
+              )}
+              <div className="image-picker-results">
+                {page.items.map((item) => (
+                  <button
+                    key={item}
+                    type="button"
+                    className="image-picker-option"
+                    onClick={() => {
+                      if (repository) {
+                        onChange(
+                          imageRegistryReference(
+                            selectedRegistry.registry,
+                            repository,
+                            item,
+                          ),
+                        );
+                        setBrowserOpen(false);
+                        resetBrowser();
+                      } else chooseRepository(item);
+                    }}
+                  >
+                    <strong>{item}</strong>
+                  </button>
+                ))}
+              </div>
+              <div className="image-picker-pagination">
+                <button
+                  type="button"
+                  className="secondary-button"
+                  disabled={cursors.length === 1}
+                  onClick={() => setCursors(previousRegistryPage)}
+                >
+                  {zh ? "上一页" : "Previous"}
+                </button>
+                <button
+                  type="button"
+                  className="secondary-button"
+                  disabled={!page.next || cursors.includes(page.next)}
+                  onClick={() =>
+                    setCursors((current) =>
+                      nextRegistryPage(current, page.next),
+                    )
+                  }
+                >
+                  {zh ? "下一页" : "Next"}
+                </button>
+              </div>
+            </>
+          )}
         </div>
       )}
     </div>
