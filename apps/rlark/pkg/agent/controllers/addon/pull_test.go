@@ -2,12 +2,19 @@ package addon
 
 import (
 	"context"
+	"errors"
 	"testing"
 
+	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	rlarkv1alpha1 "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
 	"github.com/rlinf/rlark/apps/rlark/pkg/agent/controllers/base"
@@ -34,6 +41,142 @@ func TestAddonReadiness(t *testing.T) {
 				t.Fatalf("addonReadiness(%q) = %s/%s, want %s/%s", tt.phase, status, reason, tt.wantStatus, tt.wantReason)
 			}
 		})
+	}
+}
+
+func TestCleanupAddonOnlyDeletesCurrentInstanceAndWaits(t *testing.T) {
+	ctx := context.Background()
+	addon := &rlarkv1alpha1.Addon{ObjectMeta: metav1.ObjectMeta{Name: "a", UID: "current"}}
+	makeConfig := func(name, uid string) *corev1.ConfigMap {
+		return &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "rlark-system", UID: types.UID(name + "-uid"), Labels: map[string]string{"rlark.io/addon-name": "a", "rlark.io/addon-uid": uid}}}
+	}
+	cl := fake.NewClientBuilder().WithScheme(clientgoscheme.Scheme).WithObjects(makeConfig("owned", "current"), makeConfig("other", "old"), makeConfig("legacy", "")).Build()
+	r := &pullReconciler{c: &Controller{Controller: base.Controller{LocalKubeClient: cl}}}
+	if err := r.cleanupAddon(ctx, addon); !errors.Is(err, errAddonCleanupPending) {
+		t.Fatalf("first cleanup = %v, want pending", err)
+	}
+	if err := r.cleanupAddon(ctx, addon); err != nil {
+		t.Fatalf("second cleanup = %v", err)
+	}
+	for _, name := range []string{"other", "legacy"} {
+		var got corev1.ConfigMap
+		if err := cl.Get(ctx, types.NamespacedName{Name: name, Namespace: "rlark-system"}, &got); err != nil {
+			t.Fatalf("unowned resource %s removed: %v", name, err)
+		}
+	}
+	addon.UID = ""
+	if err := r.cleanupAddon(ctx, addon); err == nil {
+		t.Fatal("accepted missing addon UID")
+	}
+}
+
+type failOnceUpdateClient struct {
+	client.Client
+	fail bool
+}
+
+type failOnceDeleteClient struct {
+	client.Client
+	fail bool
+}
+
+type relabelBeforeDeleteClient struct {
+	client.Client
+	once bool
+}
+
+func (c *relabelBeforeDeleteClient) Delete(ctx context.Context, obj client.Object, opts ...client.DeleteOption) error {
+	if !c.once {
+		c.once = true
+		var current corev1.ConfigMap
+		if err := c.Get(ctx, client.ObjectKeyFromObject(obj), &current); err != nil {
+			return err
+		}
+		current.Labels["rlark.io/addon-uid"] = "replacement"
+		if err := c.Update(ctx, &current); err != nil {
+			return err
+		}
+	}
+	return c.Client.Delete(ctx, obj, opts...)
+}
+
+func TestCleanupDoesNotDeleteRelabelledResource(t *testing.T) {
+	ctx := context.Background()
+	addon := &rlarkv1alpha1.Addon{ObjectMeta: metav1.ObjectMeta{Name: "a", UID: "uid"}}
+	resource := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "owned", Namespace: "rlark-system", UID: "object-uid", Labels: map[string]string{"rlark.io/addon-name": "a", "rlark.io/addon-uid": "uid"}}}
+	cl := &relabelBeforeDeleteClient{Client: fake.NewClientBuilder().WithScheme(clientgoscheme.Scheme).WithObjects(resource).Build()}
+	r := &pullReconciler{c: &Controller{Controller: base.Controller{LocalKubeClient: cl}}}
+	if err := r.cleanupAddon(ctx, addon); err == nil {
+		t.Fatal("stale delete succeeded after ownership changed")
+	}
+	var got corev1.ConfigMap
+	if err := cl.Get(ctx, client.ObjectKeyFromObject(resource), &got); err != nil {
+		t.Fatalf("relabelled resource was deleted: %v", err)
+	}
+	if got.Labels["rlark.io/addon-uid"] != "replacement" {
+		t.Fatal("replacement ownership lost")
+	}
+	if err := r.cleanupAddon(ctx, addon); err != nil {
+		t.Fatalf("retry after relabel: %v", err)
+	}
+}
+
+func (c *failOnceDeleteClient) Delete(ctx context.Context, obj client.Object, opts ...client.DeleteOption) error {
+	if c.fail {
+		c.fail = false
+		return errors.New("temporary delete failure")
+	}
+	return c.Client.Delete(ctx, obj, opts...)
+}
+
+func TestCleanupAddonRetriesDeleteFailure(t *testing.T) {
+	addon := &rlarkv1alpha1.Addon{ObjectMeta: metav1.ObjectMeta{Name: "a", UID: "uid"}}
+	resource := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "owned", Namespace: "rlark-system", UID: "object-uid", Labels: map[string]string{"rlark.io/addon-name": "a", "rlark.io/addon-uid": "uid"}}}
+	cl := &failOnceDeleteClient{Client: fake.NewClientBuilder().WithScheme(clientgoscheme.Scheme).WithObjects(resource).Build(), fail: true}
+	r := &pullReconciler{c: &Controller{Controller: base.Controller{LocalKubeClient: cl}}}
+	if err := r.cleanupAddon(context.Background(), addon); err == nil || errors.Is(err, errAddonCleanupPending) {
+		t.Fatalf("delete failure was not returned: %v", err)
+	}
+	if err := r.cleanupAddon(context.Background(), addon); !errors.Is(err, errAddonCleanupPending) {
+		t.Fatalf("retry = %v, want pending", err)
+	}
+	if err := r.cleanupAddon(context.Background(), addon); err != nil {
+		t.Fatalf("cleanup after deletion = %v", err)
+	}
+}
+
+func (c *failOnceUpdateClient) Update(ctx context.Context, obj client.Object, opts ...client.UpdateOption) error {
+	if c.fail {
+		c.fail = false
+		return errors.New("temporary update failure")
+	}
+	return c.Client.Update(ctx, obj, opts...)
+}
+
+func TestApplyObjectRetriesAfterUpdateFailure(t *testing.T) {
+	ctx := context.Background()
+	addon := &rlarkv1alpha1.Addon{ObjectMeta: metav1.ObjectMeta{Name: "a", UID: "uid", ResourceVersion: "1"}}
+	makeConfig := func(value string) *unstructured.Unstructured {
+		return &unstructured.Unstructured{Object: map[string]interface{}{
+			"apiVersion": "v1", "kind": "ConfigMap",
+			"metadata": map[string]interface{}{"name": "test", "namespace": "rlark-system", "labels": map[string]interface{}{"rlark.io/addon-name": "a", "rlark.io/addon-uid": "uid"}, "annotations": map[string]interface{}{AddonResourceVersionAnnotation: "1"}},
+			"data":     map[string]interface{}{"key": value},
+		}}
+	}
+	cl := &failOnceUpdateClient{Client: fake.NewClientBuilder().WithObjects(makeConfig("old")).Build(), fail: true}
+	r := &pullReconciler{c: &Controller{Controller: base.Controller{LocalKubeClient: cl}}}
+	if err := r.applyObject(ctx, makeConfig("new"), addon); err == nil {
+		t.Fatal("update failure was ignored")
+	}
+	if err := r.applyObject(ctx, makeConfig("new"), addon); err != nil {
+		t.Fatalf("retry failed: %v", err)
+	}
+	got := makeConfig("old")
+	if err := cl.Get(ctx, types.NamespacedName{Name: "test", Namespace: "rlark-system"}, got); err != nil {
+		t.Fatal(err)
+	}
+	if value, _, _ := unstructured.NestedString(got.Object, "data", "key"); value != "new" {
+		t.Fatalf("retry left value %q", value)
 	}
 }
 
@@ -118,4 +261,152 @@ func findAddonCondition(conditions []metav1.Condition, conditionType string) *me
 		}
 	}
 	return nil
+}
+
+func TestApplyObjectRepairsOwnedDriftAndRejectsForeignObjects(t *testing.T) {
+	ctx := context.Background()
+	addon := &rlarkv1alpha1.Addon{ObjectMeta: metav1.ObjectMeta{Name: "csi", UID: types.UID("addon-uid"), ResourceVersion: "42"}}
+	makeObject := func(uid string) *unstructured.Unstructured {
+		return &unstructured.Unstructured{Object: map[string]interface{}{
+			"apiVersion": "apps/v1", "kind": "Deployment",
+			"metadata": map[string]interface{}{"name": "driver", "namespace": "rlark-system", "labels": map[string]interface{}{"rlark.io/addon-name": "csi", "rlark.io/addon-uid": uid}, "annotations": map[string]interface{}{AddonResourceVersionAnnotation: "42"}},
+			"spec":     map[string]interface{}{"template": map[string]interface{}{"spec": map[string]interface{}{"nodeSelector": map[string]interface{}{"kubernetes.io/hostname": "worker"}}}},
+		}}
+	}
+	for _, tt := range []struct {
+		name, uid string
+		wantErr   bool
+	}{{"owned", "addon-uid", false}, {"different instance", "other", true}, {"unowned", "", true}} {
+		t.Run(tt.name, func(t *testing.T) {
+			live := makeObject(tt.uid)
+			unstructured.RemoveNestedField(live.Object, "spec", "template", "spec", "nodeSelector")
+			cl := fake.NewClientBuilder().WithObjects(live).Build()
+			r := &pullReconciler{c: &Controller{Controller: base.Controller{LocalKubeClient: cl}}}
+			err := r.applyObject(ctx, makeObject("addon-uid"), addon)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("apply: %v", err)
+			}
+			got := makeObject(tt.uid)
+			if err := cl.Get(ctx, types.NamespacedName{Name: "driver", Namespace: "rlark-system"}, got); err != nil {
+				t.Fatal(err)
+			}
+			_, found, err := unstructured.NestedMap(got.Object, "spec", "template", "spec", "nodeSelector")
+			if err != nil || found == tt.wantErr {
+				t.Fatalf("selector found=%v err=%v", found, err)
+			}
+			if !tt.wantErr {
+				version := got.GetResourceVersion()
+				if err := r.applyObject(ctx, makeObject("addon-uid"), addon); err != nil {
+					t.Fatal(err)
+				}
+				if err := cl.Get(ctx, types.NamespacedName{Name: "driver", Namespace: "rlark-system"}, got); err != nil {
+					t.Fatal(err)
+				}
+				if got.GetResourceVersion() != version {
+					t.Fatal("unchanged object updated again")
+				}
+			}
+		})
+	}
+}
+
+func TestDesiredFieldsMatchAllowsDefaultedFields(t *testing.T) {
+	desired := &unstructured.Unstructured{Object: map[string]interface{}{"spec": map[string]interface{}{"replicas": int64(1)}}}
+	existing := &unstructured.Unstructured{Object: map[string]interface{}{"spec": map[string]interface{}{"replicas": int64(1), "defaulted": "value"}}}
+	if !desiredFieldsMatch(desired, existing) {
+		t.Fatal("server-defaulted field considered drift")
+	}
+}
+
+func TestDesiredFieldsMatchDetectsZeroValuesAndListDrift(t *testing.T) {
+	for _, pair := range [][2]interface{}{{false, true}, {int64(0), int64(1)}, {"", "nonempty"}, {[]interface{}{"one"}, []interface{}{"one", "two"}}} {
+		if desiredValueMatches(pair[0], pair[1]) {
+			t.Errorf("accepted drift: wanted %#v, got %#v", pair[0], pair[1])
+		}
+	}
+}
+
+func TestSecretStringDataComparedAsStoredData(t *testing.T) {
+	desired := &unstructured.Unstructured{Object: map[string]interface{}{"apiVersion": "v1", "kind": "Secret", "stringData": map[string]interface{}{"key": "value"}}}
+	existing := &unstructured.Unstructured{Object: map[string]interface{}{"apiVersion": "v1", "kind": "Secret", "data": map[string]interface{}{"key": "dmFsdWU="}}}
+	if !desiredFieldsMatch(desired, existing) {
+		t.Fatal("equivalent Secret treated as drift")
+	}
+	existing.Object["data"] = map[string]interface{}{"key": "b3RoZXI="}
+	if desiredFieldsMatch(desired, existing) {
+		t.Fatal("Secret drift ignored")
+	}
+	if _, ok := desired.Object["stringData"]; !ok {
+		t.Fatal("comparison mutated desired object")
+	}
+}
+
+func TestReadyAddonSchedulesDriftReconciliation(t *testing.T) {
+	ctx := context.Background()
+	a := &rlarkv1alpha1.Addon{ObjectMeta: metav1.ObjectMeta{Name: "csi", Namespace: "test", UID: "uid", Finalizers: []string{AddonFinalizer}}, Spec: rlarkv1alpha1.AddonSpec{AddonName: "csi-driver-rclone"}}
+	scheme := runtime.NewScheme()
+	if err := clientgoscheme.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	if err := rlarkv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	mgmt := fake.NewClientBuilder().WithScheme(scheme).WithObjects(a).WithStatusSubresource(&rlarkv1alpha1.Addon{}).Build()
+	replicas := int32(1)
+	local := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(&appsv1.Deployment{}, &appsv1.DaemonSet{}).WithObjects(&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "ready", Namespace: "rlark-system", Labels: map[string]string{"rlark.io/addon-name": "csi"}}, Spec: appsv1.DeploymentSpec{Replicas: &replicas}, Status: appsv1.DeploymentStatus{ReadyReplicas: 1}}).Build()
+	r := &pullReconciler{c: &Controller{Controller: base.Controller{ManagementClient: mgmt, LocalKubeClient: local, AgentType: string(rlarkv1alpha1.AgentTypeKubernetes)}}}
+	req := reconcile.Request{NamespacedName: types.NamespacedName{Name: "csi", Namespace: "test"}}
+	if _, err := r.Reconcile(ctx, req); err != nil {
+		t.Fatal(err)
+	}
+	var dep appsv1.Deployment
+	if err := local.Get(ctx, types.NamespacedName{Name: "csi-driver-rclone-controller", Namespace: "rlark-system"}, &dep); err != nil {
+		t.Fatal(err)
+	}
+	dep.Status.ReadyReplicas = *dep.Spec.Replicas
+	if err := local.Status().Update(ctx, &dep); err != nil {
+		t.Fatal(err)
+	}
+	var ds appsv1.DaemonSet
+	if err := local.Get(ctx, types.NamespacedName{Name: "csi-driver-rclone-node", Namespace: "rlark-system"}, &ds); err != nil {
+		t.Fatal(err)
+	}
+	ds.Status.DesiredNumberScheduled = 1
+	ds.Status.NumberReady = 1
+	if err := local.Status().Update(ctx, &ds); err != nil {
+		t.Fatal(err)
+	}
+	result, err := r.Reconcile(ctx, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.RequeueAfter != AddonRequeueInterval {
+		t.Fatalf("ready addon requeue = %v", result.RequeueAfter)
+	}
+	var got rlarkv1alpha1.Addon
+	if err := mgmt.Get(ctx, types.NamespacedName{Name: "csi", Namespace: "test"}, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Status.Phase != rlarkv1alpha1.AddonPhaseReady {
+		t.Fatalf("expected Ready branch, got %s: %s", got.Status.Phase, got.Status.Message)
+	}
+	// Simulate the next scheduled pass after an external actor removed a
+	// desired field without changing the management Addon's resourceVersion.
+	var config corev1.ConfigMap
+	if err := local.Get(ctx, types.NamespacedName{Name: "csi-driver-rclone-config", Namespace: "rlark-system"}, &config); err != nil {
+		t.Fatal(err)
+	}
+	config.Data = map[string]string{"unexpected": "drift"}
+	if err := local.Update(ctx, &config); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Reconcile(ctx, req); err != nil {
+		t.Fatal(err)
+	}
+	if err := local.Get(ctx, types.NamespacedName{Name: "csi-driver-rclone-config", Namespace: "rlark-system"}, &config); err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := config.Data["unexpected"]; exists {
+		t.Fatal("scheduled reconciliation left drifted config")
+	}
 }

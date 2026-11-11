@@ -382,8 +382,10 @@ Responses:
   - `agentNamespace`: `string`, required - AgentNamespace is the management-plane namespace that contains the agent heartbeat Lease and Node CRs.
   - `cordoned`: `boolean`, optional
   - `delisted`: `boolean`, optional
+  - `displayName`: `string`, optional - DisplayName is a human-readable name; metadata.name remains the stable cluster ID.
   - `drainPreviousCordoned`: `boolean`, optional
   - `draining`: `boolean`, optional
+  - `region`: `string`, optional - Region is administrator-managed location metadata, independent of node placement.
 - `status`: `object`, optional - ClusterStatus reports the controller's current observation of a data-plane cluster.
   - `conditions`: `array`, optional
     - `items`: `object`, optional - Condition contains details for one aspect of the current state of this API Resource.

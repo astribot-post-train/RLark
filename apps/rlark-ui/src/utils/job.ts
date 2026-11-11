@@ -252,6 +252,17 @@ export function generateJobCRD(opts: {
           version: "v1",
           parameters: {
             role: isHead ? "head" : "worker",
+            ...(res?.exposedPorts !== undefined
+              ? {
+                  exposedPortsConfigured: true,
+                  exposedPorts: res.exposedPorts.map((port) => ({
+                    name: port.name,
+                    protocol: port.protocol,
+                    targetPort: port.targetPort,
+                    ...(port.nodePort ? { nodePort: port.nodePort } : {}),
+                  })),
+                }
+              : {}),
             ...(res?.prepareScript
               ? { prepare: { inline: res.prepareScript } }
               : {}),

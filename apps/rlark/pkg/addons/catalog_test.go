@@ -15,7 +15,8 @@ func TestRcloneManifestsUseSafeMountsAndCanarySelector(t *testing.T) {
 	}
 
 	manifests, err := addon.Render(map[string]string{
-		"nodeSelector": "rlark.io/rclone-csi=enabled",
+		"nodeSelector":           "rlark.io/rclone-csi=enabled",
+		"controllerNodeSelector": "kubernetes.io/hostname=worker-1",
 	}, "rlark-system", "csi-driver-rclone", "test-uid")
 	if err != nil {
 		t.Fatalf("render addon: %v", err)
@@ -42,6 +43,10 @@ func TestRcloneManifestsUseSafeMountsAndCanarySelector(t *testing.T) {
 				spec := resource["spec"].(map[string]any)
 				template := spec["template"].(map[string]any)
 				podSpec := template["spec"].(map[string]any)
+				selector := podSpec["nodeSelector"].(map[string]any)
+				if selector["kubernetes.io/hostname"] != "worker-1" {
+					t.Fatalf("unexpected controller selector: %v", selector)
+				}
 				containers := podSpec["containers"].([]any)
 				provisioner := containers[1].(map[string]any)
 				for _, arg := range provisioner["args"].([]any) {
@@ -101,5 +106,38 @@ func TestRcloneManifestsUseSafeMountsAndCanarySelector(t *testing.T) {
 
 	if !foundController || !foundNode || !foundLeasePermissions {
 		t.Fatalf("missing rendered resources: controller=%v node=%v leasePermissions=%v", foundController, foundNode, foundLeasePermissions)
+	}
+}
+
+func TestRcloneSelectorsValidateAndDefault(t *testing.T) {
+	addon, _ := Registry.Get("csi-driver-rclone")
+	for _, name := range []string{"nodeSelector", "controllerNodeSelector"} {
+		for _, value := range []string{"missing-equals", "a=b=c", "bad key=value", "valid/key=bad value"} {
+			if _, err := addon.Render(map[string]string{name: value}, "rlark-system", "csi", "uid"); err == nil {
+				t.Errorf("accepted invalid %s %q", name, value)
+			}
+		}
+	}
+	manifests, err := addon.Render(nil, "rlark-system", "csi", "uid")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, manifest := range manifests {
+		decoder := yaml.NewDecoder(bytes.NewReader(manifest.Raw))
+		for {
+			var resource map[string]any
+			if err := decoder.Decode(&resource); err == io.EOF {
+				break
+			} else if err != nil {
+				t.Fatal(err)
+			}
+			if resource["kind"] != "Deployment" {
+				continue
+			}
+			pod := resource["spec"].(map[string]any)["template"].(map[string]any)["spec"].(map[string]any)
+			if _, ok := pod["nodeSelector"]; ok {
+				t.Fatal("default controller unexpectedly restricts placement")
+			}
+		}
 	}
 }

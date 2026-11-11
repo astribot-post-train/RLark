@@ -21,6 +21,7 @@ lint-go: ## Lint all Go projects (golangci-lint)
 	$(MAKE) -C sdks/embodied-runtime-go lint $(MAKEOVERRIDES)
 	$(MAKE) -C sdks/execution-go lint $(MAKEOVERRIDES)
 	$(MAKE) -C test/e2e lint $(MAKEOVERRIDES)
+	(cd extensions/station && GOWORK=off golangci-lint run)
 
 lint-web: ## Lint web UI (eslint)
 	$(MAKE) -C apps/rlark-ui lint $(MAKEOVERRIDES)
@@ -54,6 +55,8 @@ test-go: ## Run Go unit tests with coverage
 		coverage=$$(cd $$module && realpath --relative-to=. $(CURDIR)/coverage/go/$$name.out); \
 		(cd $$module && go test ./... -v -count=1 -short -covermode=atomic -coverprofile=$$coverage) || exit $$?; \
 	done
+	@coverage=$$(realpath --relative-to=extensions/station $(CURDIR)/coverage/go/extensions-station.out); \
+	(cd extensions/station && GOWORK=off go test ./... -v -count=1 -short -covermode=atomic -coverprofile=$$coverage)
 
 test-web: ## Run web UI unit tests with coverage
 	npm ci --prefix apps/rlark-ui

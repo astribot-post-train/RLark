@@ -32,8 +32,16 @@ export interface ICluster {
     "agentNamespace": string;
     "cordoned"?: boolean;
     "delisted"?: boolean;
+    /**
+     * DisplayName is a human-readable name; metadata.name remains the stable cluster ID.
+     */
+    "displayName"?: string;
     "drainPreviousCordoned"?: boolean;
     "draining"?: boolean;
+    /**
+     * Region is administrator-managed location metadata, independent of node placement.
+     */
+    "region"?: string;
   };
   /**
    * ClusterStatus reports the controller's current observation of a data-plane cluster.

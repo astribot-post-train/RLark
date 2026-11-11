@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"sort"
 	"strconv"
+	"strings"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -16,6 +17,8 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/intstr"
+	"k8s.io/apimachinery/pkg/util/validation"
 
 	rlarkv1alpha1 "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
 	taskapi "github.com/rlinf/rlark/apps/rlark/pkg/agent/controllers/task/api"
@@ -28,6 +31,7 @@ import (
 	executionprocess "github.com/rlinf/rlark/apps/rlark/pkg/agent/execution/process"
 	agentruntime "github.com/rlinf/rlark/apps/rlark/pkg/agent/execution/runtime"
 	"github.com/rlinf/rlark/apps/rlark/pkg/agent/execution/workload"
+	"github.com/rlinf/rlark/apps/rlark/pkg/tenant"
 )
 
 // NamespaceResolver maps a management Task identity to local Kubernetes placement.
@@ -37,16 +41,19 @@ const workloadPodTemplateTarget = "workload-pod-template"
 
 // Adapter implements the Ray workload contract on Kubernetes carriers.
 type Adapter struct {
-	typeID    workload.TypeID
-	namespace NamespaceResolver
+	typeID          workload.TypeID
+	namespace       NamespaceResolver
+	nodePortEnabled bool
 }
 
 // NewAdapter constructs the legacy Ray-oriented Kubernetes Workload Adapter.
 // typeID and kind remain the existing API discriminators for compatibility.
-func NewAdapter(typeID workload.TypeID, namespace NamespaceResolver) *Adapter {
+func NewAdapter(typeID workload.TypeID, namespace NamespaceResolver, nodePortEnabled ...bool) *Adapter {
+	enabled := len(nodePortEnabled) > 0 && nodePortEnabled[0]
 	return &Adapter{
-		typeID:    typeID,
-		namespace: namespace,
+		typeID:          typeID,
+		namespace:       namespace,
+		nodePortEnabled: enabled,
 	}
 }
 
@@ -146,6 +153,13 @@ func (a *Adapter) Inventory(_ context.Context, request workload.InventoryRequest
 			Ownership: incarnationOwnership(request.Task),
 			Lifecycle: agentruntime.LifecycleDeleteOnTaskCleanup,
 		},
+		{
+			Kind:      agentruntime.ObjectKind{Version: corev1.SchemeGroupVersion.Version, Kind: "Service"},
+			Namespace: namespace,
+			Name:      ExposedPortServiceName(request.Task.Logical.Name),
+			Ownership: incarnationOwnership(request.Task),
+			Lifecycle: agentruntime.LifecycleDeleteOnTaskCleanup,
+		},
 	}}, nil
 }
 
@@ -184,6 +198,23 @@ func (a *Adapter) Compile(_ context.Context, request workload.CompileRequest) (e
 	}
 	objects := make([]agentruntime.DesiredObject, 0)
 	dependencies := make([]string, 0)
+	if len(ray.ExposedPorts) > 0 || ray.ExposedPortsConfigured {
+		if !a.nodePortEnabled {
+			return executionplan.Plan{}, fault.New(fault.FailedPrecondition, "WG-only NodePort exposure is not enabled on this cluster")
+		}
+		service, err := buildExposedPortService(namespace, task, ray.ExposedPorts)
+		if err != nil {
+			return executionplan.Plan{}, err
+		}
+		object, err := desiredObject("exposed-ports", "service", service, request.Task.Identity, agentruntime.IdentityTaskIncarnation, agentruntime.LifecycleDeleteOnTaskCleanup)
+		if err != nil {
+			return executionplan.Plan{}, err
+		}
+		object.Ownership = incarnationOwnership(request.Task.Identity)
+		object.ReconcileProfile = kubernetesobjects.ServiceReconcileProfile
+		object.UpdateMode = agentruntime.UpdateReplace
+		objects = append(objects, object)
+	}
 	// 3. Compile optional Ray helpers. The head Service has Task identity and is cleaned up.
 	role := string(ray.Role)
 	if role != "" {
@@ -270,6 +301,53 @@ func (a *Adapter) Compile(_ context.Context, request workload.CompileRequest) (e
 			Roots: []string{"workload"},
 		},
 	}, nil
+}
+
+// ExposedPortServiceName is stable across Pod restarts but scoped by Task UID ownership.
+func ExposedPortServiceName(taskName string) string {
+	if len(taskName) <= 57 {
+		return taskName + "-ports"
+	}
+	checksum := sha256.Sum256([]byte(taskName))
+	return fmt.Sprintf("%s-%x", strings.TrimRight(taskName[:54], "-"), checksum[:4])
+}
+
+func buildExposedPortService(namespace string, task *rlarkv1alpha1.Task, declarations []taskapi.ExposedPort) (*corev1.Service, error) {
+	if len(declarations) > 16 {
+		return nil, fault.New(fault.InvalidArgument, "at most 16 exposed ports are allowed")
+	}
+	seen := make(map[string]bool, len(declarations))
+	ports := make([]corev1.ServicePort, 0, len(declarations))
+	for _, declaration := range declarations {
+		if len(validation.IsDNS1123Label(declaration.Name)) != 0 || len(declaration.Name) > 15 || seen[declaration.Name] {
+			return nil, fault.New(fault.InvalidArgument, "exposed port names must be unique DNS labels of at most 15 characters")
+		}
+		seen[declaration.Name] = true
+		protocol := strings.ToUpper(declaration.Protocol)
+		if protocol != "TCP" && protocol != "UDP" {
+			return nil, fault.New(fault.InvalidArgument, "exposed port protocol must be TCP or UDP")
+		}
+		if declaration.TargetPort < 1 || declaration.TargetPort > 65535 || (declaration.NodePort != 0 && (declaration.NodePort < 30000 || declaration.NodePort > 32767)) {
+			return nil, fault.New(fault.InvalidArgument, "exposed port must use a valid target port and a NodePort in 30000-32767")
+		}
+		ports = append(ports, corev1.ServicePort{Name: declaration.Name, Protocol: corev1.Protocol(protocol), Port: declaration.TargetPort, TargetPort: intstr.FromInt32(declaration.TargetPort), NodePort: declaration.NodePort})
+	}
+	serviceType := corev1.ServiceTypeNodePort
+	selector := map[string]string{kubernetesobjects.ManagementTaskUIDLabel: string(task.UID)}
+	if len(ports) == 0 {
+		// Kubernetes requires a Service port. A selector with no matching Pods
+		// keeps this owned object in the desired plan while releasing NodePorts.
+		serviceType = corev1.ServiceTypeClusterIP
+		selector = map[string]string{"rlark.io/exposure-disabled": string(task.UID)}
+		ports = []corev1.ServicePort{{Name: "disabled", Protocol: corev1.ProtocolTCP, Port: 65535, TargetPort: intstr.FromInt32(65535)}}
+	}
+	service := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{Name: ExposedPortServiceName(task.Name), Namespace: namespace,
+			Annotations: kubernetesobjects.WorkloadAnnotations(task)},
+		Spec: corev1.ServiceSpec{Type: serviceType, Selector: selector, Ports: ports},
+	}
+	tenant.Inherit(task, service)
+	return service, nil
 }
 
 func networkDomain(requirements executionplan.Requirements) (string, error) {

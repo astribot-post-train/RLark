@@ -180,6 +180,16 @@ export function crdToJob(crd: CRDJob): Job {
       devices,
       image: c?.image ?? "",
       prepareScript: rayScript(t, "prepare"),
+      exposedPorts: Array.isArray(
+        (t.workload.parameters as { exposedPorts?: unknown } | undefined)
+          ?.exposedPorts,
+      )
+        ? ((
+            t.workload.parameters as {
+              exposedPorts: Job["resources"][number]["exposedPorts"];
+            }
+          ).exposedPorts ?? [])
+        : undefined,
       env: taskEnv,
       mounts: taskMountList,
     };

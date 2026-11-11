@@ -17,7 +17,7 @@
 | `nodes` | Namespaced | `GET, POST /api/v1/rlinf.io/v1alpha1/nodes`；`GET, PUT, PATCH, DELETE /api/v1/rlinf.io/v1alpha1/nodes/{name}` |
 | `workflows` | Cluster | `GET, POST /api/v1/rlinf.io/v1alpha1/workflows`；`GET, PUT, PATCH, DELETE /api/v1/rlinf.io/v1alpha1/workflows/{name}` |
 | `jobs` | Cluster | `GET, POST /api/v1/rlinf.io/v1alpha1/jobs`；`GET /api/v1/rlinf.io/v1alpha1/jobs/tags`；`GET, PUT, PATCH, DELETE /api/v1/rlinf.io/v1alpha1/jobs/{name}`；`GET /api/v1/rlinf.io/v1alpha1/jobs/{name}/logs`；`GET /api/v1/rlinf.io/v1alpha1/jobs/{name}/logs/label-values`；`GET /api/v1/rlinf.io/v1alpha1/jobs/{name}/metrics` |
-| `tasks` | Namespaced | `GET, POST /api/v1/rlinf.io/v1alpha1/tasks`；`GET, PUT, PATCH, DELETE /api/v1/rlinf.io/v1alpha1/tasks/{name}`；`/api/v1/rlinf.io/v1alpha1/tasks/{name}/tensorboard/{path}` 接受所有方法 |
+| `tasks` | Namespaced | `GET, POST /api/v1/rlinf.io/v1alpha1/tasks`；`GET, PUT, PATCH, DELETE /api/v1/rlinf.io/v1alpha1/tasks/{name}`；`GET /api/v1/rlinf.io/v1alpha1/tasks/{name}/exposed-ports` 读取实际分配 NodePort；`/api/v1/rlinf.io/v1alpha1/tasks/{name}/tensorboard/{path}` 接受所有方法 |
 | `pods` | Namespaced | `GET /api/v1/rlinf.io/v1alpha1/pods`；`GET, PATCH /api/v1/rlinf.io/v1alpha1/pods/{name}`；`GET /api/v1/rlinf.io/v1alpha1/pods/{name}/events`；`GET /api/v1/rlinf.io/v1alpha1/pods/{name}/terminal` |
 | `domains` | Cluster | `GET, POST /api/v1/rlinf.io/v1alpha1/domains`；`GET, PUT, PATCH, DELETE /api/v1/rlinf.io/v1alpha1/domains/{name}` |
 
@@ -31,6 +31,8 @@ Job 日志接口已实现：`logs` 支持 `from`、`to`、`task`、`pod`、`quer
 
 ## 集群与证书
 
+集群列表和详情响应的 `id` 是稳定的 Cluster 资源名；`name` 优先返回去除首尾空白后的 `spec.displayName`，为空时回退到资源名；`region` 优先返回去除首尾空白后的 `spec.region`，为空时保留从节点推导元数据的行为。显示元数据支持中文等 Unicode 字符。通过管理面的 Kubernetes API 配置 Cluster；URL、分发和调度引用使用 `id`，不要使用 `name`。
+
 | 方法 | 路径 |
 |------|------|
 | `GET` | `/api/v1/clusters` |
@@ -38,8 +40,29 @@ Job 日志接口已实现：`logs` 支持 `from`、`to`、`task`、`pod`、`quer
 | `GET` | `/api/v1/certificates/agent` |
 | `GET` | `/api/v1/certificates/agent/{cluster_id}` |
 | `POST` | `/api/v1/certificates/agent` |
+| `POST` | `/api/v1/certificates/revoke` |
 
-Gateway 虽注册了 `POST /api/v1/certificates/revoke`，但该接口尚未实现，不应视为可用 API。
+Agent 证书签发仅在管理面 Secret 保存后返回凭证；存储失败会报错，归属冲突或不明确的 Secret 不会被接管。响应中断时证书仍可能已经保存，重试签发可能产生不同凭证。详见[证书管理](../deployment.md#92-签发-agent-证书)。
+
+证书撤销需要管理员权限及配置了持久撤销存储的兼容 Server。POST JSON 包含 `cert_type`（`x509` 或 `ssh`）、规范十进制 `serial_number`、`subject_key_id`（X.509 为小写十六进制，SSH 为 key ID）和可选 `reason`。返回 200 和 `{"persisted":true}` 表示 Server 已持久保存撤销记录；重复提交同一身份是安全的。502 可能表示结果未知，包括旧 Server 未返回持久化回执的情况；恢复兼容 Server 后可用相同身份重试。撤销影响新认证，不会终止已有会话；Gateway 不会删除或轮换凭证。该源码变更需要同时升级 Gateway 和 Server，目前尚未在站点部署。
+
+## Station 身份（预览）
+
+`GET /api/v1/node-networks/{name}?cluster_id=<cluster-id>` 返回经验证的节点 WireGuard 接口、CIDR 地址、`state`（`current`、`stale` 或 `unreported`）和可选的服务端接收时间。接口采用与节点列表相同的用户认证和集群可见性规则。命名空间归属冲突返回 `409`；未配置、成员身份验证失败或 Station API 不可用返回 `503`。响应不包含 Peer 或密钥。启用条件见 Station 网关 README。
+
+| 方法 | 路径 |
+|------|------|
+| `GET` | `/api/v1/station/stations?cluster_id={cluster_id}&limit={limit}&continue={token}` |
+| `GET` | `/api/v1/station/stations/{name}?cluster_id={cluster_id}` |
+| `POST` | `/api/v1/station/rebinds` |
+| `GET` | `/api/v1/station/rebinds/{name}?cluster_id={cluster_id}` |
+| `GET` | `/api/v1/station/observations?cluster_id={cluster_id}&limit={limit}&continue={token}` |
+
+两个 `GET` 接口均需要管理员权限。列表从管理面 Kubernetes API 读取 Station 自定义资源；`cluster_id` 是已注册 Cluster 对象名，Gateway 会将其解析为权威的 `spec.agentNamespace`。不要把 namespace 当作 `cluster_id` 传入。分页 `limit` 为 1 到 500（默认 200），`continue` 使用接口返回的不透明 token。Station 名称具有 namespace 作用域，因此详情接口必须提供 `cluster_id`。Cluster 到 namespace 映射冲突返回 `409`；管理面 API 不可用返回 `502`。这两个 GET 接口为只读预览。
+
+`GET /api/v1/station/observations` 需要 `cluster_id`，返回该 Cluster 映射 namespace 中最近一次经服务端验证的快照，其中的 Node UID 可用于选择重绑目标；controller 执行前仍会重新读取成员 Node。`POST /api/v1/station/rebinds` 是仅管理员可调用的预览操作接口。请求提交 `cluster_id`、稳定的 `request_id`、`station_name`、页面读取到的 `station_uid` 与 `expected_binding_version`、`target_node_name`、`target_node_uid` 和操作者填写的 `reason`；`target_system_uuid` 是可选辅助证据。请求必须为严格 JSON，不超过 16 KiB，且不能包含未知字段。Gateway 按已注册 Cluster 解析 namespace，并拒绝 Station UID 过期、Station 已退役或 binding 版本变化的请求。接口创建名称确定的 `StationRebind` operation 并返回 `202`；相同 ID 和载荷重试返回同一 operation，复用 ID 但载荷不同返回 `409`。`GET /api/v1/station/rebinds/{name}` 返回当前异步状态。controller 会再次从成员集群读取目标 Node、核对 UID，并拒绝已绑定给其他 Station 的 UID 后才修改绑定。`202` 不代表重绑已完成。控制台已支持对 `Conflict` Station 提交并跟踪 operation；实际完成仍需安装 Station CRD/controller。
+
+Station 发现和 Rebind reconcile 在 controller-manager leader election 下共享串行协调器；race 测试验证二者同时处理同一 Node UID 时最终只有一个 owner。leader 故障切换与真实 CRD operation 尚未测试，因此此预览接口还不能作为生产身份唯一性保证。
 
 ## 认证与 SSH 密钥
 
@@ -73,6 +96,7 @@ Gateway 虽注册了 `POST /api/v1/certificates/revoke`，但该接口尚未实�
 | `GET` | `/api/v1/images` |
 | `GET, POST` | `/api/v1/image-registries` |
 | `GET, PUT, DELETE` | `/api/v1/image-registries/{id}` |
+| `GET` | `/api/v1/image-registries/{id}/password` |
 | `GET` | `/api/v1/image-registries/{id}/repositories` |
 | `GET` | `/api/v1/image-registries/{id}/tags?repository={name}` |
 | `GET` | `/api/v1/image-registries/{id}/manifest?repository={name}&tag={tag}` |
@@ -84,13 +108,15 @@ Gateway 虽注册了 `POST /api/v1/certificates/revoke`，但该接口尚未实�
 
 镜像仓库凭证使用不可变的 `ir-<16 位小写十六进制字符>` ID；展示 `name` 可以重复或修改。创建请求必须包含 `name`、`registry`、`username`、`password` 和 `clusterSelection`：
 
+列表和详情不返回密码。管理员可显式调用 `GET /api/v1/image-registries/{id}/password`，返回 `{"password":"..."}`，响应包含 `Cache-Control: no-store`。已认证的请求会产生包含操作者、凭据 ID 和状态的结构化审计日志，不含密码。
+
 ```json
 {"name":"生产 Harbor","registry":"harbor.example.com","username":"robot","password":"secret","clusterSelection":{"mode":"Selected","clusters":["cluster-a"]}}
 ```
 
-`clusterSelection.mode` 可为 `None`（仅保存）、`Selected`（一个或多个逻辑集群名）或 `All`（当前及未来集群）。`None` 和 `All` 模式下 `clusters` 必须为空。响应不返回密码，但会返回 `id`。`POST` 返回 `201 Created`。执行 `PUT` 时，省略 `password` 表示保留原密码，显式空密码非法。`DELETE` 返回 `202 Accepted`，因为 Replication 和 Delivery 会异步删除已分发的 Secret。
+`clusterSelection.mode` 可为 `None`（仅保存）、`Selected`（一个或多个逻辑集群名）或 `All`（当前及未来集群）。`None` 和 `All` 模式下 `clusters` 必须为空。普通凭据响应不返回密码，但会返回 `id`。`POST` 返回 `201 Created`。执行 `PUT` 时，省略 `password` 表示保留原密码，显式空密码非法。`DELETE` 返回 `202 Accepted`，因为 Replication 和 Delivery 会异步删除已分发的 Secret。
 
-三个只读浏览接口仅限管理员。Gateway 需配置 `--registry-browse-allowed-hosts=registry.example.com:5443`（多个精确 `host[:port]` 以逗号分隔）；默认空列表关闭浏览。只访问显式允许的 HTTPS 地址，不跟随重定向或使用代理，保存的凭证不返回给浏览器。Gateway 必须能访问仓库，并通过系统 CA 信任其证书；私有 CA 应在 Gateway 启动前加入其运行环境，不要关闭证书校验。仓库必须支持目录、分页标签查询、返回 `sha256` 摘要的 manifest HEAD 和 Basic 认证；暂不支持 token 认证或不提供目录接口的仓库。目录和标签每页最多 50 项，使用返回的 `next` 作为下一次请求的 `last`。仓库失败返回 502，不视为空结果。已有 `GET /api/v1/images` 是 Job 镜像使用历史，不是仓库库存。查询期间标签和摘要可能变化，发布时应固定经过验证的摘要。
+三个只读浏览接口仅限管理员。Gateway 需配置 `--registry-browse-allowed-hosts=registry.example.com:5443`（多个精确 `host[:port]` 或 IP CIDR 以逗号分隔）；默认空列表关闭浏览。CIDR 允许该网段内的 IP 字面地址使用任意端口，不对域名解析后匹配；应将网段限制在可信网络。只访问显式允许的 HTTPS 地址，不跟随重定向或使用代理，保存的凭证不返回给浏览器。Gateway 必须能访问仓库，并通过系统 CA 信任其证书；私有 CA 应在 Gateway 启动前加入其运行环境，不要关闭证书校验。仓库必须支持目录、分页标签查询、返回 `sha256` 摘要的 manifest HEAD 和 Basic 认证；暂不支持 token 认证或不提供目录接口的仓库。目录和标签每页最多 50 项，使用返回的 `next` 作为下一次请求的 `last`。仓库失败返回 502，不视为空结果。已有 `GET /api/v1/images` 是 Job 镜像使用历史，不是仓库库存。查询期间标签和摘要可能变化，发布时应固定经过验证的摘要。
 
 ## 存储
 

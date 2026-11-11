@@ -323,6 +323,7 @@ function clusterPayload() {
     ...cluster,
     id: cluster.name,
     name: cluster.name,
+    agentNamespace: cluster.name,
   }));
 }
 
@@ -346,6 +347,8 @@ export function installMockBackend() {
 
     if (method === "GET" && path === "/api/v1/clusters")
       return json({ data: clusterPayload() });
+    if (path.startsWith("/api/v1/station/"))
+      return json({ error: "Station is unavailable in mock mode" }, 503);
     if (method === "GET" && path.startsWith("/api/v1/clusters/")) {
       const id = decodeURIComponent(path.split("/").pop()!);
       const cluster = clusterPayload().find((item) => item.id === id);
@@ -598,6 +601,8 @@ export function installMockBackend() {
       const index = imageRegistries.findIndex((item) => item.id === id);
       if (index < 0)
         return json({ code: "RESOURCE_NOT_FOUND", message: "not found" }, 404);
+      if (method === "GET" && segments[5] === "password")
+        return json({ password: "example-password" });
       if (method === "GET" && segments[5] === "repositories")
         return json({ items: ["example/image"], next: "" });
       if (method === "GET" && segments[5] === "tags")

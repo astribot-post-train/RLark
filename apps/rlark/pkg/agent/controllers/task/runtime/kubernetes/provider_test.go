@@ -847,6 +847,27 @@ func TestProviderApplyUpdatesServiceOwnedFields(t *testing.T) {
 	}
 }
 
+func TestProviderApplyReleasesNodePortOnClusterIPTransition(t *testing.T) {
+	scheme := testScheme(t)
+	existing := &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: "task-service", Namespace: "runtime", UID: "service-uid", Annotations: managementAnnotations("task-uid")}, Spec: corev1.ServiceSpec{Type: corev1.ServiceTypeNodePort, Selector: map[string]string{"app": "task"}, Ports: []corev1.ServicePort{{Name: "api", Protocol: corev1.ProtocolTCP, Port: 8080, TargetPort: intstr.FromInt32(8080), NodePort: 31000}}}}
+	counting := &countingClient{Client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(existing).Build()}
+	provider := New(counting, scheme, func(agentruntime.TaskIdentity) string { return "runtime" })
+	desired := existing.DeepCopy()
+	desired.UID, desired.ResourceVersion = "", ""
+	desired.Spec.Type = corev1.ServiceTypeClusterIP
+	desired.Spec.Ports[0].NodePort = 0
+	if _, err := provider.Apply(context.Background(), agentruntime.ApplyRequest{Task: taskIdentity(), Desired: desiredObject(t, desired), Current: ptrRef(objectRefFor(existing, "v1, Kind=Service"))}); err != nil {
+		t.Fatal(err)
+	}
+	var got corev1.Service
+	if err := counting.Get(context.Background(), client.ObjectKeyFromObject(existing), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Spec.Type != corev1.ServiceTypeClusterIP || got.Spec.Ports[0].NodePort != 0 {
+		t.Fatalf("NodePort was retained after exposure was removed: %#v", got.Spec)
+	}
+}
+
 func TestProviderApplyServiceDefaultsAreSteadyState(t *testing.T) {
 	scheme := testScheme(t)
 	existing := &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: "task-service", Namespace: "runtime", UID: "service-uid", Annotations: managementAnnotations("task-uid"), Labels: map[string]string{"app": "task", "foreign": "kept"}}, Spec: corev1.ServiceSpec{ClusterIP: "10.0.0.1", ClusterIPs: []string{"10.0.0.1"}, IPFamilies: []corev1.IPFamily{corev1.IPv4Protocol}, IPFamilyPolicy: ptr(corev1.IPFamilyPolicySingleStack), InternalTrafficPolicy: ptr(corev1.ServiceInternalTrafficPolicyCluster), SessionAffinity: corev1.ServiceAffinityNone, Type: corev1.ServiceTypeClusterIP, Selector: map[string]string{"app": "task"}, Ports: []corev1.ServicePort{{Name: "api", Protocol: corev1.ProtocolTCP, Port: 8080, TargetPort: intstr.FromInt32(8080), NodePort: 30001}}}}

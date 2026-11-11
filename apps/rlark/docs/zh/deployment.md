@@ -243,7 +243,7 @@ Agent 通过 `--mode` 支持三种运行模式：
 
 ## 6. Addon 配置
 
-rlark 支持跨数据面集群的声明式 Addon 管理。Addon 定义在 addon 目录（`../pkg/addons/catalog/`）中，通过 Addon API 安装。
+rlark 支持跨数据面集群的声明式 Addon 管理。Addon 定义在 addon 目录（`../pkg/addons/catalog/`）中，通过 Addon API 安装。 Agent 会定期比较渲染清单明确指定的字段与现有资源，发现漂移时重新应用；比较时忽略清单未指定的服务端附加字段，明确指定的列表按整个有序列表比较。发生漂移时 Agent 会重新应用清单中的顶层资源字段，因此不要让其他控制器同时修改这些字段。已有资源必须同时带有匹配的 Addon 名称和当前 Addon UID 标签；无标签或归属其他实例时会报告归属冲突，需要运维检查，不会自动接管。删除时清理按两个标签选择资源，使用 Kubernetes UID 和 resourceVersion 删除前置条件，并在已归属资源消失后才移除 Addon finalizer。缺少 UID、本地 API 不可用以及列表或删除失败会阻止清理；旧格式或其他实例的资源不会被自动删除。
 
 ### 6.1 Addon 目录结构
 
@@ -300,9 +300,12 @@ pkg/addons/catalog/
 | `nodeDriverRegistrarImage` | Node Driver Registrar sidecar 镜像 | `rlinf/csi-rclone/csi-node-driver-registrar:v2.16.0` |
 | `driverName` | CSI 驱动注册名称 | `rclone.csi.veloxpack.io` |
 | `nodeSelector` | Node DaemonSet 节点选择器，格式为 `label=value` | `""` |
+| `controllerNodeSelector` | Controller Deployment 节点选择器，格式为 `label=value`；镜像仅在特定节点可用时可指定 | `""` |
 | `controllerReplicas` | Controller Deployment 副本数 | `1` |
 | `controllerLogLevel` | Controller 日志级别 (0-10) | `5` |
 | `nodeLogLevel` | Node DaemonSet 日志级别 (0-10) | `5` |
+
+两个选择器参数均接受一组 Kubernetes 标签键和值。无效选择器会导致渲染失败；空值不限制对应工作负载的节点。
 
 RClone CSI 驱动支持通过 RClone 动态配置远程存储（S3、GCS、Azure Blob 等）支持的 PersistentVolume。
 
@@ -397,7 +400,13 @@ curl -X DELETE "http://localhost:8080/api/v1/clusters/agent-beijing/addons/embod
 | Server | 8888 | HTTP | 内部健康检查和指标 |
 | kcp | 6443 | HTTPS | 内部控制面 API |
 
-### 8.2 网络拓扑
+### 8.2 仅 WG 访问的 Job NodePort（预览）
+
+为数据面 Agent 设置 `RLARK_WG_NODEPORT_ENABLED=true` 之前，先将 kube-proxy `nodePortAddresses` 配为 `["10.254.240.0/24"]`，逐节点重启并验证 kube-proxy，并证明测试 NodePort 无法从非 WG 地址访问。Agent 启动时检查 ConfigMap，缺失或过宽则拒绝启动；仅设置开关不能证明运行中的 kube-proxy 已重载配置。未完成限制的集群保持关闭。这些端口按已有 WG Peer 的路由可达；kube-proxy 不提供 Peer 级授权。
+
+预览版节点 WireGuard 地址展示需要 Station API 与 Gateway 使用独立的共享服务凭证。配置 `station-api --gateway-credential-file`，以及 Gateway 的 `--station-api-address`、`--station-api-ca-file` 和 `--station-gateway-credential-file`；将同一随机凭证作为 Secret 挂载到两个服务，并使用可验证的 Station API TLS 证书。网络节点还需运行支持观测上报的 Agent。未配置时功能关闭；限制和回滚前提见 Station 网关 README。
+
+### 8.3 网络拓扑
 
 ```text
 用户 / 浏览器 ──HTTP──▶ UI (:80) ──/api 代理──▶ Gateway (:8090)
@@ -410,7 +419,7 @@ curl -X DELETE "http://localhost:8080/api/v1/clusters/agent-beijing/addons/embod
 Server / Gateway / Controller Manager ──HTTPS──▶ kcp (:6443)
 ```
 
-两个数据面 Agent 都主动向 Server 发起出方向连接，因此无需开放数据面入站端口。在控制面按需开放 UI 80 和 Server 8443、2222 端口；Gateway、kcp、健康检查和指标端口应保持内部可见。
+两个数据面 Agent 都主动向 Server 发起出方向连接。除上述可选的仅 WG 访问的 Job NodePort 外，无需开放数据面入站端口。在控制面按需开放 UI 80 和 Server 8443、2222 端口；Gateway、kcp、健康检查和指标端口应保持内部可见。
 
 ## 9. 证书管理
 
@@ -434,7 +443,9 @@ curl -X POST "http://localhost:8080/api/v1/certificates/agent" \
   -d '{"cluster_id": "beijing"}'
 ```
 
-返回证书和私钥，部署到数据面 Agent 的配置中。
+仅在管理面 Secret 保存成功后返回证书和私钥，供部署到数据面 Agent。存储失败会返回错误；同名 Secret 的 Agent 证书归属元数据不匹配时不会自动接管。并发更新遇 resourceVersion 冲突时会重试。响应丢失时新证书仍可能已保存，重试前应检查现有证书，因为签发不是幂等操作。保护响应，不要记录私钥。运行中的 Agent 客户端在初始化时加载凭证，此 API 不保证自动重载或轮换。
+
+Server 配置撤销存储时，查询失败会以 HTTP 503 拒绝新的 X.509 请求，并拒绝 SSH 证书认证。未撤销的成功查询不缓存，已撤销结果可能被缓存。未配置存储时 Server 会拒绝撤销请求，不再确认临时撤销；认证保留原有无存储兼容行为。Server 撤销请求要求精确的证书类型、规范十进制序列号和 subject key ID（X.509 使用小写十六进制）；重复写入具有幂等性。Gateway 管理员接口将撤销转发至兼容的 Server 并要求持久化回执。502 可能表示结果未知，恢复后可用相同身份重试；须同时升级两个组件。撤销不会终止已建立的会话；依赖撤销前须验证可用性和恢复。
 
 ### 9.3 UI 认证
 

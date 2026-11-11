@@ -19,6 +19,10 @@ const (
 
 // ClusterSpec declares the durable operational state of a data-plane cluster.
 type ClusterSpec struct {
+	// DisplayName is a human-readable name; metadata.name remains the stable cluster ID.
+	DisplayName string `json:"displayName,omitempty"`
+	// Region is administrator-managed location metadata, independent of node placement.
+	Region string `json:"region,omitempty"`
 	// AgentNamespace is the management-plane namespace that contains the agent heartbeat Lease and Node CRs.
 	// +kubebuilder:validation:MinLength=1
 	AgentNamespace        string `json:"agentNamespace"`

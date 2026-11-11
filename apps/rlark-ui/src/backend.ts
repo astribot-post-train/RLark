@@ -69,6 +69,87 @@ export interface ImageRegistryItem {
   };
 }
 
+export interface StationItem {
+  apiVersion: string;
+  kind: "Station";
+  metadata: {
+    name: string;
+    namespace: string;
+    uid?: string;
+    creationTimestamp?: string;
+  };
+  spec: {
+    displayName: string;
+    sequence: number;
+    retired?: boolean;
+    binding: {
+      nodeName: string;
+      nodeUID: string;
+      systemUUID?: string;
+      version: number;
+      boundBy: string;
+    };
+  };
+  status?: {
+    phase?: "Bound" | "Offline" | "Conflict" | "Retired";
+    bootTime?: string;
+    lastSeenTime?: string;
+    conditions?: Array<{
+      type: string;
+      status: "True" | "False" | "Unknown";
+      reason?: string;
+      message?: string;
+      lastTransitionTime?: string;
+    }>;
+  };
+}
+
+export interface StationPageResponse {
+  items: StationItem[];
+  continue?: string;
+}
+
+export interface StationObservationItem {
+  apiVersion: string;
+  kind: "StationObservation";
+  metadata: { name: string; namespace: string };
+  status: {
+    nodeUID: string;
+    reportedAt: string;
+    systemUUID?: string;
+    bootTime?: string;
+  };
+}
+
+export interface StationObservationPageResponse {
+  items: StationObservationItem[];
+  continue?: string;
+}
+
+export interface StationRebindOperation {
+  apiVersion: string;
+  kind: "StationRebind";
+  metadata: { name: string; namespace: string; uid?: string };
+  spec: {
+    requestID: string;
+    stationRef: { name: string; uid: string };
+    expectedBindingVersion: number;
+    targetNodeName: string;
+    targetNodeUID: string;
+    reason: string;
+    requestedBy: string;
+  };
+  status?: {
+    phase?: "Accepted" | "Applied" | "Rejected";
+    conditions?: Array<{ type: string; status: string; reason?: string; message?: string }>;
+  };
+}
+
+export interface StationRebindResponse {
+  operation: StationRebindOperation;
+  created: boolean;
+}
+
 export interface LocalizedText {
   zh: string;
   en: string;
@@ -291,6 +372,9 @@ export const imagesApi = {
 };
 
 export const imageRegistriesApi = {
+  password(id: string, signal?: AbortSignal) {
+    return requestJson<{ password: string }>(`/api/v1/image-registries/${encodeURIComponent(id)}/password`, { signal });
+  },
   list() {
     return requestJson<ImageRegistryItem[]>("/api/v1/image-registries");
   },
@@ -329,6 +413,52 @@ export const imageRegistriesApi = {
     const query = new URLSearchParams({ repository, tag });
     return requestJson<{ digest: string }>(
       `/api/v1/image-registries/${encodeURIComponent(id)}/manifest?${query}`,
+      { signal },
+    );
+  },
+};
+
+export const stationsApi = {
+  list(query: Record<string, string | undefined> = {}, signal?: AbortSignal) {
+    return requestJson<StationPageResponse>(
+      withQuery("/api/v1/station/stations", query),
+      { signal },
+    );
+  },
+  get(name: string, clusterID: string, signal?: AbortSignal) {
+    const query = new URLSearchParams({ cluster_id: clusterID });
+    return requestJson<StationItem>(
+      `/api/v1/station/stations/${encodeURIComponent(name)}?${query}`,
+      { signal },
+    );
+  },
+  observations(clusterID: string, signal?: AbortSignal) {
+    const query = new URLSearchParams({ cluster_id: clusterID, limit: "500" });
+    return requestJson<StationObservationPageResponse>(
+      `/api/v1/station/observations?${query}`,
+      { signal },
+    );
+  },
+  createRebind(input: {
+    cluster_id: string;
+    request_id: string;
+    station_name: string;
+    station_uid: string;
+    expected_binding_version: number;
+    target_node_name: string;
+    target_node_uid: string;
+    target_system_uuid?: string;
+    reason: string;
+  }) {
+    return requestJson<StationRebindResponse>("/api/v1/station/rebinds", {
+      method: "POST",
+      body: input,
+    });
+  },
+  getRebind(name: string, clusterID: string, signal?: AbortSignal) {
+    const query = new URLSearchParams({ cluster_id: clusterID });
+    return requestJson<StationRebindOperation>(
+      `/api/v1/station/rebinds/${encodeURIComponent(name)}?${query}`,
       { signal },
     );
   },

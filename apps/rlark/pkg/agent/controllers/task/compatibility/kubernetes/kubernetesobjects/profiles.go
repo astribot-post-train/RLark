@@ -35,6 +35,7 @@ type servicePortProjection struct {
 	Port        int32
 	TargetPort  intstr.IntOrString
 	AppProtocol *string
+	NodePort    int32
 }
 
 // ServiceProjectionEqual compares only Adapter-owned Service fields. Kubernetes
@@ -62,7 +63,14 @@ func projectService(service, ownership *corev1.Service) serviceProjection {
 		if targetPort == (intstr.IntOrString{}) {
 			targetPort = intstr.FromInt32(port.Port)
 		}
-		ports[i] = servicePortProjection{Name: port.Name, Protocol: protocol, Port: port.Port, TargetPort: targetPort, AppProtocol: port.AppProtocol}
+		nodePort := int32(0)
+		for _, expected := range ownership.Spec.Ports {
+			if expected.Name == port.Name && expected.NodePort != 0 {
+				nodePort = port.NodePort
+				break
+			}
+		}
+		ports[i] = servicePortProjection{Name: port.Name, Protocol: protocol, Port: port.Port, TargetPort: targetPort, AppProtocol: port.AppProtocol, NodePort: nodePort}
 	}
 	serviceType := service.Spec.Type
 	if serviceType == "" {

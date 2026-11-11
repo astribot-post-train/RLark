@@ -445,6 +445,7 @@ export function CreateJobModal({
         devices: res.devices?.map((d) => ({ ...d })) ?? [],
         image: res.image,
         prepareScript: res.prepareScript ?? "",
+        exposedPorts: res.exposedPorts?.map((port) => ({ ...port })),
         envs: res.env.map((e) => ({ ...e })),
         mounts: res.mounts.map((m) => ({
           type: m.type ?? "host",
@@ -852,6 +853,26 @@ export function CreateJobModal({
           return zh
             ? `${role} 的镜像地址不能包含空格或其他空白字符。`
             : `The image reference for ${role} cannot contain spaces or other whitespace.`;
+        const ports = resource.exposedPorts ?? [];
+        if (
+          ports.length > 16 ||
+          ports.some(
+            (port) =>
+              !/^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/.test(port.name) ||
+              port.name.length > 15 ||
+              !Number.isInteger(port.targetPort) ||
+              port.targetPort < 1 ||
+              port.targetPort > 65535 ||
+              (port.nodePort !== undefined &&
+                (!Number.isInteger(port.nodePort) ||
+                  port.nodePort < 30000 ||
+                  port.nodePort > 32767)),
+          ) ||
+          new Set(ports.map((port) => port.name)).size !== ports.length
+        )
+          return zh
+            ? `${role} 的端口名称、容器端口或外部端口无效。`
+            : `${role} has an invalid port name, container port, or external port.`;
         if (
           !Number.isFinite(Number(resource.replicas)) ||
           resource.replicas < 1
@@ -1406,6 +1427,164 @@ export function CreateJobModal({
                               <button
                                 className="icon-button danger"
                                 onClick={() => removeRREnv(role, index)}
+                              >
+                                <X size={14} />
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                        <div className="form-section" style={{ marginTop: 12 }}>
+                          <div className="form-section-head">
+                            <small>
+                              {zh ? "WG 访问端口" : "WG access ports"}
+                            </small>
+                            <button
+                              type="button"
+                              className="secondary-button"
+                              onClick={() =>
+                                setRoleResources((previous) => ({
+                                  ...previous,
+                                  [role]: {
+                                    ...previous[role],
+                                    exposedPorts: [
+                                      ...(previous[role].exposedPorts ?? []),
+                                      {
+                                        name: "",
+                                        protocol: "TCP",
+                                        targetPort: 0,
+                                      },
+                                    ],
+                                  },
+                                }))
+                              }
+                            >
+                              <Plus size={14} />
+                              {zh ? "添加" : "Add"}
+                            </button>
+                          </div>
+                          {(rr.exposedPorts ?? []).map((port, index) => (
+                            <div className="exposed-port-row" key={index}>
+                              <input
+                                aria-label={zh ? "端口名称" : "Port name"}
+                                placeholder={zh ? "名称" : "Name"}
+                                value={port.name}
+                                onChange={(event) =>
+                                  setRoleResources((previous) => ({
+                                    ...previous,
+                                    [role]: {
+                                      ...previous[role],
+                                      exposedPorts: (
+                                        previous[role].exposedPorts ?? []
+                                      ).map((item, i) =>
+                                        i === index
+                                          ? {
+                                              ...item,
+                                              name: event.target.value,
+                                            }
+                                          : item,
+                                      ),
+                                    },
+                                  }))
+                                }
+                              />
+                              <select
+                                aria-label={zh ? "协议" : "Protocol"}
+                                value={port.protocol}
+                                onChange={(event) =>
+                                  setRoleResources((previous) => ({
+                                    ...previous,
+                                    [role]: {
+                                      ...previous[role],
+                                      exposedPorts: (
+                                        previous[role].exposedPorts ?? []
+                                      ).map((item, i) =>
+                                        i === index
+                                          ? {
+                                              ...item,
+                                              protocol: event.target.value as
+                                                "TCP" | "UDP",
+                                            }
+                                          : item,
+                                      ),
+                                    },
+                                  }))
+                                }
+                              >
+                                <option>TCP</option>
+                                <option>UDP</option>
+                              </select>
+                              <input
+                                aria-label={zh ? "容器端口" : "Container port"}
+                                type="number"
+                                min={1}
+                                max={65535}
+                                placeholder={zh ? "容器端口" : "Container port"}
+                                value={port.targetPort || ""}
+                                onChange={(event) =>
+                                  setRoleResources((previous) => ({
+                                    ...previous,
+                                    [role]: {
+                                      ...previous[role],
+                                      exposedPorts: (
+                                        previous[role].exposedPorts ?? []
+                                      ).map((item, i) =>
+                                        i === index
+                                          ? {
+                                              ...item,
+                                              targetPort: Number(
+                                                event.target.value,
+                                              ),
+                                            }
+                                          : item,
+                                      ),
+                                    },
+                                  }))
+                                }
+                              />
+                              <input
+                                aria-label={zh ? "外部端口" : "External port"}
+                                type="number"
+                                min={30000}
+                                max={32767}
+                                placeholder={zh ? "自动分配" : "Automatic"}
+                                value={port.nodePort ?? ""}
+                                onChange={(event) =>
+                                  setRoleResources((previous) => ({
+                                    ...previous,
+                                    [role]: {
+                                      ...previous[role],
+                                      exposedPorts: (
+                                        previous[role].exposedPorts ?? []
+                                      ).map((item, i) =>
+                                        i === index
+                                          ? {
+                                              ...item,
+                                              nodePort:
+                                                event.target.value === ""
+                                                  ? undefined
+                                                  : Number(event.target.value),
+                                            }
+                                          : item,
+                                      ),
+                                    },
+                                  }))
+                                }
+                              />
+                              <button
+                                type="button"
+                                className="icon-button danger"
+                                title={zh ? "删除端口" : "Remove port"}
+                                onClick={() =>
+                                  setRoleResources((previous) => ({
+                                    ...previous,
+                                    [role]: {
+                                      ...previous[role],
+                                      exposedPorts: (
+                                        previous[role].exposedPorts ?? []
+                                      ).filter((_, i) => i !== index),
+                                    },
+                                  }))
+                                }
                               >
                                 <X size={14} />
                               </button>

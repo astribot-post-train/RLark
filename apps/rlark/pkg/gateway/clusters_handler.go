@@ -97,10 +97,14 @@ func buildClusterInfo(cluster rlarkv1alpha1.Cluster, nodes []rlarkv1alpha1.Node)
 		ID:                     cluster.Name,
 		AgentNamespace:         cluster.Spec.AgentNamespace,
 		Name:                   cluster.Name,
+		Region:                 strings.TrimSpace(cluster.Spec.Region),
 		Phase:                  cluster.Status.Phase,
 		AgentNamespaceConflict: clusterAgentNamespaceConflict(cluster),
 		GPUModels:              []string{},
 		RobotModels:            []string{},
+	}
+	if displayName := strings.TrimSpace(cluster.Spec.DisplayName); displayName != "" {
+		info.Name = displayName
 	}
 	gpuModels := make(map[string]struct{})
 	robotModels := make(map[string]struct{})

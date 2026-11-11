@@ -54,6 +54,7 @@
 
 .cluster-management-row {
   width: 100%;
+  cursor: pointer;
   min-height: 66px;
   padding: 10px 16px;
   border: 0;

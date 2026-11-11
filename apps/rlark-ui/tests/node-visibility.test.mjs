@@ -76,3 +76,16 @@ test("hides Kubernetes control-plane nodes even when categorized", () => {
     false,
   );
 });
+
+test("shows explicitly managed control-plane nodes with workload resources", () => {
+  const controlPlane = node("gpu-control-plane", {
+    "node-role.kubernetes.io/control-plane": "",
+    "rlark.io/enabled": "true",
+  });
+  controlPlane.status = { allocatable: { "nvidia.com/gpu": "8" } };
+  assert.equal(isBusinessWorkerNode(controlPlane), true);
+  assert.equal(isBusinessWorkerNode(node("management", {
+    "node-role.kubernetes.io/control-plane": "",
+    "rlark.io/enabled": "true",
+  })), false);
+});

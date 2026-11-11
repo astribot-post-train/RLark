@@ -138,3 +138,21 @@ func TestRegistryBrowserDoesNotFollowRedirect(t *testing.T) {
 	require.Equal(t, http.StatusFound, response.StatusCode)
 	require.Zero(t, targetRequests.Load())
 }
+
+func TestRegistryHostAllowedCIDR(t *testing.T) {
+	allowed := []string{"10.0.0.0/8", "192.168.0.0/16", "registry.example:5443"}
+	for _, tc := range []struct {
+		authority, host string
+		want            bool
+	}{
+		{"10.11.14.128:5443", "10.11.14.128", true},
+		{"192.168.31.2:5443", "192.168.31.2", true},
+		{"192.0.2.1:5443", "192.0.2.1", false},
+		{"registry.example:5443", "registry.example", true},
+		{"registry.example:443", "registry.example", false},
+		{"127.0.0.1:5443", "127.0.0.1", false},
+		{"example.test:5443", "example.test", false},
+	} {
+		t.Run(tc.authority, func(t *testing.T) { require.Equal(t, tc.want, registryHostAllowed(allowed, tc.authority, tc.host)) })
+	}
+}

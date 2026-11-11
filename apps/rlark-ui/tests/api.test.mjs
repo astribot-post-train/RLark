@@ -18,8 +18,53 @@ import {
   domainsApi,
   imageRegistriesApi,
   nodesApi,
+  stationsApi,
   systemConfigApi,
 } from "../dist/test/backend.js";
+
+test("Station APIs encode Cluster IDs, names, and pagination parameters", async () => {
+  globalThis.sessionStorage = storage();
+  globalThis.window = { dispatchEvent() {} };
+  const calls = [];
+  globalThis.fetch = async (input, init) => {
+    calls.push({ input: String(input), init });
+    return new Response(JSON.stringify({ items: [], continue: "" }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  };
+  const controller = new AbortController();
+  await stationsApi.list({ cluster_id: "cluster/a", limit: "200", continue: "token +/=" }, controller.signal);
+  await stationsApi.get("station/a", "cluster/a", controller.signal);
+  await stationsApi.observations("cluster/a", controller.signal);
+  await stationsApi.createRebind({
+    cluster_id: "cluster/a",
+    request_id: "request-1",
+    station_name: "station/a",
+    station_uid: "uid-1",
+    expected_binding_version: 2,
+    target_node_name: "node-a",
+    target_node_uid: "node-uid-a",
+    reason: "approved replacement",
+  });
+  await stationsApi.getRebind("rebind/a", "cluster/a", controller.signal);
+  assert.equal(calls[0].input, "/api/v1/station/stations?cluster_id=cluster%2Fa&limit=200&continue=token+%2B%2F%3D");
+  assert.equal(calls[1].input, "/api/v1/station/stations/station%2Fa?cluster_id=cluster%2Fa");
+  assert.equal(calls[2].input, "/api/v1/station/observations?cluster_id=cluster%2Fa&limit=500");
+  assert.equal(calls[3].input, "/api/v1/station/rebinds");
+  assert.deepEqual(JSON.parse(calls[3].init.body), {
+    cluster_id: "cluster/a",
+    request_id: "request-1",
+    station_name: "station/a",
+    station_uid: "uid-1",
+    expected_binding_version: 2,
+    target_node_name: "node-a",
+    target_node_uid: "node-uid-a",
+    reason: "approved replacement",
+  });
+  assert.equal(calls[4].input, "/api/v1/station/rebinds/rebind%2Fa?cluster_id=cluster%2Fa");
+  assert.ok(calls.filter((call) => call.init.signal).every((call) => call.init.signal === controller.signal));
+});
 
 test("registry browse API encodes parameters and forwards cancellation", async () => {
   globalThis.sessionStorage = storage();
@@ -39,6 +84,7 @@ test("registry browse API encodes parameters and forwards cancellation", async (
   await imageRegistriesApi.repositories("id/a", "a/b", controller.signal);
   await imageRegistriesApi.tags("id/a", "a/b", "v1", controller.signal);
   await imageRegistriesApi.manifest("id/a", "a/b", "v1", controller.signal);
+  await imageRegistriesApi.password("id/a", controller.signal);
   assert.equal(
     calls[0].input,
     "/api/v1/image-registries/id%2Fa/repositories?last=a%2Fb",
@@ -51,6 +97,7 @@ test("registry browse API encodes parameters and forwards cancellation", async (
     calls[2].input,
     "/api/v1/image-registries/id%2Fa/manifest?repository=a%2Fb&tag=v1",
   );
+  assert.equal(calls[3].input, "/api/v1/image-registries/id%2Fa/password");
   assert.ok(calls.every((call) => call.init.signal === controller.signal));
 });
 

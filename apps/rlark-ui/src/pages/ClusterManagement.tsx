@@ -580,6 +580,7 @@ export function ClusterManagementPage({
                     </i>
                     <span>
                       <strong>{cluster.name}</strong>
+                      {cluster.region && <small>{cluster.region}</small>}
                     </span>
                   </span>
                   <span className="cluster-type-chip">

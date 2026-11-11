@@ -35,7 +35,10 @@ type Config struct {
 	SyncResources []string
 
 	// RegistryBrowseAllowedHosts limits the registry origins the Gateway may query.
-	RegistryBrowseAllowedHosts []string
+	RegistryBrowseAllowedHosts   []string
+	StationAPIAddress            string
+	StationAPICAFile             string
+	StationGatewayCredentialFile string
 }
 
 // DefaultConfig returns a Config with sensible defaults.
@@ -57,7 +60,10 @@ func (c *Config) SetupFlags(fs *pflag.FlagSet) {
 	fs.DurationVar(&c.JWTTokenTTL, "jwt-token-ttl", c.JWTTokenTTL, "The lifetime of UI JWT access tokens.")
 	fs.BoolVar(&c.EnableSecretBackend, "enable-secret-backend", c.EnableSecretBackend, "Use Kubernetes Secret as persistence backend (test/CI mode, only when PostgreSQL is not configured).")
 	fs.StringSliceVar(&c.SyncResources, "sync-resources", c.SyncResources, "Resources that query from persistence backend (jobs, tasks, workflows, nodes). Others query from KCP.")
-	fs.StringSliceVar(&c.RegistryBrowseAllowedHosts, "registry-browse-allowed-hosts", c.RegistryBrowseAllowedHosts, "Exact host[:port] values permitted for read-only HTTPS registry browsing; empty disables browsing.")
+	fs.StringSliceVar(&c.RegistryBrowseAllowedHosts, "registry-browse-allowed-hosts", c.RegistryBrowseAllowedHosts, "Exact host[:port] values or IP CIDRs permitted for read-only HTTPS registry browsing; empty disables browsing.")
+	fs.StringVar(&c.StationAPIAddress, "station-api-address", "", "Optional Station API HTTPS origin for node network summaries")
+	fs.StringVar(&c.StationAPICAFile, "station-api-ca-file", "", "Station API CA bundle")
+	fs.StringVar(&c.StationGatewayCredentialFile, "station-gateway-credential-file", "", "Dedicated Station API network summary credential file")
 
 	c.KubeClientConfig.SetupFlags(fs)
 }

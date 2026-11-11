@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"regexp"
 	"slices"
@@ -70,7 +71,7 @@ func (g *Gateway) registryBrowser() *registryBrowser {
 func (browser *registryBrowser) request(ctx context.Context, credential storedImageRegistryCredential, method, path string, query url.Values) (*http.Response, error) {
 	registry := credential.Registry
 	parsed, err := url.Parse("https://" + registry)
-	if err != nil || parsed.Host != registry || parsed.User != nil || parsed.Path != "" || parsed.RawQuery != "" || parsed.Fragment != "" || parsed.Hostname() == "" || !slices.Contains(browser.allowed, registry) {
+	if err != nil || parsed.Host != registry || parsed.User != nil || parsed.Path != "" || parsed.RawQuery != "" || parsed.Fragment != "" || parsed.Hostname() == "" || !registryHostAllowed(browser.allowed, registry, parsed.Hostname()) {
 		return nil, fmt.Errorf("registry browsing is not enabled for this address")
 	}
 	parsed.Path = path
@@ -82,6 +83,25 @@ func (browser *registryBrowser) request(ctx context.Context, credential storedIm
 	request.SetBasicAuth(credential.Username, credential.Password)
 	request.Header.Set("Accept", "application/vnd.oci.image.index.v1+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.docker.distribution.manifest.v2+json")
 	return browser.client.Do(request)
+}
+
+// registryHostAllowed accepts exact authorities and IP literals in explicitly configured CIDRs.
+// It never resolves hostnames for CIDR matching.
+func registryHostAllowed(allowed []string, authority, hostname string) bool {
+	if slices.Contains(allowed, authority) {
+		return true
+	}
+	address, err := netip.ParseAddr(hostname)
+	if err != nil || address.Zone() != "" {
+		return false
+	}
+	for _, item := range allowed {
+		prefix, err := netip.ParsePrefix(item)
+		if err == nil && prefix.Contains(address) {
+			return true
+		}
+	}
+	return false
 }
 
 func registryBrowseResponse(c *gin.Context, response *http.Response, err error) bool {

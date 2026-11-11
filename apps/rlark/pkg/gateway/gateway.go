@@ -13,6 +13,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"golang.org/x/sync/errgroup"
+	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 
 	versioned "github.com/rlinf/rlark/api/kubeclients/clientset/versioned"
@@ -29,9 +30,11 @@ import (
 type Gateway struct {
 	config Config
 
-	kubeClient versioned.Interface
-	rawClient  kubernetes.Interface
-	nodeLister nodeLister
+	kubeClient     versioned.Interface
+	rawClient      kubernetes.Interface
+	stationClient  dynamic.Interface
+	networkSummary nodeNetworkSummaryClient
+	nodeLister     nodeLister
 
 	// podLister is a cached view of rlark Pod CRs, backed by a shared
 	// informer. It is used by the TensorBoard proxy handler to look up
@@ -111,6 +114,16 @@ func (g *Gateway) init(ctx context.Context) error {
 	g.rawClient, err = kubernetes.NewForConfig(restConfig)
 	if err != nil {
 		return fmt.Errorf("create raw Kubernetes client: %w", err)
+	}
+	g.stationClient, err = dynamic.NewForConfig(restConfig)
+	if err != nil {
+		return fmt.Errorf("create dynamic Kubernetes client: %w", err)
+	}
+	if g.config.StationAPIAddress != "" || g.config.StationAPICAFile != "" || g.config.StationGatewayCredentialFile != "" {
+		g.networkSummary, err = newStationNetworkClient(g.config.StationAPIAddress, g.config.StationAPICAFile, g.config.StationGatewayCredentialFile)
+		if err != nil {
+			return fmt.Errorf("configure Station network summaries: %w", err)
+		}
 	}
 	g.users = secretUserProvider{client: g.rawClient, namespace: g.managementNamespace()}
 	if err := g.loadJWTSigningKey(ctx); err != nil {

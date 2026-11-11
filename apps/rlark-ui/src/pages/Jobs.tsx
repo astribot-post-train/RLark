@@ -44,6 +44,8 @@ import type { Copy as CopyType } from "../i18n";
 import type { CRDNode, NodeEventEntry } from "../types";
 import type { CRDTask } from "../crdModels";
 import { useAutoRefresh } from "../hooks";
+import { useNodeNetworks } from "../hooks/useNodeNetworks";
+import { requestJson } from "../api";
 import { copyText } from "../utils/clipboard";
 import { crdToJob, describeVolumeSource } from "../utils/crd";
 import { effectiveJobPhase, type JobDisplayPhase } from "../utils/jobPhase";
@@ -1679,6 +1681,26 @@ export function JobDetailPage({
   >({});
   // Task 列表缓存，用于获取节点 RANK
   const [tasks, setTasks] = useState<CRDTask[]>([]);
+  const [networkNodes, setNetworkNodes] = useState<CRDNode[]>([]);
+  const nodeNetworks = useNodeNetworks(networkNodes, true);
+  const [exposedPortMap, setExposedPortMap] = useState<
+    Record<
+      string,
+      {
+        ports: Array<{
+          name: string;
+          protocol: string;
+          targetPort: number;
+          nodePort: number;
+        }>;
+        nodes: string[];
+        namespace: string;
+        state?: string;
+        error?: string;
+        message?: string;
+      }
+    >
+  >({});
   const [detailNodeDiskWarningMap, setDetailNodeDiskWarningMap] = useState<
     Record<string, boolean>
   >({});
@@ -1837,6 +1859,56 @@ export function JobDetailPage({
             return null;
           }
         }),
+      );
+      setNetworkNodes(
+        nodeResponses.filter(
+          (node): node is CRDNode => node !== null,
+        ) as CRDNode[],
+      );
+      const exposures = await Promise.all(
+        items.map(async (item) => {
+          const name = item.metadata?.name ?? "";
+          const parameters = item.spec?.workload?.parameters as
+            { exposedPorts?: unknown } | undefined;
+          if (
+            !name ||
+            !Array.isArray(parameters?.exposedPorts) ||
+            parameters.exposedPorts.length === 0
+          )
+            return [name, null] as const;
+          try {
+            return [
+              name,
+              await requestJson<{
+                ports: Array<{
+                  name: string;
+                  protocol: string;
+                  targetPort: number;
+                  nodePort: number;
+                }>;
+                nodes: string[];
+                namespace: string;
+                state?: string;
+                message?: string;
+              }>(
+                `/api/v1/rlinf.io/v1alpha1/tasks/${encodeURIComponent(name)}/exposed-ports`,
+              ),
+            ] as const;
+          } catch (error) {
+            return [
+              name,
+              {
+                ports: [],
+                nodes: [],
+                namespace: item.metadata?.namespace ?? "",
+                error: error instanceof Error ? error.message : String(error),
+              },
+            ] as const;
+          }
+        }),
+      );
+      setExposedPortMap(
+        Object.fromEntries(exposures.filter((entry) => entry[1] !== null)),
       );
       const diskWarningMap: Record<string, boolean> = {};
       const nodeProgressMap: Record<string, PullProgressEntry[]> = {};
@@ -2802,6 +2874,78 @@ export function JobDetailPage({
               allJobTags={allJobTags}
               onPatchJob={onPatchJob}
             />
+            {Object.keys(exposedPortMap).length > 0 && (
+              <section
+                className="worker-config-section"
+                aria-label={zh ? "WG 访问端口" : "WG access ports"}
+              >
+                <header className="worker-config-section-head">
+                  <strong>{zh ? "WG 访问端口" : "WG access ports"}</strong>
+                </header>
+                {Object.entries(exposedPortMap).map(([taskName, exposure]) => (
+                  <div key={taskName} className="form-section">
+                    <strong>{taskName}</strong>
+                    {exposure.error && (
+                      <span role="status">{exposure.error}</span>
+                    )}
+                    {exposure.state === "pending" && (
+                      <span role="status">
+                        {exposure.message ||
+                          (zh ? "等待端口分配" : "Waiting for port allocation")}
+                      </span>
+                    )}
+                    {exposure.ports.map((port) => {
+                      const addresses = exposure.nodes.flatMap((node) =>
+                        nodeNetworks[`${exposure.namespace}/${node}`]?.wireguard
+                          ?.state === "current"
+                          ? (nodeNetworks[
+                              `${exposure.namespace}/${node}`
+                            ].wireguard?.interfaces.flatMap((iface) =>
+                              iface.addresses.map(
+                                (address) => address.split("/")[0],
+                              ),
+                            ) ?? [])
+                          : [],
+                      );
+                      return (
+                        <div key={port.name} className="env-row">
+                          <span>
+                            {port.name} · {port.protocol} · {port.targetPort} →{" "}
+                            {port.nodePort}
+                          </span>
+                          {addresses.length ? (
+                            addresses.map((address) => (
+                              <button
+                                key={address}
+                                type="button"
+                                className="secondary-button"
+                                title={
+                                  zh
+                                    ? "复制 WG 访问地址"
+                                    : "Copy WG access address"
+                                }
+                                onClick={() =>
+                                  void copyText(`${address}:${port.nodePort}`)
+                                }
+                              >
+                                <Copy size={14} />
+                                {address}:{port.nodePort}
+                              </button>
+                            ))
+                          ) : (
+                            <span role="status">
+                              {zh
+                                ? "等待当前 WG 地址"
+                                : "Waiting for current WG address"}
+                            </span>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                ))}
+              </section>
+            )}
 
             {/* 第三块：Pod 实例列表 */}
             <div className="worker-primary-panel worker-console-panel">

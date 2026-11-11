@@ -1,0 +1,175 @@
+package stationidentity
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"strings"
+
+	authv1 "k8s.io/api/authentication/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
+)
+
+// Registration is supplied by a trusted server-side registry, never by the
+// caller. The client must target that registered cluster with verified TLS.
+type Registration struct {
+	ClusterID, Namespace, ServiceAccount, ServiceAccountUID string
+	NodeUID, StationUID, Audience                           string
+	Generation                                              int64
+	Inactive                                                bool
+}
+
+type Binding struct {
+	NodeUID, StationUID string
+	Generation          int64
+	Inactive            bool
+}
+
+type BindingResolver interface {
+	Resolve(context.Context, string, string, string) (Binding, error)
+}
+
+type RegisteredCluster struct {
+	Registration Registration
+	Client       kubernetes.Interface
+	Bindings     BindingResolver
+}
+
+type StaticClusterRegistry struct{ clusters map[string]RegisteredCluster }
+
+func NewStaticClusterRegistry(clusters []RegisteredCluster) (*StaticClusterRegistry, error) {
+	registry := &StaticClusterRegistry{clusters: make(map[string]RegisteredCluster, len(clusters))}
+	for _, cluster := range clusters {
+		reg := cluster.Registration
+		if cluster.Client == nil || reg.ClusterID == "" || reg.Namespace == "" || reg.ServiceAccount == "" || reg.ServiceAccountUID == "" || reg.Audience == "" {
+			return nil, errors.New("incomplete registered cluster")
+		}
+		if _, exists := registry.clusters[reg.ClusterID]; exists {
+			return nil, errors.New("duplicate cluster registration")
+		}
+		copy := cluster
+		registry.clusters[reg.ClusterID] = copy
+	}
+	if len(registry.clusters) == 0 {
+		return nil, errors.New("empty cluster registry")
+	}
+	return registry, nil
+}
+
+func (r *StaticClusterRegistry) Reader(_ context.Context, clusterID string) (IdentityReader, error) {
+	cluster, ok := r.clusters[clusterID]
+	if !ok || cluster.Registration.Inactive {
+		return nil, ErrClusterNotRegistered
+	}
+	return registeredReader{cluster: cluster}, nil
+}
+
+type registeredReader struct{ cluster RegisteredCluster }
+
+func (r registeredReader) Authenticate(ctx context.Context, token string) (Evidence, error) {
+	return AuthenticateWithBindings(ctx, r.cluster.Client, r.cluster.Registration, r.cluster.Bindings, token)
+}
+
+// CurrentNodeBinding rechecks the member Node and its Station binding on each
+// query. A historical heartbeat is not proof that a Node still exists.
+func (r registeredReader) CurrentNodeBinding(ctx context.Context, nodeName string) (Binding, error) {
+	if r.cluster.Client == nil || r.cluster.Bindings == nil || nodeName == "" {
+		return Binding{}, ErrIdentityUnavailable
+	}
+	node, err := r.cluster.Client.CoreV1().Nodes().Get(ctx, nodeName, metav1.GetOptions{})
+	if err != nil {
+		return Binding{}, fmt.Errorf("read current member Node: %w", err)
+	}
+	if node.DeletionTimestamp != nil || node.UID == "" {
+		return Binding{}, ErrIdentityDenied
+	}
+	binding, err := r.cluster.Bindings.Resolve(ctx, r.cluster.Registration.ClusterID, node.Name, string(node.UID))
+	if err != nil {
+		return Binding{}, err
+	}
+	if binding.Inactive || binding.NodeUID != string(node.UID) || binding.StationUID == "" || binding.Generation <= 0 {
+		return Binding{}, ErrIdentityDenied
+	}
+	return binding, nil
+}
+
+// Authenticate resolves a Pod-bound token with a registered cluster API.
+// Static node binding is a compatibility/testing mode; multi-node clusters
+// should use AuthenticateWithBindings and a fresh server-side resolver.
+func Authenticate(ctx context.Context, client kubernetes.Interface, reg Registration, token string) (Evidence, error) {
+	return AuthenticateWithBindings(ctx, client, reg, nil, token)
+}
+
+func AuthenticateWithBindings(ctx context.Context, client kubernetes.Interface, reg Registration, bindings BindingResolver, token string) (Evidence, error) {
+	if client == nil || token == "" || reg.ClusterID == "" || reg.Namespace == "" || reg.ServiceAccount == "" || reg.ServiceAccountUID == "" || reg.Audience == "" {
+		return Evidence{}, errors.New("invalid registration or credential")
+	}
+	review, err := client.AuthenticationV1().TokenReviews().Create(ctx, &authv1.TokenReview{Spec: authv1.TokenReviewSpec{Token: token, Audiences: []string{reg.Audience}}}, metav1.CreateOptions{})
+	if err != nil {
+		return Evidence{}, fmt.Errorf("%w: TokenReview request failed: %w", ErrIdentityUnavailable, err)
+	}
+	if review.Status.Error != "" || !review.Status.Authenticated || review.Status.User.Username != "system:serviceaccount:"+reg.Namespace+":"+reg.ServiceAccount || string(review.Status.User.UID) != reg.ServiceAccountUID {
+		return Evidence{}, errors.New("token review rejected identity")
+	}
+	name, okName := singleExtra(review.Status.User.Extra, "authentication.kubernetes.io/pod-name")
+	uid, okUID := singleExtra(review.Status.User.Extra, "authentication.kubernetes.io/pod-uid")
+	if !okName || !okUID {
+		return Evidence{}, errors.New("token missing bound pod identity")
+	}
+	pod, err := client.CoreV1().Pods(reg.Namespace).Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		if !apierrors.IsNotFound(err) {
+			return Evidence{}, fmt.Errorf("%w: read bound Pod: %w", ErrIdentityUnavailable, err)
+		}
+		return Evidence{}, fmt.Errorf("read bound pod: %w", err)
+	}
+	if pod.Spec.NodeName == "" {
+		return Evidence{}, errors.New("pod has no assigned node")
+	}
+	sa, err := client.CoreV1().ServiceAccounts(reg.Namespace).Get(ctx, reg.ServiceAccount, metav1.GetOptions{})
+	if err != nil {
+		if !apierrors.IsNotFound(err) {
+			return Evidence{}, fmt.Errorf("%w: read registered ServiceAccount: %w", ErrIdentityUnavailable, err)
+		}
+		return Evidence{}, fmt.Errorf("read service account: %w", err)
+	}
+	node, err := client.CoreV1().Nodes().Get(ctx, pod.Spec.NodeName, metav1.GetOptions{})
+	if err != nil {
+		if !apierrors.IsNotFound(err) {
+			return Evidence{}, fmt.Errorf("%w: read bound Node: %w", ErrIdentityUnavailable, err)
+		}
+		return Evidence{}, fmt.Errorf("read node: %w", err)
+	}
+	binding := Binding{NodeUID: reg.NodeUID, StationUID: reg.StationUID, Generation: reg.Generation, Inactive: reg.Inactive}
+	if bindings != nil {
+		binding, err = bindings.Resolve(ctx, reg.ClusterID, node.Name, string(node.UID))
+		if err != nil {
+			if errors.Is(err, ErrStationBindingNotFound) {
+				binding = Binding{NodeUID: string(node.UID)}
+			} else if errors.Is(err, ErrIdentityUnavailable) {
+				return Evidence{}, err
+			} else {
+				return Evidence{}, fmt.Errorf("resolve node binding: %w", err)
+			}
+		}
+	}
+	e := Evidence{ClusterID: reg.ClusterID, RegisteredClusterID: reg.ClusterID, ServiceAccountNamespace: reg.Namespace, RegisteredNamespace: reg.Namespace, ServiceAccountName: reg.ServiceAccount, RegisteredServiceAccount: reg.ServiceAccount, TokenServiceAccountUID: string(review.Status.User.UID), RegisteredServiceAccountUID: string(sa.UID), PodServiceAccountName: pod.Spec.ServiceAccountName, TokenPodName: name, PodName: pod.Name, TokenPodUID: uid, PodUID: string(pod.UID), PodNodeName: pod.Spec.NodeName, NodeName: node.Name, NodeUID: string(node.UID), RegisteredNodeUID: binding.NodeUID, StationUID: binding.StationUID, RegisteredStationUID: binding.StationUID, TokenAuthenticated: review.Status.Authenticated, TokenAudiences: review.Status.Audiences, RequiredAudiences: []string{reg.Audience}, PodDeleted: pod.DeletionTimestamp != nil || sa.DeletionTimestamp != nil, NodeDeleted: node.DeletionTimestamp != nil, BindingInactive: binding.Inactive, Generation: binding.Generation, RegisteredGeneration: binding.Generation}
+	if string(sa.UID) != reg.ServiceAccountUID {
+		return Evidence{}, errors.New("service account registration changed")
+	}
+	if err := Validate(e); err != nil {
+		return Evidence{}, err
+	}
+	return e, nil
+}
+
+func singleExtra(extras map[string]authv1.ExtraValue, key string) (string, bool) {
+	values := extras[key]
+	returnValue := ""
+	if len(values) == 1 {
+		returnValue = values[0]
+	}
+	return returnValue, len(values) == 1 && returnValue != "" && strings.TrimSpace(returnValue) == returnValue
+}

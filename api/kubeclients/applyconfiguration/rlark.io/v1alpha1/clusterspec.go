@@ -22,6 +22,10 @@ package v1alpha1
 //
 // ClusterSpec declares the durable operational state of a data-plane cluster.
 type ClusterSpecApplyConfiguration struct {
+	// DisplayName is a human-readable name; metadata.name remains the stable cluster ID.
+	DisplayName *string `json:"displayName,omitempty"`
+	// Region is administrator-managed location metadata, independent of node placement.
+	Region *string `json:"region,omitempty"`
 	// AgentNamespace is the management-plane namespace that contains the agent heartbeat Lease and Node CRs.
 	AgentNamespace        *string `json:"agentNamespace,omitempty"`
 	Cordoned              *bool   `json:"cordoned,omitempty"`
@@ -34,6 +38,22 @@ type ClusterSpecApplyConfiguration struct {
 // apply.
 func ClusterSpec() *ClusterSpecApplyConfiguration {
 	return &ClusterSpecApplyConfiguration{}
+}
+
+// WithDisplayName sets the DisplayName field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the DisplayName field is set to the value of the last call.
+func (b *ClusterSpecApplyConfiguration) WithDisplayName(value string) *ClusterSpecApplyConfiguration {
+	b.DisplayName = &value
+	return b
+}
+
+// WithRegion sets the Region field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the Region field is set to the value of the last call.
+func (b *ClusterSpecApplyConfiguration) WithRegion(value string) *ClusterSpecApplyConfiguration {
+	b.Region = &value
+	return b
 }
 
 // WithAgentNamespace sets the AgentNamespace field in the declarative configuration to the given value

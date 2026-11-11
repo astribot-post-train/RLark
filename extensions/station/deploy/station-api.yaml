@@ -1,0 +1,107 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: station-system
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: station-api
+  namespace: station-system
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: station-api
+  template:
+    metadata:
+      labels:
+        app: station-api
+    spec:
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      nodeSelector:
+        kubernetes.io/hostname: cailiang
+      tolerations:
+      - key: node-role.kubernetes.io/control-plane
+        operator: Exists
+        effect: NoSchedule
+      automountServiceAccountToken: false
+      containers:
+      - name: station-api
+        image: REPLACE_RLARK_IMAGE
+        imagePullPolicy: IfNotPresent
+        command: ["/usr/local/bin/station-api"]
+        args:
+        - --addr=10.254.240.1:18443
+        - --kubeconfig=/var/run/secrets/station/management.kubeconfig
+        - --member-credentials-namespace=station-member-credentials
+        - --tls-cert-file=/var/run/secrets/station-api-tls/tls.crt
+        - --tls-key-file=/var/run/secrets/station-api-tls/tls.key
+        env:
+        - name: STATION_API_DATABASE_DSN
+          valueFrom:
+            secretKeyRef:
+              name: station-api-database
+              key: dsn
+        ports:
+        - name: https
+          containerPort: 18443
+        readinessProbe:
+          httpGet:
+            scheme: HTTPS
+            path: /readyz
+            port: https
+            host: 10.254.240.1
+          periodSeconds: 10
+          timeoutSeconds: 3
+        livenessProbe:
+          httpGet:
+            scheme: HTTPS
+            path: /healthz
+            port: https
+            host: 10.254.240.1
+          periodSeconds: 20
+          timeoutSeconds: 3
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: "1"
+            memory: 512Mi
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 65532
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop: [ALL]
+        volumeMounts:
+        - name: management-kubeconfig
+          mountPath: /var/run/secrets/station
+          readOnly: true
+        - name: tls
+          mountPath: /var/run/secrets/station-api-tls
+          readOnly: true
+        - name: database-ca
+          mountPath: /var/run/secrets/station-db
+          readOnly: true
+      volumes:
+      - name: management-kubeconfig
+        secret:
+          secretName: station-management-kubeconfig
+          items:
+          - key: kubeconfig
+            path: management.kubeconfig
+      - name: tls
+        secret:
+          secretName: station-api-tls
+      - name: database-ca
+        secret:
+          secretName: station-api-database-ca
+          items:
+          - key: ca.crt
+            path: ca.crt

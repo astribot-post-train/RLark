@@ -19,6 +19,13 @@ import {
   useColumnFilter,
 } from "./shared";
 import { ColumnFilterPopover } from "./ColumnFilterPopover";
+import { NodeNetworkAddresses } from "./NodeNetworkAddresses";
+import { useNodeNetworks } from "../hooks/useNodeNetworks";
+import {
+  nodeNetworkKey,
+  nodeNetworkSearchText,
+  type NodeNetworkDisplay,
+} from "../utils/nodeNetwork";
 
 type CategoryFilter = "all" | NodeCategory;
 
@@ -39,6 +46,7 @@ export function NodeResourceBrowser({
   onSelectionChange,
   onSelectFiltered,
   onClearSelection,
+  nodeNetworks: suppliedNodeNetworks,
 }: {
   nodes: CRDNode[];
   nodeWorkloads?: Record<string, { jobs: string[]; workers: number }>;
@@ -54,7 +62,10 @@ export function NodeResourceBrowser({
   onSelectionChange?: (keys: Set<string>) => void;
   onSelectFiltered?: (keys: string[]) => void;
   onClearSelection?: () => void;
+  nodeNetworks?: Readonly<Record<string, NodeNetworkDisplay>>;
 }) {
+  const fetchedNodeNetworks = useNodeNetworks(nodes, suppliedNodeNetworks === undefined);
+  const nodeNetworks = suppliedNodeNetworks ?? fetchedNodeNetworks;
   const zh = c.nav.overview === "总览";
   const [category, setCategory] = useState<CategoryFilter>(initialCategory);
   const [query, setQuery] = useState(initialQuery);
@@ -92,11 +103,10 @@ export function NodeResourceBrowser({
     const normalizedQuery = query.trim().toLowerCase();
     return nodes
       .filter((node) => {
-        const address =
-          node.status?.addresses?.find((item) => item.type === "InternalIP")
-            ?.address ??
-          node.status?.addresses?.[0]?.address ??
-          "";
+        const address = nodeNetworkSearchText(
+          node,
+          nodeNetworks?.[nodeNetworkKey(node)],
+        );
         const taskName = (nodeWorkloads[node.metadata.name]?.jobs ?? []).join(
           " ",
         );
@@ -135,6 +145,7 @@ export function NodeResourceBrowser({
     locationFilter,
     nodeWorkloads,
     nodes,
+    nodeNetworks,
     phaseFilter,
     query,
     typeFilter,
@@ -356,12 +367,6 @@ export function NodeResourceBrowser({
               const labels = node.metadata.labels ?? {};
               const cluster =
                 node.metadata.namespace ?? labels["rlark.io/cluster-id"] ?? "—";
-              const address =
-                node.status?.addresses?.find(
-                  (item) => item.type === "InternalIP",
-                )?.address ??
-                node.status?.addresses?.[0]?.address ??
-                "—";
               const workload = nodeWorkloads[node.metadata.name];
               const jobCount = workload?.jobs.length ?? 0;
               const workerCount = workload?.workers ?? 0;
@@ -461,7 +466,11 @@ export function NodeResourceBrowser({
                   <span className="node-row-location" title={location}>
                     {location}
                   </span>
-                  <code className="node-row-ip">{address}</code>
+                  <NodeNetworkAddresses
+                    node={node}
+                    network={nodeNetworks?.[nodeNetworkKey(node)]}
+                    zh={zh}
+                  />
                   <span
                     className="node-row-resource"
                     title={resource.lines

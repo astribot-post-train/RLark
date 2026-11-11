@@ -243,7 +243,7 @@ When `--mode=node`, the agent runs as a DaemonSet on each node, handling SSH tun
 
 ## 6. Addon Configuration
 
-rlark supports declarative Addon management across data plane clusters. Addons are defined in the addon catalog (`../pkg/addons/catalog/`) and installed via the Addon API.
+rlark supports declarative Addon management across data plane clusters. Addons are defined in the addon catalog (`../pkg/addons/catalog/`) and installed via the Addon API. The agent periodically compares explicitly rendered resource fields with the live object and reapplies them when they drift. Server-added fields absent from the manifest are ignored during comparison; explicitly specified lists are compared as whole ordered lists. On drift, the agent reapplies the rendered top-level resource fields, so do not use independent controllers to modify those fields. Existing resources must carry both the Addon name and the current Addon UID labels; an unlabelled or differently owned object causes an ownership conflict and requires operator investigation rather than automatic adoption. During deletion, cleanup selects resources by both labels, uses Kubernetes UID and resourceVersion delete preconditions, and retains the Addon finalizer until owned resources disappear. Missing UID, unavailable local API, list and delete errors block cleanup; legacy or other-instance resources are not automatically removed.
 
 ### 6.1 Addon Catalog Structure
 
@@ -300,9 +300,12 @@ Key configurable parameters for `csi-driver-rclone`:
 | `nodeDriverRegistrarImage` | Node driver registrar sidecar image | `rlinf/csi-rclone/csi-node-driver-registrar:v2.16.0` |
 | `driverName` | CSI driver registration name | `rclone.csi.veloxpack.io` |
 | `nodeSelector` | Node DaemonSet selector in `label=value` format | `""` |
+| `controllerNodeSelector` | Controller Deployment node selector in `label=value` format; use it when its images are available only on specific nodes | `""` |
 | `controllerReplicas` | Controller Deployment replicas | `1` |
 | `controllerLogLevel` | Controller log level (0-10) | `5` |
 | `nodeLogLevel` | Node DaemonSet log level (0-10) | `5` |
+
+Both selector parameters accept a single Kubernetes label key and value. An invalid selector fails rendering; an empty value leaves that workload unrestricted.
 
 The RClone CSI driver enables dynamic provisioning of PersistentVolumes backed by remote storage (S3, GCS, Azure Blob, etc.) via RClone.
 
@@ -397,7 +400,13 @@ curl -X DELETE "http://localhost:8080/api/v1/clusters/agent-beijing/addons/embod
 | Server | 8888 | HTTP | Internal health and metrics |
 | kcp | 6443 | HTTPS | Internal control plane API |
 
-### 8.2 Network Topology
+### 8.2 WG-only Job NodePorts (preview)
+
+Before enabling `RLARK_WG_NODEPORT_ENABLED=true` on a data-plane Agent, configure kube-proxy `nodePortAddresses: ["10.254.240.0/24"]`, restart and verify kube-proxy on every node, and prove that a test NodePort is unreachable through non-WG addresses. The Agent checks the ConfigMap at startup and refuses broad or missing values. The flag alone is not proof that a running kube-proxy has reloaded its configuration. Keep this flag disabled on clusters without WG-only NodePort enforcement. These NodePorts are reachable by existing WG peers according to their routes; kube-proxy does not provide peer-level authorization.
+
+The preview node WireGuard address display requires Station API and Gateway to use a dedicated shared service credential. Set `station-api --gateway-credential-file` and Gateway's `--station-api-address`, `--station-api-ca-file`, and `--station-gateway-credential-file`; mount the same randomly generated credential as a Secret on both services and use a verified Station API TLS certificate. Updated network-node agents must publish observations. The feature is disabled until configured; see the Station gateway README for limitations and rollback prerequisites.
+
+### 8.3 Network Topology
 
 ```text
 User / browser ──HTTP──▶ UI (:80) ──/api proxy──▶ Gateway (:8090)
@@ -410,7 +419,7 @@ Data plane cluster ──outbound WSS─────┤ Server (:8443)
 Server / Gateway / Controller Manager ──HTTPS──▶ kcp (:6443)
 ```
 
-Both data-plane agents initiate outbound connections to Server, so no inbound data-plane port is required. Expose UI port 80 and, when needed, Server ports 8443 and 2222; keep Gateway, kcp, and health/metrics ports internal.
+Both data-plane agents initiate outbound connections to Server. Except for the optional WG-only Job NodePorts above, no inbound data-plane port is required. Expose UI port 80 and, when needed, Server ports 8443 and 2222; keep Gateway, kcp, and health/metrics ports internal.
 
 ## 9. Certificate Management
 
@@ -434,7 +443,9 @@ curl -X POST "http://localhost:8080/api/v1/certificates/agent" \
   -d '{"cluster_id": "beijing"}'
 ```
 
-Returns certificate and private key for deployment to the data plane Agent.
+Returns the certificate and private key for deployment to the data-plane Agent only after the management Secret is saved. A storage failure returns an error; a same-named Secret without matching Agent-certificate ownership metadata is not adopted. Concurrent updates retry on resource-version conflicts. A lost response can still leave a newly issued credential stored; inspect the existing certificate before retrying, because signing is not an idempotent operation. Protect the response and never log the private key. Running Agent clients load credentials at initialization; automatic certificate reload and rotation are not established by this API.
+
+When Server has a revocation store configured, a failed revocation lookup rejects new X.509 requests with HTTP 503 and rejects SSH certificate authentication. Successful non-revoked decisions are not cached; revoked decisions may be cached. Without a configured store, Server rejects revocation requests rather than acknowledging a temporary revocation; authentication retains its existing no-store compatibility behavior. Server revocation requests require an exact certificate type, canonical decimal serial and subject key ID (lowercase hexadecimal for X.509); duplicate writes are idempotent. The Gateway administrator endpoint forwards revocation to a compatible Server and requires its durable receipt. A 502 may mean an unknown outcome; retry the same identity after recovery. Upgrade both components together. Revocation does not terminate already established sessions. Validate availability and recovery before relying on revocation.
 
 ### 9.3 UI Authentication
 
