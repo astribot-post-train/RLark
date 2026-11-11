@@ -15,6 +15,36 @@ import (
 	rlarkv1alpha1 "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
 )
 
+func TestClusterDisplayMetadata(t *testing.T) {
+	t.Parallel()
+	for _, tt := range []struct {
+		name, displayName, region, wantName, wantRegion string
+	}{
+		{"explicit metadata", "金山云西北宁夏裸金属集群", "宁夏", "金山云西北宁夏裸金属集群", "宁夏"},
+		{"legacy fallback", "", "", "cluster-a", "node-region"},
+		{"blank metadata fallback", "  ", "  ", "cluster-a", "node-region"},
+		{"trim metadata", " 深圳公司本地开发集群 ", " 深圳 ", "深圳公司本地开发集群", "深圳"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			cluster := rlarkv1alpha1.Cluster{
+				ObjectMeta: metav1.ObjectMeta{Name: "cluster-a"},
+				Spec:       rlarkv1alpha1.ClusterSpec{AgentNamespace: "agent-a", DisplayName: tt.displayName, Region: tt.region},
+			}
+			nodes := []rlarkv1alpha1.Node{{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"rlark.io/region": "node-region"}}}}
+			info := buildClusterInfo(cluster, nodes)
+			if info.Name != tt.wantName || info.Region != tt.wantRegion {
+				t.Fatalf("name/region = %q/%q, want %q/%q", info.Name, info.Region, tt.wantName, tt.wantRegion)
+			}
+			if info.ID != "cluster-a" || info.AgentNamespace != "agent-a" {
+				t.Fatalf("display metadata changed cluster identity: %#v", info)
+			}
+			if cluster.Spec.DisplayName != tt.displayName || cluster.Spec.Region != tt.region {
+				t.Fatal("response normalization mutated the source Cluster")
+			}
+		})
+	}
+}
+
 func TestClusterTransitionErrors(t *testing.T) {
 	t.Parallel()
 	tests := []struct {

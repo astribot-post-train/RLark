@@ -204,6 +204,34 @@
   align-items: start;
 }
 
+.exposed-port-row {
+  display: grid;
+  grid-template-columns: minmax(110px, 1fr) 90px 120px 140px 32px;
+  gap: 8px;
+  margin-top: 8px;
+  align-items: center;
+}
+
+.exposed-port-row input,
+.exposed-port-row select {
+  min-width: 0;
+  width: 100%;
+  height: 36px;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  color: inherit;
+  background-color: #fff;
+}
+
+@media (max-width: 720px) {
+  .exposed-port-row {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 32px;
+  }
+  .exposed-port-row input:first-child { grid-column: 1 / 3; }
+  .exposed-port-row .icon-button { grid-column: 3; grid-row: 1 / 3; }
+}
+
 .device-row {
   display: grid;
   grid-template-columns: 1fr 1fr 32px;

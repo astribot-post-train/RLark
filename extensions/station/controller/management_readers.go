@@ -1,0 +1,88 @@
+package controller
+
+import (
+	"context"
+	"errors"
+	"fmt"
+
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+)
+
+var (
+	clusterGVK     = schema.GroupVersionKind{Group: "rlinf.io", Version: "v1alpha1", Kind: "Cluster"}
+	clusterListGVK = schema.GroupVersionKind{Group: "rlinf.io", Version: "v1alpha1", Kind: "ClusterList"}
+	rlarkNodeGVK   = schema.GroupVersionKind{Group: "rlinf.io", Version: "v1alpha1", Kind: "Node"}
+)
+
+// ManagementClusterResolver maps exactly one Cluster.spec.agentNamespace to its
+// immutable Cluster object name. Duplicate claims fail closed.
+type ManagementClusterResolver struct{ Reader client.Reader }
+
+func (r ManagementClusterResolver) ResolveNamespace(ctx context.Context, namespace string) (ClusterRegistration, error) {
+	if r.Reader == nil || namespace == "" {
+		return ClusterRegistration{}, ErrInvalidRegistration
+	}
+	list := &unstructured.UnstructuredList{}
+	list.SetGroupVersionKind(clusterListGVK)
+	if err := r.Reader.List(ctx, list); err != nil {
+		return ClusterRegistration{}, fmt.Errorf("list RLark Clusters: %w", err)
+	}
+	var registration ClusterRegistration
+	for i := range list.Items {
+		item := &list.Items[i]
+		agentNamespace, found, err := unstructured.NestedString(item.Object, "spec", "agentNamespace")
+		if err != nil {
+			return ClusterRegistration{}, fmt.Errorf("read Cluster %q agentNamespace: %w", item.GetName(), err)
+		}
+		if !found || agentNamespace != namespace {
+			continue
+		}
+		if registration.ClusterID != "" {
+			return ClusterRegistration{}, fmt.Errorf("multiple RLark Clusters claim agent namespace %q", namespace)
+		}
+		registration = ClusterRegistration{ClusterID: item.GetName(), Namespace: agentNamespace}
+	}
+	if registration.ClusterID == "" {
+		return ClusterRegistration{}, ErrInvalidRegistration
+	}
+	return registration, nil
+}
+
+// ManagementNodeReadiness reads a namespaced RLark Node without trusting labels
+// for Cluster membership; the caller supplies the already-verified Cluster scope.
+type ManagementNodeReadiness struct{ Reader client.Reader }
+
+func (r ManagementNodeReadiness) Ready(ctx context.Context, _ string, namespace, nodeName string) (bool, error) {
+	if r.Reader == nil || namespace == "" || nodeName == "" {
+		return false, errors.New("RLark Node reader and identity are required")
+	}
+	node := &unstructured.Unstructured{}
+	node.SetGroupVersionKind(rlarkNodeGVK)
+	if err := r.Reader.Get(ctx, client.ObjectKey{Namespace: namespace, Name: nodeName}, node); apierrors.IsNotFound(err) {
+		return false, nil
+	} else if err != nil {
+		return false, fmt.Errorf("read RLark Node %s/%s: %w", namespace, nodeName, err)
+	}
+	conditions, found, err := unstructured.NestedSlice(node.Object, "status", "conditions")
+	if err != nil {
+		return false, fmt.Errorf("read RLark Node conditions: %w", err)
+	}
+	if !found {
+		return false, nil
+	}
+	for _, raw := range conditions {
+		condition, ok := raw.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		typeValue, _, _ := unstructured.NestedString(condition, "type")
+		statusValue, _, _ := unstructured.NestedString(condition, "status")
+		if typeValue == "Ready" {
+			return statusValue == "True", nil
+		}
+	}
+	return false, nil
+}

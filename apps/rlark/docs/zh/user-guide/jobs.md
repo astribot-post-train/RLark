@@ -4,6 +4,12 @@ Job 是面向用户的工作负载。创建任务时选择模板或配置 Task �
 
 提交前应确认平台中存在满足条件的集群和节点资源。Job、Task 与 Worker 的关系参见[核心概念](../concepts.md)。
 
+## 仅 WG 可访问的端口（预览）
+
+Ray Job 每个角色可申请最多 16 个命名 TCP/UDP 端口。填写容器端口，可选填固定外部 NodePort（30000–32767）；留空由 Kubernetes 分配。任务详情显示实际分配端口和当前上报的节点 WG 地址。`172.x` Worker IP 仍是集群内 Pod IP。同角色多个就绪 Worker 由一个 Task 归属的 Service 转发。应用须在 Pod 内监听 `0.0.0.0`。原始 TCP/UDP 不经过 Gateway 登录认证，按已有 WireGuard Peer 的路由可达。
+
+管理员须先将每个集群的 kube-proxy `nodePortAddresses` 限制为 `10.254.240.0/24`，重启并逐节点验证 kube-proxy，确认非 WG 地址无法访问测试 NodePort，再为该集群 Agent 设置 `RLARK_WG_NODEPORT_ENABLED=true`。若 ConfigMap 仍允许更宽地址，Agent 会拒绝启用。固定端口冲突会使 Task 报错，不会偷偷换号。停止或删除 Task 时回收 Service；运行中清空端口会把对外 Service 替换为无 NodePort、无匹配 Pod 的 Service，待清理时移除。新 Task 实例的自动分配端口可能改变。Station WG 观测过期时，页面不提供可复制地址，但不会自动撤销已有 Service。
+
 ## 通过 UI
 
 业务平台 → 任务 → 创建任务。填写展示名称并定义 Worker 角色。任务展示名称和角色名称最长均为 50 个字符；角色名称忽略大小写后必须唯一，RLark 会将其规范化为 Kubernetes 可接受的 Task 资源名。任务展示名称可以重复，因为每个 Job 都有独立生成的资源 ID。

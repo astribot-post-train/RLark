@@ -94,9 +94,32 @@ Use the Node Management batch editor to set city, one or more cloud/edge/robot c
 
 ## Run a Smoke Test
 
+To use a Kubernetes control-plane node for workloads, explicitly enable RLark reporting with `rlark.io/enabled=true`, verify the node Agent can run there, and provide appropriate Kubernetes tolerations in the workload Pod template. Install the GPU runtime and device plugin where required, and verify allocatable GPU resources. Reserve capacity for the control plane and any network gateway; enabling a node or displaying it does not bypass taints or guarantee scheduling.
+
 Create a small Job from the platform console, choose the onboarded cluster for its Worker, use an available image, and submit it. Verify that the Worker reaches Running, logs are available, and WebTerminal opens if the image supplies a shell.
 
 ## Troubleshooting
+
+### NVIDIA container creation fails before the plugin starts
+
+Inspect the runtime's stderr as well as kubelet/containerd logs. An OCI runtime exit code alone does not identify a driver, image, or networking failure. On the tested H100 hosts (driver 565.57.01, NVIDIA Container Toolkit 1.20.2, containerd 2.2.1), `mode = "auto"` selected `jit-cdi` and container creation crashed with `SIGSEGV` in `nvSandboxUtilsShutdown()` while generating a CDI specification. Explicit `mode = "legacy"` in `/etc/nvidia-container-runtime/config.toml` bypassed that path; both hosts then passed container GPU enumeration and a Kubernetes Job requesting one GPU. This is a tested workaround for that combination, not a general requirement or proof of the underlying library defect.
+
+Back up configuration before changing it. With containerd configuration version 3, add the following to an imported runtime drop-in (for example `/etc/containerd/conf.d/99-nvidia.toml`, only if the main configuration imports that directory):
+
+```toml
+version = 3
+[plugins.'io.containerd.cri.v1.runtime'.containerd.runtimes.nvidia]
+  runtime_type = 'io.containerd.runc.v2'
+[plugins.'io.containerd.cri.v1.runtime'.containerd.runtimes.nvidia.options]
+  BinaryName = '/usr/bin/nvidia-container-runtime'
+  SystemdCgroup = true
+```
+
+Keep the default runtime as `runc`. Validate with `containerd config dump`, restart containerd one host at a time, and check node and existing workload health. Define a `node.k8s.io/v1` RuntimeClass named `nvidia` with `handler: nvidia`. Both the NVIDIA device-plugin DaemonSet and GPU workload Pod templates must set `runtimeClassName: nvidia` for this setup; GPU workloads must request `nvidia.com/gpu`. The device plugin needs access to `/var/lib/kubelet/device-plugins`; give it the appropriate control-plane toleration when that node also provides GPUs. Verify allocatable GPU counts, plugin registration logs, and a scheduled one-GPU Job on each host. Enumeration does not validate CUDA training or multi-node NCCL communication.
+
+Offline image imports only populate the current host's cache. Preload every target node and use `IfNotPresent`, or configure a registry reachable by every node before deployment; a `localhost` image reference does not imply a registry exists on every host.
+
+For rollback, stop affected GPU workloads first, remove only the plugin/RuntimeClass resources created for this setup after their consumers are gone, remove the added drop-in, restore the saved NVIDIA configuration, and restart containerd one host at a time. Recheck Kubernetes, Station gateways, and Agents. Preserve diagnostic logs before removing temporary diagnostic wrappers. A containerd restart check does not establish recovery after a full host reboot.
 
 | Symptom | Check |
 |---------|-------|

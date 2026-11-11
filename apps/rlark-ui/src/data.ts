@@ -158,6 +158,12 @@ export interface Job {
     devices: Array<{ name: string; quantity: string }>;
     image: string;
     prepareScript: string;
+    exposedPorts?: Array<{
+      name: string;
+      protocol: "TCP" | "UDP";
+      targetPort: number;
+      nodePort?: number;
+    }>;
     env: Array<{ key: string; value: string }>;
     mounts: Array<{
       type: MountType;

@@ -351,8 +351,8 @@ func TestRayKubernetesAdapterInventoryDeclaresCompleteIdentityResourceSet(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(inventory.Candidates) != 4 {
-		t.Fatalf("candidates=%#v, want supervisor ConfigMap, SSH Secret, workload, and head Service", inventory.Candidates)
+	if len(inventory.Candidates) != 5 {
+		t.Fatalf("candidates=%#v, want supervisor ConfigMap, SSH Secret, workload, head Service, and exposed-port Service", inventory.Candidates)
 	}
 	configCandidate, secretCandidate, workloadCandidate, serviceCandidate := inventory.Candidates[0], inventory.Candidates[1], inventory.Candidates[2], inventory.Candidates[3]
 	if configCandidate.Kind != (agentruntime.ObjectKind{Version: "v1", Kind: "ConfigMap"}) || configCandidate.Namespace != "runtime" || configCandidate.Name == "" || configCandidate.Lifecycle != agentruntime.LifecycleDeleteOnTaskCleanup || configCandidate.Ownership.Scope != agentruntime.IdentityTaskIncarnation || configCandidate.Ownership.OwnerKey != "task-uid" {
@@ -366,6 +366,65 @@ func TestRayKubernetesAdapterInventoryDeclaresCompleteIdentityResourceSet(t *tes
 	}
 	if serviceCandidate.Kind != (agentruntime.ObjectKind{Version: "v1", Kind: "Service"}) || serviceCandidate.Namespace != "runtime" || serviceCandidate.Name != "task-ray-head" || len(serviceCandidate.Labels) != 0 || serviceCandidate.Lifecycle != agentruntime.LifecycleDeleteOnTaskCleanup || serviceCandidate.Ownership.Scope != agentruntime.IdentityTaskIncarnation || serviceCandidate.Ownership.OwnerKey != "task-uid" || serviceCandidate.Ownership.IncarnationPolicy != agentruntime.IncarnationOwnershipAllowAdoption {
 		t.Fatalf("Service candidate=%#v", serviceCandidate)
+	}
+	if candidate := inventory.Candidates[4]; candidate.Name != "task-ports" || candidate.Kind.Kind != "Service" || candidate.Ownership.OwnerKey != "task-uid" {
+		t.Fatalf("exposed-port Service candidate=%#v", candidate)
+	}
+}
+
+func TestRayExposedPortsRequireWGGateAndPreserveRequestedPorts(t *testing.T) {
+	task := compileTask(kubernetesworkload.CarrierDeployment)
+	parameters := taskapi.RayExecutionParametersV1{Role: taskapi.RayRoleWorker, ExposedPorts: []taskapi.ExposedPort{{Name: "api", Protocol: "TCP", TargetPort: 8080}, {Name: "metrics", Protocol: "UDP", TargetPort: 9000, NodePort: 31000}}}
+	raw, err := json.Marshal(parameters)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task.Spec.Workload.Parameters = apiextensionsv1.JSON{Raw: raw}
+	snapshot, err := compatibility.DecodeTask(task)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := workload.CompileRequest{Task: snapshot, Runtime: agentruntime.Info{Kind: compatibility.RuntimeKindKubernetes}}
+	if _, err := kubernetesworkload.NewAdapter(workload.TypeID(taskapi.WorkloadTypeRay), namespace).Compile(context.Background(), request); err == nil {
+		t.Fatal("NodePort compiled without WG-only gate")
+	}
+	plan, err := kubernetesworkload.NewAdapter(workload.TypeID(taskapi.WorkloadTypeRay), namespace, true).Compile(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	object := findObject(t, plan.Objects, "exposed-ports")
+	var service corev1.Service
+	if err := json.Unmarshal(object.Manifest.Object, &service); err != nil {
+		t.Fatal(err)
+	}
+	if service.Spec.Type != corev1.ServiceTypeNodePort || service.Spec.Selector[kubernetesobjects.ManagementTaskUIDLabel] != string(task.UID) || len(service.Spec.Ports) != 2 || service.Spec.Ports[0].NodePort != 0 || service.Spec.Ports[1].NodePort != 31000 {
+		t.Fatalf("unexpected exposed-port Service: %#v", service.Spec)
+	}
+	parameters.ExposedPorts[1].NodePort = 29999
+	raw, _ = json.Marshal(parameters)
+	task.Spec.Workload.Parameters = apiextensionsv1.JSON{Raw: raw}
+	snapshot, _ = compatibility.DecodeTask(task)
+	request.Task = snapshot
+	if _, err := kubernetesworkload.NewAdapter(workload.TypeID(taskapi.WorkloadTypeRay), namespace, true).Compile(context.Background(), request); err == nil {
+		t.Fatal("out-of-range fixed NodePort accepted")
+	}
+	parameters.ExposedPorts = nil
+	parameters.ExposedPortsConfigured = true
+	raw, _ = json.Marshal(parameters)
+	task.Spec.Workload.Parameters = apiextensionsv1.JSON{Raw: raw}
+	snapshot, _ = compatibility.DecodeTask(task)
+	request.Task = snapshot
+	plan, err = kubernetesworkload.NewAdapter(workload.TypeID(taskapi.WorkloadTypeRay), namespace, true).Compile(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	object = findObject(t, plan.Objects, "exposed-ports")
+	service = corev1.Service{}
+	if err := json.Unmarshal(object.Manifest.Object, &service); err != nil {
+		t.Fatal(err)
+	}
+	if service.Spec.Type != corev1.ServiceTypeClusterIP || service.Spec.Selector[kubernetesobjects.ManagementTaskUIDLabel] != "" {
+		t.Fatalf("clearing ports did not revoke the NodePort Service: %#v", service.Spec)
 	}
 }
 

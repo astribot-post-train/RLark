@@ -31,12 +31,23 @@ type InlineScript struct {
 
 // RayExecutionParametersV1 是 rlinf.io/ray/v1 的参数合同。
 type RayExecutionParametersV1 struct {
-	Role          RayRole       `json:"role"`
-	HeadTaskName  string        `json:"headTaskName,omitempty"`
-	TotalNodes    int32         `json:"totalNodes,omitempty"`
-	NodeRankStart int32         `json:"nodeRankStart,omitempty"`
-	Prepare       *InlineScript `json:"prepare,omitempty"`
-	Run           *InlineScript `json:"run,omitempty"`
+	Role                   RayRole       `json:"role"`
+	HeadTaskName           string        `json:"headTaskName,omitempty"`
+	TotalNodes             int32         `json:"totalNodes,omitempty"`
+	NodeRankStart          int32         `json:"nodeRankStart,omitempty"`
+	Prepare                *InlineScript `json:"prepare,omitempty"`
+	Run                    *InlineScript `json:"run,omitempty"`
+	ExposedPorts           []ExposedPort `json:"exposedPorts,omitempty"`
+	ExposedPortsConfigured bool          `json:"exposedPortsConfigured,omitempty"`
+}
+
+// ExposedPort requests a Kubernetes NodePort for a Ray Task's Pods.
+// NodePort zero lets Kubernetes allocate the external port.
+type ExposedPort struct {
+	Name       string `json:"name"`
+	Protocol   string `json:"protocol"`
+	TargetPort int32  `json:"targetPort"`
+	NodePort   int32  `json:"nodePort,omitempty"`
 }
 
 // KubernetesReplicatedCarrierParametersV1 configures replicated Kubernetes

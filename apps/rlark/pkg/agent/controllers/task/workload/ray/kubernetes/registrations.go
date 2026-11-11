@@ -9,11 +9,11 @@ import (
 
 // Registrations returns the Ray v1 implementation for Kubernetes. The carrier
 // is selected independently from each Task's workload.carrier envelope.
-func Registrations(namespace NamespaceResolver, runtimeKind agentruntime.Kind) []coordinator.WorkloadRegistration {
+func Registrations(namespace NamespaceResolver, runtimeKind agentruntime.Kind, nodePortEnabled ...bool) []coordinator.WorkloadRegistration {
 	return []coordinator.WorkloadRegistration{{
 		Type:        workload.TypeID(taskapi.WorkloadTypeRay),
 		Version:     taskapi.WorkloadVersionRayV1,
 		RuntimeKind: runtimeKind,
-		Adapter:     NewAdapter(workload.TypeID(taskapi.WorkloadTypeRay), namespace),
+		Adapter:     NewAdapter(workload.TypeID(taskapi.WorkloadTypeRay), namespace, nodePortEnabled...),
 	}}
 }

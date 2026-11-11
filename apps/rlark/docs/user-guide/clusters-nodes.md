@@ -4,10 +4,25 @@ Use this guide to find a data-plane cluster and confirm that it has suitable Wor
 
 ## Task 1: Find an Available Cluster
 
+Node tables show the Kubernetes node address and a separate **WG** line. Each available address has its own copy button; copying returns the IP without labels or a CIDR prefix. Search matches both node and supplied WG addresses. Multiple WG addresses are shown individually, with the interface and original CIDR in the tooltip. Copy failures are reported inline and the address remains selectable.
+
+When the optional Station integration is configured, the node list queries verified WireGuard observations and displays the node's interface addresses. **Not reported** does not imply WireGuard is absent. An observation older than 90 seconds since server receipt is displayed as **Last reported**; unavailable verification hides WG addresses while retaining the Kubernetes node address. The UI does not infer gateway access or use a gateway IP as a node address. This is a preview and requires the Station API, Gateway credentials and updated agents; see the Station gateway README for prerequisites.
+
 1. Open **Clusters** in the platform console.
 2. Search by cluster name or ID, or filter by the metadata shown in the list.
 3. Check the cluster status, online rate, and Worker count.
-4. Open the cluster that you plan to use.
+4. Click the cluster row to open the cluster that you plan to use.
+
+Administrators can set optional `spec.displayName` and `spec.region` on the management Cluster resource. The list, detail view, and cluster selectors display the configured name; the list shows the region below it. Search accepts the display name, original ID, or region. An empty display name falls back to `metadata.name`; an empty region retains node-derived region metadata. The REST `name` field is presentation text, while `id` remains the stable identity. Renaming does not change `metadata.name`, UID, Agent namespace, certificates, scheduling references, or registry credential delivery targets. Registry delivery keeps its existing namespace-suffix identifiers rather than using display names. No Agent reinstall is needed.
+
+For example, on the management API (not a member cluster):
+
+```bash
+kubectl --kubeconfig /path/to/management.kubeconfig patch clusters.rlinf.io rlark-ksyun-gpu \
+  --type=merge -p '{"spec":{"displayName":"Kingsoft Cloud Ningxia Bare Metal","region":"Ningxia"}}'
+```
+
+Record the previous field values before patching. Restore them to roll back; if the fields were absent, remove them with a merge patch containing `null`. This change adds metadata only and does not require migrating cluster identity.
 
 A Cluster is a cluster-scoped RLark resource. `spec.agentNamespace` is the authoritative membership boundary: the cluster details and node count include only Node CRs in that namespace. `rlark.io/cluster-id` is a compatibility lookup label and does not establish membership. Its cluster Agent renews the control-plane `heartbeat` Lease every 15 seconds, and the Lease expires after 45 seconds. Every registered Worker also requires its own `node-heartbeat-<node-name>` Lease from `rlark-agent-node`; a missing or expired node Lease makes only that Worker offline.
 
@@ -51,7 +66,7 @@ Use **Refresh** on the Nodes page to update the full filtered node list in place
 ![Node detail](../images/ui/first-login-node-detail.png)
 
 !!! note "Node categories"
-The platform groups Workers using RLark category labels for cloud, edge, and robot resources. Legacy category values and nodes that explicitly advertise supported resources remain visible. Kubernetes control-plane nodes are excluded from the platform Worker view.
+The platform groups Workers using RLark category labels for cloud, edge, and robot resources. Legacy category values and nodes that explicitly advertise supported resources remain visible. A Kubernetes control-plane node is shown in the Worker view only when it is explicitly managed with `rlark.io/enabled=true` and has a workload category or supported device resource. Visibility does not override Kubernetes taints or guarantee schedulability.
 
 ## Result
 

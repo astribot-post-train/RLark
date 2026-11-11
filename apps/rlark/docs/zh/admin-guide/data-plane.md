@@ -94,9 +94,32 @@ rlarkadm install -f apps/rlark/docs/examples/deploy-data-plane.yaml
 
 ## 运行冒烟测试
 
+如需在 Kubernetes 控制面节点运行工作负载，应显式设置 `rlark.io/enabled=true` 以启用 RLark 上报，确认节点 Agent 可以运行，并在工作负载 Pod 模板中配置所需的 Kubernetes 污点容忍。需要 GPU 时，安装对应运行时和设备插件并核验可分配 GPU 资源。为控制面和网络网关预留资源；启用或显示节点不会绕过污点，也不保证任务可以调度。
+
 从业务平台创建一个小型 Job，为 Worker 选择刚接入的集群并填写可用镜像后提交。确认 Worker 进入 Running、日志可查看；如果镜像提供 Shell，再确认 WebTerminal 可以打开。
 
 ## 故障排查
+
+### NVIDIA 在设备插件启动前创建容器失败
+
+同时检查运行时 stderr 与 kubelet/containerd 日志；仅凭 OCI runtime 退出码无法判断是驱动、镜像还是网络故障。实测 H100 主机（驱动 565.57.01、NVIDIA Container Toolkit 1.20.2、containerd 2.2.1）中，`mode = "auto"` 选择 `jit-cdi`，生成 CDI 配置时在 `nvSandboxUtilsShutdown()` 中触发 `SIGSEGV`。在 `/etc/nvidia-container-runtime/config.toml` 显式设置 `mode = "legacy"` 绕过该路径后，两台均通过容器 GPU 枚举及申请一张 GPU 的 Kubernetes Job。这是该组合下验证过的规避措施，不是通用要求，也未证明底层库缺陷的具体原因。
+
+修改前备份配置。containerd 配置版本为 3 时，可在已导入的运行时片段中增加以下内容（例如 `/etc/containerd/conf.d/99-nvidia.toml`，前提是主配置确实导入该目录）：
+
+```toml
+version = 3
+[plugins.'io.containerd.cri.v1.runtime'.containerd.runtimes.nvidia]
+  runtime_type = 'io.containerd.runc.v2'
+[plugins.'io.containerd.cri.v1.runtime'.containerd.runtimes.nvidia.options]
+  BinaryName = '/usr/bin/nvidia-container-runtime'
+  SystemdCgroup = true
+```
+
+默认运行时保留 `runc`。先用 `containerd config dump` 验证，再逐台重启 containerd 并检查节点及已有工作负载。创建名为 `nvidia`、`handler: nvidia` 的 `node.k8s.io/v1` RuntimeClass。本方案的 NVIDIA 设备插件 DaemonSet 和 GPU 工作负载 Pod 模板均需设置 `runtimeClassName: nvidia`，GPU 工作负载还须申请 `nvidia.com/gpu`。设备插件需要访问 `/var/lib/kubelet/device-plugins`；控制面节点同时提供 GPU 时，应配置对应污点容忍。核验可分配 GPU 数、插件注册日志，并在每台节点通过调度器运行一卡 Job。枚举成功不代表 CUDA 训练或多节点 NCCL 通信已验证。
+
+离线镜像导入只填充当前主机缓存。部署前应在所有目标节点预加载并使用 `IfNotPresent`，或配置所有节点均能访问的仓库；镜像引用中的 `localhost` 不代表每台主机都运行仓库。
+
+回滚时先停止受影响的 GPU 工作负载，确认消费者退出后只移除本方案创建的插件及 RuntimeClass 资源，删除新增运行时片段，恢复备份的 NVIDIA 配置，再逐台重启 containerd。重新检查 Kubernetes、Station 网关和 Agent。清理临时诊断包装脚本前保留日志。验证 containerd 重启不等于验证整机重启恢复。
 
 | 症状 | 排查方向 |
 |------|---------|

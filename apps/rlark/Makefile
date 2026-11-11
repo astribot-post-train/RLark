@@ -25,6 +25,8 @@ AGENT_BIN             := agent
 NETWORK_SIDECAR_BIN   := network-sidecar
 RLARKADM_BIN          := rlarkadm
 RLARK_TOOLS_BIN       := rlark-tools
+STATION_API_BIN       := station-api
+STATION_AGENT_BIN     := station-agent
 
 ##@ Lint & format
 
@@ -43,7 +45,7 @@ fmt: ## Format Go (gofmt)
 
 .PHONY: all build
 all: build ## Build all binaries (default)
-build: $(SERVER_BIN) $(CONTROLLER_MANAGER_BIN) $(GATEWAY_BIN) $(AGENT_BIN) $(NETWORK_SIDECAR_BIN) $(RLARKADM_BIN) $(RLARK_TOOLS_BIN) ## Build all binaries
+build: $(SERVER_BIN) $(CONTROLLER_MANAGER_BIN) $(GATEWAY_BIN) $(AGENT_BIN) $(NETWORK_SIDECAR_BIN) $(RLARKADM_BIN) $(RLARK_TOOLS_BIN) $(STATION_API_BIN) $(STATION_AGENT_BIN) ## Build all binaries
 
 .PHONY: $(SERVER_BIN)
 $(SERVER_BIN): ## Build server binary
@@ -72,6 +74,12 @@ $(RLARKADM_BIN): ## Build rlarkadm binary
 .PHONY: $(RLARK_TOOLS_BIN)
 $(RLARK_TOOLS_BIN): ## Build rlark-tools binary
 	CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) go build -ldflags="$(LDFLAGS)" -o bin/$@ ./cmd/rlark-tools
+
+$(STATION_API_BIN): ## Build station-api binary
+	CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) go build -ldflags="$(LDFLAGS)" -o bin/$@ ./cmd/station-api
+
+$(STATION_AGENT_BIN): ## Build station-agent binary
+	CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) go build -ldflags="$(LDFLAGS)" -o bin/$@ ./cmd/station-agent
 
 .PHONY: vet test clean
 vet: ## Run go vet

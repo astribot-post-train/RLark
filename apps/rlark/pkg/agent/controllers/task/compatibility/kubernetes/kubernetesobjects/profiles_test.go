@@ -29,3 +29,17 @@ func TestServiceProjectionEqualDetectsOwnedFieldDrift(t *testing.T) {
 		t.Fatal("owned selector drift was ignored")
 	}
 }
+
+func TestServiceProjectionTracksOnlyRequestedFixedNodePort(t *testing.T) {
+	current := agentruntime.TypedManifest{Object: []byte(`{"spec":{"type":"NodePort","ports":[{"name":"api","protocol":"TCP","port":8080,"targetPort":8080,"nodePort":31001}]}}`)}
+	automatic := agentruntime.TypedManifest{Object: []byte(`{"spec":{"type":"NodePort","ports":[{"name":"api","protocol":"TCP","port":8080,"targetPort":8080}]}}`)}
+	equal, err := ServiceProjectionEqual(current, automatic)
+	if err != nil || !equal {
+		t.Fatalf("automatic allocation drifted: equal=%v err=%v", equal, err)
+	}
+	fixed := agentruntime.TypedManifest{Object: []byte(`{"spec":{"type":"NodePort","ports":[{"name":"api","protocol":"TCP","port":8080,"targetPort":8080,"nodePort":31000}]}}`)}
+	equal, err = ServiceProjectionEqual(current, fixed)
+	if err != nil || equal {
+		t.Fatalf("fixed allocation mismatch ignored: equal=%v err=%v", equal, err)
+	}
+}

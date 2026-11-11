@@ -829,8 +829,13 @@ func applyService(existing, desired *corev1.Service, task agentruntime.TaskIdent
 		existing.Spec.Selector = maps.Clone(desired.Spec.Selector)
 		changed = true
 	}
-	if !reflect.DeepEqual(servicePortsProjection(existing.Spec.Ports), servicePortsProjection(desired.Spec.Ports)) {
-		existing.Spec.Ports = preserveAllocatedNodePorts(existing.Spec.Ports, desired.Spec.Ports)
+	releaseNodePorts := desired.Spec.Type == corev1.ServiceTypeClusterIP && existing.Spec.Type != corev1.ServiceTypeClusterIP
+	if !reflect.DeepEqual(servicePortsProjection(existing.Spec.Ports), servicePortsProjection(desired.Spec.Ports)) || explicitNodePortChanged(existing.Spec.Ports, desired.Spec.Ports) || releaseNodePorts {
+		if releaseNodePorts {
+			existing.Spec.Ports = append([]corev1.ServicePort(nil), desired.Spec.Ports...)
+		} else {
+			existing.Spec.Ports = preserveAllocatedNodePorts(existing.Spec.Ports, desired.Spec.Ports)
+		}
 		changed = true
 	}
 	if existing.Spec.PublishNotReadyAddresses != desired.Spec.PublishNotReadyAddresses {
@@ -845,6 +850,19 @@ func applyService(existing, desired *corev1.Service, task agentruntime.TaskIdent
 		changed = true
 	}
 	return changed, nil
+}
+
+func explicitNodePortChanged(current, desired []corev1.ServicePort) bool {
+	allocated := make(map[string]int32, len(current))
+	for _, port := range current {
+		allocated[port.Name] = port.NodePort
+	}
+	for _, port := range desired {
+		if port.NodePort != 0 && allocated[port.Name] != port.NodePort {
+			return true
+		}
+	}
+	return false
 }
 
 func typedManifest(object client.Object) (agentruntime.TypedManifest, error) {

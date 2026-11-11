@@ -1,0 +1,37 @@
+# Site-specific service and endpoint; certificate name is rlark-server.
+apiVersion: v1
+kind: Service
+metadata:
+  name: rlark-server
+  namespace: rlark-system
+  labels:
+    rlark.io/managed-by: station-bootstrap
+spec:
+  ports:
+  - name: https
+    port: 8443
+    protocol: TCP
+    targetPort: 8443
+  - name: ssh
+    port: 2222
+    protocol: TCP
+    targetPort: 2222
+  type: ClusterIP
+---
+apiVersion: v1
+kind: Endpoints
+metadata:
+  name: rlark-server
+  namespace: rlark-system
+  labels:
+    rlark.io/managed-by: station-bootstrap
+subsets:
+- addresses:
+  - ip: 10.254.240.1
+  ports:
+  - name: https
+    port: 8443
+    protocol: TCP
+  - name: ssh
+    port: 2222
+    protocol: TCP

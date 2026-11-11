@@ -9,6 +9,7 @@ import (
 	"text/template"
 
 	"go.yaml.in/yaml/v3"
+	"k8s.io/apimachinery/pkg/util/validation"
 )
 
 //go:embed catalog/*/addon.yaml
@@ -156,6 +157,18 @@ func (a *embeddedAddon) Meta() AddonMeta {
 
 // Render is an exported method.
 func (a *embeddedAddon) Render(values map[string]string, namespace string, addonName string, addonUID string) ([]Manifest, error) {
+	if a.dir == "csi-driver-rclone" {
+		for _, name := range []string{"nodeSelector", "controllerNodeSelector"} {
+			value := values[name]
+			if value == "" {
+				continue
+			}
+			parts := strings.Split(value, "=")
+			if len(parts) != 2 || len(validation.IsQualifiedName(parts[0])) != 0 || len(validation.IsValidLabelValue(parts[1])) != 0 {
+				return nil, fmt.Errorf("parameter %s must be a valid label=value selector", name)
+			}
+		}
+	}
 	renderValues := make(map[string]interface{})
 	for _, p := range a.meta.Parameters {
 		v, ok := values[p.Name]

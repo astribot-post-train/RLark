@@ -64,7 +64,7 @@ export function isBusinessWorkerNode(node: CRDNode): boolean {
         name.startsWith("rlinf.io/device-")),
   );
   return (
-    !isControlPlane &&
+    (!isControlPlane || labels["rlark.io/enabled"] === "true") &&
     (getNodeCategories(node).some((category) => category !== "unknown") ||
       hasWorkloadDevice)
   );

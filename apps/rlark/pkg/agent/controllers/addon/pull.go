@@ -3,7 +3,10 @@ package addon
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
+	"errors"
 	"fmt"
+	"reflect"
 	"slices"
 	"strings"
 	"time"
@@ -34,6 +37,8 @@ const (
 	// AddonResourceVersionAnnotation annotates local resources linking back to the management Addon CR.
 	AddonResourceVersionAnnotation = "rlark.io/addon-resource-version"
 )
+
+var errAddonCleanupPending = errors.New("addon resource deletion pending")
 
 // Reason values for the Addon Ready condition. They are stable, CamelCase
 // identifiers consumed by clients.
@@ -83,6 +88,9 @@ func (r *pullReconciler) Reconcile(ctx context.Context, req reconcile.Request) (
 	if mgmtAddon.DeletionTimestamp != nil {
 		logger.Info("management Addon being deleted, cleaning up local resources")
 		if err := r.cleanupAddon(ctx, &mgmtAddon); err != nil {
+			if errors.Is(err, errAddonCleanupPending) {
+				return reconcile.Result{RequeueAfter: AddonRequeueInterval}, nil
+			}
 			logger.Error(err, "failed to clean up addon resources")
 			return reconcile.Result{}, err
 		}
@@ -158,7 +166,7 @@ func (r *pullReconciler) Reconcile(ctx context.Context, req reconcile.Request) (
 
 	if ready {
 		r.updateStatus(ctx, &mgmtAddon, rlarkv1alpha1.AddonPhaseReady, "")
-		return reconcile.Result{}, nil
+		return reconcile.Result{RequeueAfter: AddonRequeueInterval}, nil
 	}
 
 	// Not ready yet — check if any pods are failed
@@ -201,9 +209,15 @@ func (r *pullReconciler) applyObject(ctx context.Context, obj *unstructured.Unst
 		return nil
 	}
 
-	// Exists — update if resource version annotation changed
+	// Never adopt a same-named object belonging to a different Addon instance.
+	labels := existing.GetLabels()
+	if labels[addons.LabelAddonName] != mgmtAddon.Name || labels[addons.LabelAddonUID] != string(mgmtAddon.UID) || mgmtAddon.UID == "" {
+		return fmt.Errorf("ownership conflict for %s/%s", gvk.Kind, key)
+	}
+	// The annotation identifies the rendered revision, but does not prove that
+	// the live fields still match it. Check desired fields on each reconciliation.
 	existingAnnotations := existing.GetAnnotations()
-	if existingAnnotations != nil && existingAnnotations[AddonResourceVersionAnnotation] == mgmtAddon.ResourceVersion {
+	if existingAnnotations != nil && existingAnnotations[AddonResourceVersionAnnotation] == mgmtAddon.ResourceVersion && desiredFieldsMatch(obj, existing) {
 		return nil
 	}
 
@@ -231,13 +245,93 @@ func (r *pullReconciler) applyObject(ctx context.Context, obj *unstructured.Unst
 	return nil
 }
 
+// desiredFieldsMatch ignores server-defaulted fields absent from the rendered
+// object, while detecting changes to fields the Addon explicitly specifies.
+func desiredFieldsMatch(desired, existing *unstructured.Unstructured) bool {
+	// Kubernetes consumes Secret.stringData on write and returns only base64
+	// data on read. Compare its canonical representation to avoid update loops.
+	if desired.GetKind() == "Secret" {
+		desired = desired.DeepCopy()
+		if raw, exists := desired.Object["stringData"]; exists {
+			data, found, err := unstructured.NestedMap(desired.Object, "data")
+			if err != nil {
+				return false
+			}
+			if !found {
+				data = map[string]interface{}{}
+			}
+			if raw != nil {
+				values, ok := raw.(map[string]interface{})
+				if !ok {
+					return false
+				}
+				for k, v := range values {
+					value, ok := v.(string)
+					if !ok {
+						return false
+					}
+					data[k] = base64.StdEncoding.EncodeToString([]byte(value))
+				}
+			}
+			delete(desired.Object, "stringData")
+			if len(data) > 0 {
+				desired.Object["data"] = data
+			}
+		}
+	}
+	for k, v := range desired.Object {
+		switch k {
+		case "apiVersion", "kind", "metadata", "status":
+			continue
+		}
+		if !desiredValueMatches(v, existing.Object[k]) {
+			return false
+		}
+	}
+	return true
+}
+
+func desiredValueMatches(want, got interface{}) bool {
+	switch w := want.(type) {
+	case map[string]interface{}:
+		g, ok := got.(map[string]interface{})
+		if !ok {
+			return false
+		}
+		for k, value := range w {
+			actual, exists := g[k]
+			if !exists || !desiredValueMatches(value, actual) {
+				return false
+			}
+		}
+		return true
+	case []interface{}:
+		g, ok := got.([]interface{})
+		if !ok || len(w) != len(g) {
+			return false
+		}
+		for i := range w {
+			if !desiredValueMatches(w[i], g[i]) {
+				return false
+			}
+		}
+		return true
+	default:
+		return reflect.DeepEqual(want, got)
+	}
+}
+
 func (r *pullReconciler) cleanupAddon(ctx context.Context, mgmtAddon *rlarkv1alpha1.Addon) error {
 	if r.c.LocalKubeClient == nil {
-		return nil
+		return errors.New("local Kubernetes client unavailable during addon cleanup")
+	}
+	if mgmtAddon.UID == "" {
+		return errors.New("cannot clean up addon without UID")
 	}
 
 	labelSelector := client.MatchingLabels{
 		addons.LabelAddonName: mgmtAddon.Name,
+		addons.LabelAddonUID:  string(mgmtAddon.UID),
 	}
 
 	// Delete all resources with the addon label
@@ -257,25 +351,33 @@ func (r *pullReconciler) cleanupAddon(ctx context.Context, mgmtAddon *rlarkv1alp
 		&storagev1.StorageClassList{},
 	}
 
+	pending := false
 	for _, list := range resources {
 		if err := r.c.LocalKubeClient.List(ctx, list, labelSelector); err != nil {
-			if client.IgnoreNotFound(err) != nil {
-				continue
-			}
+			return fmt.Errorf("list addon resources %T: %w", list, err)
 		}
 		items := extractItems(list)
 		if items == nil {
 			continue
 		}
 		for _, item := range items {
-			if err := r.c.LocalKubeClient.Delete(ctx, item); err != nil {
-				if client.IgnoreNotFound(err) != nil {
+			uid := item.GetUID()
+			version := item.GetResourceVersion()
+			if uid == "" || version == "" {
+				return fmt.Errorf("addon resource %s/%s has no UID or resourceVersion", item.GetNamespace(), item.GetName())
+			}
+			if err := r.c.LocalKubeClient.Delete(ctx, item, client.Preconditions{UID: &uid, ResourceVersion: &version}); err != nil {
+				if client.IgnoreNotFound(err) == nil {
 					continue
 				}
+				return fmt.Errorf("delete addon resource %s/%s: %w", item.GetNamespace(), item.GetName(), err)
 			}
+			pending = true
 		}
 	}
-
+	if pending {
+		return errAddonCleanupPending
+	}
 	return nil
 }
 

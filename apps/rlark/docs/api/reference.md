@@ -17,7 +17,7 @@ Path parameters are written as `{name}` below; Gin uses the equivalent `:name` s
 | `nodes` | Namespaced | `GET, POST /api/v1/rlinf.io/v1alpha1/nodes`; `GET, PUT, PATCH, DELETE /api/v1/rlinf.io/v1alpha1/nodes/{name}` |
 | `workflows` | Cluster | `GET, POST /api/v1/rlinf.io/v1alpha1/workflows`; `GET, PUT, PATCH, DELETE /api/v1/rlinf.io/v1alpha1/workflows/{name}` |
 | `jobs` | Cluster | `GET, POST /api/v1/rlinf.io/v1alpha1/jobs`; `GET /api/v1/rlinf.io/v1alpha1/jobs/tags`; `GET, PUT, PATCH, DELETE /api/v1/rlinf.io/v1alpha1/jobs/{name}`; `GET /api/v1/rlinf.io/v1alpha1/jobs/{name}/logs`; `GET /api/v1/rlinf.io/v1alpha1/jobs/{name}/logs/label-values`; `GET /api/v1/rlinf.io/v1alpha1/jobs/{name}/metrics` |
-| `tasks` | Namespaced | `GET, POST /api/v1/rlinf.io/v1alpha1/tasks`; `GET, PUT, PATCH, DELETE /api/v1/rlinf.io/v1alpha1/tasks/{name}`; all methods on `/api/v1/rlinf.io/v1alpha1/tasks/{name}/tensorboard/{path}` |
+| `tasks` | Namespaced | `GET, POST /api/v1/rlinf.io/v1alpha1/tasks`; `GET, PUT, PATCH, DELETE /api/v1/rlinf.io/v1alpha1/tasks/{name}`; `GET /api/v1/rlinf.io/v1alpha1/tasks/{name}/exposed-ports` reads allocated NodePorts; all methods on `/api/v1/rlinf.io/v1alpha1/tasks/{name}/tensorboard/{path}` |
 | `pods` | Namespaced | `GET /api/v1/rlinf.io/v1alpha1/pods`; `GET, PATCH /api/v1/rlinf.io/v1alpha1/pods/{name}`; `GET /api/v1/rlinf.io/v1alpha1/pods/{name}/events`; `GET /api/v1/rlinf.io/v1alpha1/pods/{name}/terminal` |
 | `domains` | Cluster | `GET, POST /api/v1/rlinf.io/v1alpha1/domains`; `GET, PUT, PATCH, DELETE /api/v1/rlinf.io/v1alpha1/domains/{name}` |
 
@@ -31,6 +31,8 @@ The Job `logs` route is implemented and accepts `from`, `to`, `task`, `pod`, `qu
 
 ## Clusters and certificates
 
+Cluster list/detail responses use `id` as the stable Cluster resource name. `name` is the trimmed `spec.displayName`, falling back to the resource name; `region` prefers trimmed `spec.region` and otherwise retains node-derived metadata. Display metadata supports Unicode. Configure it on the management Cluster resource through the Kubernetes API; use `id`, not `name`, in URLs and delivery/scheduling references.
+
 | Method | Path |
 |--------|------|
 | `GET` | `/api/v1/clusters` |
@@ -38,8 +40,29 @@ The Job `logs` route is implemented and accepts `from`, `to`, `task`, `pod`, `qu
 | `GET` | `/api/v1/certificates/agent` |
 | `GET` | `/api/v1/certificates/agent/{cluster_id}` |
 | `POST` | `/api/v1/certificates/agent` |
+| `POST` | `/api/v1/certificates/revoke` |
 
-`POST /api/v1/certificates/revoke` is registered by the Gateway but is not implemented and must not be treated as an available API.
+Agent certificate issuance returns credentials only after management Secret persistence. Storage errors fail the request; conflicting or ambiguous Secret ownership is rejected. An interrupted response can still leave a certificate stored, so signing retries may issue a different credential. See [certificate management](../deployment.md#92-issuing-agent-certificates).
+
+Certificate revocation requires an administrator and a compatible Server with durable revocation storage. POST JSON with `cert_type` (`x509` or `ssh`), canonical decimal `serial_number`, `subject_key_id` (lowercase hexadecimal for X.509; SSH key ID for SSH), and optional `reason`. A 200 response with `{"persisted":true}` confirms the Server stored the revocation; repeating the same identity is safe. A 502 can mean the outcome is unknown, including when an older Server returns no durable receipt; retry with the same identity after restoring a compatible Server. Revocation affects new authentications and does not terminate existing sessions. The Gateway does not remove or rotate credentials. This source change requires both Gateway and Server upgrades and is not yet deployed at the station.
+
+## Station identities (preview)
+
+`GET /api/v1/node-networks/{name}?cluster_id=<cluster-id>` returns a node's verified WireGuard interface and CIDR addresses with `state` (`current`, `stale`, or `unreported`) and optional server receipt time. It requires the same user authentication and cluster visibility as node listing. A conflicting namespace mapping returns `409`; missing configuration, member identity verification failures, or an unavailable Station API return `503`. It does not return peers or keys. The feature requires the optional Gateway and Station API configuration described in the Station gateway README.
+
+| Method | Path |
+|--------|------|
+| `GET` | `/api/v1/station/stations?cluster_id={cluster_id}&limit={limit}&continue={token}` |
+| `GET` | `/api/v1/station/stations/{name}?cluster_id={cluster_id}` |
+| `POST` | `/api/v1/station/rebinds` |
+| `GET` | `/api/v1/station/rebinds/{name}?cluster_id={cluster_id}` |
+| `GET` | `/api/v1/station/observations?cluster_id={cluster_id}&limit={limit}&continue={token}` |
+
+The two `GET` routes require an administrator. The list reads Station custom resources from the management Kubernetes API; `cluster_id` is the registered Cluster object name, which the Gateway resolves to its authoritative `spec.agentNamespace`. Do not pass a namespace as `cluster_id`. Pagination accepts `limit` from 1 through 500 (default 200) and the opaque `continue` token returned by the API. Station names are namespaced, so the detail route requires `cluster_id`. A conflicting Cluster-to-namespace mapping returns `409`; an unavailable management API returns `502`. These GET endpoints are read-only.
+
+`GET /api/v1/station/observations` requires `cluster_id` and returns the latest server-verified snapshots in that Cluster's mapped namespace. These records include Node UIDs suitable for selecting a rebind target; the controller still rereads the member Node before applying an operation. `POST /api/v1/station/rebinds` is an administrator-only preview operation endpoint. Submit `cluster_id`, stable `request_id`, `station_name`, the displayed `station_uid` and `expected_binding_version`, `target_node_name`, `target_node_uid`, and an operator `reason`; `target_system_uuid` is optional evidence. The request must be strict JSON, at most 16 KiB, and contain no unknown fields. The Gateway resolves namespace from the registered Cluster and rejects a stale Station UID, retired Station, or changed binding version. It creates a deterministic `StationRebind` operation and returns `202`; retrying the same ID and payload returns the same operation, while reusing the ID with different content returns `409`. `GET /api/v1/station/rebinds/{name}` returns current asynchronous status. The controller independently reads the target Node from the member cluster, validates its UID, and rejects a UID already bound to a different Station before applying the change. An accepted operation is asynchronous; `202` does not mean the rebind has completed. The console submits rebinds for `Conflict` Stations and polls the operation; actual completion requires the Station CRDs and controller to be installed.
+
+Station discovery and Rebind reconciliation share a serialized coordinator under controller-manager leader election, and race tests verify one owner when they concurrently process the same Node UID. Leader failover and live CRD operation are not yet tested, so this preview endpoint is not a production identity guarantee.
 
 ## Authentication and SSH keys
 
@@ -73,6 +96,7 @@ The authenticated API reference metadata endpoint returns localized section titl
 | `GET` | `/api/v1/images` |
 | `GET, POST` | `/api/v1/image-registries` |
 | `GET, PUT, DELETE` | `/api/v1/image-registries/{id}` |
+| `GET` | `/api/v1/image-registries/{id}/password` |
 | `GET` | `/api/v1/image-registries/{id}/repositories` |
 | `GET` | `/api/v1/image-registries/{id}/tags?repository={name}` |
 | `GET` | `/api/v1/image-registries/{id}/manifest?repository={name}&tag={tag}` |
@@ -88,9 +112,11 @@ Image registry credentials use an immutable `ir-<16 lowercase hexadecimal charac
 {"name":"Production Harbor","registry":"harbor.example.com","username":"robot","password":"secret","clusterSelection":{"mode":"Selected","clusters":["cluster-a"]}}
 ```
 
-`clusterSelection.mode` is `None` (store only), `Selected` (one or more logical cluster names), or `All` (current and future clusters). `clusters` must be empty for `None` and `All`. Responses omit the password and include `id`. `POST` returns `201 Created`. On `PUT`, omitting `password` preserves it; an explicitly empty password is invalid. `DELETE` returns `202 Accepted` because Replication and Delivery remove distributed Secrets asynchronously.
+`clusterSelection.mode` is `None` (store only), `Selected` (one or more logical cluster names), or `All` (current and future clusters). `clusters` must be empty for `None` and `All`. Ordinary credential responses omit the password and include `id`. `POST` returns `201 Created`. On `PUT`, omitting `password` preserves it; an explicitly empty password is invalid. `DELETE` returns `202 Accepted` because Replication and Delivery remove distributed Secrets asynchronously.
 
-The three read-only browse endpoints require an administrator. Configure the Gateway with `--registry-browse-allowed-hosts=registry.example.com:5443` (comma-separated exact `host[:port]` values); the default empty list disables browsing. Only explicitly allowed HTTPS origins are contacted, redirects and proxies are not followed, and stored credentials remain on the Gateway. The Gateway must be able to reach the registry and trust its TLS certificate using its system CA store; install a private CA in the Gateway environment before starting it. Do not disable certificate verification. Registry catalog, paginated tags and manifest HEAD with a `sha256` digest and Basic authentication are required; token-authentication challenges and registries that omit catalog support are not supported. Each catalog/tag page has at most 50 entries; pass the returned `next` value as `last` for the next page. Registry failures return 502, not an empty result. Existing `GET /api/v1/images` is Job image usage history, not registry inventory. Image references and digests can change between requests; pin verified digests for releases.
+The list and detail omit passwords. Administrators may explicitly call `GET /api/v1/image-registries/{id}/password`, returning `{"password":"..."}` with `Cache-Control: no-store`. Authenticated attempts produce a structured audit log with actor, registry ID and status, never the password.
+
+The three read-only browse endpoints require an administrator. Configure the Gateway with `--registry-browse-allowed-hosts=registry.example.com:5443` (comma-separated exact `host[:port]` values or IP CIDRs); the default empty list disables browsing. A CIDR permits IP-literal hosts on any port; hostnames are not resolved for CIDR matching. Restrict CIDRs to trusted networks. Only explicitly allowed HTTPS origins are contacted, redirects and proxies are not followed, and stored credentials remain on the Gateway. The Gateway must be able to reach the registry and trust its TLS certificate using its system CA store; install a private CA in the Gateway environment before starting it. Do not disable certificate verification. Registry catalog, paginated tags and manifest HEAD with a `sha256` digest and Basic authentication are required; token-authentication challenges and registries that omit catalog support are not supported. Each catalog/tag page has at most 50 entries; pass the returned `next` value as `last` for the next page. Registry failures return 502, not an empty result. Existing `GET /api/v1/images` is Job image usage history, not registry inventory. Image references and digests can change between requests; pin verified digests for releases.
 
 ## Storage
 

@@ -356,6 +356,38 @@ func (g *Gateway) handleGetImageRegistry(c *gin.Context) {
 	c.JSON(http.StatusOK, item)
 }
 
+// auditRegistryPasswordAccess records authorization outcomes without credential values.
+func (g *Gateway) auditRegistryPasswordAccess() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		c.Header("Cache-Control", "no-store")
+		c.Next()
+		log.FromContext(c.Request.Context()).WithName("audit").Info("image registry password access", "actor", c.GetString(authSubjectKey), "registryID", c.Param("id"), "status", c.Writer.Status())
+	}
+}
+
+func (g *Gateway) handleGetImageRegistryPassword(c *gin.Context) {
+	id := c.Param("id")
+	if err := validateImageRegistryID(id); err != nil {
+		respondError(c, http.StatusBadRequest, CodeInvalidQueryParameter, "invalid registry ID")
+		return
+	}
+	secret, err := getImageRegistrySecret(c.Request.Context(), g.rawClient, g.managementNamespace(), id)
+	if err != nil {
+		if errors.IsNotFound(err) {
+			respondError(c, http.StatusNotFound, CodeResourceNotFound, "image registry not found")
+		} else {
+			respondError(c, http.StatusInternalServerError, CodeInternalError, "cannot read image registry")
+		}
+		return
+	}
+	var credential storedImageRegistryCredential
+	if err := json.Unmarshal(secret.Data[common.ImageRegistryCredentialDataKey], &credential); err != nil || credential.Version != imageRegistryCredentialVersion || credential.Password == "" {
+		respondError(c, http.StatusInternalServerError, CodeInternalError, "invalid image registry data")
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"password": credential.Password})
+}
+
 func (g *Gateway) handleCreateImageRegistry(c *gin.Context) {
 	var req createImageRegistryRequest
 	if err := c.ShouldBindJSON(&req); err != nil {

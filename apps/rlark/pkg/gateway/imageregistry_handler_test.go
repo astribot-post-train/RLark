@@ -102,6 +102,19 @@ func TestNormalizeClusterSelection(t *testing.T) {
 	assert.False(t, matched)
 }
 
+func TestRegistryPasswordRequiresAdmin(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	gateway := &Gateway{config: Config{KubeClientConfig: configs.KubernetesClientConfig{Namespace: "management"}}, rawClient: fake.NewSimpleClientset(), jwtSigningKey: []byte("01234567890123456789012345678901")}
+	token, _, err := gateway.issueJWT("user", "user")
+	require.NoError(t, err)
+	router := gin.New()
+	router.Use(func(c *gin.Context) { c.Request.Header.Set("Authorization", "Bearer "+token) })
+	gateway.RegisterRoutes(router)
+	response := performJSONRequest(t, router, http.MethodGet, "/api/v1/image-registries/ir-0123456789abcdef/password", nil)
+	assert.Equal(t, http.StatusForbidden, response.Code)
+	assert.Equal(t, "no-store", response.Header().Get("Cache-Control"))
+}
+
 func TestImageRegistryHandlers(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	gateway := &Gateway{
@@ -127,6 +140,12 @@ func TestImageRegistryHandlers(t *testing.T) {
 	assert.Regexp(t, `^ir-[0-9a-f]{16}$`, item.ID)
 	assert.Equal(t, []string{"cluster-a", "cluster-b"}, item.ClusterSelection.Clusters)
 	assert.NotContains(t, created.Body.String(), "secret")
+	passwordResponse := performJSONRequest(t, router, http.MethodGet, "/api/v1/image-registries/"+item.ID+"/password", nil)
+	assert.Equal(t, http.StatusOK, passwordResponse.Code)
+	assert.Equal(t, "no-store", passwordResponse.Header().Get("Cache-Control"))
+	assert.JSONEq(t, `{"password":"secret"}`, passwordResponse.Body.String())
+	missing := performJSONRequest(t, router, http.MethodGet, "/api/v1/image-registries/ir-0000000000000000/password", nil)
+	assert.Equal(t, http.StatusNotFound, missing.Code)
 
 	secret, err := gateway.rawClient.CoreV1().Secrets("management").Get(context.Background(), imageRegistryReplicationName(item.ID), metav1.GetOptions{})
 	require.NoError(t, err)

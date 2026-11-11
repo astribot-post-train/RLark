@@ -3,13 +3,13 @@ info:
   title: RLark Gateway CRD API Subset
   description: >-
     A maintained subset of routes registered by the RLark Gateway, focused on CRD operations and selected supporting endpoints; this is not a complete Gateway specification. The Gateway login endpoint
-    does not issue a token or establish a session, and these routes currently
-    do not enforce the UI login result. Deploy the Gateway only on a trusted
-    network or behind an authenticated access-control layer. Domain resources
+    issues a token and the certificate revocation route enforces an administrator
+    role. Deploy the Gateway on a trusted network or behind an authenticated
+    access-control layer. Domain resources
     group virtual addresses and scope cross-cluster forwarding; they do not
     isolate underlying infrastructure or ordinary Kubernetes networking. The
-    registered Gateway certificate-revocation route is not implemented and is
-    intentionally omitted from this specification.
+    certificate-revocation route requires an administrator and a compatible
+    Server with durable revocation storage.
   version: v1alpha1
 
 servers:
@@ -33,8 +33,179 @@ tags:
     description: Images referenced by Jobs and Tasks
   - name: Observability
     description: Gateway Prometheus metrics
+  - name: Station
+    description: Experimental Station identity administration
 
 paths:
+  /api/v1/certificates/revoke:
+    post:
+      summary: Persist certificate revocation (administrator only)
+      description: Requires a compatible Server. An ambiguous failure may be retried with the same identity; existing sessions are not terminated.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [cert_type, serial_number, subject_key_id]
+              properties:
+                cert_type: {type: string, enum: [x509, ssh]}
+                serial_number: {type: string, description: Canonical decimal serial}
+                subject_key_id: {type: string, description: Lowercase hexadecimal for X.509; SSH key ID for SSH}
+                reason: {type: string}
+      responses:
+        '200':
+          description: Server confirmed durable storage
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  persisted: {type: boolean, enum: [true]}
+        '400': {description: Invalid certificate identity}
+        '401': {description: Authentication required}
+        '403': {description: Administrator role required}
+        '502': {description: Server failed or did not confirm persistence; outcome may be unknown}
+        '503': {description: Server connection not configured}
+  /api/v1/image-registries/{id}/password:
+    get:
+      tags: [Image]
+      summary: Reveal a registry password (administrator only)
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string}}
+      responses:
+        '200':
+          description: Password; response is not cacheable
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [password]
+                properties:
+                  password: {type: string, format: password}
+        '400': {description: Invalid registry ID}
+        '403': {description: Administrator role required}
+        '404': {description: Registry not found}
+  /api/v1/node-networks/{name}:
+    get:
+      tags: [Station]
+      summary: Get the verified node network summary (preview)
+      parameters:
+        - {name: name, in: path, required: true, schema: {type: string}}
+        - {name: cluster_id, in: query, required: true, schema: {type: string}}
+      responses:
+        '200':
+          description: Current, stale or unreported WireGuard observation
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [state]
+                properties:
+                  state: {type: string, enum: [current, stale, unreported]}
+                  interface: {type: string}
+                  addresses: {type: array, items: {type: string}}
+                  reportedAt: {type: string, format: date-time}
+        '400': {description: Missing cluster ID}
+        '404': {description: Cluster or node not visible}
+        '409': {description: Ambiguous cluster namespace}
+        '503': {description: Verified observation unavailable}
+  /api/v1/station/stations:
+    get:
+      tags: [Station]
+      summary: List registered Station identities (administrator only)
+      parameters:
+        - {name: cluster_id, in: query, required: false, schema: {type: string}}
+        - {name: limit, in: query, required: false, schema: {type: integer, minimum: 1, maximum: 500, default: 200}}
+        - {name: continue, in: query, required: false, schema: {type: string}}
+      responses:
+        '200':
+          description: Namespaced Station records from the current management API
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items: {type: array, items: {type: object}}
+                  continue: {type: string}
+        '400': {description: Invalid list limit}
+        '403': {description: Administrator role required}
+        '502': {description: Management Kubernetes API unavailable}
+  /api/v1/station/stations/{name}:
+    get:
+      tags: [Station]
+      summary: Get a Station by name and registered Cluster (administrator only)
+      parameters:
+        - {name: name, in: path, required: true, schema: {type: string}}
+        - {name: cluster_id, in: query, required: true, schema: {type: string}}
+      responses:
+        '200': {description: Station record}
+        '400': {description: Cluster ID required}
+        '403': {description: Administrator role required}
+        '404': {description: Cluster or Station not found}
+        '409': {description: Cluster namespace mapping is ambiguous}
+        '502': {description: Management Kubernetes API unavailable}
+  /api/v1/station/rebinds:
+    post:
+      tags: [Station]
+      summary: Create an administrator-approved Station rebind operation
+      description: Requires an admin JWT and a strict JSON body no larger than 16 KiB. Unknown fields are rejected. The Gateway resolves the namespace from the registered Cluster, verifies the Station object UID and expected binding version, and creates an idempotent StationRebind resource. The controller independently verifies the target Node against the member Kubernetes API and refuses a Node UID already owned by another Station before changing the binding.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [cluster_id, request_id, station_name, station_uid, expected_binding_version, target_node_name, target_node_uid, reason]
+              properties:
+                cluster_id: {type: string, maxLength: 128}
+                request_id: {type: string, minLength: 1, maxLength: 128}
+                station_name: {type: string, maxLength: 253}
+                station_uid: {type: string, maxLength: 128}
+                expected_binding_version: {type: integer, format: int64, minimum: 1}
+                target_node_name: {type: string, maxLength: 253}
+                target_node_uid: {type: string, maxLength: 128}
+                target_system_uuid: {type: string, maxLength: 128}
+                reason: {type: string, minLength: 1, maxLength: 1024}
+      responses:
+        '202': {description: Operation created or an identical prior request returned}
+        '400': {description: Invalid request}
+        '401': {description: Authentication required}
+        '403': {description: Administrator role required}
+        '404': {description: Cluster or Station not found}
+        '409': {description: Request ID conflict, Station UID mismatch, or binding version changed}
+        '502': {description: Management Kubernetes API failure}
+        '503': {description: Station API unavailable}
+  /api/v1/station/rebinds/{name}:
+    get:
+      tags: [Station]
+      summary: Get a Station rebind operation (administrator only)
+      parameters:
+        - {name: name, in: path, required: true, schema: {type: string}}
+        - {name: cluster_id, in: query, required: true, schema: {type: string}}
+      responses:
+        '200': {description: Current asynchronous operation state}
+        '401': {description: Authentication required}
+        '403': {description: Administrator role required}
+        '404': {description: Cluster or operation not found}
+        '502': {description: Management Kubernetes API failure}
+        '503': {description: Station API unavailable}
+  /api/v1/station/observations:
+    get:
+      tags: [Station]
+      summary: List Station observations for a registered Cluster (administrator only)
+      parameters:
+        - {name: cluster_id, in: query, required: true, schema: {type: string}}
+        - {name: limit, in: query, required: false, schema: {type: integer, minimum: 1, maximum: 500, default: 200}}
+        - {name: continue, in: query, required: false, schema: {type: string}}
+      responses:
+        '200': {description: Latest verified observations from the mapped member namespace}
+        '400': {description: Cluster ID required or invalid limit}
+        '401': {description: Authentication required}
+        '403': {description: Administrator role required}
+        '404': {description: Cluster not found}
+        '502': {description: Management Kubernetes API failure}
+        '503': {description: Station API unavailable}
   /api/v1/images:
     get:
       tags: [Image]
@@ -753,6 +924,38 @@ paths:
                 $ref: '#/components/schemas/Task'
 
   # ─── Task Named ──────────────────────────────────────────────────
+  /api/v1/rlinf.io/v1alpha1/tasks/{name}/exposed-ports:
+    get:
+      tags: [Task]
+      summary: Read allocated WG-only Job ports
+      description: Returns the Task-owned data-plane Service's allocated NodePorts and observed nodes. Requires an authorized Task and a reachable data-plane Agent.
+      operationId: readTaskExposedPorts
+      parameters:
+        - $ref: '#/components/parameters/name'
+      responses:
+        '200':
+          description: Current port allocation or pending state
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  state: {type: string}
+                  namespace: {type: string}
+                  nodes: {type: array, items: {type: string}}
+                  ports:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        name: {type: string}
+                        protocol: {type: string}
+                        targetPort: {type: integer}
+                        nodePort: {type: integer}
+        '403': {description: Forbidden}
+        '404': {description: Task not found}
+        '409': {description: Ambiguous Task or Service ownership conflict}
+        '502': {description: Data-plane Agent unavailable}
   /api/v1/rlinf.io/v1alpha1/tasks/{name}:
     get:
       tags: [Task]
@@ -1156,10 +1359,10 @@ components:
       type: object
       required: [id, name, type, region, location, phase, totalNodes, onlineNodes, offlineNodes, cloudNodes, embodiedNodes, robots, gpuModels, robotModels, cpuUsage, gpuUsage, robotUsage, runningJobs, description]
       properties:
-        id: {type: string}
-        name: {type: string}
+        id: {type: string, description: Stable Cluster resource name used in API paths and references.}
+        name: {type: string, description: Trimmed spec.displayName or the Cluster resource name when unset.}
         type: {type: string}
-        region: {type: string}
+        region: {type: string, description: Trimmed spec.region or node-derived region metadata when unset.}
         location: {type: string}
         phase: {type: string}
         totalNodes: {type: integer}

@@ -25,7 +25,9 @@ RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache
     CGO_ENABLED=0 GOOS=linux go build -o /agent              ./cmd/agent/... && \
     CGO_ENABLED=0 GOOS=linux go build -o /network-sidecar    ./cmd/network-sidecar/... && \
     CGO_ENABLED=0 GOOS=linux go build -o /rlarkadm           ./cmd/rlarkadm && \
-    CGO_ENABLED=0 GOOS=linux go build -o /rlark-tools        ./cmd/rlark-tools
+    CGO_ENABLED=0 GOOS=linux go build -o /rlark-tools        ./cmd/rlark-tools && \
+    CGO_ENABLED=0 GOOS=linux go build -o /station-api        ./cmd/station-api && \
+    CGO_ENABLED=0 GOOS=linux go build -o /station-agent      ./cmd/station-agent
 
 # -- Runtime stage ---------------------------------------------------------
 FROM ${RUNTIME_BASE_IMAGE}
@@ -39,3 +41,5 @@ COPY --from=builder /agent              /usr/local/bin/agent
 COPY --from=builder /network-sidecar    /usr/local/bin/network-sidecar
 COPY --from=builder /rlarkadm           /usr/local/bin/rlarkadm
 COPY --from=builder /rlark-tools        /usr/local/bin/rlark-tools
+COPY --from=builder /station-api        /usr/local/bin/station-api
+COPY --from=builder /station-agent      /usr/local/bin/station-agent

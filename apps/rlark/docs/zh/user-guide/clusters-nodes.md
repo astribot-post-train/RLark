@@ -4,10 +4,25 @@
 
 ## 任务一：查找可用集群
 
+节点表格分别显示 Kubernetes 节点地址和 **WG** 行。每个有效地址均可独立复制，复制结果只包含 IP，不含标签或 CIDR 前缀；搜索支持节点地址和已提供的 WG 地址。多个 WG 地址逐项显示，悬停可查看接口及原始 CIDR。复制失败会在单元格提示，地址仍可手动选择。
+
+配置可选 Station 集成后，节点列表查询经验证的 WireGuard 观测并显示该节点的接口地址。**未上报**不代表没有部署 WireGuard。服务端接收时间超过 90 秒的观测显示为**上次上报**；验证不可用时隐藏 WG 地址，保留 Kubernetes 节点地址。界面不推测网关接入，也不把网关 IP 当作节点地址。本功能为预览，需要 Station API、Gateway 凭证及更新后的 Agent；前提条件见 Station 网关 README。
+
 1. 在业务平台打开**集群**。
 2. 按集群名称或 ID 搜索，或使用列表提供的元数据筛选。
 3. 检查集群状态、在线率和 Worker 数量。
-4. 打开计划使用的集群。
+4. 点击集群所在行，打开计划使用的集群。
+
+管理员可在管理面的 Cluster 资源上设置可选的 `spec.displayName` 和 `spec.region`。列表、详情及集群选择器显示配置的名称，列表在名称下方显示区域；搜索支持显示名称、原 ID 和区域。显示名称为空时回退到 `metadata.name`，区域为空时保留从节点推导区域的行为。REST 的 `name` 是展示文本，`id` 才是稳定身份。修改名称不改变资源名、UID、Agent 命名空间、证书、调度引用和镜像凭证下发目标；镜像凭证下发继续使用既有命名空间后缀标识，不使用显示名称。无需重新安装 Agent。
+
+例如，在管理 API 上执行（不要在成员集群上执行）：
+
+```bash
+kubectl --kubeconfig /path/to/management.kubeconfig patch clusters.rlinf.io rlark-ksyun-gpu \
+  --type=merge -p '{"spec":{"displayName":"金山云西北宁夏裸金属集群","region":"宁夏"}}'
+```
+
+修改前记录字段原值；回滚时恢复原值，原先不存在的字段可通过值为 `null` 的 merge patch 移除。本次仅增加展示元数据，不迁移集群身份。
 
 Cluster 是集群作用域的 RLark 资源。`spec.agentNamespace` 是其 Node CR 成员关系的权威边界：集群详情与节点数只包含该命名空间中的 Node CR。`rlark.io/cluster-id` 仅用于兼容查询，不能证明成员归属。其 cluster Agent 每 15 秒续约一次控制面的 `heartbeat` Lease，Lease 在 45 秒后过期。每个已注册 Worker 还需要由 `rlark-agent-node` 维护自身的 `node-heartbeat-<node-name>` Lease；节点 Lease 缺失或过期时，仅该 Worker 会离线。
 
@@ -51,7 +66,7 @@ Cluster 是集群作用域的 RLark 资源。`spec.agentNamespace` 是其 Node C
 ![节点详情](../../images/ui/first-login-node-detail.png)
 
 !!! note "节点分类"
-业务平台使用 RLark 分类标签组织云算力、端算力和真机 Worker。旧版分类值及明确上报受支持资源的节点仍可见；Kubernetes 控制面节点不进入业务平台 Worker 视图。
+业务平台使用 RLark 分类标签组织云算力、端算力和真机 Worker。旧版分类值及明确上报受支持资源的节点仍可见。Kubernetes 控制面节点仅在明确标记 `rlark.io/enabled=true` 且具有业务分类或受支持的设备资源时显示在 Worker 视图中。显示不代表绕过 Kubernetes 污点或保证可以调度。
 
 ## 完成结果
 

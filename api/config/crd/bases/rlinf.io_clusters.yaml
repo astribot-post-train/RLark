@@ -63,10 +63,18 @@ spec:
                 type: boolean
               delisted:
                 type: boolean
+              displayName:
+                description: DisplayName is a human-readable name; metadata.name remains
+                  the stable cluster ID.
+                type: string
               drainPreviousCordoned:
                 type: boolean
               draining:
                 type: boolean
+              region:
+                description: Region is administrator-managed location metadata, independent
+                  of node placement.
+                type: string
             required:
             - agentNamespace
             type: object

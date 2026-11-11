@@ -59,6 +59,13 @@ parameters:
     default: "1"
     required: true
 
+  - name: controllerNodeSelector
+    displayName: Controller 节点选择器
+    description: Controller Deployment 的节点选择器（label=value 格式），为空时由调度器选择节点。
+    type: string
+    default: ""
+    required: false
+
   - name: controllerLogLevel
     displayName: Controller 日志级别
     description: Controller 日志级别 (0-10)

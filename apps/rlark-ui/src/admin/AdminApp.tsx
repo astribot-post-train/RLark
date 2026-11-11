@@ -25,6 +25,7 @@ import { Header, Logo, PlatformFooter } from "../components/shared";
 import { useBackendMode, usePersistentState } from "../hooks";
 import { SSHKeysPage } from "../pages/SSHKeys";
 import { ImageRegistriesPage } from "../pages/ImageRegistries";
+import { StationsPage } from "../pages/Stations";
 import { SystemConfigPage } from "../pages/SystemConfig";
 import { JobsPage } from "../pages/Jobs";
 import { parseAdminRoute } from "../utils/route";
@@ -452,6 +453,7 @@ export function AdminApp() {
             onSelect={(id?: string) => navigate("image-registries", id ?? "")}
           />
         )}
+        {adminPage === "stations" && <StationsPage copy={c} />}
         {adminPage === "ssh-keys" && (
           <SSHKeysPage copy={c} userName={userName} />
         )}

@@ -3,8 +3,13 @@ package task
 import (
 	"context"
 	"fmt"
+	"net/netip"
 	"os"
 	"strings"
+
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/yaml"
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -54,7 +59,30 @@ func NewKubernetesExecutionCoordinator(kubeClient client.Client, image string) (
 	if err != nil {
 		return nil, fmt.Errorf("inspect Kubernetes Runtime Provider: %w", err)
 	}
-	workloads := raykubernetes.Registrations(namespace, kubernetesruntime.Kind)
+	nodePortEnabled := os.Getenv("RLARK_WG_NODEPORT_ENABLED") == "true"
+	if nodePortEnabled {
+		var config corev1.ConfigMap
+		if err := kubeClient.Get(context.Background(), types.NamespacedName{Namespace: "kube-system", Name: "kube-proxy"}, &config); err != nil {
+			return nil, fmt.Errorf("verify WG-only NodePort addresses: %w", err)
+		}
+		var proxy struct {
+			NodePortAddresses []string `json:"nodePortAddresses"`
+		}
+		if err := yaml.Unmarshal([]byte(config.Data["config.conf"]), &proxy); err != nil {
+			return nil, fmt.Errorf("decode kube-proxy NodePort addresses: %w", err)
+		}
+		wgRange := netip.MustParsePrefix("10.254.240.0/24")
+		if len(proxy.NodePortAddresses) == 0 {
+			return nil, fmt.Errorf("WG-only NodePort requires kube-proxy nodePortAddresses within %s", wgRange)
+		}
+		for _, raw := range proxy.NodePortAddresses {
+			prefix, err := netip.ParsePrefix(raw)
+			if err != nil || !wgRange.Contains(prefix.Addr()) || prefix.Bits() < wgRange.Bits() {
+				return nil, fmt.Errorf("kube-proxy nodePortAddresses %q is outside the WG range", raw)
+			}
+		}
+	}
+	workloads := raykubernetes.Registrations(namespace, kubernetesruntime.Kind, nodePortEnabled)
 	implementations, err := newHostImplementationRegistry(workloads)
 	if err != nil {
 		return nil, fmt.Errorf("initialize Workload implementation registry: %w", err)

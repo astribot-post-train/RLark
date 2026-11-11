@@ -18,6 +18,18 @@ func (g *Gateway) RegisterRoutes(r gin.IRouter) {
 	rlinfv1alpha1 := api.Group("/rlinf.io/v1alpha1")
 	adminAPI := api.Group("", requireAdmin())
 	adminRlinfv1alpha1 := rlinfv1alpha1.Group("", requireAdmin())
+	station := adminAPI.Group("/station/stations")
+	{
+		station.GET("", g.handleListStations)
+		station.GET("/:name", g.handleGetStation)
+	}
+	stationRebinds := adminAPI.Group("/station/rebinds")
+	{
+		stationRebinds.POST("", g.handleCreateStationRebind)
+		stationRebinds.GET("/:name", g.handleGetStationRebind)
+	}
+	adminAPI.GET("/station/observations", g.handleListStationObservations)
+	api.GET("/node-networks/:name", g.handleNodeNetwork)
 
 	api.GET("/api-reference", g.handleAPIReference)
 	users := api.Group("/users")
@@ -95,6 +107,7 @@ func (g *Gateway) RegisterRoutes(r gin.IRouter) {
 		tasks.PATCH("/:name", g.rlinfv1alpha1PatchTask)
 		tasks.DELETE("/:name", g.rlinfv1alpha1DeleteTask)
 		tasks.Any("/:name/tensorboard/*path", g.handleTaskTensorBoardProxy)
+		tasks.GET("/:name/exposed-ports", g.handleTaskExposedPorts)
 	}
 
 	pods := rlinfv1alpha1.Group("/pods")
@@ -151,6 +164,7 @@ func (g *Gateway) RegisterRoutes(r gin.IRouter) {
 		imageRegistries.GET("/:id/tags", g.handleRegistryTags)
 		imageRegistries.GET("/:id/manifest", g.handleRegistryManifest)
 	}
+	api.GET("/image-registries/:id/password", g.auditRegistryPasswordAccess(), requireAdmin(), g.handleGetImageRegistryPassword)
 
 	// System Config APIs
 	systemConfig := api.Group("/system-config")
