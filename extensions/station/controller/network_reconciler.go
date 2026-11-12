@@ -69,10 +69,20 @@ func (r *NetworkReconciler) SetupWithManager(mgr manager.Manager) error {
 		Complete(r)
 }
 
+// Reconcile answers every enrollment. station-api writes enrollments while this
+// runs; losing such a race is not an error, the network is computed again.
 func (r *NetworkReconciler) Reconcile(ctx context.Context, req reconcile.Request) (reconcile.Result, error) {
 	if req.NamespacedName != r.network {
 		return reconcile.Result{}, nil
 	}
+	result, err := r.reconcile(ctx)
+	if apierrors.IsConflict(err) {
+		return reconcile.Result{Requeue: true}, nil
+	}
+	return result, err
+}
+
+func (r *NetworkReconciler) reconcile(ctx context.Context) (reconcile.Result, error) {
 	var siteNetwork stationv1alpha1.SiteNetwork
 	if err := r.reader.Get(ctx, r.network, &siteNetwork); apierrors.IsNotFound(err) {
 		return reconcile.Result{}, nil
