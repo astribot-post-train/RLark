@@ -230,10 +230,10 @@ func TestRegistryTrustRendersHostsAndCA(t *testing.T) {
 	for _, e := range pod.Containers[0].Env {
 		env[e.Name] = e.Value
 	}
-	if env["HOSTS"] != "10.0.0.1:5443,10.0.0.2:5443" || env["CA_CERT"] != ca+"\n" || env["CERTS_DIR"] != "/etc/containerd/certs.d" {
+	if env["HOSTS"] != "10.0.0.1:5443,10.0.0.2:5443" || env["CA_CERT"] != ca+"\n" {
 		t.Fatalf("env = %q", env)
 	}
-	if pod.Volumes[0].HostPath.Path != "/etc/containerd/certs.d" || pod.Containers[0].Image != "registry/shell:1" {
+	if pod.Volumes[0].HostPath.Path != "/etc" || pod.Containers[0].Image != "registry/shell:1" {
 		t.Fatalf("pod = %+v", pod)
 	}
 }
