@@ -40,6 +40,9 @@ rules:
 - apiGroups: ["station.rlark.io"]
   resources: ["networkenrollments"]
   verbs: ["get", "create", "update"]
+- apiGroups: ["station.rlark.io"]
+  resources: ["nodeadmissions"]
+  verbs: ["list", "update"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -87,10 +90,10 @@ rules:
   resources: ["stationauditevents"]
   verbs: ["get", "create"]
 - apiGroups: ["station.rlark.io"]
-  resources: ["sitenetworks", "networkenrollments"]
+  resources: ["sitenetworks", "networkenrollments", "nodeadmissions"]
   verbs: ["get", "list", "watch"]
 - apiGroups: ["station.rlark.io"]
-  resources: ["sitenetworks/status", "networkenrollments/status"]
+  resources: ["sitenetworks/status", "networkenrollments/status", "nodeadmissions/status"]
   verbs: ["get", "update", "patch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1

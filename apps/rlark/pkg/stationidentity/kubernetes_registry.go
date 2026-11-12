@@ -145,6 +145,15 @@ func (r *KubernetesClusterRegistry) Reader(ctx context.Context, clusterID string
 	}}, nil
 }
 
+// MemberClient returns the client of a registered cluster.
+func (r *KubernetesClusterRegistry) MemberClient(ctx context.Context, clusterID string) (kubernetes.Interface, error) {
+	reader, err := r.Reader(ctx, clusterID)
+	if err != nil {
+		return nil, err
+	}
+	return reader.(registeredReader).cluster.Client, nil
+}
+
 func (r *KubernetesClusterRegistry) evict(clusterID string) {
 	r.mu.Lock()
 	delete(r.cache, clusterID)

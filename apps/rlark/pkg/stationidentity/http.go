@@ -72,6 +72,8 @@ type API struct {
 	NetworkSummary     *NodeNetworkSummaryReader
 	Enrollments        NetworkEnroller
 	EnrollmentLimiter  ObservationLimiter
+	// Bootstrap, when set, admits machines that are not nodes yet by a one-time code.
+	Bootstrap *Bootstrap
 	GatewayCredential  func() ([]byte, error)
 }
 
@@ -103,6 +105,10 @@ func (a *API) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ready"})
+		return
+	}
+	if a.Bootstrap != nil && (strings.HasPrefix(r.URL.Path, "/b/") || strings.HasPrefix(r.URL.Path, "/v1/bootstrap/")) {
+		a.Bootstrap.ServeHTTP(w, r)
 		return
 	}
 	if a.Registry == nil {
