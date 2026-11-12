@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -343,4 +344,91 @@ func TestSequenceOwnerMismatchFailsClosed(t *testing.T) {
 
 func findCondition(station *stationv1alpha1.Station, conditionType string) *metav1.Condition {
 	return apimeta.FindStatusCondition(station.Status.Conditions, conditionType)
+}
+
+// Online is three separate facts. A fresh heartbeat does not say the tunnel
+// works, and a node is not unverified because a peer of its is switched off.
+func TestTunnelVerdictCountsOnlyPeersThatAreOnline(t *testing.T) {
+	now := time.Date(2026, 11, 12, 4, 0, 0, 0, time.UTC)
+	observation := testObservation("node-a", "node-uid-a", now)
+	observation.Status.Probes = []stationv1alpha1.StationProbe{{Target: "10.254.240.1", Via: "st-wg0", OK: true}, {Target: "10.254.240.3", Via: "st-wg0"}}
+	peer := &stationv1alpha1.Station{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "other-cluster", Name: "stn-robot"},
+		Spec:       stationv1alpha1.StationSpec{DisplayName: "robot", Sequence: 1, Binding: stationv1alpha1.StationBinding{NodeName: "robot", NodeUID: "u", Version: 1, BoundBy: "t"}},
+		Status:     stationv1alpha1.StationStatus{Phase: stationv1alpha1.StationPhaseBound},
+	}
+	enrollment := &stationv1alpha1.NetworkEnrollment{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "other-cluster", Name: "robot"},
+		Status:     stationv1alpha1.NetworkEnrollmentStatus{Phase: stationv1alpha1.NetworkEnrollmentEnrolled, TunnelAddress: "10.254.240.3"},
+	}
+	reconciler, c := newTestReconciler(t, &now, observation, peer, enrollment)
+	if _, err := reconciler.Reconcile(context.Background(), requestFor("node-a")); err != nil {
+		t.Fatal(err)
+	}
+	name := StationName("cluster-a", "node-uid-a")
+	station := getStation(t, c, name)
+	if condition := findCondition(station, "NetworkVerified"); station.Status.Phase != stationv1alpha1.StationPhaseBound || condition == nil || condition.Status != metav1.ConditionFalse || !strings.Contains(condition.Message, "10.254.240.3") {
+		t.Fatalf("a live heartbeat with an unreachable online peer: phase %s, %+v", station.Status.Phase, condition)
+	}
+
+	// The robot is switched off: its Station goes Offline, and this node is verified again.
+	peer.Status.Phase = stationv1alpha1.StationPhaseOffline
+	if err := c.Status().Update(context.Background(), peer); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := reconciler.Reconcile(context.Background(), requestFor("node-a")); err != nil {
+		t.Fatal(err)
+	}
+	if condition := findCondition(getStation(t, c, name), "NetworkVerified"); condition == nil || condition.Status != metav1.ConditionTrue || !strings.Contains(condition.Message, "reached 1 of 2") {
+		t.Fatalf("an offline peer must not count: %+v", condition)
+	}
+}
+
+// A restart shorter than the heartbeat window never shows as Offline; the boot
+// time records it.
+func TestRebootLeavesATrace(t *testing.T) {
+	now := time.Date(2026, 11, 12, 3, 0, 0, 0, time.UTC)
+	observation := testObservation("node-a", "node-uid-a", now)
+	reconciler, c := newTestReconciler(t, &now, observation)
+	reconcileOnce := func() *stationv1alpha1.Station {
+		t.Helper()
+		if _, err := reconciler.Reconcile(context.Background(), requestFor("node-a")); err != nil {
+			t.Fatal(err)
+		}
+		return getStation(t, c, StationName("cluster-a", "node-uid-a"))
+	}
+	reconcileOnce() // creates the Station
+	if station := reconcileOnce(); station.Status.Reboots != 0 || findCondition(station, "Rebooted") != nil {
+		t.Fatalf("no reboot yet: %+v", station.Status)
+	}
+	report := func(boot time.Time) {
+		t.Helper()
+		var current stationv1alpha1.StationObservation
+		if err := c.Get(context.Background(), types.NamespacedName{Namespace: testNamespace, Name: "node-a"}, &current); err != nil {
+			t.Fatal(err)
+		}
+		current.Status.ReportedAt, current.Status.BootTime = metav1.NewTime(now), &metav1.Time{Time: boot}
+		if err := c.Status().Update(context.Background(), &current); err != nil {
+			t.Fatal(err)
+		}
+	}
+	first := observation.Status.BootTime.Time
+	// The clock was stepped by a second: the same boot.
+	now = now.Add(30 * time.Second)
+	report(first.Add(time.Second))
+	if station := reconcileOnce(); station.Status.Reboots != 0 {
+		t.Fatal("a stepped clock counted as a reboot")
+	}
+	// The machine restarted 40 s ago; its heartbeat never lapsed.
+	now = now.Add(30 * time.Second)
+	rebooted := now.Add(-40 * time.Second)
+	report(rebooted)
+	station := reconcileOnce()
+	condition := findCondition(station, "Rebooted")
+	if station.Status.Phase != stationv1alpha1.StationPhaseBound || station.Status.Reboots != 1 || condition == nil || !strings.Contains(condition.Message, rebooted.Format(time.RFC3339)) || !condition.LastTransitionTime.Time.Equal(now) {
+		t.Fatalf("reboot not recorded: reboots %d, %+v", station.Status.Reboots, condition)
+	}
+	if station = reconcileOnce(); station.Status.Reboots != 1 {
+		t.Fatal("the same boot counted twice")
+	}
 }

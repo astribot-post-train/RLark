@@ -29,17 +29,17 @@ func TestKernelReconciliation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = apply(d, key); err != nil {
+	if err = apply(d, key, false); err != nil {
 		t.Fatal(err)
 	}
-	if err = apply(d, key); err != nil {
+	if err = apply(d, key, false); err != nil {
 		t.Fatalf("restart reconcile: %v", err)
 	}
 	changed, err := parse([]byte(`{"interface":"wg-st-test","address":"10.253.0.9/32","listenPort":51821,"mtu":1420}`))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = apply(changed, key); err == nil {
+	if err = apply(changed, key, false); err == nil {
 		t.Fatal("accepted address migration on existing interface")
 	}
 	linkBefore, err := netlink.LinkByName("wg-st-test")
@@ -50,7 +50,7 @@ func TestKernelReconciliation(t *testing.T) {
 	if err != nil || len(addresses) != 1 || addresses[0].IPNet.String() != "10.253.0.1/32" {
 		t.Fatalf("address changed after rejected migration: %v %v", addresses, err)
 	}
-	if err = apply(d, key); err != nil {
+	if err = apply(d, key, false); err != nil {
 		t.Fatalf("recover original configuration: %v", err)
 	}
 	uplink := &netlink.Dummy{LinkAttrs: netlink.LinkAttrs{Name: "station-uplink"}}
@@ -65,14 +65,14 @@ func TestKernelReconciliation(t *testing.T) {
 		t.Fatal(err)
 	}
 	d.UplinkRoutes = []uplinkRoute{{Destination: "198.51.100.1/32", Gateway: "192.0.2.1", Source: "192.0.2.10", Interface: "station-uplink"}}
-	if err = apply(d, key); err != nil {
+	if err = apply(d, key, false); err != nil {
 		t.Fatalf("add uplink: %v", err)
 	}
-	if err = apply(d, key); err != nil {
+	if err = apply(d, key, false); err != nil {
 		t.Fatalf("reconcile uplink: %v", err)
 	}
 	d.UplinkRoutes[0].Source = "192.0.2.11"
-	if err = apply(d, key); err == nil {
+	if err = apply(d, key, false); err == nil {
 		t.Fatal("accepted missing uplink source")
 	}
 	d.UplinkRoutes[0].Source = "192.0.2.10"
@@ -81,7 +81,7 @@ func TestKernelReconciliation(t *testing.T) {
 	if err = netlink.RouteReplace(&conflict); err != nil {
 		t.Fatal(err)
 	}
-	if err = apply(d, key); err == nil {
+	if err = apply(d, key, false); err == nil {
 		t.Fatal("accepted foreign uplink route")
 	}
 	d.UplinkRoutes = nil
@@ -94,7 +94,7 @@ func TestKernelReconciliation(t *testing.T) {
 	if err = netlink.RouteAdd(&other); err != nil {
 		t.Fatal(err)
 	}
-	if err = apply(d, key); err == nil {
+	if err = apply(d, key, false); err == nil {
 		t.Fatal("accepted ambiguous pre-existing route")
 	}
 	routes, err := netlink.RouteListFiltered(netlink.FAMILY_V4, &netlink.Route{Dst: dst}, netlink.RT_FILTER_DST)
@@ -106,7 +106,7 @@ func TestKernelReconciliation(t *testing.T) {
 		t.Fatal(err)
 	}
 	d.Interface = "wg-foreign"
-	if err = apply(d, key); err == nil {
+	if err = apply(d, key, false); err == nil {
 		t.Fatal("adopted unowned interface")
 	}
 }
@@ -127,7 +127,7 @@ func TestKernelStatus(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := apply(d, private); err != nil {
+	if err := apply(d, private, false); err != nil {
 		t.Fatal(err)
 	}
 	snapshot := filepath.Join(t.TempDir(), "observation.json")
@@ -182,5 +182,61 @@ func TestKernelStatus(t *testing.T) {
 	}
 	if got.Interface != "wg-status" || got.PublicKey != private.PublicKey().String() || len(got.Peers) != 1 || got.Peers[0].PublicKey != peerKey.PublicKey().String() || got.Peers[0].LastHandshake != nil || got.Peers[0].ReceiveBytes != 0 || got.Peers[0].TransmitBytes != 0 {
 		t.Fatalf("unexpected kernel status: %+v", got)
+	}
+}
+
+// An enrolled node gains and loses peers without touching the others, and
+// with pruning it removes the routes of a node that left.
+func TestKernelIncrementalPeersAndPrunedRoutes(t *testing.T) {
+	if os.Getenv("STATION_NETNS_TEST") != "1" {
+		t.Skip("requires disposable privileged network namespace")
+	}
+	key, _ := wgtypes.GeneratePrivateKey()
+	first, _ := wgtypes.GeneratePrivateKey()
+	second, _ := wgtypes.GeneratePrivateKey()
+	peer := func(k wgtypes.Key, address string) string {
+		return `{"publicKey":"` + k.PublicKey().String() + `","allowedIPs":["` + address + `/32"],"endpoint":"192.0.2.9:51820","keepaliveSeconds":25}`
+	}
+	document := func(peers, routes string) *desired {
+		d, err := parse([]byte(`{"interface":"wg-st-incr","address":"10.253.1.1/32","listenPort":51830,"mtu":1380,"peers":[` + peers + `],"routes":[` + routes + `]}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return d
+	}
+	client, err := wgctrl.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	one := document(peer(first, "10.253.1.2"), `"10.253.1.2/32"`)
+	if err := apply(one, key, true); err != nil {
+		t.Fatal(err)
+	}
+	both := document(peer(first, "10.253.1.2")+","+peer(second, "10.253.1.3"), `"10.253.1.2/32","10.253.1.3/32"`)
+	device, _ := client.Device("wg-st-incr")
+	if config, changed := deviceConfig(both, key, device); !changed || len(config.Peers) != 1 || config.Peers[0].PublicKey != second.PublicKey() || config.PrivateKey != nil || config.ReplacePeers {
+		t.Fatalf("joining node must be the only change: %+v", config)
+	}
+	if err := apply(both, key, true); err != nil {
+		t.Fatal(err)
+	}
+	if device, _ = client.Device("wg-st-incr"); len(device.Peers) != 2 {
+		t.Fatalf("peers after join: %d", len(device.Peers))
+	}
+	if _, changed := deviceConfig(both, key, device); changed {
+		t.Fatal("reconciling the same document must not touch the device")
+	}
+	if err := apply(one, key, false); err == nil {
+		t.Fatal("without pruning a dropped route stops reconciliation")
+	}
+	if err := apply(one, key, true); err != nil {
+		t.Fatal(err)
+	}
+	device, _ = client.Device("wg-st-incr")
+	link, _ := netlink.LinkByName("wg-st-incr")
+	routes, err := netlink.RouteList(link, netlink.FAMILY_V4)
+	if err != nil || len(device.Peers) != 1 || device.Peers[0].PublicKey != first.PublicKey() || len(routes) != 1 || routes[0].Dst.String() != "10.253.1.2/32" {
+		t.Fatalf("after the node left: peers %d, routes %v, %v", len(device.Peers), routes, err)
 	}
 }

@@ -110,6 +110,78 @@ paths:
         '404': {description: Cluster or node not visible}
         '409': {description: Ambiguous cluster namespace}
         '503': {description: Verified observation unavailable}
+  /api/v1/site-nodes:
+    get:
+      tags: [Station]
+      summary: List the site nodes of a cluster (read-only), optionally those carrying a label
+      parameters:
+        - {name: cluster_id, in: query, required: true, schema: {type: string}}
+        - {name: label, in: query, required: false, schema: {type: string}, description: key=value}
+      responses:
+        '200':
+          description: Site nodes in sequence order, each shaped as in GET /api/v1/site-nodes/{name}
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items: {type: array, items: {type: object}}
+        '400': {description: Missing cluster ID}
+        '404': {description: Cluster not found}
+        '409': {description: Ambiguous cluster namespace}
+        '502': {description: Management API request failed}
+        '503': {description: Station API unavailable}
+  /api/v1/site-nodes/{name}:
+    get:
+      tags: [Station]
+      summary: Look up one site node by Node name (read-only; identity, network address, robot)
+      description: >-
+        The interface for consumers that place work on machines, such as a Fleet Run. A caller keeps
+        the cluster ID and Node name and reads the rest here. site_node_id is stable across reinstalls;
+        binding_version increases when an administrator rebinds the identity to a reinstalled machine;
+        network.address is the one address every other member reaches the node at. The answer says
+        nothing about what runs on the machine.
+      parameters:
+        - {name: name, in: path, required: true, schema: {type: string}}
+        - {name: cluster_id, in: query, required: true, schema: {type: string}}
+      responses:
+        '200':
+          description: The site node bound to this Node name
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [cluster_id, node_name, site_node_id, sequence, binding_version, phase, online]
+                properties:
+                  cluster_id: {type: string}
+                  node_name: {type: string}
+                  site_node_id: {type: string}
+                  sequence: {type: integer}
+                  binding_version: {type: integer}
+                  phase: {type: string, enum: [Bound, Offline, Conflict, Retired]}
+                  online: {type: boolean, description: Heartbeat only; the agent reported within 90 s}
+                  tunnel: {type: string, enum: [verified, failed, unknown], description: Whether the node reaches every peer that is itself online}
+                  rlark_node: {type: string, enum: [ready, not-ready, unknown]}
+                  last_seen_time: {type: string, format: date-time}
+                  boot_time: {type: string, format: date-time}
+                  reboots: {type: integer, description: Boot-time changes seen since the identity was created}
+                  labels: {type: object, additionalProperties: {type: string}}
+                  robot_id: {type: string}
+                  workstation_id: {type: string}
+                  network:
+                    type: object
+                    description: Absent until the node has enrolled under its current binding
+                    properties:
+                      state: {type: string, enum: [Pending, Enrolled, Rejected]}
+                      site: {type: string}
+                      role: {type: string, enum: [Leaf, Hub]}
+                      address: {type: string}
+                      tunnel_address: {type: string}
+        '400': {description: Missing cluster ID}
+        '404': {description: Cluster or site node not found}
+        '409': {description: Ambiguous cluster namespace or node binding}
+        '502': {description: Management API request failed}
+        '503': {description: Station API unavailable}
   /api/v1/station/stations:
     get:
       tags: [Station]

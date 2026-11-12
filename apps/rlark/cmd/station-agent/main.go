@@ -35,6 +35,8 @@ func main() {
 	cmd.Flags().DurationVar(&config.RequestLimit, "request-timeout", 10*time.Second, "Maximum time for one API request")
 	cmd.Flags().StringVar(&config.ProbeAddress, "probe-address", ":8081", "Health and readiness listener address")
 	cmd.Flags().StringVar(&config.WireguardObservationFile, "wireguard-observation-file", "", "Optional non-secret WireGuard observation snapshot")
+	cmd.Flags().StringVar(&config.NetworkIdentityFile, "network-identity-file", "", "Public key file published by the gateway container; omit on a network that runs no tunnel")
+	cmd.Flags().StringVar(&config.NetworkConfigFile, "network-config-file", "", "Enables network enrollment: where to store the configuration computed by Station API")
 	if err := cmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, "station-agent failed")
 		os.Exit(1)

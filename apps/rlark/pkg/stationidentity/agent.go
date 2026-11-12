@@ -29,6 +29,12 @@ type AgentConfig struct {
 	RequestLimit             time.Duration
 	ProbeAddress             string
 	WireguardObservationFile string
+	// NetworkConfigFile enables network enrollment: it is where the agent
+	// stores the configuration computed for the node. NetworkIdentityFile is
+	// where the gateway container publishes its public key; without it the
+	// node enrolls its address only, for a network that runs no tunnel.
+	NetworkIdentityFile string
+	NetworkConfigFile   string
 }
 
 func (c AgentConfig) Validate() error {
@@ -49,8 +55,15 @@ func (c AgentConfig) Validate() error {
 			return errors.New("agent probe address must contain a valid TCP port")
 		}
 	}
+	if c.NetworkIdentityFile != "" && c.NetworkConfigFile == "" {
+		return errors.New("a network identity file requires a network configuration file")
+	}
 	return nil
 }
+
+// pendingEnrollmentRetry is how soon a node asks again while its enrollment is
+// being answered. It stays above the observation rate limit of one per second.
+const pendingEnrollmentRetry = 5 * time.Second
 
 type Agent struct {
 	config               AgentConfig
@@ -61,6 +74,7 @@ type Agent struct {
 	mu                   sync.RWMutex
 	lastSuccessfulReport time.Time
 	observe              func() (Observation, error)
+	dial                 func(context.Context, string) error
 }
 
 func NewAgent(config AgentConfig) (*Agent, error) {
@@ -108,6 +122,13 @@ func newAgent(config AgentConfig, read func(string) ([]byte, error), now func() 
 	}
 	agent := &Agent{config: config, client: client, read: read, now: now, observe: collectSystemObservation}
 	agent.post = agent.postObservation
+	agent.dial = func(ctx context.Context, address string) error {
+		connection, err := (&net.Dialer{}).DialContext(ctx, "tcp4", address)
+		if err == nil {
+			_ = connection.Close()
+		}
+		return err
+	}
 	return agent, nil
 }
 
@@ -131,7 +152,7 @@ func (a *Agent) Run(ctx context.Context) error {
 		defer cancel()
 		_ = probeServer.Shutdown(shutdownCtx)
 	}()
-	backoff := time.Second
+	backoff, enrollment, reported := time.Second, "", ""
 	maxBackoff := min(a.config.Interval, 30*time.Second)
 	for {
 		select {
@@ -145,6 +166,10 @@ func (a *Agent) Run(ctx context.Context) error {
 			if ctx.Err() != nil {
 				return nil
 			}
+			if err.Error() != reported {
+				reported = err.Error()
+				fmt.Fprintln(os.Stderr, "observation:", reported)
+			}
 			timer := time.NewTimer(backoff)
 			select {
 			case <-ctx.Done():
@@ -156,7 +181,27 @@ func (a *Agent) Run(ctx context.Context) error {
 			continue
 		}
 		backoff = time.Second
-		timer := time.NewTimer(a.config.Interval)
+		if reported != "" {
+			reported = ""
+			fmt.Fprintln(os.Stderr, "observation: accepted")
+		}
+		wait := a.config.Interval
+		if a.config.NetworkConfigFile != "" {
+			state, err := a.Enroll(ctx)
+			if err != nil {
+				state = err.Error()
+			}
+			if state != enrollment {
+				enrollment = state
+				fmt.Fprintln(os.Stderr, "network enrollment:", state)
+			}
+			// The controller answers a new request within seconds; do not
+			// make a joining node wait a whole interval for it.
+			if state == "pending" {
+				wait = min(wait, pendingEnrollmentRetry)
+			}
+		}
+		timer := time.NewTimer(wait)
 		select {
 		case <-ctx.Done():
 			timer.Stop()
@@ -184,6 +229,9 @@ func (a *Agent) Report(ctx context.Context) error {
 	}
 	if a.config.WireguardObservationFile != "" {
 		observation.Wireguard = readWireguardSnapshot(a.config.WireguardObservationFile, a.now())
+	}
+	if a.config.NetworkConfigFile != "" {
+		observation.Probes = a.probePeers(ctx)
 	}
 	body, err := json.Marshal(observationRequest{ClusterID: a.config.ClusterID, Observation: observation})
 	if err != nil {

@@ -89,3 +89,14 @@ func TestAuthenticateResolvesPerNodeBindingFromServerState(t *testing.T) {
 		t.Fatal("accepted stale registration binding")
 	}
 }
+
+// The same Node name with a new UID authenticates as an unbound node: it can
+// report, and it cannot act as the Station bound to the previous UID.
+func TestReinstalledNodeAuthenticatesUnbound(t *testing.T) {
+	cluster := makeCluster("cluster-a", "agent-a", false)
+	station := makeStation("station-a", "agent-a", "node-a", "old-node-uid", "station-uid-a", 2, false, "Bound")
+	resolver := KubernetesStationBindingResolver{Management: registryDynamic(cluster, station)}
+	if _, err := resolver.Resolve(context.Background(), "cluster-a", "node-a", "new-node-uid"); !errors.Is(err, ErrStationBindingNotFound) {
+		t.Fatalf("reinstalled node resolved as %v", err)
+	}
+}

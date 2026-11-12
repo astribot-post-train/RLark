@@ -43,11 +43,7 @@ func writeReady(path string, data []byte, now time.Time) error {
 }
 
 // checkReady checks reconciliation freshness, not peer connectivity.
-func checkReady(configPath, path string, now time.Time) error {
-	data, err := os.ReadFile(configPath)
-	if err != nil {
-		return fmt.Errorf("read config: %w", err)
-	}
+func checkReady(data []byte, path string, now time.Time) error {
 	state, err := os.ReadFile(path)
 	if err != nil {
 		return fmt.Errorf("read readiness: %w", err)

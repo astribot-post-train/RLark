@@ -145,6 +145,15 @@ func (r *KubernetesClusterRegistry) Reader(ctx context.Context, clusterID string
 	}}, nil
 }
 
+// MemberClient returns the client of a registered cluster.
+func (r *KubernetesClusterRegistry) MemberClient(ctx context.Context, clusterID string) (kubernetes.Interface, error) {
+	reader, err := r.Reader(ctx, clusterID)
+	if err != nil {
+		return nil, err
+	}
+	return reader.(registeredReader).cluster.Client, nil
+}
+
 func (r *KubernetesClusterRegistry) evict(clusterID string) {
 	r.mu.Lock()
 	delete(r.cache, clusterID)
@@ -185,7 +194,10 @@ func (r KubernetesStationBindingResolver) Resolve(ctx context.Context, clusterID
 			return Binding{}, errors.New("multiple Stations claim the same Node binding")
 		}
 		if uid != nodeUID {
-			return Binding{}, errors.New("Station Node UID conflicts with current member Node")
+			// A reinstalled machine under the same name is a verified Node with no
+			// binding of its own: it may report, so that the Station shows the
+			// conflict and an administrator can rebind it, and nothing more.
+			return Binding{}, fmt.Errorf("%w: Station %q is bound to another Node UID under this name", ErrStationBindingNotFound, station.GetName())
 		}
 		retired, _, retiredErr := unstructured.NestedBool(station.Object, "spec", "retired")
 		version, _, versionErr := unstructured.NestedInt64(station.Object, "spec", "binding", "version")

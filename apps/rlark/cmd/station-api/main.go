@@ -28,6 +28,8 @@ import (
 func main() {
 	config := configs.DefaultKubernetesClientConfig()
 	var address, credentialsNamespace, certFile, keyFile, gatewayCredentialFile string
+	var bootstrap stationidentity.Bootstrap
+	var bootstrapCAFile string
 	cmd := &cobra.Command{
 		Use:   "station-api",
 		Short: "Run the Station identity and observation API",
@@ -35,7 +37,7 @@ func main() {
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx, cancel := signal.NotifyContext(cmd.Context(), syscall.SIGINT, syscall.SIGTERM)
 			defer cancel()
-			return run(ctx, config, address, credentialsNamespace, certFile, keyFile, gatewayCredentialFile)
+			return run(ctx, config, address, credentialsNamespace, certFile, keyFile, gatewayCredentialFile, &bootstrap, bootstrapCAFile)
 		},
 	}
 	config.SetupFlags(cmd.Flags())
@@ -44,13 +46,16 @@ func main() {
 	cmd.Flags().StringVar(&certFile, "tls-cert-file", os.Getenv("STATION_API_TLS_CERT_FILE"), "TLS certificate path mounted into the container")
 	cmd.Flags().StringVar(&keyFile, "tls-key-file", os.Getenv("STATION_API_TLS_KEY_FILE"), "TLS private key path mounted into the container")
 	cmd.Flags().StringVar(&gatewayCredentialFile, "gateway-credential-file", "", "Optional dedicated Gateway network-summary credential file")
+	cmd.Flags().StringVar(&bootstrapCAFile, "bootstrap-ca-file", "", "CA certificate machines verify this API with; enables node admission by one-time code")
+	cmd.Flags().StringVar(&bootstrap.ImageFile, "bootstrap-image-file", "", "Installer image served to admitted machines, as a docker archive")
+	cmd.Flags().StringVar(&bootstrap.ImageRef, "bootstrap-image-ref", "", "Name of the installer image inside the archive")
 	if err := cmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, "station-api failed")
 		os.Exit(1)
 	}
 }
 
-func run(ctx context.Context, kubeConfig configs.KubernetesClientConfig, address, credentialsNamespace, certFile, keyFile, gatewayCredentialFile string) error {
+func run(ctx context.Context, kubeConfig configs.KubernetesClientConfig, address, credentialsNamespace, certFile, keyFile, gatewayCredentialFile string, bootstrap *stationidentity.Bootstrap, bootstrapCAFile string) error {
 	if address == "" || credentialsNamespace == "" || certFile == "" || keyFile == "" {
 		return errors.New("listener, credential namespace and TLS certificate paths are required")
 	}
@@ -101,6 +106,10 @@ func run(ctx context.Context, kubeConfig configs.KubernetesClientConfig, address
 	if err != nil {
 		return errors.New("configure Station observation rate limiter")
 	}
+	enrollmentLimiter, err := stationidentity.NewTokenBucketObservationLimiter(1, 5, 10000, 10*time.Minute)
+	if err != nil {
+		return errors.New("configure network enrollment rate limiter")
+	}
 	api := &stationidentity.API{
 		Registry:           registry,
 		Challenges:         challenges,
@@ -108,6 +117,10 @@ func run(ctx context.Context, kubeConfig configs.KubernetesClientConfig, address
 		Observations: &stationidentity.KubernetesObservationSink{
 			Client: management, Namespaces: stationidentity.KubernetesClusterNamespaceResolver{Client: management},
 		},
+		Enrollments: &stationidentity.KubernetesNetworkEnroller{
+			Client: management, Namespaces: stationidentity.KubernetesClusterNamespaceResolver{Client: management},
+		},
+		EnrollmentLimiter: enrollmentLimiter,
 		Ready: func(readyCtx context.Context) error {
 			if err := db.PingContext(readyCtx); err != nil {
 				return err
@@ -115,6 +128,14 @@ func run(ctx context.Context, kubeConfig configs.KubernetesClientConfig, address
 			_, err := management.Resource(rlarkClusterGVR).List(readyCtx, metav1.ListOptions{Limit: 1})
 			return err
 		},
+	}
+	if bootstrapCAFile != "" {
+		ca, err := os.ReadFile(bootstrapCAFile)
+		if err != nil || bootstrap.ImageFile == "" || bootstrap.ImageRef == "" {
+			return errors.New("node admission needs a readable CA file, the installer archive and its image name")
+		}
+		bootstrap.CA, bootstrap.Management, bootstrap.Member = ca, management, registry.MemberClient
+		api.Bootstrap = bootstrap
 	}
 	if gatewayCredentialFile != "" {
 		api.NetworkSummary = &stationidentity.NodeNetworkSummaryReader{Registry: registry, Client: management, Namespaces: stationidentity.KubernetesClusterNamespaceResolver{Client: management}}

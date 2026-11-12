@@ -61,7 +61,8 @@ spec:
                 minLength: 1
                 type: string
               containerdRuntime:
-                description: ContainerdRuntime selects the member cluster's node-agent runtime profile.
+                description: ContainerdRuntime selects one of the node-agent runtime
+                  profiles installed in the member cluster.
                 enum:
                 - containerd
                 - fleet

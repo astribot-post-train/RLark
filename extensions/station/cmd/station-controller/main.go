@@ -12,6 +12,7 @@ import (
 	"github.com/rlinf/rlark/extensions/station/controller"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/clientcmd"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
@@ -20,7 +21,7 @@ import (
 )
 
 func main() {
-	var kubeconfig, credentialsNamespace, nodeOperationCredentialsNamespace, metricsAddress, probeAddress string
+	var kubeconfig, credentialsNamespace, nodeOperationCredentialsNamespace, metricsAddress, probeAddress, networkNamespace, networkName string
 	var nodeOperations bool
 	flag.StringVar(&kubeconfig, "management-kubeconfig", os.Getenv("KUBECONFIG"), "management API kubeconfig; omit to use in-cluster credentials")
 	flag.StringVar(&credentialsNamespace, "member-credentials-namespace", "station-system", "namespace containing per-member kubeconfig Secrets")
@@ -28,6 +29,8 @@ func main() {
 	flag.StringVar(&metricsAddress, "metrics-bind-address", ":8080", "Prometheus metrics bind address")
 	flag.StringVar(&probeAddress, "health-probe-bind-address", ":8081", "health and readiness probe bind address")
 	flag.BoolVar(&nodeOperations, "enable-node-operations", false, "Enable experimental node operations; requires NodeOperation CRD and dedicated permissions")
+	flag.StringVar(&networkNamespace, "site-network-namespace", "station-system", "namespace of the SiteNetwork that answers NetworkEnrollments")
+	flag.StringVar(&networkName, "site-network-name", "default", "name of the SiteNetwork that answers NetworkEnrollments")
 	flag.Parse()
 	ctrl.SetLogger(zap.New(zap.UseDevMode(false)))
 
@@ -120,6 +123,15 @@ func main() {
 			ctrl.Log.Error(err, "register node operation reconciler")
 			os.Exit(1)
 		}
+	}
+	networkReconciler, err := controller.NewNetworkReconciler(manager.GetClient(), manager.GetAPIReader(), types.NamespacedName{Namespace: networkNamespace, Name: networkName}, time.Now)
+	if err != nil {
+		ctrl.Log.Error(err, "create SiteNetwork reconciler")
+		os.Exit(1)
+	}
+	if err := networkReconciler.SetupWithManager(manager); err != nil {
+		ctrl.Log.Error(err, "register SiteNetwork reconciler")
+		os.Exit(1)
 	}
 	if err := manager.AddHealthzCheck("healthz", healthz.Ping); err != nil {
 		ctrl.Log.Error(err, "register health check")

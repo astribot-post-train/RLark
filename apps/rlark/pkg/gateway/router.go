@@ -36,6 +36,8 @@ func (g *Gateway) RegisterRoutes(r gin.IRouter) {
 	}
 	adminAPI.GET("/station/observations", g.handleListStationObservations)
 	api.GET("/node-networks/:name", g.handleNodeNetwork)
+	api.GET("/site-nodes", g.handleListSiteNodes)
+	api.GET("/site-nodes/:name", g.handleGetSiteNode)
 
 	api.GET("/api-reference", g.handleAPIReference)
 	users := api.Group("/users")

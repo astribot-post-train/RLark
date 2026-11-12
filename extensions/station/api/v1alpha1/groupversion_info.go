@@ -20,6 +20,9 @@ func AddToScheme(scheme *runtime.Scheme) error {
 		&StationRebind{}, &StationRebindList{},
 		&StationAuditEvent{}, &StationAuditEventList{},
 		&NodeOperation{}, &NodeOperationList{},
+		&SiteNetwork{}, &SiteNetworkList{},
+		&NetworkEnrollment{}, &NetworkEnrollmentList{},
+		&NodeAdmission{}, &NodeAdmissionList{},
 	)
 	metav1.AddToGroupVersion(scheme, GroupVersion)
 	return nil

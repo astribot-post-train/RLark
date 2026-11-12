@@ -89,7 +89,7 @@ spec:
                   - ok
                   - target
                   type: object
-                maxItems: 64
+                maxItems: 256
                 type: array
               reportedAt:
                 description: ReportedAt is server receipt time, never a client-provided

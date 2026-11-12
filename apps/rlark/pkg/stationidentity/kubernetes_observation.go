@@ -146,6 +146,20 @@ func (s *KubernetesObservationSink) Store(ctx context.Context, evidence Evidence
 			return fmt.Errorf("read StationObservation: %w", getErr)
 		}
 		annotations := current.GetAnnotations()
+		if annotations[observationClusterIDKey] == evidence.ClusterID && annotations[observationNodeUIDKey] != evidence.NodeUID && evidence.StationUID == "" {
+			// The member API server has just vouched for this Node under this
+			// name and it is bound to no Station, so the Node the stored
+			// snapshot belongs to is gone. Its snapshot goes with it; nothing
+			// of it is carried over. This is what lets a machine that replaced
+			// a node be observed at all: its Station then shows Conflict and
+			// can be rebound. A bound identity with another Node UID is not
+			// this case: it is a verified rebind or a conflict, decided below.
+			uid := current.GetUID()
+			if err := resource.Delete(ctx, evidence.NodeName, metav1.DeleteOptions{Preconditions: &metav1.Preconditions{UID: &uid}}); err != nil && !apierrors.IsNotFound(err) && !apierrors.IsConflict(err) {
+				return fmt.Errorf("replace StationObservation of a previous Node: %w", err)
+			}
+			continue
+		}
 		storedStationUID := annotations[observationStationUIDKey]
 		storedNodeUID := annotations[observationNodeUIDKey]
 		storedBindingVersion, versionErr := strconv.ParseInt(annotations[observationBindingVersionKey], 10, 64)

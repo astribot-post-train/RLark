@@ -70,6 +70,9 @@ type StationStatus struct {
 	Phase        StationPhase `json:"phase,omitempty"`
 	BootTime     *metav1.Time `json:"bootTime,omitempty"`
 	LastSeenTime *metav1.Time `json:"lastSeenTime,omitempty"`
+	// Reboots counts the boot-time changes seen since the Station was created.
+	// The Rebooted condition describes the last one.
+	Reboots int64 `json:"reboots,omitempty"`
 	// Conditions are owned by station-controller.
 	// +listType=map
 	// +listMapKey=type
@@ -117,7 +120,7 @@ type StationObservationStatus struct {
 	// +listType=set
 	Roles     []string              `json:"roles,omitempty"`
 	Wireguard *WireguardObservation `json:"wireguard,omitempty"`
-	// +kubebuilder:validation:MaxItems=64
+	// +kubebuilder:validation:MaxItems=256
 	Probes []StationProbe `json:"probes,omitempty"`
 }
 

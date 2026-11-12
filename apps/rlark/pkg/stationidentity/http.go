@@ -71,6 +71,10 @@ type API struct {
 	TTL                time.Duration
 	Now                func() time.Time
 	NetworkSummary     *NodeNetworkSummaryReader
+	Enrollments        NetworkEnroller
+	EnrollmentLimiter  ObservationLimiter
+	// Bootstrap, when set, admits machines that are not nodes yet by a one-time code.
+	Bootstrap *Bootstrap
 	GatewayCredential  func() ([]byte, error)
 }
 
@@ -104,6 +108,10 @@ func (a *API) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ready"})
 		return
 	}
+	if a.Bootstrap != nil && (strings.HasPrefix(r.URL.Path, "/b/") || strings.HasPrefix(r.URL.Path, "/v1/bootstrap/")) {
+		a.Bootstrap.ServeHTTP(w, r)
+		return
+	}
 	if a.Registry == nil {
 		writeError(w, http.StatusServiceUnavailable, "station API is not configured")
 		return
@@ -124,6 +132,8 @@ func (a *API) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case r.URL.Path == "/v1/observations":
 		a.observe(w, r, token)
+	case r.URL.Path == "/v1/network/enrollments":
+		a.enroll(w, r, token)
 	case r.URL.Path == "/v1/challenges":
 		a.issue(w, r, token)
 	case strings.HasPrefix(r.URL.Path, "/v1/sensitive/"):
@@ -335,7 +345,7 @@ func (a *API) now() time.Time {
 }
 
 func validateObservation(o Observation) error {
-	if len(o.SystemUUID) > 128 || len(o.Roles) > 32 || len(o.Probes) > 64 || len(o.Wireguard) > 16*1024 {
+	if len(o.SystemUUID) > 128 || len(o.Roles) > 32 || len(o.Probes) > 256 || len(o.Wireguard) > 16*1024 {
 		return errors.New("observation exceeds limits")
 	}
 	roles := make(map[string]struct{}, len(o.Roles))
