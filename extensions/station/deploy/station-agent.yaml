@@ -1,7 +1,12 @@
-# Replace the images, endpoint, cluster ID, registry credentials and network ConfigMap.
+# Replace the images, endpoint, cluster ID and registry credentials.
 # Label network nodes station.rlark.io/network=enabled; other nodes run identity only.
-# The network ConfigMap must contain <node-name>.json for each enabled node.
-# Preserve each node private.key in /var/lib/station/wg.
+# A network node enrolls itself: the wireguard container publishes its public
+# key, the station-agent container registers it with Station API and stores the
+# computed configuration, and the wireguard container reconciles it. Nothing is
+# written per node. station-wireguard-config is optional and holds a static
+# <node-name>.json only for a node that cannot reach Station API without the
+# tunnel (see docs/design/station-v2.zh-CN.md, "引导").
+# Each node keeps private.key and last-applied.json in /var/lib/station/wg.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -149,6 +154,8 @@ spec:
         - --request-timeout=10s
         - --probe-address=:18082
         - --wireguard-observation-file=/var/run/station-observation/wireguard.json
+        - --network-identity-file=/var/run/station-observation/identity.json
+        - --network-config-file=/var/run/station-network/config.json
         env:
         - name: STATION_API_URL
           valueFrom:
@@ -202,6 +209,8 @@ spec:
         - name: wireguard-observation
           mountPath: /var/run/station-observation
           readOnly: true
+        - name: wireguard-computed
+          mountPath: /var/run/station-network
       - name: wireguard
         image: REPLACE_PRIVATE_WIREGUARD_IMAGE
         imagePullPolicy: IfNotPresent
@@ -214,6 +223,12 @@ spec:
           value: /config/$(NODE_NAME).json
         - name: STATION_GATEWAY_OBSERVATION_FILE
           value: /var/run/station-observation/wireguard.json
+        - name: STATION_GATEWAY_IDENTITY_FILE
+          value: /var/run/station-observation/identity.json
+        - name: STATION_GATEWAY_COMPUTED_CONFIG
+          value: /var/run/station-network/config.json
+        - name: STATION_GATEWAY_PRUNE_ROUTES
+          value: "true"
         securityContext:
           runAsUser: 0
           allowPrivilegeEscalation: false
@@ -230,6 +245,9 @@ spec:
           mountPath: /var/lib/station/wg
         - name: wireguard-observation
           mountPath: /var/run/station-observation
+        - name: wireguard-computed
+          mountPath: /var/run/station-network
+          readOnly: true
         readinessProbe:
           exec:
             command:
@@ -254,11 +272,14 @@ spec:
       - name: wireguard-config
         configMap:
           name: station-wireguard-config
+          optional: true
       - name: wireguard-key
         hostPath:
           path: /var/lib/station/wg
-          type: Directory
+          type: DirectoryOrCreate
       - name: wireguard-observation
+        emptyDir: {}
+      - name: wireguard-computed
         emptyDir: {}
       affinity:
         nodeAffinity:

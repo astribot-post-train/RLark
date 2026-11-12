@@ -1,0 +1,459 @@
+// Package network derives every node's WireGuard configuration from a declared
+// site topology and the set of enrolled nodes. It is pure: no Kubernetes, no
+// clock and no I/O, so the same inputs always give the same document.
+package network
+
+import (
+	"fmt"
+	"net/netip"
+	"sort"
+)
+
+type Role string
+
+const (
+	// RoleLeaf nodes have no dialable endpoint; they dial out to hubs.
+	RoleLeaf Role = "Leaf"
+	// RoleHub nodes have at least one endpoint other nodes can dial.
+	RoleHub Role = "Hub"
+)
+
+type EndpointScope string
+
+const (
+	// ScopePublic endpoints are dialable from every site.
+	ScopePublic EndpointScope = "Public"
+	// ScopeSite endpoints are dialable from the node's own site and from
+	// sites that declare it in Reaches.
+	ScopeSite EndpointScope = "Site"
+)
+
+type Topology struct {
+	Pool             string
+	MTU              int
+	Interface        string
+	ListenPort       int
+	KeepaliveSeconds int
+	Sites            []Site
+}
+
+type Site struct {
+	Name string
+	// Mesh links the hubs of this site to each other over the tunnel. Leave it
+	// false when they reach each other on their NodeAddress.
+	Mesh bool
+	// Reaches lists the sites whose Site-scoped endpoints this site can dial.
+	Reaches []string
+}
+
+type Endpoint struct {
+	Address string
+	Scope   EndpointScope
+}
+
+type Advertisement struct {
+	CIDR string
+	// Sites limits the receivers; empty means every other site.
+	Sites []string
+}
+
+type Uplink struct {
+	Gateway   string
+	Source    string
+	Interface string
+}
+
+type Member struct {
+	// ID is the stable key of the node, "<clusterID>/<nodeName>".
+	ID        string
+	Site      string
+	Role      Role
+	PublicKey string
+	// Address is the allocated tunnel address, without a prefix length.
+	Address string
+	// NodeAddress is the one address other nodes use for this node when it is
+	// not the tunnel address (a cloud VPC address). Other sites route it
+	// through the tunnel; the node's own site reaches it directly.
+	NodeAddress string
+	// Relay makes a hub carry traffic between the leaves that dial it.
+	Relay      bool
+	Interface  string
+	ListenPort int
+	Endpoints  []Endpoint
+	Advertise  []Advertisement
+	Uplink     *Uplink
+}
+
+// NodeConfig is the document station-gateway reconciles. Field names match
+// extensions/station-gateway.
+type NodeConfig struct {
+	Interface    string        `json:"interface"`
+	Address      string        `json:"address"`
+	ListenPort   int           `json:"listenPort"`
+	MTU          int           `json:"mtu"`
+	Peers        []Peer        `json:"peers"`
+	Routes       []string      `json:"routes"`
+	UplinkRoutes []UplinkRoute `json:"uplinkRoutes,omitempty"`
+}
+
+type Peer struct {
+	PublicKey        string   `json:"publicKey"`
+	Endpoint         string   `json:"endpoint,omitempty"`
+	AllowedIPs       []string `json:"allowedIPs"`
+	KeepaliveSeconds int      `json:"keepaliveSeconds,omitempty"`
+}
+
+type UplinkRoute struct {
+	Destination string `json:"destination"`
+	Gateway     string `json:"gateway"`
+	Source      string `json:"source"`
+	Interface   string `json:"interface"`
+}
+
+type Result struct {
+	// Configs holds one configuration per member that takes part.
+	Configs map[string]NodeConfig
+	// Problems are per-member findings that did not stop the computation.
+	Problems map[string][]string
+	// Unreachable lists ordered pairs "from -> to" with no path at the
+	// target's address. Ray needs this list to be empty for a Run's nodes.
+	Unreachable []string
+}
+
+type node struct {
+	Member
+	site    Site
+	address netip.Addr
+	// routable is the address other members use for this node.
+	routable netip.Addr
+}
+
+// Compute returns the configuration of every member. An invalid topology is an
+// error; an invalid member is skipped and reported in Problems.
+func Compute(topology Topology, members []Member) (Result, error) {
+	pool, err := netip.ParsePrefix(topology.Pool)
+	if err != nil || !pool.Addr().Is4() {
+		return Result{}, fmt.Errorf("pool must be an IPv4 prefix")
+	}
+	pool = pool.Masked()
+	if topology.MTU < 576 || topology.MTU > 9000 || topology.ListenPort < 1 || topology.ListenPort > 65535 || topology.Interface == "" || topology.KeepaliveSeconds < 1 || topology.KeepaliveSeconds > 3600 {
+		return Result{}, fmt.Errorf("interface, MTU, listen port and keepalive are required")
+	}
+	sites := make(map[string]Site, len(topology.Sites))
+	for _, site := range topology.Sites {
+		if _, exists := sites[site.Name]; exists || site.Name == "" {
+			return Result{}, fmt.Errorf("site names must be unique and non-empty")
+		}
+		sites[site.Name] = site
+	}
+	for _, site := range topology.Sites {
+		for _, reached := range site.Reaches {
+			if _, ok := sites[reached]; !ok {
+				return Result{}, fmt.Errorf("site %q reaches unknown site %q", site.Name, reached)
+			}
+		}
+	}
+
+	result := Result{Configs: map[string]NodeConfig{}, Problems: map[string][]string{}}
+	nodes := make([]*node, 0, len(members))
+	usedAddress, usedKey, usedID := map[netip.Addr]string{}, map[string]string{}, map[string]bool{}
+	for _, member := range members {
+		problem := func(format string, args ...any) {
+			result.Problems[member.ID] = append(result.Problems[member.ID], fmt.Sprintf(format, args...))
+		}
+		if member.ID == "" || usedID[member.ID] {
+			return Result{}, fmt.Errorf("member IDs must be unique and non-empty")
+		}
+		usedID[member.ID] = true
+		site, ok := sites[member.Site]
+		if !ok {
+			problem("site %q is not declared", member.Site)
+			continue
+		}
+		address, err := netip.ParseAddr(member.Address)
+		if err != nil || !pool.Contains(address) {
+			problem("address %q is not in pool %s", member.Address, pool)
+			continue
+		}
+		if other, taken := usedAddress[address]; taken {
+			problem("address %s is already used by %s", address, other)
+			continue
+		}
+		if member.PublicKey == "" {
+			problem("no public key")
+			continue
+		}
+		if other, taken := usedKey[member.PublicKey]; taken {
+			problem("public key is already used by %s", other)
+			continue
+		}
+		if member.Role != RoleHub && member.Role != RoleLeaf {
+			problem("role must be Hub or Leaf")
+			continue
+		}
+		routable := address
+		if member.NodeAddress != "" {
+			routable, err = netip.ParseAddr(member.NodeAddress)
+			if err != nil || !routable.Is4() || pool.Contains(routable) {
+				problem("node address %q must be an IPv4 address outside the pool", member.NodeAddress)
+				continue
+			}
+		}
+		valid := true
+		for _, endpoint := range member.Endpoints {
+			if _, err := netip.ParseAddrPort(endpoint.Address); err != nil || (endpoint.Scope != ScopePublic && endpoint.Scope != ScopeSite) {
+				problem("endpoint %q must be ip:port with scope Public or Site", endpoint.Address)
+				valid = false
+			}
+		}
+		if member.Role == RoleLeaf && (len(member.Endpoints) > 0 || member.Relay) {
+			problem("a leaf has no endpoints and does not relay")
+			valid = false
+		}
+		if member.Role == RoleHub && len(member.Endpoints) == 0 {
+			problem("a hub needs at least one endpoint")
+			valid = false
+		}
+		if !valid {
+			continue
+		}
+		usedAddress[address], usedKey[member.PublicKey] = member.ID, member.ID
+		nodes = append(nodes, &node{Member: member, site: site, address: address, routable: routable})
+	}
+	sort.Slice(nodes, func(i, j int) bool { return nodes[i].address.Less(nodes[j].address) })
+
+	// relayOf picks at most one relay per leaf: a relay in its own site first,
+	// then the lowest tunnel address. Two peers cannot own the same prefix.
+	relayOf := map[*node]*node{}
+	for _, leaf := range nodes {
+		if leaf.Role != RoleLeaf {
+			continue
+		}
+		for _, hub := range nodes {
+			if !hub.Relay || !linked(leaf, hub) {
+				continue
+			}
+			current := relayOf[leaf]
+			if current == nil || (hub.Site == leaf.Site && current.Site != leaf.Site) {
+				relayOf[leaf] = hub
+			}
+		}
+	}
+
+	for _, self := range nodes {
+		config := NodeConfig{
+			Interface: firstNonEmpty(self.Interface, topology.Interface), Address: self.address.String() + "/32",
+			ListenPort: firstPositive(self.ListenPort, topology.ListenPort), MTU: topology.MTU,
+			Peers: []Peer{}, Routes: []string{},
+		}
+		type candidate struct {
+			peer     Peer
+			prefixes []netip.Prefix
+		}
+		var candidates []candidate
+		var dialed []netip.Addr
+		for _, other := range nodes {
+			if other == self || !linked(self, other) {
+				continue
+			}
+			c := candidate{peer: Peer{PublicKey: other.PublicKey}}
+			if endpoint, ok := dial(self, other); ok {
+				c.peer.Endpoint = endpoint.String()
+				c.peer.KeepaliveSeconds = topology.KeepaliveSeconds
+				dialed = append(dialed, endpoint.Addr())
+			}
+			c.prefixes = append(c.prefixes, netip.PrefixFrom(other.address, 32))
+			if other.Site != self.Site {
+				if other.routable != other.address {
+					c.prefixes = append(c.prefixes, netip.PrefixFrom(other.routable, 32))
+				}
+				for _, advertisement := range other.Advertise {
+					prefix, err := netip.ParsePrefix(advertisement.CIDR)
+					if err != nil || !prefix.Addr().Is4() || prefix.Bits() == 0 {
+						result.Problems[other.ID] = appendOnce(result.Problems[other.ID], fmt.Sprintf("advertised prefix %q is not a non-default IPv4 prefix", advertisement.CIDR))
+						continue
+					}
+					if len(advertisement.Sites) == 0 || contains(advertisement.Sites, self.Site) {
+						c.prefixes = append(c.prefixes, prefix.Masked())
+					}
+				}
+			}
+			if relayOf[self] == other {
+				c.prefixes = append(c.prefixes, pool)
+			}
+			if other.Relay && self.Role == RoleHub {
+				// A hub that a relayed leaf cannot dial still has to answer it.
+				for _, leaf := range nodes {
+					if relayOf[leaf] == other && !linked(self, leaf) {
+						c.prefixes = append(c.prefixes, netip.PrefixFrom(leaf.address, 32))
+					}
+				}
+			}
+			candidates = append(candidates, c)
+		}
+		owned := map[netip.Prefix]bool{}
+		for _, c := range candidates {
+			for _, prefix := range c.prefixes {
+				loops := false
+				for _, endpoint := range dialed {
+					if prefix.Contains(endpoint) {
+						loops = true
+					}
+				}
+				if loops {
+					result.Problems[self.ID] = append(result.Problems[self.ID], fmt.Sprintf("prefix %s would route a dialled endpoint into the tunnel; dropped", prefix))
+					continue
+				}
+				if owned[prefix] {
+					result.Problems[self.ID] = append(result.Problems[self.ID], fmt.Sprintf("prefix %s is offered by more than one peer; kept the first", prefix))
+					continue
+				}
+				owned[prefix] = true
+				c.peer.AllowedIPs = append(c.peer.AllowedIPs, prefix.String())
+				config.Routes = append(config.Routes, prefix.String())
+			}
+			config.Peers = append(config.Peers, c.peer)
+		}
+		if self.Uplink != nil {
+			seen := map[netip.Addr]bool{}
+			for _, endpoint := range dialed {
+				if seen[endpoint] {
+					continue
+				}
+				seen[endpoint] = true
+				config.UplinkRoutes = append(config.UplinkRoutes, UplinkRoute{
+					Destination: endpoint.String() + "/32", Gateway: self.Uplink.Gateway,
+					Source: self.Uplink.Source, Interface: self.Uplink.Interface,
+				})
+			}
+		}
+		result.Configs[self.ID] = config
+	}
+
+	for _, from := range nodes {
+		for _, to := range nodes {
+			if from != to && !reaches(result.Configs, nodes, from, to) {
+				result.Unreachable = append(result.Unreachable, from.ID+" -> "+to.ID)
+			}
+		}
+	}
+	return result, nil
+}
+
+// dial returns the endpoint from uses to open the tunnel to to.
+func dial(from, to *node) (netip.AddrPort, bool) {
+	local := from.Site == to.Site || contains(from.site.Reaches, to.Site)
+	var public netip.AddrPort
+	for _, endpoint := range to.Endpoints {
+		parsed := netip.MustParseAddrPort(endpoint.Address)
+		if endpoint.Scope == ScopeSite && local {
+			return parsed, true
+		}
+		if endpoint.Scope == ScopePublic && !public.IsValid() {
+			public = parsed
+		}
+	}
+	return public, public.IsValid()
+}
+
+// linked reports whether two members share a tunnel: at least one is a hub,
+// one side can dial the other, and hubs of one site link only when it meshes.
+func linked(a, b *node) bool {
+	if a.Role == RoleLeaf && b.Role == RoleLeaf {
+		return false
+	}
+	if a.Site == b.Site && a.Role == RoleHub && b.Role == RoleHub && !a.site.Mesh {
+		return false
+	}
+	_, forward := dial(a, b)
+	_, backward := dial(b, a)
+	return forward || backward
+}
+
+// reaches follows the computed configurations from one member to another's
+// address: directly, through one relay, or on the site's own network.
+func reaches(configs map[string]NodeConfig, nodes []*node, from, to *node) bool {
+	if from.Site == to.Site && to.routable != to.address && from.routable != from.address {
+		return true
+	}
+	next := nextHop(configs[from.ID], to.routable)
+	if next == "" {
+		return false
+	}
+	if next == to.PublicKey {
+		return true
+	}
+	for _, relay := range nodes {
+		if relay.PublicKey == next {
+			return nextHop(configs[relay.ID], to.routable) == to.PublicKey
+		}
+	}
+	return false
+}
+
+// nextHop is WireGuard's cryptokey routing: the peer with the longest prefix.
+func nextHop(config NodeConfig, target netip.Addr) string {
+	best, key := -1, ""
+	for _, peer := range config.Peers {
+		for _, allowed := range peer.AllowedIPs {
+			prefix := netip.MustParsePrefix(allowed)
+			if prefix.Contains(target) && prefix.Bits() > best {
+				best, key = prefix.Bits(), peer.PublicKey
+			}
+		}
+	}
+	return key
+}
+
+// Allocate returns the lowest free host address of the pool.
+func Allocate(pool string, taken []string) (string, error) {
+	prefix, err := netip.ParsePrefix(pool)
+	if err != nil || !prefix.Addr().Is4() || prefix.Bits() > 30 {
+		return "", fmt.Errorf("pool must be an IPv4 prefix of at most /30")
+	}
+	prefix = prefix.Masked()
+	used := make(map[netip.Addr]bool, len(taken))
+	for _, value := range taken {
+		address, err := netip.ParseAddr(value)
+		if err != nil {
+			return "", fmt.Errorf("allocated address %q is invalid", value)
+		}
+		used[address] = true
+	}
+	for address := prefix.Addr().Next(); prefix.Contains(address.Next()); address = address.Next() {
+		if !used[address] {
+			return address.String(), nil
+		}
+	}
+	return "", fmt.Errorf("pool %s is exhausted", prefix)
+}
+
+func contains(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
+}
+
+func appendOnce(values []string, value string) []string {
+	if contains(values, value) {
+		return values
+	}
+	return append(values, value)
+}
+
+func firstNonEmpty(a, b string) string {
+	if a != "" {
+		return a
+	}
+	return b
+}
+
+func firstPositive(a, b int) int {
+	if a > 0 {
+		return a
+	}
+	return b
+}

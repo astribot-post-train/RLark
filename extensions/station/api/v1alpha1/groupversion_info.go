@@ -19,6 +19,8 @@ func AddToScheme(scheme *runtime.Scheme) error {
 		&StationSequence{}, &StationSequenceList{},
 		&StationRebind{}, &StationRebindList{},
 		&StationAuditEvent{}, &StationAuditEventList{},
+		&SiteNetwork{}, &SiteNetworkList{},
+		&NetworkEnrollment{}, &NetworkEnrollmentList{},
 	)
 	metav1.AddToGroupVersion(scheme, GroupVersion)
 	return nil
