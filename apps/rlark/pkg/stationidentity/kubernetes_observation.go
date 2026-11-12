@@ -146,6 +146,16 @@ func (s *KubernetesObservationSink) Store(ctx context.Context, evidence Evidence
 			return fmt.Errorf("read StationObservation: %w", getErr)
 		}
 		annotations := current.GetAnnotations()
+		if annotations[observationClusterIDKey] == evidence.ClusterID && annotations[observationNodeUIDKey] != evidence.NodeUID {
+			// The member API server has just vouched for this Node under this
+			// name, so the Node the stored snapshot belongs to is gone. Its
+			// snapshot goes with it; nothing of it is carried over.
+			uid := current.GetUID()
+			if err := resource.Delete(ctx, evidence.NodeName, metav1.DeleteOptions{Preconditions: &metav1.Preconditions{UID: &uid}}); err != nil && !apierrors.IsNotFound(err) && !apierrors.IsConflict(err) {
+				return fmt.Errorf("replace StationObservation of a previous Node: %w", err)
+			}
+			continue
+		}
 		storedStationUID := annotations[observationStationUIDKey]
 		if annotations[observationClusterIDKey] != evidence.ClusterID || annotations[observationNodeUIDKey] != evidence.NodeUID || storedStationUID != "" && storedStationUID != evidence.StationUID || evidence.StationUID == "" && storedStationUID != "" {
 			return ErrObservationOwnershipConflict

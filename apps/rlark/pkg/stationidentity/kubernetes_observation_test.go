@@ -295,3 +295,39 @@ func TestKubernetesObservationSinkPreservesExistingObjectUID(t *testing.T) {
 		t.Fatalf("observation UID changed to %q", stored.GetUID())
 	}
 }
+
+// A machine reinstalled under the same name has a new Node UID. It must be
+// able to report, or the Station never shows the conflict an administrator
+// rebinds; it gets a fresh snapshot and nothing of the previous Node's.
+func TestReinstalledNodeReplacesThePreviousNodesSnapshot(t *testing.T) {
+	client := testDynamicClient()
+	sink := &KubernetesObservationSink{Client: client, Namespaces: observationNamespaceMap{"c": "agent"}}
+	old := validEvidence()
+	boot := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
+	if err := sink.Store(context.Background(), old, Observation{BootTime: &boot, Wireguard: json.RawMessage(`{"interface":"st-wg0","addresses":["10.254.240.5/32"]}`)}); err != nil {
+		t.Fatal(err)
+	}
+	rebuilt := validEvidence()
+	rebuilt.NodeUID, rebuilt.RegisteredNodeUID = "n-rebuilt", "n-rebuilt"
+	rebuilt.StationUID, rebuilt.RegisteredStationUID, rebuilt.Generation, rebuilt.RegisteredGeneration = "", "", 0, 0
+	if err := sink.Store(context.Background(), rebuilt, Observation{}); err != nil {
+		t.Fatalf("reinstalled node could not report: %v", err)
+	}
+	stored, err := client.Resource(stationObservationGVR).Namespace("agent").Get(context.Background(), "node", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	annotations := stored.GetAnnotations()
+	uid, _, _ := unstructured.NestedString(stored.Object, "status", "nodeUID")
+	_, hasTunnel, _ := unstructured.NestedMap(stored.Object, "status", "wireguard")
+	if uid != "n-rebuilt" || annotations[observationNodeUIDKey] != "n-rebuilt" || annotations[observationStationUIDKey] != "" || hasTunnel {
+		t.Fatalf("snapshot still carries the previous Node: %v %v", annotations, stored.Object["status"])
+	}
+	// Another cluster's node of the same name still cannot take the object.
+	foreign := validEvidence()
+	foreign.ClusterID, foreign.RegisteredClusterID = "d", "d"
+	other := &KubernetesObservationSink{Client: client, Namespaces: observationNamespaceMap{"d": "agent"}}
+	if err := other.Store(context.Background(), foreign, Observation{}); !errors.Is(err, ErrObservationOwnershipConflict) {
+		t.Fatalf("foreign cluster error = %v", err)
+	}
+}

@@ -185,7 +185,10 @@ func (r KubernetesStationBindingResolver) Resolve(ctx context.Context, clusterID
 			return Binding{}, errors.New("multiple Stations claim the same Node binding")
 		}
 		if uid != nodeUID {
-			return Binding{}, errors.New("Station Node UID conflicts with current member Node")
+			// A reinstalled machine under the same name is a verified Node with no
+			// binding of its own: it may report, so that the Station shows the
+			// conflict and an administrator can rebind it, and nothing more.
+			return Binding{}, fmt.Errorf("%w: Station %q is bound to another Node UID under this name", ErrStationBindingNotFound, station.GetName())
 		}
 		retired, _, retiredErr := unstructured.NestedBool(station.Object, "spec", "retired")
 		version, _, versionErr := unstructured.NestedInt64(station.Object, "spec", "binding", "version")

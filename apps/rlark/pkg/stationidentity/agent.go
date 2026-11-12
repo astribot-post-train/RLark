@@ -61,6 +61,10 @@ func (c AgentConfig) Validate() error {
 	return nil
 }
 
+// pendingEnrollmentRetry is how soon a node asks again while its enrollment is
+// being answered. It stays above the observation rate limit of one per second.
+const pendingEnrollmentRetry = 5 * time.Second
+
 type Agent struct {
 	config               AgentConfig
 	client               *http.Client
@@ -140,7 +144,7 @@ func (a *Agent) Run(ctx context.Context) error {
 		defer cancel()
 		_ = probeServer.Shutdown(shutdownCtx)
 	}()
-	backoff, enrollment := time.Second, ""
+	backoff, enrollment, reported := time.Second, "", ""
 	maxBackoff := min(a.config.Interval, 30*time.Second)
 	for {
 		select {
@@ -154,6 +158,10 @@ func (a *Agent) Run(ctx context.Context) error {
 			if ctx.Err() != nil {
 				return nil
 			}
+			if err.Error() != reported {
+				reported = err.Error()
+				fmt.Fprintln(os.Stderr, "observation:", reported)
+			}
 			timer := time.NewTimer(backoff)
 			select {
 			case <-ctx.Done():
@@ -165,6 +173,11 @@ func (a *Agent) Run(ctx context.Context) error {
 			continue
 		}
 		backoff = time.Second
+		if reported != "" {
+			reported = ""
+			fmt.Fprintln(os.Stderr, "observation: accepted")
+		}
+		wait := a.config.Interval
 		if a.config.NetworkConfigFile != "" {
 			state, err := a.Enroll(ctx)
 			if err != nil {
@@ -174,8 +187,13 @@ func (a *Agent) Run(ctx context.Context) error {
 				enrollment = state
 				fmt.Fprintln(os.Stderr, "network enrollment:", state)
 			}
+			// The controller answers a new request within seconds; do not
+			// make a joining node wait a whole interval for it.
+			if state == "pending" {
+				wait = min(wait, pendingEnrollmentRetry)
+			}
 		}
-		timer := time.NewTimer(a.config.Interval)
+		timer := time.NewTimer(wait)
 		select {
 		case <-ctx.Done():
 			timer.Stop()
