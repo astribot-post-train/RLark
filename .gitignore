@@ -34,3 +34,4 @@ __pycache__/
 # MkDocs build output
 **/site/
 site-team/
+extensions/station-gateway/station-gateway

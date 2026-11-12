@@ -45,13 +45,16 @@ spec:
   containers: [{name: witness, image: $pause, imagePullPolicy: Never}]
 POD
   done
+  # A setting of one node only, as a workstation's swap handling is: it must survive the upgrades.
+  docker exec $NAME-worker sh -c "sed -i '/^maxPods:/d' /var/lib/kubelet/config.yaml && echo 'maxPods: 77' >> /var/lib/kubelet/config.yaml && systemctl restart kubelet"
   until [[ $(kubectl --kubeconfig "$K" get pods -o name 2>/dev/null | grep -c witness) == 2 ]]; do sleep 1; done
+  until [[ $(kubectl --kubeconfig "$K" get node $NAME-worker -o jsonpath='{.status.capacity.pods}') == 77 ]]; do sleep 1; done
   kubectl --kubeconfig "$K" wait --for=condition=Ready pod --all --timeout=60s >/dev/null
   witness
 }
 
 witness() {
-  kubectl --kubeconfig "$K" get nodes --no-headers | awk '{print $1, $2, $5}'
+  kubectl --kubeconfig "$K" get nodes -o jsonpath='{range .items[*]}{.metadata.name} {.status.nodeInfo.kubeletVersion} ready={.status.conditions[?(@.type=="Ready")].status} maxPods={.status.capacity.pods}{"\n"}{end}'
   kubectl --kubeconfig "$K" get pods -o jsonpath='{range .items[*]}{.metadata.name} restarts={.status.containerStatuses[0].restartCount} started={.status.containerStatuses[0].state.running.startedAt} id={.status.containerStatuses[0].containerID}{"\n"}{end}' | cut -c1-140
 }
 

@@ -27,12 +27,25 @@ control)
   stamp "images of $KUBE_VERSION imported"
   [ -e "$keep/kubeadm" ] || cp -a "$BIN/kubeadm" "$keep/kubeadm"
   [ -d "$keep/etc-kubernetes" ] || cp -a /etc/kubernetes "$keep/etc-kubernetes"
+  # What this node's kubelet configuration has that the cluster's does not is
+  # carried across: kubeadm writes the file anew from the cluster's.
+  patches=
+  if [ ! -e "$keep/kubelet-overrides.yaml" ]; then
+    kubectl --kubeconfig /etc/kubernetes/kubelet.conf -n kube-system get configmap kubelet-config -o jsonpath='{.data.kubelet}' > "$keep/cluster-kubelet.yaml"
+    "$B/station-bootstrap" kubelet-overrides /var/lib/kubelet/config.yaml "$keep/cluster-kubelet.yaml" > "$keep/kubelet-overrides.yaml"
+  fi
+  if [ -s "$keep/kubelet-overrides.yaml" ]; then
+    install -d "$keep/patches"
+    cp "$keep/kubelet-overrides.yaml" "$keep/patches/kubeletconfiguration+merge.yaml"
+    patches="--patches $keep/patches"
+    stamp "kept from this node's kubelet configuration: $(grep -v -E '^(apiVersion|kind):' "$keep/kubelet-overrides.yaml" | grep -E '^[a-zA-Z]' | cut -d: -f1 | tr '\n' ' ')"
+  fi
   install -m 755 "$B/bin/kubeadm" "$BIN/kubeadm"
   if [ -e /etc/kubernetes/manifests/kube-apiserver.yaml ]; then
-    kubeadm upgrade apply "$KUBE_VERSION" --yes > "$keep/upgrade-apply.log" 2>&1 || { tail -25 "$keep/upgrade-apply.log" >&2; fail "kubeadm upgrade apply"; }
+    kubeadm upgrade apply "$KUBE_VERSION" --yes $patches > "$keep/upgrade-apply.log" 2>&1 || { tail -25 "$keep/upgrade-apply.log" >&2; fail "kubeadm upgrade apply"; }
     stamp "control plane at $KUBE_VERSION"
   else
-    kubeadm upgrade node > "$keep/upgrade-node.log" 2>&1 || { tail -25 "$keep/upgrade-node.log" >&2; fail "kubeadm upgrade node"; }
+    kubeadm upgrade node $patches > "$keep/upgrade-node.log" 2>&1 || { tail -25 "$keep/upgrade-node.log" >&2; fail "kubeadm upgrade node"; }
     stamp "node configuration at $KUBE_VERSION"
   fi
   ;;

@@ -23,9 +23,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"syscall"
 	"time"
+
+	"sigs.k8s.io/yaml"
 )
 
 const (
@@ -51,6 +54,10 @@ type answer struct {
 
 func main() {
 	log.SetFlags(log.Ltime)
+	if len(os.Args) == 4 && os.Args[1] == "kubelet-overrides" {
+		kubeletOverrides(os.Args[2], os.Args[3])
+		return
+	}
 	if os.Getenv("PHASE") != "" {
 		upgrade()
 		return
@@ -191,6 +198,14 @@ func upgrade() {
 	if err := copyTree("/bundle", hostRoot+stage); err != nil {
 		log.Fatalf("copy the bundle: %v", err)
 	}
+	// upgrade.sh calls this program again on the host for kubelet-overrides.
+	self, err := os.ReadFile("/station-bootstrap")
+	if err != nil {
+		log.Fatal(err)
+	}
+	if err := os.WriteFile(hostRoot+stage+"/station-bootstrap", self, 0755); err != nil {
+		log.Fatal(err)
+	}
 	if err := syscall.Chroot(hostRoot); err != nil {
 		log.Fatalf("enter the host filesystem (the container must be privileged, with hostPID): %v", err)
 	}
@@ -203,4 +218,39 @@ func upgrade() {
 	if err := run.Run(); err != nil {
 		log.Fatalf("upgrade: %v", err)
 	}
+}
+
+// kubeletOverrides prints, as a kubeadm patch of the KubeletConfiguration,
+// the settings in which this node's kubelet configuration differs from the
+// cluster's. kubeadm writes the node's file anew from the cluster's on every
+// upgrade; the patch carries what was set on this node only (swap handling on
+// a workstation, CPU reservation on a robot) across it.
+func kubeletOverrides(nodeFile, clusterFile string) {
+	read := func(path string) map[string]interface{} {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			log.Fatal(err)
+		}
+		var config map[string]interface{}
+		if err := yaml.Unmarshal(data, &config); err != nil {
+			log.Fatalf("%s: %v", path, err)
+		}
+		return config
+	}
+	node, cluster := read(nodeFile), read(clusterFile)
+	overrides := map[string]interface{}{}
+	for key, value := range node {
+		if key != "apiVersion" && key != "kind" && !reflect.DeepEqual(value, cluster[key]) {
+			overrides[key] = value
+		}
+	}
+	if len(overrides) == 0 {
+		return
+	}
+	overrides["apiVersion"], overrides["kind"] = "kubelet.config.k8s.io/v1beta1", "KubeletConfiguration"
+	patch, err := yaml.Marshal(overrides)
+	if err != nil {
+		log.Fatal(err)
+	}
+	os.Stdout.Write(patch)
 }
