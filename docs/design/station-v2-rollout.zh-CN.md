@@ -4,7 +4,7 @@
 
 ## 0. 上线记录（2026-11-12 16:27–17:17）
 
-**已上线**：五个在线节点（`cailiang`、`alexfu`、`wendychen`、`10-0-2-57`、`10-0-2-196`）第 1–5 步全部完成，网关用的是算出来的配置。机器人 `s1u-01-x86` 做完第 2 步（已登记），17:04 起整机断电，第 3–5 步等它开机后补（三条命令见本节末）。
+**已上线**：六个节点（`cailiang`、`alexfu`、`wendychen`、`10-0-2-57`、`10-0-2-196`、`s1u-01-x86`）第 1–5 步全部完成，网关用的都是算出来的配置。机器人 17:04–17:19 整机断电，开机后补的第 3–5 步。
 
 **从现在起不再手改 `station-wireguard-config`。** 对端表 = `SiteNetwork default`（管理面 `station-system`）+ 各节点自己的登记，由 station-controller 算出来；改拓扑只改 `SiteNetwork.spec`。ConfigMap 只剩兜底：节点登记不到时网关退回它。加机器人见"之后：加一台机器人"。
 
@@ -18,6 +18,7 @@
 | 3 本地、云端 | 17:09:13–17:10:46 | 五个 | 启动 10 s 后 `using the computed configuration`；新增的路由（管理机到 `10.0.2.57`、`10.0.2.196`）通 |
 | 4 本地、云端 | 17:12 | 五个 | 管理机 `st-wg0` 路由前后一致 |
 | 5 station-api、本地 | 17:15:26、17:16:10 | station-api、三个节点 | 监听 `*:18443`；本地集群的 agent 改走内网地址，登记来源变成各自的内网地址 |
+| 3–5 机器人 | 17:25:05 | 一个 | 17:19:25 开机后隧道自己恢复；对比 +0 / 删除 0；一次重建同时改用计算配置、开删路由、`api-url` 走内网；10 s 后 `using the computed configuration`，两个方向各路 0 丢包 |
 
 每一步之后：在线节点全部 Bound、心跳连续，管理机到各隧道地址和 3090 到各隧道地址 ping 0 丢包（重建后头 2–3 s 偶有 1–2 个丢包），HG 集群云端两个 Ray 节点一直 alive。备份都在开发机 `/var/backups/station-v2-20261112-162720/`（第 5 步在其下 `step5/`，只有 root 可读）。
 
@@ -29,16 +30,7 @@
 - **办公室节点的端点先写死在声明里**：第 2 步时节点经隧道连 station-api，登记来源是隧道地址，不能当端点。第 5 步后本地集群经内网登记，来源已是内网地址；"端点留空、跟着登记来源走"随下一个版本启用（agent 改成上报默认路由的源地址）。
 - **机器人的监听端口改成了 51830**（声明里已写）。机器人 16:39 非正常重启后仍用固定源端口 51820，实验室路由器上旧的 NAT 映射一直被对端的保活包续着，三个对端的回包被吃掉；换端口后 30 s 内全通。下一个版本：NAT 后的叶子节点不用固定源端口，枢纽对"等对方拨入"的对端不发保活。
 
-机器人开机后补做（开发机上，root）：
-
-```bash
-K=/dev/shm/rlark-robot-kubeconfig
-kubectl --kubeconfig $K -n station-system set env ds/station-agent-network -c wireguard \
-  STATION_GATEWAY_COMPUTED_CONFIG=/var/run/station-network/config.json STATION_GATEWAY_PRUNE_ROUTES=true
-kubectl --kubeconfig $K -n station-system patch cm station-agent --type=merge -p '{"data":{"api-url":"https://10.11.14.128:18443"}}'
-kubectl --kubeconfig $K -n station-system rollout restart ds/station-agent-network
-# 验：wireguard 容器日志 using the computed configuration；机器人到 10.254.240.1/.2/.4/.5/.6 通；Station Bound
-```
+机器人自带单节点集群、又在 NAT 后面时的入网（换机、或新机器人仍带自己的集群）：`extensions/station/hack/admit-member.sh`，五个子命令 `install → bootstrap → credential → rebind → finish`，文件头有说明。它存在的原因是这种机器人第一次入网有先后问题：没有隧道，管理面够不着它的 Kubernetes API，就验证不了它的身份。所以要抄一次公钥（声明进 `SiteNetwork`）、给它一份引导配置、隧道通了再换管理面凭据。机器人改成场站集群的 worker 之后这个脚本就不需要了（worker 自己向外连场站的 API）。脚本的文档生成部分对着线上数据跑过，其余部分**还没有在真机上跑过**。
 
 ## 0. 结论
 
