@@ -156,7 +156,7 @@ func main() {
 		migrate(settings)
 		return
 	}
-	install := exec.Command("/bin/sh", stage+"/install.sh")
+	install := hostCommand(stage + "/install.sh")
 	install.Stdout, install.Stderr = os.Stdout, os.Stderr
 	install.Env = settings
 	if err := install.Run(); err != nil {
@@ -247,7 +247,7 @@ func upgrade() {
 	if err := os.Chdir(stage); err != nil {
 		log.Fatal(err)
 	}
-	run := exec.Command("/bin/sh", stage+"/upgrade.sh")
+	run := hostCommand(stage + "/upgrade.sh")
 	run.Stdout, run.Stderr = os.Stdout, os.Stderr
 	run.Env = append(os.Environ(), "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin")
 	if err := run.Run(); err != nil {
@@ -288,4 +288,18 @@ func kubeletOverrides(nodeFile, clusterFile string) {
 		log.Fatal(err)
 	}
 	os.Stdout.Write(patch)
+}
+
+// hostCommand runs a script of the bundle as a process of the host. After the
+// chroot this program sees the host's files but is still in its container's
+// namespaces; kubeadm reads the mount table to find the cgroup hierarchy, so
+// the script is started through the host's nsenter in the namespaces of PID 1.
+func hostCommand(script string) *exec.Cmd {
+	for _, nsenter := range []string{"/usr/bin/nsenter", "/bin/nsenter", "/usr/sbin/nsenter", "/sbin/nsenter"} {
+		if _, err := os.Stat(nsenter); err == nil {
+			return exec.Command(nsenter, "-t", "1", "-m", "-u", "-i", "-n", "-p", "--", "/bin/sh", script)
+		}
+	}
+	log.Print("the host has no nsenter; running in the container's namespaces")
+	return exec.Command("/bin/sh", script)
 }

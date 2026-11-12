@@ -21,6 +21,7 @@ k() { kubectl --kubeconfig "$K" "$@"; }
 stamp() { echo "$(date +%T) $*"; }
 minor() { echo "$1" | sed -E 's/^v1\.([0-9]+)\..*/\1/'; }
 started=$(date +%s)
+pull=; [[ -z ${PULL_SECRET:-} ]] || pull="imagePullSecrets: [{name: $PULL_SECRET}]"
 
 current=$(k version -o json | python3 -c 'import json,sys; print(json.load(sys.stdin)["serverVersion"]["gitVersion"])')
 step=$(( $(minor "$VERSION") - $(minor "$current") ))
@@ -50,7 +51,7 @@ spec:
       hostPID: true
       restartPolicy: Never
       tolerations: [{operator: Exists}]
-      ${PULL_SECRET:+imagePullSecrets: [{name: $PULL_SECRET}]}
+      $pull
       containers:
       - name: upgrade
         image: $IMAGE
@@ -66,7 +67,7 @@ JOB
 for item in $nodes; do
   node=${item#node/}
   cordoned=$(k get node "$node" -o jsonpath='{.spec.unschedulable}')
-  if [[ -n $(k get node "$node" -l node-role.kubernetes.io/control-plane -o name) ]]; then
+  if k get nodes -l node-role.kubernetes.io/control-plane -o name | grep -qx "node/$node"; then
     k -n kube-system exec "etcd-$node" -- etcdctl --endpoints https://127.0.0.1:2379 --cacert /etc/kubernetes/pki/etcd/ca.crt \
       --cert /etc/kubernetes/pki/etcd/server.crt --key /etc/kubernetes/pki/etcd/server.key \
       snapshot save "/var/lib/etcd/rlark-snapshot-before-$VERSION.db" >/dev/null

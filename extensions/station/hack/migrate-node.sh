@@ -22,6 +22,7 @@ new() { kubectl --kubeconfig "$NEW" "$@"; }
 mgmt() { kubectl --kubeconfig "$KCP" "$@"; }
 stamp() { echo "$(date +%T) $*"; }
 started=$(date +%s)
+pull=; [[ -z ${PULL_SECRET:-} ]] || pull="imagePullSecrets: [{name: $PULL_SECRET}]"
 
 # What the node has now is what it keeps.
 read -r old_namespace address port < <(mgmt get networkenrollments.station.rlark.io -A -o json | python3 -c '
@@ -36,7 +37,7 @@ import json, sys
 for n in json.load(sys.stdin)["spec"]["nodes"]:
     if (n["clusterID"], n["nodeName"]) == tuple(sys.argv[1:3]) and n.get("uplink"):
         print(",".join(n["uplink"][k] for k in ("gateway", "source", "interface")))' "$old_cluster" "$NODE")
-[[ -n $(old get node "$NODE" -l node-role.kubernetes.io/control-plane -o name) ]] && mode=control-plane || mode=node
+old get nodes -l node-role.kubernetes.io/control-plane -o name | grep -qx "node/$NODE" && mode=control-plane || mode=node
 [[ $mode == node || ${CONTROL_PLANE:-} == yes ]] || { echo "$NODE is the control plane of $old_cluster: move the other nodes first, then this one with CONTROL_PLANE=yes" >&2; exit 1; }
 stamp "$NODE: $old_cluster -> $CLUSTER, keeps $address port $port${uplink:+ uplink $uplink}"
 
@@ -58,7 +59,7 @@ spec:
       hostPID: true
       restartPolicy: Never
       tolerations: [{operator: Exists}]
-      ${PULL_SECRET:+imagePullSecrets: [{name: $PULL_SECRET}]}
+      $pull
       containers:
       - name: migrate
         image: $IMAGE
