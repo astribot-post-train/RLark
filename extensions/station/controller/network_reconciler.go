@@ -193,6 +193,12 @@ func (r *NetworkReconciler) reconcile(ctx context.Context) (reconcile.Result, er
 	}
 
 	admitted := map[string]stationv1alpha1.NodeAdmissionStatus{}
+	movedTo := map[string]string{}
+	for id, admission := range admissions {
+		if admission.Spec.PublicKey != "" && admission.Status.Phase != stationv1alpha1.NodeAdmissionJoined {
+			movedTo[admission.Spec.PublicKey] = id
+		}
+	}
 	answers := make(map[string]*stationv1alpha1.NetworkEnrollmentStatus, len(enrollments.Items))
 	enrolled, declaredOnly := map[string]bool{}, map[string]bool{}
 	var members []network.Member
@@ -210,6 +216,12 @@ func (r *NetworkReconciler) reconcile(ctx context.Context) (reconcile.Result, er
 		answer.Site = siteOfCluster[enrollment.Spec.ClusterID]
 		if answer.Site == "" {
 			answer.Reason = "cluster " + enrollment.Spec.ClusterID + " is not in any site of the SiteNetwork"
+			continue
+		}
+		// A machine that redeemed an admission elsewhere has moved: the
+		// enrollment it left behind, under the same key, no longer speaks for it.
+		if moved := movedTo[enrollment.Spec.PublicKey]; moved != "" && moved != id && enrollment.Spec.PublicKey != "" {
+			answer.Reason = "the machine moved to " + moved
 			continue
 		}
 		// A redeemed admission names the machine that now holds this node
