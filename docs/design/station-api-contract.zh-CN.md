@@ -1,5 +1,7 @@
 # Station API 契约（试验性，尚未安装）
 
+> **名字（2026-11-12）**：本文的 `Station` 对象在界面和对外接口里叫**场站节点（Site Node）**：一台机器在场站里的长期身份和入网记录。"Station"留给 Fleet 一个 Run 里的 station（论文的定义）。CRD 组 `station.rlark.io`、kind `Station*` 和可执行文件名是沿用的代号，迁移方案和入网设计见 [Station v2](station-v2.zh-CN.md)。
+
 本文定义 `extensions/station` 中已登记的 `station.rlark.io/v1alpha1` 类型和生成 CRD。它仍是试验性扩展 API：CRD 尚未安装到生产 kcp 或成员集群；controller manager 与 Station API 可执行原型及示例 Deployment 均已存在，但尚未部署或达到生产就绪。
 
 ## 范围与 namespace 映射

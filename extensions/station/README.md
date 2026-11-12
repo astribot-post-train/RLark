@@ -1,5 +1,7 @@
 # Station API types (experimental)
 
+> **Naming (2026-11-12)**: the object in this directory is called a **Site Node** in the UI and in the external API: one machine's long-lived identity and network membership in the site. "Station" is reserved for a station of a Fleet Run, as the paper defines it. The CRD group `station.rlark.io`, the `Station*` kinds and the binary names are kept as code names; the migration and the enrollment design are in [Station v2](../../docs/design/station-v2.zh-CN.md).
+
 This standalone Go module defines the experimental `station.rlark.io/v1alpha1` API types, generated CRDs, controller prototypes, and an executable controller manager. The manager has example RBAC and Deployment manifests but is not deployed. The Station API executable is in `apps/rlark/cmd/station-api`, and the prototype agent is in `apps/rlark/cmd/station-agent`; both are not deployed. The agent reports kernel boot time from `/proc/stat` along with its heartbeat. WireGuard, hardware and probe collection, production UI integration and deployment are not implemented, and generated CRDs are not installed in production.
 
 See the [API contract](../../docs/design/station-api-contract.md) for field ownership, namespace mapping, validation, lifecycle semantics, and remaining design questions.

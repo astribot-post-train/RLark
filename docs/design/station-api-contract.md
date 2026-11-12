@@ -1,5 +1,7 @@
 # Station API Contract (Experimental, Not Installed)
 
+> **Naming (2026-11-12)**: the `Station` object of this document is called a **Site Node** in the UI and in the external API: one machine's long-lived identity and network membership in the site. "Station" is reserved for a station of a Fleet Run, as the paper defines it. The CRD group `station.rlark.io`, the `Station*` kinds and the binary names are kept as code names; the migration and the enrollment design are in [Station v2](station-v2.zh-CN.md).
+
 This contract defines the checked-in `station.rlark.io/v1alpha1` types and generated CRDs in `extensions/station`. It is an experimental extension API: the CRDs are not installed in production kcp or member clusters. Controller manager and Station API executable prototypes and sample Deployments now exist, but neither is deployed or production-ready.
 
 ## Scope and namespace mapping

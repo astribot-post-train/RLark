@@ -1,5 +1,7 @@
 # Station gateway bootstrap (experimental)
 
+> **Naming (2026-11-12)**: the object in this directory is called a **Site Node** in the UI and in the external API: one machine's long-lived identity and network membership in the site. "Station" is reserved for a station of a Fleet Run, as the paper defines it. The CRD group `station.rlark.io`, the `Station*` kinds and the binary names are kept as code names; the migration and the enrollment design are in [Station v2](../../docs/design/station-v2.zh-CN.md).
+
 This standalone component bootstraps one WireGuard site interface using a Kubernetes DaemonSet. It is not the Station controller, does not integrate with RLark UI, and is not an independent-peer solution. Use only after validating the topology and CIDRs; it has not been tested on production nodes. No systemd or Ansible is involved.
 
 Build the WireGuard image in this directory and deploy it with the network template in `extensions/station/deploy/station-agent.yaml`. Nodes select that template with `station.rlark.io/network=enabled`; desired configuration comes from `station-wireguard-config`, and private keys live under `/var/lib/station/wg/private.key` on each node. Install through a Kubernetes API reachable independently of this tunnel. Verify the host has WireGuard kernel support. Set and verify forwarding, firewall and return routes separately when forwarding traffic; the component does not change host-wide forwarding or firewall rules.
@@ -35,3 +37,13 @@ Before use, create `station-wireguard-config` with a `<node-name>.json` key for 
 The network template uses `/var/lib/station/wg/private.key` on each node and the Station identity container listens for probes on `:18082`, avoiding the default `:8081` when a host-network controller uses that port. The ordinary identity-only template retains `:8081`. The agent's `--probe-address` flag can select another TCP address; listener conflicts stop the agent at startup. A node must have the correct existing key before a migration; do not silently replace its identity.
 
 On 2026-11-11, the local `cailiang` node was migrated to the two-container network Pod. Its existing key was copied into the uniform directory and checked for equality and mode 0600. Pod recreation returned to Ready, and three peer handshakes and tunnel pings were observed. The earlier remote pull failures were resolved by the WG-only registry described above. Whole-node restart and remote cold recovery are not verified.
+
+## Configuration sources after enrollment (2026-11-12)
+
+With `STATION_GATEWAY_COMPUTED_CONFIG` set, the gateway takes the first document that exists and parses: the one station-agent fetched from Station API → `last-applied.json`, this node's copy of the last one it reconciled (beside the private key, so a restart without Station API brings the same tunnel back) → the static `--config` file (bootstrap and rollback; may be absent). Without the variable only the static file is read, as before.
+
+- `STATION_GATEWAY_IDENTITY_FILE`: the public key is written there at start for station-agent to enroll; it no longer has to be copied from the log.
+- Peers are updated one by one: only peers that differ are sent to the kernel and dropped peers are removed explicitly; unchanged peers keep their sessions and learned endpoints.
+- `STATION_GATEWAY_PRUNE_ROUTES=true` (off by default): routes the configuration drops are removed by the gateway, limited to routes on the interface it created and marked, with protocol 242 and metric 49321. When off the previous behaviour holds: such a route stops reconciliation until removed by hand. Uplink routes, which are on another interface, are never removed.
+
+The document format is produced by `extensions/station/network`; both sides share `testdata/computed-s1u-01-x86.json` as a contract test.

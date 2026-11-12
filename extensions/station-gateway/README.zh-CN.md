@@ -1,5 +1,7 @@
 # Station 网关引导组件（试验性）
 
+> **名字（2026-11-12）**：本目录的对象在界面和对外接口里叫**场站节点（Site Node）**：一台机器在场站里的长期身份和入网记录。"Station"留给 Fleet 一个 Run 里的 station（论文的定义）。CRD 组 `station.rlark.io`、kind `Station*` 和可执行文件名是沿用的代号，迁移方案和入网设计见 [Station v2](../../docs/design/station-v2.zh-CN.md)。
+
 这个独立组件通过 Kubernetes DaemonSet 引导一个 WireGuard 站点接口，不是 Station 控制器、不提供 RLark 界面和独立 Peer 功能。使用前必须核对拓扑和网段；尚未在生产节点验证。不依赖 systemd 或 Ansible。
 
 在本目录构建 WireGuard 镜像，并由 `extensions/station/deploy/station-agent.yaml` 的网络模板部署。节点通过 `station.rlark.io/network=enabled` 标签选择网络模板，配置由 `station-wireguard-config` 提供，私钥位于节点统一目录 `/var/lib/station/wg/private.key`。通过独立于此隧道的 Kubernetes API 安装。确认宿主机内核支持 WireGuard；转发流量时另行配置并验证 IP 转发、防火墙和回程路由，本组件不会修改宿主机全局转发或防火墙。
@@ -35,3 +37,13 @@ Station 身份服务源码还包含内部网络摘要读取器：查询时重新
 网络模板使用各节点的 `/var/lib/station/wg/private.key`，Station 身份容器使用 `:18082` 提供探针，避开 host-network 控制器可能占用的默认 `:8081`。普通身份模板继续使用 `:8081`。agent 可通过 `--probe-address` 选择其他 TCP 地址，监听冲突会使 agent 在启动时退出。迁移前须确保节点已有正确密钥，不能静默替换身份。
 
 2026-11-11，本地 `cailiang` 已迁移到双容器网络 Pod，现有密钥复制到统一目录并验证内容一致及权限 0600。Pod 重建后恢复 Ready，三个 Peer 有近期握手且隧道 ping 成功。早期远端镜像拉取故障已通过上文的 WG 专用仓库解决。整机重启和远端冷恢复尚未验证。
+
+## 入网后的配置来源（2026-11-12）
+
+设置 `STATION_GATEWAY_COMPUTED_CONFIG` 后，网关按顺序取第一个存在且能解析的文档：station-agent 从 Station API 取回并写入的配置 → 本机上次执行过的 `last-applied.json`（和私钥同目录，Station API 不可达时节点重启也能恢复同一条隧道）→ `--config` 的静态文件（引导和回退用，可以没有）。不设这个变量时只读静态文件，行为和以前一样。
+
+- `STATION_GATEWAY_IDENTITY_FILE`：启动时把公钥写到这个文件，供 station-agent 登记，不用再从日志里抄。
+- 对端逐个更新：只把有差别的对端发给内核，去掉的对端显式删除；没变的对端不碰，它们的会话和学到的端点保留。
+- `STATION_GATEWAY_PRUNE_ROUTES=true`（默认关）：配置里去掉的路由由网关删除，范围只限它自己创建并打了别名的接口上、协议号 242、metric 49321 的路由。不开时仍是原来的行为：遇到这种路由就停止协调，等人工删除。上联路由（在别的接口上）任何时候都不删。
+
+文档格式由 `extensions/station/network` 产出，两边共用 `testdata/computed-s1u-01-x86.json` 做契约测试。
