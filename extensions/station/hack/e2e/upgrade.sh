@@ -32,7 +32,8 @@ bundle() {
 
 up() {
   mkdir -p "$D"
-  printf 'kind: Cluster\napiVersion: kind.x-k8s.io/v1alpha4\nnodes:\n- role: control-plane\n- role: worker\n' > "$D/kind.yaml"
+  # /boot: kubeadm's system verification reads the kernel configuration, which a node container lacks.
+  printf 'kind: Cluster\napiVersion: kind.x-k8s.io/v1alpha4\nnodes:\n- role: control-plane\n  extraMounts: [{hostPath: /boot, containerPath: /boot, readOnly: true}]\n- role: worker\n  extraMounts: [{hostPath: /boot, containerPath: /boot, readOnly: true}]\n' > "$D/kind.yaml"
   kind create cluster --name $NAME --image "${NODE_IMAGE:-kindest/node:v1.31.0}" --config "$D/kind.yaml" --kubeconfig "$K" --wait 120s 2>&1 | tail -1
   pause=$(docker exec $NAME-control-plane ctr -n k8s.io images ls -q | grep '/pause:' | grep -v sha256 | head -1)
   for node in $NAME-control-plane $NAME-worker; do
@@ -49,6 +50,7 @@ POD
   docker exec $NAME-worker sh -c "sed -i '/^maxPods:/d' /var/lib/kubelet/config.yaml && echo 'maxPods: 77' >> /var/lib/kubelet/config.yaml && systemctl restart kubelet"
   until [[ $(kubectl --kubeconfig "$K" get pods -o name 2>/dev/null | grep -c witness) == 2 ]]; do sleep 1; done
   until [[ $(kubectl --kubeconfig "$K" get node $NAME-worker -o jsonpath='{.status.capacity.pods}') == 77 ]]; do sleep 1; done
+  kubectl --kubeconfig "$K" wait --for=condition=Ready node --all --timeout=90s >/dev/null
   kubectl --kubeconfig "$K" wait --for=condition=Ready pod --all --timeout=60s >/dev/null
   witness
 }

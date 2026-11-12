@@ -64,8 +64,12 @@ func main() {
 	}
 	server, code := os.Getenv("RLARK_SERVER"), os.Getenv("RLARK_CODE")
 	ca, err := os.ReadFile("/ca.crt")
+	if err != nil && os.Getenv("RLARK_CA") != "" {
+		// A Job that moves a node hands the CA over in the environment.
+		ca, err = []byte(os.Getenv("RLARK_CA")), nil
+	}
 	if server == "" || code == "" || err != nil {
-		log.Fatal("RLARK_SERVER, RLARK_CODE and /ca.crt are required")
+		log.Fatal("RLARK_SERVER, RLARK_CODE and the CA (/ca.crt or RLARK_CA) are required")
 	}
 	pool := x509.NewCertPool()
 	if !pool.AppendCertsFromPEM(ca) {
@@ -143,15 +147,46 @@ func main() {
 	if err := os.WriteFile("/etc/rlark/station/ca.crt", ca, 0644); err != nil {
 		log.Fatal(err)
 	}
-	install := exec.Command("/bin/sh", stage+"/install.sh")
-	install.Stdout, install.Stderr = os.Stdout, os.Stderr
-	install.Env = append(os.Environ(),
+	settings := append(os.Environ(),
 		"PATH=/opt/rlark/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
 		"NODE_NAME="+granted.NodeName, "TUNNEL_ADDRESS="+granted.TunnelAddress, "TUNNEL_INTERFACE="+tunnel.Interface,
 		"JOIN_API_SERVER="+granted.Join.APIServer, "JOIN_TOKEN="+granted.Join.Token, "JOIN_CA_HASH="+granted.Join.CACertHash,
 		"NODE_LABELS="+granted.Labels, "NODE_TAINTS="+granted.Taints)
+	if os.Getenv("RLARK_MIGRATE") != "" {
+		migrate(settings)
+		return
+	}
+	install := hostCommand(stage + "/install.sh")
+	install.Stdout, install.Stderr = os.Stdout, os.Stderr
+	install.Env = settings
 	if err := install.Run(); err != nil {
 		log.Fatalf("install: %v", err)
+	}
+}
+
+// migrate runs install.sh as a unit of the host's systemd: the machine is a
+// node already and this program runs in one of its pods, which the node's
+// leaving its cluster ends. The unit goes on; its output is install.log.
+func migrate(settings []string) {
+	arguments := []string{"--unit", "rlark-node-migrate", "--collect", "--quiet"}
+	for _, setting := range settings {
+		if name := strings.SplitN(setting, "=", 2)[0]; strings.HasPrefix(name, "RLARK_") || strings.HasPrefix(name, "NODE_") || strings.HasPrefix(name, "TUNNEL_") || strings.HasPrefix(name, "JOIN_") || name == "PATH" {
+			arguments = append(arguments, "--setenv="+setting)
+		}
+	}
+	arguments = append(arguments, "/bin/sh", "-c", "exec /bin/sh "+stage+"/install.sh > "+stage+"/install.log 2>&1")
+	if output, err := exec.Command("systemd-run", arguments...).CombinedOutput(); err != nil {
+		log.Fatalf("start the migration unit: %v: %s", err, output)
+	}
+	log.Printf("migration runs as rlark-node-migrate.service; its log is %s/install.log", stage)
+	for shown := 0; ; time.Sleep(time.Second) {
+		if data, err := os.ReadFile(stage + "/install.log"); err == nil && len(data) > shown {
+			os.Stdout.Write(data[shown:])
+			shown = len(data)
+		}
+		if state, _ := exec.Command("systemctl", "is-active", "rlark-node-migrate").Output(); strings.TrimSpace(string(state)) != "active" && strings.TrimSpace(string(state)) != "activating" {
+			return
+		}
 	}
 }
 
@@ -212,7 +247,7 @@ func upgrade() {
 	if err := os.Chdir(stage); err != nil {
 		log.Fatal(err)
 	}
-	run := exec.Command("/bin/sh", stage+"/upgrade.sh")
+	run := hostCommand(stage + "/upgrade.sh")
 	run.Stdout, run.Stderr = os.Stdout, os.Stderr
 	run.Env = append(os.Environ(), "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin")
 	if err := run.Run(); err != nil {
@@ -253,4 +288,18 @@ func kubeletOverrides(nodeFile, clusterFile string) {
 		log.Fatal(err)
 	}
 	os.Stdout.Write(patch)
+}
+
+// hostCommand runs a script of the bundle as a process of the host. After the
+// chroot this program sees the host's files but is still in its container's
+// namespaces; kubeadm reads the mount table to find the cgroup hierarchy, so
+// the script is started through the host's nsenter in the namespaces of PID 1.
+func hostCommand(script string) *exec.Cmd {
+	for _, nsenter := range []string{"/usr/bin/nsenter", "/bin/nsenter", "/usr/sbin/nsenter", "/sbin/nsenter"} {
+		if _, err := os.Stat(nsenter); err == nil {
+			return exec.Command(nsenter, "-t", "1", "-m", "-u", "-i", "-n", "-p", "--", "/bin/sh", script)
+		}
+	}
+	log.Print("the host has no nsenter; running in the container's namespaces")
+	return exec.Command("/bin/sh", script)
 }

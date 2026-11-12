@@ -14,9 +14,25 @@ SOCKET=/run/containerd-fleet/containerd.sock
 started=$(date +%s)
 stamp() { echo "$(date +%T) +$(( $(date +%s) - started ))s $*"; }
 fail() { echo "$(date +%T) FAILED: $*" >&2; exit 1; }
-[ ! -e /etc/kubernetes/kubelet.conf ] || fail "this machine is already a node (/etc/kubernetes/kubelet.conf exists)"
 command -v containerd >/dev/null || fail "containerd is required; it is installed together with docker"
 modprobe wireguard || fail "the kernel has no wireguard module"
+
+# 0. A machine that is a node already leaves its cluster first (RLARK_MIGRATE,
+#    set by migrate-node.sh). It keeps its container runtime, and with it the
+#    images it has, and its WireGuard key, and with that its tunnel address.
+if [ -e /etc/kubernetes/kubelet.conf ]; then
+  [ -n "${RLARK_MIGRATE:-}" ] || fail "this machine is already a node (/etc/kubernetes/kubelet.conf exists); moving it is migrate-node.sh"
+  [ ! -e /etc/kubernetes/manifests/kube-apiserver.yaml ] || [ "$RLARK_MIGRATE" = control-plane ] ||
+    fail "this node is its cluster's control plane; the cluster ends when it leaves, so it moves last and with RLARK_MIGRATE=control-plane"
+  SOCKET=$(sed -n 's/.*--container-runtime-endpoint=unix:\/\/\([^ "]*\).*/\1/p' /var/lib/kubelet/kubeadm-flags.env)
+  [ -S "$SOCKET" ] || fail "cannot find the node's container runtime socket"
+  old=$(dirname "$(systemctl show kubelet -p ExecStart --value | sed -n 's/.*path=\([^ ;]*kubelet\) .*/\1/p')")
+  systemctl stop kubelet
+  "$old/kubeadm" reset --force --cri-socket "unix://$SOCKET" > "$B"/reset.log 2>&1 || { tail -20 "$B"/reset.log >&2; fail "kubeadm reset"; }
+  rm -rf /etc/cni/net.d/*
+  KEEP_RUNTIME=1
+  stamp "left the old cluster; runtime $SOCKET and its images are kept"
+fi
 
 install -d /opt/rlark/bin /opt/cni/bin /etc/rlark/station /etc/kubernetes/kubelet.conf.d /etc/containerd-fleet
 install -m 755 "$B"/bin/* /opt/rlark/bin/
@@ -56,6 +72,7 @@ stamp "tunnel up: $TUNNEL_ADDRESS on $TUNNEL_INTERFACE"
 
 # 2. A containerd for the kubelet, with the images a node needs before it
 #    can pull anything.
+if [ -z "${KEEP_RUNTIME:-}" ]; then
 containerd config default | sed -e 's#/var/lib/containerd#/var/lib/containerd-fleet#g' -e 's#/run/containerd#/run/containerd-fleet#g' \
   -e 's#SystemdCgroup = false#SystemdCgroup = true#' -e "s#registry.k8s.io/pause:[0-9.]*#$(cat "$B"/images/pause.ref)#" \
   -e "s#config_path = \"\"#config_path = \"/etc/containerd-fleet/certs.d\"#" -e "s#config_path = ''#config_path = '/etc/containerd-fleet/certs.d'#" \
@@ -86,6 +103,10 @@ printf '%s\n' 'net.ipv4.ip_forward = 1' 'net.bridge.bridge-nf-call-iptables = 1'
 sysctl -q -p /etc/sysctl.d/90-rlark.conf
 systemctl daemon-reload
 systemctl enable --now containerd-fleet >/dev/null 2>&1 || fail "containerd-fleet did not start: journalctl -u containerd-fleet"
+else
+modprobe overlay
+modprobe br_netfilter
+fi
 for archive in "$B"/images/*.tar; do
   ctr -a $SOCKET -n k8s.io images import "$archive" >/dev/null || fail "import $archive"
 done
@@ -115,6 +136,16 @@ RestartSec=5
 
 [Install]
 WantedBy=multi-user.target
+UNIT
+# A distribution's or an earlier installation's drop-in may set ExecStart; this one is read last.
+install -d /etc/systemd/system/kubelet.service.d
+cat > /etc/systemd/system/kubelet.service.d/zz-rlark.conf <<UNIT
+[Service]
+Environment="KUBELET_KUBECONFIG_ARGS=--bootstrap-kubeconfig=/etc/kubernetes/bootstrap-kubelet.conf --kubeconfig=/etc/kubernetes/kubelet.conf"
+Environment="KUBELET_CONFIG_ARGS=--config=/var/lib/kubelet/config.yaml --config-dir=/etc/kubernetes/kubelet.conf.d"
+EnvironmentFile=-/var/lib/kubelet/kubeadm-flags.env
+ExecStart=
+ExecStart=/opt/rlark/bin/kubelet \$KUBELET_KUBECONFIG_ARGS \$KUBELET_CONFIG_ARGS \$KUBELET_KUBEADM_ARGS
 UNIT
 systemctl daemon-reload
 systemctl enable kubelet >/dev/null 2>&1

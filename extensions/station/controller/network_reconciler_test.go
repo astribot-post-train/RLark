@@ -420,3 +420,60 @@ func TestNetworkAdmitsAMachineByCode(t *testing.T) {
 		t.Fatalf("joined: admission %+v enrollment %+v", joined, own)
 	}
 }
+
+// A machine that is a node of one cluster and redeems an admission into
+// another keeps its key and its address: the enrollment it leaves behind
+// gives way without anyone deleting it, and its peers keep one entry for it.
+func TestNetworkMovesAMachineToAnotherCluster(t *testing.T) {
+	keyHub, keyRobot := strings.Repeat("A", 43)+"=", strings.Repeat("B", 43)+"="
+	siteNetwork := testSiteNetwork()
+	siteNetwork.Spec.Nodes = append(siteNetwork.Spec.Nodes, stationv1alpha1.SiteNetworkNode{ClusterID: "robot-01", NodeName: "x86", Role: "Leaf", Address: "10.254.240.7"})
+	objects := append(testMember("dev", "cailiang", keyHub, "10.11.14.128"), testMember("robot-01", "x86", keyRobot, "192.168.0.10")...)
+	admission := &stationv1alpha1.NodeAdmission{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "ns-dev", Name: "x86", Generation: 1},
+		Spec: stationv1alpha1.NodeAdmissionSpec{ClusterID: "dev", CodeHash: strings.Repeat("0", 64), APIServer: "10.11.14.128:16443",
+			ExpiresAt: metav1.NewTime(time.Unix(1_800_000_600, 0)), Address: "10.254.240.7"},
+	}
+	r, c := newNetworkTest(t, append(objects, siteNetwork, admission)...)
+	reconcileNetwork(t, r)
+	if old := enrollmentStatus(t, c, "robot-01", "x86"); old.Phase != stationv1alpha1.NetworkEnrollmentEnrolled || old.TunnelAddress != "10.254.240.7" {
+		t.Fatalf("before the move the machine is enrolled where it is: %+v", old)
+	}
+
+	var stored stationv1alpha1.NodeAdmission
+	if err := c.Get(context.Background(), types.NamespacedName{Namespace: "ns-dev", Name: "x86"}, &stored); err != nil {
+		t.Fatal(err)
+	}
+	stored.Spec.PublicKey = keyRobot
+	if err := c.Update(context.Background(), &stored); err != nil {
+		t.Fatal(err)
+	}
+	reconcileNetwork(t, r)
+	if err := c.Get(context.Background(), types.NamespacedName{Namespace: "ns-dev", Name: "x86"}, &stored); err != nil {
+		t.Fatal(err)
+	}
+	old := enrollmentStatus(t, c, "robot-01", "x86")
+	hub := configOf(t, enrollmentStatus(t, c, "dev", "cailiang"))
+	entries := 0
+	for _, peer := range hub.Peers {
+		if peer.PublicKey == keyRobot {
+			entries++
+			if len(peer.AllowedIPs) == 0 || peer.AllowedIPs[0] != "10.254.240.7/32" {
+				t.Fatalf("the hub's entry for the moved machine: %+v", peer)
+			}
+		}
+	}
+	if stored.Status.Phase != stationv1alpha1.NodeAdmissionRedeemed || stored.Status.Address != "10.254.240.7" || stored.Status.Config == "" ||
+		old.Phase != stationv1alpha1.NetworkEnrollmentRejected || !strings.Contains(old.Reason, "moved to dev/x86") || entries != 1 {
+		t.Fatalf("after the move: admission %+v, old enrollment %+v, hub entries %d", stored.Status, old, entries)
+	}
+	var network stationv1alpha1.SiteNetwork
+	if err := c.Get(context.Background(), testNetworkKey, &network); err != nil {
+		t.Fatal(err)
+	}
+	for _, condition := range network.Status.Conditions {
+		if condition.Type == "Ready" && condition.Status != metav1.ConditionTrue {
+			t.Fatalf("the SiteNetwork must stay computable during the move: %+v", condition)
+		}
+	}
+}
