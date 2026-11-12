@@ -1,9 +1,18 @@
 #!/bin/sh
 # Upgrades this node's Kubernetes by one minor version; station-bootstrap runs
 # it as a host process from a Job that upgrade-cluster.sh pins to the node.
+#   PHASE=images    import the version's images: on every node before the
+#                   first is upgraded, because the control plane's upgrade
+#                   rolls kube-proxy and CoreDNS out to all of them at once
 #   PHASE=control   import the version's images, then "kubeadm upgrade apply"
 #                   on a control-plane node or "kubeadm upgrade node" elsewhere
-#   PHASE=kubelet   replace kubelet and kubectl and restart the kubelet
+#   PHASE=kubelet   replace kubelet and kubectl and restart the kubelet. A
+#                   watchdog is set on the node first: a systemd timer that
+#                   puts the old kubelet and its configuration back
+#                   WATCHDOG_SECONDS (600) later, whatever has become of the
+#                   upgrade's session, the API or the new kubelet
+#   PHASE=confirm   the node runs KUBE_VERSION and the API has seen it Ready:
+#                   remove the watchdog. Nothing else keeps the new kubelet.
 #   PHASE=rollback  put the node back to KUBE_VERSION, the version it had
 #                   before its last upgrade: binaries, configuration, and on a
 #                   control-plane node the static pods and etcd's content of
@@ -25,6 +34,13 @@ from=$("$BIN/kubelet" --version | awk '{print $2}')
 keep=/var/backups/rlark-kube-upgrade/$from
 [ "$PHASE" = rollback ] || install -d "$keep"
 export PATH="$BIN:$PATH"
+WATCHDOG=rlark-kube-upgrade-watchdog
+WATCH=/var/lib/rlark/kube-upgrade
+disarm() {
+  systemctl disable --now $WATCHDOG.timer >/dev/null 2>&1 || true
+  rm -f /etc/systemd/system/$WATCHDOG.timer /etc/systemd/system/$WATCHDOG.service "$WATCH/restore.sh"
+  systemctl daemon-reload
+}
 # A kubelet checks for swap only when it starts. On a node where swap was
 # turned on under a running kubelet that is not configured for it, no kubelet
 # starts again, the old one included: nothing is changed on such a node.
@@ -35,16 +51,23 @@ if [ "$PHASE" != rollback ] && [ "$(wc -l < /proc/swaps)" -gt 1 ] &&
 fi
 
 case $PHASE in
-control)
+images|control)
   for archive in "$B"/images/*.tar; do
     ctr -a "$SOCKET" -n k8s.io images import "$archive" >/dev/null || fail "import $archive"
   done
   stamp "images of $KUBE_VERSION imported"
+  [ "$PHASE" = control ] || exit 0
   [ -e "$keep/kubeadm" ] || cp -a "$BIN/kubeadm" "$keep/kubeadm"
   [ -d "$keep/etc-kubernetes" ] || cp -a /etc/kubernetes "$keep/etc-kubernetes"
   [ -d "$keep/kubelet" ] || { install -d "$keep/kubelet" && cp -a /var/lib/kubelet/config.yaml /var/lib/kubelet/kubeadm-flags.env "$keep/kubelet/"; }
   # upgrade-cluster.sh took this snapshot just before it started this phase.
-  [ ! -e "/var/lib/etcd/rlark-snapshot-before-$KUBE_VERSION.db" ] || mv "/var/lib/etcd/rlark-snapshot-before-$KUBE_VERSION.db" "$keep/etcd-snapshot.db"
+  # A run that goes on after a failed one finds the control plane at
+  # KUBE_VERSION already: its snapshot is not of the state before the upgrade,
+  # and the one that is stays.
+  snapshot=/var/lib/etcd/rlark-snapshot-before-$KUBE_VERSION.db
+  if [ -e "$snapshot" ]; then
+    if grep -q "kube-apiserver:$KUBE_VERSION\$" /etc/kubernetes/manifests/kube-apiserver.yaml; then rm -f "$snapshot"; else mv "$snapshot" "$keep/etcd-snapshot.db"; fi
+  fi
   # What this node's kubelet configuration has that the cluster's does not is
   # carried across: kubeadm writes the file anew from the cluster's.
   patches=
@@ -65,7 +88,8 @@ control)
   else
     # kubeadm reads the node's runtime socket from an annotation of the Node,
     # which a node that was not joined by kubeadm join alone may lack.
-    node=$(cat /var/lib/kubelet/kubeadm-flags.env /etc/default/kubelet /etc/sysconfig/kubelet 2>/dev/null | sed -n 's/.*--hostname-override=\([^ "]*\).*/\1/p' | head -1)
+    # upgrade-cluster.sh names the node; run by hand, the kubelet's flags or the hostname do.
+    node=${NODE_NAME:-$(cat /var/lib/kubelet/kubeadm-flags.env /etc/default/kubelet /etc/sysconfig/kubelet 2>/dev/null | sed -n 's/.*--hostname-override=\([^ "]*\).*/\1/p' | head -1)}
     [ -n "$node" ] || node=$(hostname | tr '[:upper:]' '[:lower:]')
     [ -n "$(kubectl --kubeconfig /etc/kubernetes/kubelet.conf get node "$node" -o jsonpath='{.metadata.annotations.kubeadm\.alpha\.kubernetes\.io/cri-socket}')" ] ||
       kubectl --kubeconfig /etc/kubernetes/kubelet.conf annotate node "$node" "kubeadm.alpha.kubernetes.io/cri-socket=unix://$SOCKET" >/dev/null
@@ -74,30 +98,59 @@ control)
   fi
   ;;
 kubelet)
+  [ "$from" != "$KUBE_VERSION" ] || { stamp "the kubelet is already $KUBE_VERSION"; exit 0; }
   [ -e "$keep/bin/kubelet" ] || { install -d "$keep/bin" && cp -a "$BIN/kubelet" "$BIN/kubectl" "$keep/bin/"; }
   install -m 755 "$B/bin/kubelet" "$BIN/kubelet.new" && mv "$BIN/kubelet.new" "$BIN/kubelet"
   install -m 755 "$B/bin/kubectl" "$BIN/kubectl.new" && mv "$BIN/kubectl.new" "$BIN/kubectl"
+  # The watchdog: the way back needs neither the kubelet, nor the API, nor
+  # this process. It survives a reboot (the timer then counts anew).
+  install -d "$WATCH"
+  rm -f "$WATCH/restored"
+  cat > "$WATCH/restore.sh" <<RESTORE
+#!/bin/sh
+# Written by upgrade.sh before the kubelet of $KUBE_VERSION was started: back to $from.
+journalctl -u kubelet --no-pager --since "-5min" > "$keep/kubelet-failed.log" 2>&1
+install -m 755 "$keep/bin/kubelet" "$BIN/kubelet.old" && mv "$BIN/kubelet.old" "$BIN/kubelet"
+install -m 755 "$keep/bin/kubectl" "$BIN/kubectl.old" && mv "$BIN/kubectl.old" "$BIN/kubectl"
+cp -a "$keep/kubelet/config.yaml" "$keep/kubelet/kubeadm-flags.env" /var/lib/kubelet/
+systemctl disable --now $WATCHDOG.timer
+systemctl restart kubelet
+# Once, and the outcome is left here: nothing tries again.
+state="NOT healthy 2 min after its start either (journalctl -u kubelet): the node needs a person"
+for try in \$(seq 60); do
+  if curl -fsS -m 2 http://127.0.0.1:10248/healthz >/dev/null 2>&1; then state=healthy; break; fi
+  sleep 2
+done
+date "+%F %T the kubelet of $KUBE_VERSION was not confirmed; back on $from, whose kubelet is \$state" > "$WATCH/restored"
+[ "\$state" = healthy ]
+RESTORE
+  printf '[Unit]\nDescription=Back to the kubelet of %s unless the upgrade to %s is confirmed\n[Service]\nType=oneshot\nExecStart=/bin/sh %s/restore.sh\n' "$from" "$KUBE_VERSION" "$WATCH" > /etc/systemd/system/$WATCHDOG.service
+  printf '[Timer]\nOnActiveSec=%s\nAccuracySec=1\n[Install]\nWantedBy=timers.target\n' "${WATCHDOG_SECONDS:-600}" > /etc/systemd/system/$WATCHDOG.timer
   systemctl daemon-reload
+  systemctl enable $WATCHDOG.timer >/dev/null 2>&1
+  systemctl restart $WATCHDOG.timer
+  stamp "watchdog set: back on $from in ${WATCHDOG_SECONDS:-600} s unless confirmed"
   systemctl restart kubelet
   tries=0
   until curl -fsS -m 2 http://127.0.0.1:10248/healthz >/dev/null 2>&1; do
     tries=$((tries + 1))
     if [ $tries -ge 60 ]; then
-      # Without a kubelet nothing reaches this node through the cluster, so
-      # the node goes back to what it ran before, by itself.
-      journalctl -u kubelet --no-pager --since "-3min" > "$keep/kubelet-failed.log" 2>&1 || true
+      # No reason to wait for the timer: the same way back, now.
+      systemctl start $WATCHDOG.service || true
       grep -v -E 'Failed to ensure lease|Unable to register node|node .* not found' "$keep/kubelet-failed.log" | tail -15 >&2
-      install -m 755 "$keep/bin/kubelet" "$BIN/kubelet.old" && mv "$BIN/kubelet.old" "$BIN/kubelet"
-      install -m 755 "$keep/bin/kubectl" "$BIN/kubectl.old" && mv "$BIN/kubectl.old" "$BIN/kubectl"
-      [ ! -d "$keep/kubelet" ] || cp -a "$keep/kubelet/config.yaml" "$keep/kubelet/kubeadm-flags.env" /var/lib/kubelet/
-      systemctl restart kubelet
-      fail "the kubelet of $KUBE_VERSION was not healthy 2 min after its start; the node is back on $from, the kubelet's log is $keep/kubelet-failed.log"
+      fail "the kubelet of $KUBE_VERSION was not healthy 2 min after its start; its log is $keep/kubelet-failed.log. $(cat "$WATCH/restored")"
     fi
     sleep 2
   done
   stamp "kubelet $("$BIN/kubelet" --version | awk '{print $2}') healthy"
   ;;
+confirm)
+  [ "$from" = "$KUBE_VERSION" ] || fail "the node runs $from, not $KUBE_VERSION: $(cat "$WATCH/restored" 2>/dev/null)"
+  disarm
+  stamp "watchdog removed: the node stays on $KUBE_VERSION"
+  ;;
 rollback)
+  disarm
   keep=/var/backups/rlark-kube-upgrade/$KUBE_VERSION
   [ -d "$keep/etc-kubernetes" ] || { stamp "nothing of $KUBE_VERSION is kept under $keep: this node was not upgraded from it"; exit 0; }
   if [ -e "$keep/etc-kubernetes/manifests/kube-apiserver.yaml" ]; then
@@ -145,5 +198,5 @@ rollback)
   done
   stamp "node back at $("$BIN/kubelet" --version | awk '{print $2}')"
   ;;
-*) fail "PHASE must be control, kubelet or rollback" ;;
+*) fail "PHASE must be images, control, kubelet, confirm or rollback" ;;
 esac

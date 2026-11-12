@@ -10,19 +10,27 @@
 #          plane and nodes run, so that no node needs the internet.
 # Order, as kubeadm prescribes: each control-plane node, then every other node,
 # one at a time: etcd snapshot (control plane) -> kubeadm upgrade -> drain ->
-# kubelet -> back to its previous scheduling state. It stops at the first
+# kubelet -> confirm -> back to its previous scheduling state. The kubelet
+# phase leaves a watchdog on the node that puts the old kubelet back after
+# WATCHDOG_SECONDS (600) unless this script, having seen the node Ready at
+# VERSION, confirms: a node whose new kubelet does not start, or whose upgrade
+# lost this session, returns by itself (cordoned, as the drain left it). It stops at the first
 # failed check. What a node replaced is kept on it in
 # /var/backups/rlark-kube-upgrade/<old version>/, the snapshot too
 # (etcd-snapshot.db). ROLLBACK=yes with the old version as VERSION and the
 # image of the failed upgrade takes the worker nodes back, after the control
 # plane has been taken back on its node (upgrade.sh, PHASE=rollback).
-# Environment: PULL_SECRET (name of an image pull secret in kube-system), NODES.
+# Environment: PULL_SECRET (name of an image pull secret) and JOB_NAMESPACE
+# (where it is and the Jobs run; kube-system), NODES, WATCHDOG_SECONDS.
 set -euo pipefail
 K=$1 VERSION=$2 IMAGE=$3
 k() { kubectl --kubeconfig "$K" "$@"; }
 stamp() { echo "$(date +%T) $*"; }
 minor() { echo "$1" | sed -E 's/^v1\.([0-9]+)\..*/\1/'; }
 started=$(date +%s)
+watchdog=${WATCHDOG_SECONDS:-600}
+# The Jobs run where the image pull secret of the cluster is.
+NS=${JOB_NAMESPACE:-kube-system}
 pull=; [[ -z ${PULL_SECRET:-} ]] || pull="imagePullSecrets: [{name: $PULL_SECRET}]"
 
 current=$(k version -o json | python3 -c 'import json,sys; print(json.load(sys.stdin)["serverVersion"]["gitVersion"])')
@@ -45,11 +53,11 @@ stamp "cluster at $current -> $VERSION; order:$(echo $nodes | sed 's#node/# #g')
 job() { # node phase
   local node=$1 phase=$2 name status
   name=$(echo "kube-upgrade-$phase-$node" | cut -c1-63 | sed 's/-*$//')
-  k -n kube-system delete job "$name" --ignore-not-found >/dev/null
+  k -n "$NS" delete job "$name" --ignore-not-found >/dev/null
   k apply -f - >/dev/null <<JOB
 apiVersion: batch/v1
 kind: Job
-metadata: {name: $name, namespace: kube-system, labels: {app: rlark-kube-upgrade}}
+metadata: {name: $name, namespace: $NS, labels: {app: rlark-kube-upgrade}}
 spec:
   backoffLimit: 0
   ttlSecondsAfterFinished: 86400
@@ -67,10 +75,16 @@ spec:
         image: $IMAGE
         imagePullPolicy: IfNotPresent
         securityContext: {privileged: true}
-        env: [{name: PHASE, value: $phase}, {name: KUBE_VERSION, value: $VERSION}]
+        env: [{name: PHASE, value: $phase}, {name: KUBE_VERSION, value: $VERSION}, {name: WATCHDOG_SECONDS, value: "$watchdog"}, {name: NODE_NAME, value: $node}]
 JOB
-  until status=$(k -n kube-system get job "$name" -o jsonpath='{.status.succeeded}/{.status.failed}' 2>/dev/null) && [[ $status == 1/* || $status == */1 ]]; do sleep 2; done
-  k -n kube-system logs "job/$name" 2>/dev/null | sed 's/^/    /'
+  until status=$(k -n "$NS" get job "$name" -o jsonpath='{.status.succeeded}/{.status.failed}' 2>/dev/null) && [[ $status == 1/* || $status == */1 ]]; do
+    # A node that cannot pull the bundle would be waited for for ever.
+    if k -n "$NS" get pods -l "job-name=$name" -o jsonpath='{.items[*].status.containerStatuses[*].state.waiting.reason}' 2>/dev/null | grep -q -E 'ErrImagePull|ImagePullBackOff'; then
+      echo "$node cannot pull $IMAGE (phase $phase); nothing was changed on it by this phase" >&2; exit 1
+    fi
+    sleep 2
+  done
+  k -n "$NS" logs "job/$name" 2>/dev/null | sed 's/^/    /'
   [[ $status == 1/* ]] || { echo "phase $phase failed on $node" >&2; exit 1; }
 }
 
@@ -88,9 +102,22 @@ if [[ -n ${ROLLBACK:-} ]]; then
   exit 0
 fi
 
+# The control plane's upgrade replaces kube-proxy on every node and may move
+# CoreDNS to any: each node that runs pods gets the images first.
+for node in $(k get nodes -o jsonpath='{range .items[*]}{.metadata.name} {.status.conditions[?(@.type=="Ready")].status}{"\n"}{end}' | sed -n 's/ True$//p'); do
+  job "$node" images
+done
+stamp "images of $VERSION on every Ready node"
+
 for item in $nodes; do
   node=${item#node/}
-  cordoned=$(k get node "$node" -o jsonpath='{.spec.unschedulable}')
+  # The scheduling state to return to is kept on the node: a run that goes on
+  # after a failed one finds the node cordoned by that one's drain.
+  cordoned=$(k get node "$node" -o jsonpath='{.metadata.annotations.rlark\.io/unschedulable-before-upgrade}')
+  if [[ -z $cordoned ]]; then
+    cordoned=$(k get node "$node" -o jsonpath='{.spec.unschedulable}'); cordoned=${cordoned:-false}
+    k annotate node "$node" "rlark.io/unschedulable-before-upgrade=$cordoned" >/dev/null
+  fi
   if k get nodes -l node-role.kubernetes.io/control-plane -o name | grep -qx "node/$node"; then
     k -n kube-system exec "etcd-$node" -- etcdctl --endpoints https://127.0.0.1:2379 --cacert /etc/kubernetes/pki/etcd/ca.crt \
       --cert /etc/kubernetes/pki/etcd/server.crt --key /etc/kubernetes/pki/etcd/server.key \
@@ -104,8 +131,13 @@ for item in $nodes; do
   k drain "$node" --ignore-daemonsets --delete-emptydir-data --force --pod-selector='app!=rlark-kube-upgrade' --timeout=180s >/dev/null
   t0=$(date +%s)
   job "$node" kubelet
-  until [[ $(k get node "$node" -o jsonpath='{.status.nodeInfo.kubeletVersion} {.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null) == "$VERSION True" ]]; do sleep 2; done
+  until [[ $(k get node "$node" -o jsonpath='{.status.nodeInfo.kubeletVersion} {.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null) == "$VERSION True" ]]; do
+    (( $(date +%s) - t0 < watchdog )) || { echo "$node was not Ready at $VERSION within $watchdog s: its watchdog has put the old kubelet back" >&2; exit 1; }
+    sleep 2
+  done
+  job "$node" confirm
   [[ $cordoned == true ]] || k uncordon "$node" >/dev/null
+  k annotate node "$node" rlark.io/unschedulable-before-upgrade- >/dev/null
   stamp "$node: kubelet $VERSION and Ready in $(( $(date +%s) - t0 )) s"
 done
 k get nodes -o wide
