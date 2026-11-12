@@ -8,7 +8,7 @@
 - 镜像已经构建并推送（第 0.5 节），整套步骤在隔离环境里从线上现在的镜像起步演练过一遍（第 6 节）。
 - 每一步的回退是一条命令，不需要到节点上手工清理（第 3 步以后回退时由新网关自己删多出来的路由）。
 - 对运行中的 Run 的影响（第 6 节的演练实测）：每一步都会重建各节点的 Station 网络 pod，**pod 重建期间隧道不断**。从线上现在跑的那两个镜像起步，走完第 1–4 步和一次回退，5 条业务路径各 300–500 个 ping（间隔 0.2 s）**一个没丢**。原因：WireGuard 接口和会话在内核里，不随 pod 消失；新网关在配置和内核一致时不调用设备配置，有差别时只改有差别的那个对端。Ray 的 150–180 s 容忍度远大于实测的 0 s。所以第 1、2 步可以在两个 episode 之间做；第 3、4 步同样没有测到中断，是否也在 Run 中做由主会话定，稳妥的做法是放在 hold 时。
-- 演练和线上的差别（没有被演练覆盖的）：节点之间没有真实的 NAT 和 50 ms 时延；没有机器人经 Orin 的上联路由（只有内核单测覆盖）；节点共用一个内核（6.8，云节点线上是 5.15）；只测了 ICMP，没有跑 Ray。
+- 演练和线上的差别（没有被演练覆盖的）：管理面的两个 Deployment 在演练里是单独的容器，没有经过 Deployment 的更新（线上第一次换 controller 镜像就因此失败：hostNetwork + 固定探针端口 + RollingUpdate，新旧 pod 抢端口；回退后改成 Recreate 通过，仓库里的清单已改）；节点之间没有真实的 NAT 和 50 ms 时延；没有机器人经 Orin 的上联路由（只有内核单测覆盖）；节点共用一个内核（6.8，云节点线上是 5.15）；只测了 ICMP，没有跑 Ray。
 - 所有命令在开发机 `cailiang`（10.11.14.128）上执行，需要 root（docker、三个集群的 kubeconfig 只有 root 可读）。每一步写成一个脚本放 `/tmp/`，由用户执行。
 
 约定：
@@ -72,7 +72,10 @@ kubectl --kubeconfig $KCP apply -f extensions/station/deploy/management-rbac.yam
 
 # 本地集群：两个 Deployment 换镜像
 kubectl --kubeconfig $LOCAL -n station-system get deploy station-api station-controller -o yaml > $BK/deployments.yaml
-kubectl --kubeconfig $LOCAL -n station-system set image deploy/station-controller controller=localhost:5555/station-controller:$TAG
+# controller 是 hostNetwork、探针端口固定：必须先停旧的再起新的，所以策略改成 Recreate 和镜像一起换
+kubectl --kubeconfig $LOCAL -n station-system patch deploy station-controller --type=json -p '[
+  {"op":"replace","path":"/spec/strategy","value":{"type":"Recreate"}},
+  {"op":"replace","path":"/spec/template/spec/containers/0/image","value":"localhost:5555/station-controller:'$TAG'"}]'
 kubectl --kubeconfig $LOCAL -n station-system set image deploy/station-api station-api=localhost:5555/station-services:$TAG
 kubectl --kubeconfig $LOCAL -n station-system rollout status deploy/station-controller deploy/station-api --timeout=120s
 

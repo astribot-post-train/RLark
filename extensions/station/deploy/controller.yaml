@@ -22,6 +22,10 @@ metadata:
   namespace: station-system
 spec:
   replicas: 1
+  # On a host-network node the probe port is the node's: the old pod must be
+  # gone before the new one binds it.
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app: station-controller
