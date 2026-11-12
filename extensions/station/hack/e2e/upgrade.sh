@@ -7,6 +7,7 @@
 #   upgrade.sh bundle VERSION   build the upgrade bundle of VERSION (pulls its images once)
 #   upgrade.sh up               the v1.31 cluster with the static pods
 #   upgrade.sh to VERSION       load the bundle into the nodes and upgrade
+#   upgrade.sh back VERSION     roll the cluster back to VERSION, the version before the last upgrade
 #   upgrade.sh witness          the static pods' container IDs and start times
 #   upgrade.sh down
 #
@@ -63,6 +64,24 @@ witness() {
 to() {
   kind load docker-image --name $NAME "$(image "$1")" >/dev/null
   "$REPO/extensions/station/hack/upgrade-cluster.sh" "$K" "$1" "$(image "$1")"
+  witness
+}
+
+# back: the control plane on its node (the installer shares the node's
+# namespaces by container name, a kind node having no docker of its own),
+# then the worker through the API.
+back() { # the version to return to; the bundle used is the one of the failed upgrade
+  local image
+  image=$(image "$(kubectl --kubeconfig "$K" version -o json | python3 -c 'import json,sys; print(json.load(sys.stdin)["serverVersion"]["gitVersion"])')")
+  kubectl --kubeconfig "$K" create configmap written-after-the-snapshot --from-literal=a=b >/dev/null
+  local t0=$(date +%s)
+  docker run --rm --privileged --pid=container:$NAME-control-plane --net=container:$NAME-control-plane -e PHASE=rollback -e KUBE_VERSION="$1" "$image" 2>&1 | sed 's/^/    /'
+  until kubectl --kubeconfig "$K" get --raw /readyz >/dev/null 2>&1; do sleep 1; done
+  echo "$(date +%T) control plane back at $1 in $(( $(date +%s) - t0 )) s"
+  ROLLBACK=yes "$REPO/extensions/station/hack/upgrade-cluster.sh" "$K" "$1" "$image"
+  echo "$(date +%T) cluster back at $1 in $(( $(date +%s) - t0 )) s"
+  kubectl --kubeconfig "$K" get configmap written-after-the-snapshot 2>&1 | tail -1 || true
+  kubectl --kubeconfig "$K" -n kube-system get pods -o wide --no-headers | awk '{print $1, $2, $3}'
   witness
 }
 

@@ -12,8 +12,10 @@
 # one at a time: etcd snapshot (control plane) -> kubeadm upgrade -> drain ->
 # kubelet -> back to its previous scheduling state. It stops at the first
 # failed check. What a node replaced is kept on it in
-# /var/backups/rlark-kube-upgrade/<old version>/; the snapshot is
-# /var/lib/etcd/rlark-snapshot-before-<VERSION>.db.
+# /var/backups/rlark-kube-upgrade/<old version>/, the snapshot too
+# (etcd-snapshot.db). ROLLBACK=yes with the old version as VERSION and the
+# image of the failed upgrade takes the worker nodes back, after the control
+# plane has been taken back on its node (upgrade.sh, PHASE=rollback).
 # Environment: PULL_SECRET (name of an image pull secret in kube-system).
 set -euo pipefail
 K=$1 VERSION=$2 IMAGE=$3
@@ -26,7 +28,9 @@ pull=; [[ -z ${PULL_SECRET:-} ]] || pull="imagePullSecrets: [{name: $PULL_SECRET
 current=$(k version -o json | python3 -c 'import json,sys; print(json.load(sys.stdin)["serverVersion"]["gitVersion"])')
 step=$(( $(minor "$VERSION") - $(minor "$current") ))
 [[ $step == 0 || $step == 1 ]] || { echo "the cluster is at $current: kubeadm goes one minor version at a time, not to $VERSION" >&2; exit 1; }
-k get nodes -o jsonpath='{range .items[*]}{.metadata.name} {.status.conditions[?(@.type=="Ready")].status}{"\n"}{end}' | grep -v ' True$' && { echo "every node must be Ready before an upgrade" >&2; exit 1; }
+if [[ -z ${ROLLBACK:-} ]]; then
+  k get nodes -o jsonpath='{range .items[*]}{.metadata.name} {.status.conditions[?(@.type=="Ready")].status}{"\n"}{end}' | grep -v ' True$' && { echo "every node must be Ready before an upgrade" >&2; exit 1; }
+fi
 nodes="$(k get nodes -l node-role.kubernetes.io/control-plane -o name) $(k get nodes -l '!node-role.kubernetes.io/control-plane' -o name)"
 stamp "cluster at $current -> $VERSION; order:$(echo $nodes | sed 's#node/# #g')"
 
@@ -63,6 +67,20 @@ JOB
   k -n kube-system logs "job/$name" 2>/dev/null | sed 's/^/    /'
   [[ $status == 1/* ]] || { echo "phase $phase failed on $node" >&2; exit 1; }
 }
+
+# Back to VERSION, the version before the last upgrade. The control plane
+# first, on its node, where the API cannot be used for it (upgrade.sh,
+# PHASE=rollback); then this, for every other node.
+if [[ -n ${ROLLBACK:-} ]]; then
+  for item in $(k get nodes -l '!node-role.kubernetes.io/control-plane' -o name); do
+    node=${item#node/}
+    job "$node" rollback
+    until [[ $(k get node "$node" -o jsonpath='{.status.nodeInfo.kubeletVersion} {.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null) == "$VERSION True" ]]; do sleep 2; done
+    stamp "$node: back at $VERSION and Ready"
+  done
+  k get nodes -o wide
+  exit 0
+fi
 
 for item in $nodes; do
   node=${item#node/}
