@@ -2,7 +2,6 @@ package gateway
 
 import (
 	"fmt"
-	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -30,6 +29,7 @@ func resolveS3MountOptions(profile, cacheMode string, overrides []string) ([]str
 	case "archive":
 		options["vfs-cache-mode"] = "off"
 		options["dir-cache-time"] = "5s"
+		options["attr-timeout"] = "1s"
 		backend["chunk_size"] = "32Mi"
 		backend["upload_concurrency"] = "4"
 	default:
@@ -94,14 +94,9 @@ func validateS3MountOption(key, value string) error {
 		if err != nil || d < 0 {
 			return bad()
 		}
-	case "transfers", "checkers", "low-level-retries", "tpslimit-burst", "s3-upload-concurrency":
+	case "transfers", "checkers", "low-level-retries", "s3-upload-concurrency":
 		n, err := strconv.ParseInt(value, 10, 32)
 		if err != nil || n < 1 {
-			return bad()
-		}
-	case "tpslimit":
-		n, err := strconv.ParseFloat(value, 64)
-		if err != nil || math.IsNaN(n) || math.IsInf(n, 0) || n <= 0 {
 			return bad()
 		}
 	case "buffer-size", "s3-chunk-size":
@@ -115,6 +110,8 @@ func validateS3MountOption(key, value string) error {
 	default:
 		// In particular, ignore-checksum, credentials, arbitrary paths and
 		// remote-control flags cannot be injected through a mount declaration.
+		// tpslimit is not a mount option either: the node plugin has one
+		// transaction limiter per process (csi-driver-rclone Addon, nodeTpsLimit).
 		return bad()
 	}
 	return nil

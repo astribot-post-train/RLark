@@ -1,0 +1,54 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: registry-trust
+  namespace: rlark-system
+  labels:
+    app: registry-trust
+spec:
+  selector:
+    matchLabels:
+      app: registry-trust
+  template:
+    metadata:
+      labels:
+        app: registry-trust
+    spec:
+      tolerations:
+        - operator: Exists
+      terminationGracePeriodSeconds: 1
+      containers:
+        - name: install
+          image: {{ .Values.image }}
+          imagePullPolicy: IfNotPresent
+          command:
+            - /bin/sh
+            - -ec
+            - |
+              for host in $(echo "$HOSTS" | tr ',' ' '); do
+                mkdir -p "/certs.d/$host"
+                printf '%s\n' "$CA_CERT" > "/certs.d/$host/ca.crt"
+                printf 'server = "https://%s"\n\n[host."https://%s"]\n  capabilities = ["pull", "resolve"]\n  ca = "%s/%s/ca.crt"\n' "$host" "$host" "$CERTS_DIR" "$host" > "/certs.d/$host/hosts.toml"
+                echo "trusted $host"
+              done
+              while :; do sleep 3600; done
+          env:
+            - name: HOSTS
+              value: "{{ .Values.hosts }}"
+            - name: CERTS_DIR
+              value: "{{ .Values.certsDir }}"
+            - name: CA_CERT
+              value: |
+{{ indent 16 .Values.caCert }}
+          resources:
+            requests:
+              cpu: 1m
+              memory: 8Mi
+          volumeMounts:
+            - name: certs-d
+              mountPath: /certs.d
+      volumes:
+        - name: certs-d
+          hostPath:
+            path: {{ .Values.certsDir }}
+            type: DirectoryOrCreate

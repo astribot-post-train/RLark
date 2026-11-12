@@ -182,3 +182,58 @@ func TestRclonePreservesExistingPodsWithOnDelete(t *testing.T) {
 		}
 	}
 }
+
+func TestRcloneNodeTpsLimitIsOptional(t *testing.T) {
+	addon, _ := Registry.Get("csi-driver-rclone")
+	for limit, want := range map[string]bool{"": false, "20": true} {
+		manifests, err := addon.Render(map[string]string{"nodeTpsLimit": limit}, "cluster", "csi-driver-rclone", "uid")
+		if err != nil {
+			t.Fatal(err)
+		}
+		found := false
+		for _, m := range manifests {
+			found = found || bytes.Contains(m.Raw, []byte("name: RCLONE_TPSLIMIT\n              value: \"20\""))
+		}
+		if found != want {
+			t.Fatalf("nodeTpsLimit=%q: RCLONE_TPSLIMIT rendered=%v", limit, found)
+		}
+	}
+}
+
+func TestRegistryTrustRendersHostsAndCA(t *testing.T) {
+	addon, _ := Registry.Get("registry-trust")
+	ca := "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----"
+	manifests, err := addon.Render(map[string]string{"hosts": "10.0.0.1:5443,10.0.0.2:5443", "caCert": ca, "image": "registry/shell:1"}, "cluster", "registry-trust", "uid")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var daemonSet struct {
+		Spec struct {
+			Template struct {
+				Spec struct {
+					Containers []struct {
+						Image string
+						Env   []struct{ Name, Value string }
+					}
+					Volumes []struct {
+						HostPath struct{ Path string } `yaml:"hostPath"`
+					}
+				}
+			}
+		}
+	}
+	if err := yaml.Unmarshal(manifests[0].Raw, &daemonSet); err != nil {
+		t.Fatal(err)
+	}
+	pod := daemonSet.Spec.Template.Spec
+	env := map[string]string{}
+	for _, e := range pod.Containers[0].Env {
+		env[e.Name] = e.Value
+	}
+	if env["HOSTS"] != "10.0.0.1:5443,10.0.0.2:5443" || env["CA_CERT"] != ca+"\n" || env["CERTS_DIR"] != "/etc/containerd/certs.d" {
+		t.Fatalf("env = %q", env)
+	}
+	if pod.Volumes[0].HostPath.Path != "/etc/containerd/certs.d" || pod.Containers[0].Image != "registry/shell:1" {
+		t.Fatalf("pod = %+v", pod)
+	}
+}
