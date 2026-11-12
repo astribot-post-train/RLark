@@ -80,10 +80,15 @@ spec:
     role: Hub
     address: 10.254.240.5
     endpoints:
-    - scope: Site               # the address the node reports; it is assigned by DHCP
+    # Written out, as in the hand-written files. Leaving the address empty
+    # (use what the node reports) does not work while the node reaches Station
+    # API through the tunnel: it then reports its tunnel address.
+    - address: 10.11.13.192:51820
+      scope: Site
   - clusterID: rlark-local-dev-gpu
     nodeName: wendychen
     role: Hub
     address: 10.254.240.6
     endpoints:
-    - scope: Site               # 10.11.14.135 when it joined on 11-12
+    - address: 10.11.14.135:51820
+      scope: Site
