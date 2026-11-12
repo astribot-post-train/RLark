@@ -65,7 +65,8 @@ control)
   else
     # kubeadm reads the node's runtime socket from an annotation of the Node,
     # which a node that was not joined by kubeadm join alone may lack.
-    node=$(kubectl --kubeconfig /etc/kubernetes/kubelet.conf config view -o jsonpath='{.users[0].name}' | sed 's/^system:node://')
+    node=$(cat /var/lib/kubelet/kubeadm-flags.env /etc/default/kubelet /etc/sysconfig/kubelet 2>/dev/null | sed -n 's/.*--hostname-override=\([^ "]*\).*/\1/p' | head -1)
+    [ -n "$node" ] || node=$(hostname | tr '[:upper:]' '[:lower:]')
     [ -n "$(kubectl --kubeconfig /etc/kubernetes/kubelet.conf get node "$node" -o jsonpath='{.metadata.annotations.kubeadm\.alpha\.kubernetes\.io/cri-socket}')" ] ||
       kubectl --kubeconfig /etc/kubernetes/kubelet.conf annotate node "$node" "kubeadm.alpha.kubernetes.io/cri-socket=unix://$SOCKET" >/dev/null
     kubeadm upgrade node $patches > "$keep/upgrade-node.log" 2>&1 || { tail -25 "$keep/upgrade-node.log" >&2; fail "kubeadm upgrade node"; }
