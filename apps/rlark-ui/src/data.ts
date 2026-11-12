@@ -223,6 +223,13 @@ export interface StorageClass {
   type: StorageType;
   provider: StorageProvider;
   endpoint: string;
+  mount_endpoint?: string;
+  prefix?: string;
+  vfs_cache_mode?: "off" | "writes";
+  mount_profile?: "default" | "read" | "archive";
+  mount_options?: string[];
+  effective_mount_options?: string[];
+  effective_backend_options?: Record<string, string>;
   region: string;
   bucket: string;
   accessKeyId: string;
@@ -241,6 +248,11 @@ export interface StorageClassCreateRequest {
   namespace: string;
   provider: StorageProvider;
   endpoint: string;
+  mount_endpoint?: string;
+  prefix: string;
+  vfs_cache_mode: "off" | "writes";
+  mount_profile?: "default" | "read" | "archive";
+  mount_options?: string[];
   region: string;
   bucket: string;
   access_key_id: string;

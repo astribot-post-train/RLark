@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"crypto/subtle"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io"
@@ -362,6 +363,7 @@ func validateObservation(o Observation) error {
 
 type wireguardObservation struct {
 	Interface string   `json:"interface"`
+	PublicKey string   `json:"publicKey,omitempty"`
 	Addresses []string `json:"addresses,omitempty"`
 	Peers     []struct {
 		Name            string     `json:"name"`
@@ -384,6 +386,12 @@ func validateWireguardObservation(raw json.RawMessage) error {
 	}
 	if observation.Interface == "" || len(observation.Interface) > 15 || len(observation.Addresses) > 16 || len(observation.Peers) > 64 {
 		return errors.New("invalid WireGuard observation")
+	}
+	if observation.PublicKey != "" {
+		decoded, err := base64.StdEncoding.DecodeString(observation.PublicKey)
+		if err != nil || len(decoded) != 32 || base64.StdEncoding.EncodeToString(decoded) != observation.PublicKey {
+			return errors.New("invalid WireGuard public key")
+		}
 	}
 	addresses := make(map[string]struct{}, len(observation.Addresses))
 	for _, address := range observation.Addresses {

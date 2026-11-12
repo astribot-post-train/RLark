@@ -1,0 +1,23 @@
+# Grants the existing read-only Station API identity the minimum Node access
+# needed to prevent stale kubeadm reset of a host already registered elsewhere.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: station-node-inventory-reader
+rules:
+- apiGroups: [""]
+  resources: ["nodes"]
+  verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: station-node-inventory-reader
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: station-node-inventory-reader
+subjects:
+- kind: ServiceAccount
+  name: station-api-reader
+  namespace: station-system

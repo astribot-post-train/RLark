@@ -1058,3 +1058,11 @@
 .theme-dark .role-config-facts code {
   color: #cbd5e1;
 }
+
+.job-access-section { margin: 18px 0 24px; }
+.job-access-card { padding: 14px 16px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface, transparent); }
+.job-access-task { display: block; color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+.job-access-row { display: flex; align-items: center; flex-wrap: wrap; gap: 10px 18px; margin-top: 10px; font-size: 13px; }
+.job-access-copy { display: inline-flex; align-items: center; gap: 6px; width: auto; max-width: 100%; padding: 6px 10px; border: 1px solid var(--line); border-radius: 8px; color: inherit; background: transparent; cursor: pointer; overflow-wrap: anywhere; }
+.job-access-copy:hover { border-color: #8b5cf6; }
+.job-access-copy:focus-visible { outline: 2px solid #8b5cf6; outline-offset: 2px; }

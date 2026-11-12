@@ -190,6 +190,71 @@ paths:
         '404': {description: Cluster or operation not found}
         '502': {description: Management Kubernetes API failure}
         '503': {description: Station API unavailable}
+  /api/v1/station/node-operations:
+    post:
+      tags: [Station]
+      summary: Submit an experimental node lifecycle operation (administrator only)
+      description: Requires a registered Cluster and an installed NodeOperation CRD/controller. Credentials are placed in a short-lived operation-owned Secret and are omitted from responses. Join accepts containerd_runtime=containerd (default /run/containerd/containerd.sock) or fleet (/run/containerd-fleet/containerd.sock); install the matching node-agent DaemonSet profile before onboarding. Join requires net.ipv4.ip_forward=1, verifies the selected socket, and normally refuses existing kubelet state; reset_existing_kubeadm=true explicitly requests a reset after verifying the host name, absence of the Node name and system UUID from the target cluster, and non-control-plane status. If a Station is bound to an older UID, kubeadm may complete while Join waits at RLark readiness; explicitly rebind it after a fresh observation and the Join reconciler resumes. Kubernetes readiness alone does not complete Join; the RLark Node and Station binding must also be ready. Remove drains with PDBs, requires UID-owned or observation-verified WireGuard config, disables the network DaemonSet and waits for it to stop before reset and Node deletion; unowned legacy config blocks before drain. EnableWireGuard is currently rejected.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [cluster_id, request_id, action, node_name, ssh_address, ssh_port, ssh_user, host_key_fingerprint]
+              properties:
+                cluster_id: {type: string, maxLength: 128}
+                request_id: {type: string, maxLength: 128}
+                action: {type: string, enum: [Join, Remove, EnableWireGuard]}
+                node_name: {type: string, maxLength: 253}
+                node_uid: {type: string, maxLength: 128}
+                containerd_runtime: {type: string, enum: [containerd, fleet], description: Runtime profile installed in the member cluster; Join only}
+                reset_existing_kubeadm: {type: boolean, description: Explicitly reset stale kubeadm state before Join; ignored requests are rejected unless action is Join}
+                ssh_address: {type: string, maxLength: 253}
+                ssh_port: {type: integer, minimum: 1, maximum: 65535}
+                ssh_user: {type: string, maxLength: 128}
+                host_key_fingerprint: {type: string, pattern: '^SHA256:[A-Za-z0-9+/]{43}$'}
+                ssh_password: {type: string, format: password, maxLength: 4096}
+                ssh_private_key: {type: string, format: password, maxLength: 32768}
+                sudo_password: {type: string, format: password, maxLength: 4096}
+      responses:
+        '202': {description: Operation accepted or identical request returned; inspect its status before retrying}
+        '400': {description: Invalid or unsupported request}
+        '401': {description: Authentication required}
+        '403': {description: Administrator role required}
+        '404': {description: Cluster not found}
+        '409': {description: Request ID conflict}
+        '502': {description: Management Kubernetes API failure}
+        '503': {description: Station API or credential storage unavailable}
+    get:
+      tags: [Station]
+      summary: List node lifecycle operations for a registered Cluster (administrator only)
+      parameters:
+        - {name: cluster_id, in: query, required: true, schema: {type: string}}
+        - {name: limit, in: query, required: false, schema: {type: integer, minimum: 1, maximum: 500, default: 100}}
+        - {name: continue, in: query, required: false, schema: {type: string}}
+      responses:
+        '200': {description: Current operation status without credential references}
+        '400': {description: Cluster ID required}
+        '403': {description: Administrator role required}
+        '404': {description: Cluster not found}
+        '502': {description: Management Kubernetes API failure}
+        '503': {description: Station API unavailable}
+  /api/v1/station/node-operations/{name}:
+    get:
+      tags: [Station]
+      summary: Get a node lifecycle operation (administrator only)
+      parameters:
+        - {name: name, in: path, required: true, schema: {type: string}}
+        - {name: cluster_id, in: query, required: true, schema: {type: string}}
+      responses:
+        '200': {description: Current operation status without credential references}
+        '400': {description: Cluster ID required}
+        '403': {description: Administrator role required}
+        '404': {description: Cluster or operation not found}
+        '409': {description: Operation cluster binding mismatch}
+        '502': {description: Management Kubernetes API failure}
+        '503': {description: Station API unavailable}
   /api/v1/station/observations:
     get:
       tags: [Station]
@@ -264,6 +329,57 @@ paths:
         '403': {description: Administrator role required}
         '404': {description: Registry not found}
         '502': {description: Registry unavailable, unsupported, or not allowlisted}
+
+  /api/v1/image-registries/{id}/tag-details:
+    get:
+      tags: [Image]
+      summary: List tags with image build time, size and platforms (administrator only)
+      description: >-
+        Reads one tag page, then each tag's manifest and image config. Metadata is
+        cached in Gateway memory by manifest digest; tags are resolved on every call.
+        A tag whose metadata cannot be read (unsupported media type, redirect,
+        oversized document or digest mismatch) is returned with error "unavailable"
+        and without metadata.
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string}}
+        - {name: repository, in: query, required: true, schema: {type: string}}
+        - {name: last, in: query, schema: {type: string}}
+      responses:
+        '200':
+          description: A page of tag details in registry order and an optional next cursor
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      required: [tag]
+                      properties:
+                        tag: {type: string}
+                        digest:
+                          type: string
+                          description: Manifest digest the tag currently points to
+                        created:
+                          type: string
+                          format: date-time
+                          description: Image config created time; linux/amd64 for multi-platform images
+                        size:
+                          type: integer
+                          format: int64
+                          description: Config plus compressed layer bytes
+                        platforms:
+                          type: array
+                          items: {type: string}
+                          description: "Platforms as os/architecture or os/architecture/variant"
+                        error: {type: string, enum: [unavailable]}
+                  next: {type: string}
+        '400': {description: Invalid parameter}
+        '403': {description: Administrator role required}
+        '404': {description: Registry not found}
+        '502': {description: Registry unavailable, unsupported, not allowlisted, or request canceled}
 
   /api/v1/image-registries/{id}/manifest:
     get:

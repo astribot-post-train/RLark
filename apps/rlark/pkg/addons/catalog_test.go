@@ -141,3 +141,44 @@ func TestRcloneSelectorsValidateAndDefault(t *testing.T) {
 		}
 	}
 }
+
+func TestRclonePreservesExistingPodsWithOnDelete(t *testing.T) {
+	addon, _ := Registry.Get("csi-driver-rclone")
+	manifests, err := addon.Render(map[string]string{"nodeUpdateStrategy": "OnDelete", "nodeImagePullPolicy": "IfNotPresent"}, "rlark-system", "csi", "uid")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, manifest := range manifests {
+		decoder := yaml.NewDecoder(bytes.NewReader(manifest.Raw))
+		for {
+			var resource map[string]any
+			if err := decoder.Decode(&resource); err == io.EOF {
+				break
+			} else if err != nil {
+				t.Fatal(err)
+			}
+			if resource["kind"] != "DaemonSet" {
+				continue
+			}
+			spec := resource["spec"].(map[string]any)
+			strategy := spec["updateStrategy"].(map[string]any)
+			if strategy["type"] != "OnDelete" || strategy["rollingUpdate"] != nil {
+				t.Fatalf("unexpected strategy: %v", strategy)
+			}
+			pod := spec["template"].(map[string]any)["spec"].(map[string]any)
+			if pod["nodeSelector"] != nil {
+				t.Fatal("default node placement restricted")
+			}
+			for _, c := range pod["containers"].([]any) {
+				if c.(map[string]any)["imagePullPolicy"] != "IfNotPresent" {
+					t.Fatalf("unexpected container: %v", c)
+				}
+			}
+		}
+	}
+	for _, values := range []map[string]string{{"nodeUpdateStrategy": "invalid"}, {"nodeImagePullPolicy": "Never"}} {
+		if _, err := addon.Render(values, "rlark-system", "csi", "uid"); err == nil {
+			t.Fatal("invalid strategy accepted")
+		}
+	}
+}

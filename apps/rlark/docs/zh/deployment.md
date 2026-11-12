@@ -300,10 +300,14 @@ pkg/addons/catalog/
 | `nodeDriverRegistrarImage` | Node Driver Registrar sidecar 镜像 | `rlinf/csi-rclone/csi-node-driver-registrar:v2.16.0` |
 | `driverName` | CSI 驱动注册名称 | `rclone.csi.veloxpack.io` |
 | `nodeSelector` | Node DaemonSet 节点选择器，格式为 `label=value` | `""` |
+| `nodeUpdateStrategy` | Node DaemonSet 更新策略：`RollingUpdate` 或 `OnDelete` | `RollingUpdate` |
+| `nodeImagePullPolicy` | Node 容器拉取策略：`Always` 或 `IfNotPresent` | `Always` |
 | `controllerNodeSelector` | Controller Deployment 节点选择器，格式为 `label=value`；镜像仅在特定节点可用时可指定 | `""` |
 | `controllerReplicas` | Controller Deployment 副本数 | `1` |
 | `controllerLogLevel` | Controller 日志级别 (0-10) | `5` |
 | `nodeLogLevel` | Node DaemonSet 日志级别 (0-10) | `5` |
+
+扩展节点时若需保留已有 rclone 进程，可使用 `OnDelete`：新节点会创建 Pod，已有 Pod 要在维护时显式替换。节点插件重启可能影响其 FUSE 挂载。预载镜像可用 `IfNotPresent` 避免访问不存在的节点本地仓库；启用节点前核对镜像摘要并准备恢复来源。Node DaemonSet 已容忍所有污点，但 hostname selector 仍可排除控制面节点。应逐台确认 `CSINode` 驱动注册及真实卷读写，不能只看 Addon Ready。
 
 两个选择器参数均接受一组 Kubernetes 标签键和值。无效选择器会导致渲染失败；空值不限制对应工作负载的节点。
 

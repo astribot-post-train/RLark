@@ -1,0 +1,18 @@
+# Opt in only after reviewing the node-operation RBAC manifests and testing on
+# a disposable member cluster. This enables the experimental controller only.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: station-controller
+  namespace: station-system
+spec:
+  template:
+    spec:
+      containers:
+      - name: controller
+        args:
+        - --management-kubeconfig=/var/run/secrets/station/management.kubeconfig
+        - --member-credentials-namespace=station-member-credentials
+        - --metrics-bind-address=127.0.0.1:0
+        - --health-probe-bind-address=127.0.0.1:8081
+        - --enable-node-operations=true

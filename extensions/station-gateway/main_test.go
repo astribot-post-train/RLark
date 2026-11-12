@@ -5,6 +5,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -93,6 +94,39 @@ func TestDuplicatePeerRejected(t *testing.T) {
 	data := fmt.Sprintf(`{"interface":"wg-site","address":"10.253.0.1/32","listenPort":51820,"mtu":1420,"peers":[%s,%s]}`, p, p)
 	if _, err = parse([]byte(data)); err == nil {
 		t.Fatal("accepted duplicate peer")
+	}
+}
+
+func TestNodeUIDOwnershipMetadataIsOptionalAndValidated(t *testing.T) {
+	key, err := wgtypes.GeneratePrivateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	valid := fmt.Sprintf(`{"interface":"wg-site","nodeUID":"node-uid","publicKey":%q,"address":"10.253.0.1/32","listenPort":51820,"mtu":1420,"peers":[{"publicKey":%q,"nodeUID":"peer-uid","allowedIPs":["10.253.0.2/32"]}]}`, key.PublicKey().String(), key.PublicKey().String())
+	if _, err := parse([]byte(valid)); err != nil {
+		t.Fatalf("valid ownership metadata rejected: %v", err)
+	}
+	invalid := strings.Replace(valid, key.PublicKey().String(), "not-a-key", 1)
+	if _, err := parse([]byte(invalid)); err == nil {
+		t.Fatal("invalid interface public key accepted")
+	}
+	legacy := `{"interface":"wg-site","address":"10.253.0.1/32","listenPort":51820,"mtu":1420}`
+	if _, err := parse([]byte(legacy)); err != nil {
+		t.Fatalf("legacy config without ownership metadata rejected: %v", err)
+	}
+	desired, err := parse([]byte(fmt.Sprintf(`{"interface":"wg-site","nodeUID":"node-uid","publicKey":%q,"address":"10.253.0.1/32","listenPort":51820,"mtu":1420}`, key.PublicKey().String())))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := validateNodeWireGuardOwnership(desired, key); err != nil {
+		t.Fatalf("matching local key rejected: %v", err)
+	}
+	other, err := wgtypes.GeneratePrivateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := validateNodeWireGuardOwnership(desired, other); err == nil {
+		t.Fatal("mismatched configured public key accepted")
 	}
 }
 

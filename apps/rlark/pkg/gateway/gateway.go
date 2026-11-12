@@ -64,6 +64,9 @@ type Gateway struct {
 	jwtSigningKey      []byte
 	users              userProvider
 	tenants            tenant.Provider
+
+	// registryImages caches image metadata by manifest digest; nil disables caching.
+	registryImages registryImageCache
 }
 
 func (g *Gateway) managementNamespace() string {
@@ -78,6 +81,7 @@ func NewGateway(config Config) *Gateway {
 		config:         config,
 		storageClients: make(map[string]*storage.Client),
 		tenants:        tenant.StaticProvider{},
+		registryImages: newRegistryImageCache(registryImageCacheEntries),
 	}
 	return g
 }

@@ -1,6 +1,29 @@
 # 私有镜像仓库操作手册（试运行）
 
-更新时间：2026-11-05。此手册记录当前环境的操作，不代表生产验收完成；不加入 MkDocs 导航。设计、历史测试和待办见 [共享存储与镜像仓库计划](../../apps/rlark/docs/zh/developer-guide/shared-storage-registry-plan.md)。
+2026-11-12，机器人 worker `s1u-02-x86` 使用源地址 `192.168.31.251` 的持久主机路由访问 `10.11.14.128:5443`。其专用 containerd 已配置现有仓库 CA，并完成经 TLS 校验和认证的 `busybox:latest` 拉取。该结果只验证当时该节点和镜像，不代表自动凭证分发、其他仓库或跨节点 Pod 网络已验证。
+
+
+更新时间：2026-11-12（拓扑一节）；其余章节最后更新于 2026-11-05。此手册记录当时环境的操作，不代表生产验收完成。设计、历史测试和待办见 [共享存储与镜像仓库计划](../design/shared-storage-registry-plan.zh-CN.md)。
+
+## 当前仓库拓扑：2026-11-12
+
+本节与下方地址表不一致时以本节为准。后文的 `192.168.31.2:5443` 地址和 `rlark-ks3-registry` 容器均为历史记录。
+
+| 入口 | 服务方 | 存储 | 使用方 |
+| --- | --- | --- | --- |
+| `10.11.14.128:5443`（HTTPS，`rlark` 账号） | 开发机上的 `rlark-ks3-registry-migrated` 容器 | KS3 `stardust/ks3-regular/post_train/rlark/registry` | 开发机推送；RLark 凭证 `ir-e9a22bbb4e156a1b`（Local registry 10.11.14.128） |
+| `10.254.240.1:5443`（WireGuard，HTTP，无认证） | 开发机上的 `rlark-ks3-registry-wg` 容器 | 同一 KS3 路径 | 金山云工作负载使用的镜像名；云节点优先经本机镜像站解析 |
+| 各云节点 `127.0.0.1:5444`（只读） | `rlark-registry/rlark-registry-mirror` DaemonSet | 同一 KS3 路径，KS3 内网 endpoint | containerd `certs.d` 为 `10.11.14.128:5443` 和 `10.254.240.1:5443` 配置的镜像站；失败时经 WireGuard 回退到 `10.254.240.1:5443` |
+| `10.254.240.2:5443`（HTTPS，`rlark` 账号，可写） | `10-0-2-57` 上的 `rlark-registry/rlark-registry-cloud` Deployment，`hostNetwork`，仅监听 WireGuard 地址 | 同一 KS3 路径，KS3 内网 endpoint | 金山云侧推送；RLark 凭证 `ir-667c8af90d294c2b`（金山云 KS3，仅保存） |
+| `localhost:5555`、`10.11.14.128:5555`、`10.254.240.1:5555` | 开发机上的 `local-registry` 容器 | 本机 Docker volume，**不是** KS3 | 本地开发集群和机器人集群 |
+
+**分工规则。** 本地开发集群和机器人集群从 `local-registry`（`:5555`）拉取。金山云集群从 KS3 拉取：镜像地址写 `10.254.240.1:5443/<repo>@sha256:<digest>`，节点会经本机 KS3 镜像站读取。云上工作负载引用的镜像必须先进入 KS3：在云上推到 `10.254.240.2:5443`，在开发机推到 `10.11.14.128:5443`，或用 `skopeo copy --all --preserve-digests` 从 `:5555` 复制。所有 KS3 入口共用同一存储路径，从任一入口推送的镜像在其他入口都可见。
+
+**命名。** 使用带命名空间的仓库名：`rlark/agent`、`rlark/cloud-agent`、`rlark/gateway`、`rlark/controller-manager`、`rlark/station-*`、`data-tools/*`、`fleet/*`。推送时同时打时间前缀标签 `YYYYMMDD-HHMM-<别名>` 和普通 `<别名>`，部署时按 manifest 摘要固定。
+
+**迁移记录（2026-11-12）。** `local-registry` 中的 35 个标签和仅存在于开发机 Docker 缓存中的 19 个镜像，已按上述名称复制到 KS3，复制后逐个校验摘要；KS3 上已存在且指向运行中 `c5b1b05f…` 的 `rlark/station-agent:wg-observation-20261111` 保留原值，未被覆盖。每个副本另有 `20261112-1541-<标签>` 别名。批量复制后才推到 `:5555` 的三个镜像（`rlark-cloud-agent:fleet-storage-20261112`、`station-controller:enroll-20261112`、`station-services:enroll-20261112`）单独补复制。云端 `rlark-agent`（`rlark/cloud-agent@sha256:3c8e38c8…`，`--image=rlark/agent@sha256:82c2d7b8…`）、`rlark-agent-node` 和两个 data_tools Job 已改为引用 `10.254.240.1:5443`。本地开发集群和机器人集群按约定未改，`local-registry` 继续运行。云上的 `kube-system/rlark-nvidia-device-plugin` 使用各云节点自己的 `localhost:5555`，与此无关。回滚云上某个工作负载时，把镜像改回 `10.254.240.1:5555/...` 即可；修改前的清单已备份在 Git 之外。
+
+**云上仓库服务。** 部署描述见 [ksyun-registry.yaml](ksyun-registry.yaml)，Secret 单独创建。TLS 证书（`CN=rlark-registry-ksyun`，`IP:10.254.240.2`，有效期至 2027-11-12）由与开发机仓库相同的 `rlark-registry-local` CA 签发，因此 Gateway 现有的 `SSL_CERT_FILE` 信任和 `--registry-browse-allowed-hosts` CIDR 已覆盖它。它复用 `rlark` 的 htpasswd，从 Secret `rlark-registry-mirror-s3` 读取 KS3 密钥，关闭后端重定向，并**关闭删除**，因为所有入口共用同一存储。已验证：未认证返回 `401`、认证后可读目录和 manifest、可开启并取消上传会话，以及 Gateway 浏览和构建时间读取。未验证：从云主机完整推送镜像、节点重启后的恢复，以及在 Pod 中直接以 `10.254.240.2:5443` 作为镜像地址（节点尚未信任其 CA，也没有对应拉取凭证；请改用 `10.254.240.1:5443` 名称）。只要还有可写入口，就不要运行垃圾回收。
 
 ## 仓库与权限
 
@@ -30,7 +53,7 @@ RLark 服务和 UI、Fleet/rollout、机器人运行环境等 Docker/OCI 镜像�
 192.168.31.2:5443/robot/runtime:<version>-amd64
 ```
 
-这些名称是约定示例，不表示镜像已经上传。推送前确认空间、网络和 KS3 费用；本机已有 Fleet GPU 镜像，Docker 列表显示约 15.5 GB，实际传输量取决于压缩、层复用等情况。一次约 256 MiB 随机层推送和机器人拉取成功，不代表 15.5 GB 镜像的耗时、可靠性或可恢复性；详见[设计与进度记录](../../apps/rlark/docs/zh/developer-guide/shared-storage-registry-plan.md)。仓库后端放在 KS3 不等于节点不占磁盘：构建、Docker/containerd 缓存和解压仍使用本地空间。
+这些名称是约定示例，不表示镜像已经上传。推送前确认空间、网络和 KS3 费用；本机已有 Fleet GPU 镜像，Docker 列表显示约 15.5 GB，实际传输量取决于压缩、层复用等情况。一次约 256 MiB 随机层推送和机器人拉取成功，不代表 15.5 GB 镜像的耗时、可靠性或可恢复性；详见[设计与进度记录](../design/shared-storage-registry-plan.zh-CN.md)。仓库后端放在 KS3 不等于节点不占磁盘：构建、Docker/containerd 缓存和解压仍使用本地空间。
 
 ## 已上传的服务快照：2026-11-05
 
@@ -105,7 +128,7 @@ RLark 源码的构建目标也可先构建到本地再按上例发布，例如�
 
 通过 `http://127.0.0.1:5173` 的已认证只读检查，仓库目录、标签、manifest 摘要及用户、集群、container-runtime 集群、Job 查询均成功。这只是本地试运行，不代表完整回归、任务提交或重启/开机恢复验收；Vite UI 自身仍是开发进程，不是持久化部署。需要回滚时应先协调维护窗口，将当前容器保留为未占用的其他名称，再将已停止的 `rlark-gateway-rollback-20261105-registry` 恢复为 `rlark-gateway` 并启动，最后验证服务。回滚后的旧 Gateway 不含浏览接口；在验证恢复之前不要删除回滚容器或旧镜像。
 
-机器人 Kubernetes Job 已使用显式的 `imagePullSecrets` 拉取测试镜像；测试凭证名为 `ir-a818414375f542f8`，且只对分发到的命名空间有效。RLark 当前源码包含按镜像前缀匹配凭证的逻辑，但**当前部署版本的自动注入及 RLark Job 端到端尚未验证**，需要检查最终 Pod。开发机 `cailiang` 已将 containerd CRI 信任路径改为单目录并重启；显式凭证的 Kubernetes Job 成功拉取机器人新构建的 1 MiB 随机镜像层并校验内容。开发集群其他节点及云端运行时尚未完成信任验证。原配置备份及维护记录见[设计与进度记录](../../apps/rlark/docs/zh/developer-guide/shared-storage-registry-plan.md)；不要未经协调重启繁忙的 containerd 或替换线上工作负载。
+机器人 Kubernetes Job 已使用显式的 `imagePullSecrets` 拉取测试镜像；测试凭证名为 `ir-a818414375f542f8`，且只对分发到的命名空间有效。RLark 当前源码包含按镜像前缀匹配凭证的逻辑，但**当前部署版本的自动注入及 RLark Job 端到端尚未验证**，需要检查最终 Pod。开发机 `cailiang` 已将 containerd CRI 信任路径改为单目录并重启；显式凭证的 Kubernetes Job 成功拉取机器人新构建的 1 MiB 随机镜像层并校验内容。开发集群其他节点及云端运行时尚未完成信任验证。原配置备份及维护记录见[设计与进度记录](../design/shared-storage-registry-plan.zh-CN.md)；不要未经协调重启繁忙的 containerd 或替换线上工作负载。
 
 ## 排查与恢复
 
@@ -122,4 +145,4 @@ curl --noproxy '*' -sS -o /dev/null -w '%{http_code}\n' \
 - 推送或拉取慢、失败：检查 KS3 连接、容量及费用；不要反复并发推送大镜像，也不要直接删除对象或执行垃圾回收。镜像层和 Docker/containerd 缓存可能占用本地磁盘。
 - 必须重启时仅重启独立服务 `docker restart rlark-ks3-registry`；已验证容器重启，但整机重启后的地址就绪和恢复仍未验证。不要删除容器配置、证书、凭证或 KS3 数据作为恢复捷径。
 
-更多原理、现有试验和安全限制见[设计与进度记录](../../apps/rlark/docs/zh/developer-guide/shared-storage-registry-plan.md)。
+更多原理、现有试验和安全限制见[设计与进度记录](../design/shared-storage-registry-plan.zh-CN.md)。

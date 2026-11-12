@@ -126,6 +126,9 @@ type WireguardObservation struct {
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=15
 	Interface string `json:"interface"`
+	// PublicKey is the public key of the observed interface; private keys are never reported.
+	// +kubebuilder:validation:MaxLength=64
+	PublicKey string `json:"publicKey,omitempty"`
 	// +kubebuilder:validation:MaxItems=16
 	// +kubebuilder:validation:items:MaxLength=64
 	// +listType=set

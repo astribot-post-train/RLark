@@ -1,5 +1,56 @@
 # Station 网络部署快照（试验性）
 
+2026-11-12，通过一次性恢复网络控制器处理了 SiteNetwork generation 4，`s1u-02-x86` 已以 `10.254.240.7` 完成 Enrolled。随后已恢复正常的 NodeOperation 控制器；其当前镜像不包含网络调谐器，在该能力重新合入前，后续拓扑变更不会自动调谐。从 `cailiang` 到 .7 的路由使用 `st-wg0`，3 次 ping 均成功；新机器人到 .1 的 3 次 ping 和到 .2、.4、.5、.6 的各 1 次 ping 均成功。`cailiang` 到旧机器人 .3 的 2 次 ping 也成功。SiteNetwork 报告 Ready，但 FullyConnected=False，列出两台机器人 Leaf 之间双向无路径；本次测试未证明该路径。新节点因 Calico 跨节点 Pod TCP 问题仍保持 cordon。
+
+
+在上述控制器恢复之前，已在管理面和成员集群将 `s1u-02-x86` 标记为 robot。身份专用 Station Deployment 已由双容器 Station 网络 DaemonSet 替换；该节点生成了自己的 WireGuard 密钥并上报 `st-wg0` / `10.254.240.7/32`。已在 SiteNetwork `default` 中加入期望的 Leaf，并在本地静态 ConfigMap 中加入后备 peer。注册仍为 pending：当前运行的控制器未启动 SiteNetwork 调谐器，SiteNetwork 当前 generation 4 的状态只观测到 generation 3。本地网关使用动态计算配置，因此尚无到 .7 的路由，也未验证握手。新节点因跨节点 Pod 网络问题仍保持 cordon；不能把地址上报或 2/2 Ready 当作网络连通。已通过 192.168.0.11、以 192.168.31.251 为源地址，添加到各 hub 端点的节点专用主机路由。
+
+
+2026-11-12，笔记本 `NB260706069`（`10.11.107.154`）通过 kubeadm v1.31.14 加入集群。由于正式 node-agent DaemonSet 只选择 `rlark.io/containerd=fleet`，而该主机使用 `/run/containerd/containerd.sock`，当时必须手动创建两个固定到该节点的临时 Deployment 才达到 RLark readiness；Station Deployment 仅运行身份容器，不含 WireGuard。Join 操作对精确 Node UID 报告 Succeeded，但这不能证明 Agent 自动安装或 WireGuard 接入。
+
+随后真实 Remove 操作（`node-op-212b9173335dfdeebe473c91124ee6b0`）依次完成 `Preflight`、`Drain`、`RemovePeer`、`Reset`、`VerifyRemoval` 和 `CleanupCredential`。Drain 开始前必须手动删除两个临时 Deployment：其 `kubernetes.io/hostname=nb260706069` 选择器使替代 Pod 在 Node cordon 后仍回到该节点。操作控制器不会删除这些工作负载定义。第一次 Remove 因 SSH 主机指纹校验而安全停止；提交的 Ed25519 指纹与 SSH 实际选择的 ECDSA 密钥不同。匹配的 ECDSA 指纹已存在于受信 `known_hosts`；失败操作及凭证在重试前已删除。
+
+机器人集群现有仅允许对 `station-system/station-wireguard-config` 执行 `get`/`update` 的 peer-cleaner ServiceAccount，其操作 kubeconfig 已按机器人集群 ID 存入管理面；本地和金山云操作凭证也已核验。第一次 Remove 成功后，成员集群 Node 为 NotFound，操作记录的 UID 匹配；`/etc/kubernetes/kubelet.conf` 与 `bootstrap-kubelet.conf` 均不存在，kubelet 已停止，短期 SSH 凭证已回收。随后测试重新加入（`node-op-69969a21ce3df09cb15308de8d07cf8e`）成功运行 kubeadm，并创建 Ready 的新 Node，UID 为 `ca409bb3-2bf9-43f6-9aa7-1d65a5e93b0b`；但 RLark 验证按预期阻止操作，因为已有 Station 仍绑定已删除的旧 UID `622cef99-1069-47b6-ad9a-242b7a1ecb5d`。Station 身份重绑必须作为显式身份操作，Join 不会静默接管新的 Node UID。第二次 Remove（`node-op-d2b1e481196dfdfc14ee303afd1331f1`）随后 reset 并删除精确的新 UID；删除 Blocked Join 操作后，其 SSH 凭证由 finalizer 清理。Notebook 当前再次退出集群。RLark Node 和 Station 按长生命周期库存语义保留为 Offline，并仍绑定原 UID。本次验证了本地开发集群上的操作生命周期和失败清理，但没有验证 Station 自动重绑、任意固定节点工作负载清理、空白主机 Agent 自动安装、跨节点 Pod 网络或 WireGuard。
+
+在后续替换网络 DaemonSet 之前，2026-11-12 已在保持 cordon 的新 worker 启动 `rlark-node-agent-s1u-02`，使用已有缓存 Agent 镜像，并将 `rlark-server` 指向可达的 10.11.14.128。Kubernetes Node 已设置 `rlark.io/enabled=true`，RLark 控制器报告 `s1u-02-x86` 为 Online/AgentLeaseActive。临时 host-network Deployment `station-agent-s1u-02` 仅运行身份容器；Station `Station-0002` 已绑定新 Node UID 并报告 RLarkLinked。该节点尚未配置 WireGuard 容器或 peer；替换为网络 DaemonSet 时必须删除身份专用 Deployment，避免重复 Agent。跨节点 Pod 网络尚未解决，worker 继续 cordon；Pod Ready 不代表工作负载端到端已验收。
+
+
+2026-11-12 发现新 x86 没有到内网镜像仓库 `10.11.14.128:5443` 的路由。已在其活动 NetworkManager 配置中持久添加经 `192.168.0.11`、源地址为 `192.168.31.251` 的仓库主机路由；已为专用 containerd 配置仓库 CA，指纹与已有受信 CA 一致，并成功从新节点通过 TLS 校验和认证拉取 `busybox:latest`。该路由仅覆盖此仓库，不代表内网其他地址可达。机器人网络接入脚本尚不配置此路由或 CA。跨节点 Pod 网络仍未解决，节点保持 cordon。
+
+
+地址迁移后、上述 Agent 部署前的现场状态：`s1u-01-x86`（192.168.31.250）和 `s1u-02-x86`（192.168.31.251）均为 Kubernetes Ready，Calico 和 kube-proxy 均 Running。新节点没有默认路由，内部网卡同样拥有 192.168.0.10，因此持久配置了 Service 网段路由和仅针对 API Service 的 SNAT 规则。不同节点测试 Pod 之间的 TCP 连接超时，尽管 IPIP 包已到达目标网卡，原因尚未解决。测试 Pod 已删除；新节点已 cordon 以阻止普通工作负载调度，尚未部署 RLark Node Agent 和 Station Agent，不能视为已通过工作负载验收。旧节点 RLark 和 Station Pod 正常运行；重启和跨节点恢复尚未验证。
+
+
+2026-11-12 旧机器人 Kubernetes API 和 Node 已迁移至 192.168.31.250；API 证书包含该地址，kube-proxy 与 kubeconfig 已更新，etcd peer 和客户端端点改为回环地址，Calico 改为使用 Kubernetes Internal IP 自动选址。API 健康，kube-proxy 和 Calico 滚动更新完成，旧 Node 为 Ready。新 worker 尚未加入，跨节点 Pod 通信和重启恢复尚未验证。新 API 证书暂时保留 192.168.0.10 兼容 SAN。备份和 etcd 快照保留在仅 root 可访问的 `/var/backups/rlark-node-address-20261112`。
+
+
+2026-11-12 11:10 UTC 已在同一受保护备份目录保存新的 etcd 快照和当前控制面 ConfigMap，并检查快照状态；包含 192.168.31.250 的新 API 证书已在备份目录生成并通过现有 CA 验证，尚未安装。新 x86 启用了 2 GiB swap，尚无 containerd 或默认路由；现有集群 kubelet 配置为 failSwapOn=false、工作负载 NoSwap，新节点的兼容性仍需验证。现场控制面尚未迁移，新节点尚未加入。
+
+
+2026-11-12，旧机器人控制面迁移到独立局域网地址尚未完成；Kubernetes API、节点和 etcd 仍使用 192.168.0.10。旧 x86 的 `/var/backups/rlark-node-address-20261112` 保存了仅 root 可访问的配置备份和 etcd 快照；快照曾恢复到临时目录验证，验证后临时目录已删除。隔离 Kubernetes v1.31.0 集群演练了 API 证书与地址切换及回退、etcd peer 迁移及回退；这不能证明现场 v1.31.14 集群迁移已验证。经两台 Orin 的 IPv4 协议 4 数据包已在双向目标网卡观察到，但尚未验证 Calico 跨节点 Pod 网络。新 x86 尚未加入集群。备份包含敏感凭据，应妥善保护和管理。
+
+
+## 将机器人 x86 接入局域网
+
+`robot-x86-network.py` 通过 Orin 的 IPv4 转发和代理 ARP 为 x86 配置局域网 /32 地址，并非二层网桥。管理机需要 Python 3 和 OpenSSH；两台设备需要 Python 3、NetworkManager、sudo 和 SSH，Orin 还需要 systemd 与 iptables。脚本使用 SSH 主机密钥校验和交互式认证，不保存密码；首次连接时应通过可信渠道核对主机指纹。
+
+先预留唯一的 x86 地址，确认没有分配给其他设备且不在路由器 DHCP 地址池中。ping 不通不能证明地址可用。例如：
+
+```bash
+python3 docs/design/station-deploy/robot-x86-network.py check --orin 192.168.31.5 --external 192.168.31.251
+python3 docs/design/station-deploy/robot-x86-network.py apply --orin 192.168.31.5 --external 192.168.31.251 --address-reserved
+ping 192.168.31.251
+ssh astribot@192.168.31.251
+```
+
+可通过 `--help` 查看局域网、内部地址及用户名参数。脚本分别识别内外网卡，保留已有地址和 x86 默认路由，并安装限定该地址的转发规则。两端原配置备份在 `/var/lib/rlark-robot-x86-network/`，不要编辑或删除。重复执行 `apply` 可恢复中断的操作；遇到不明配置或规则冲突时停止并人工检查。撤销时使用相同地址参数执行 `restore`；脚本不会覆盖执行后被修改的连接配置。如果某台设备暂时不可达，恢复连接后再次执行撤销。部署后检查服务连通性和防火墙策略；主机防火墙、网络隔离或后续防火墙重载可能阻断流量。配置会持久化，但重启恢复需要单独验证。
+
+2026-11-12 已为 Orin `.5` 后的 x86 配置 `.251`：从实验室局域网三次 ICMP 均成功，SSH 登录成功；旧 x86 `.250` 也可 ping 和 SSH。尚未验证重启或防火墙重载后的行为。
+
+Station 镜像和云上工作负载的仓库分工（金山云走 KS3，本地开发和机器人集群走 `local-registry`）见[当前仓库拓扑](../../operations/private-registry.zh-CN.md#当前仓库拓扑2026-11-12)。
+
+裸金属 SSH 入口和当前 rclone CSI 覆盖情况见[金山云裸金属资产页](../bare-metal-assets.zh-CN.md)。
+
 2026-11-11 最新现场结果：真实 Gateway 的 Station 路由已部署，管理员经前端代理查询返回 HTTP 200，`cailiang`、`s1u-01-x86`、`10-0-2-57`、`10-0-2-196` 四条 Station 均 Bound。四个节点现在由 `station-agent-network` DaemonSet 管理，每个网络节点的 Pod 包含身份和 WireGuard 两个容器；旧的身份、site 和 hub DaemonSet 已删除。镜像通过临时 Kubernetes Pod 导入各节点 containerd，并按摘要使用 `imagePullPolicy: Never`；节点重建或镜像回收后需要重新导入。Station API 与独立 PostgreSQL 使用长期开发证书并验证 TLS；管理/成员 token 尚未自动轮换，数据库备份恢复、实际重绑、公网镜像仓库和长期稳定性仍未验收。
 
 较早部署记录（以本页最新结果为准）：2026-11-11 真实 Station 身份链路已开始部署：管理 kcp 的五份 Station CRD 均 Established，本地 `station-api`、`station-controller`、`station-agent` 均 Ready；本地真实 Pod-bound token 已产生 `cailiang` Observation 和 Bound Station。API 监听 WireGuard 地址 `10.254.240.1:18443` 并使用 TLS；独立 PostgreSQL 容器以 TLS 监听本地 `127.0.0.1:15432`，数据库角色独立，原 RLark PostgreSQL 未更改。三地已安装成员读取 RBAC，成员凭据位于管理 kcp Secret。机器人和金山云 agent Pod 已创建，因运行时以 HTTPS 访问 HTTP 引导仓库而 ImagePullBackOff，离线镜像导入尚未完成；Gateway/UI 的 Station 真实链路未部署。证书仅 30 天、管理及成员 token 为长期测试凭据且无自动轮换，数据库备份与恢复尚未验收。
@@ -22,7 +73,7 @@
 
 用户断开开发机实验室 Wi-Fi 后再次复测（2026-11-11 01:23 UTC）：`wlp0s20f3` 仍为 DOWN，至 `10.254.240.2/.3/.4` 的路由均使用 `st-wg0`。三个隧道地址各 3 次 ICMP 均成功；三端 TCP 22 可达，`.3:6443` 可达，`https://10.254.240.3:6443/readyz` 返回 HTTP 200。机器人 kubeconfig 文件仍指向已失效的 `192.168.31.250`；未改文件，通过 kubectl 临时指定 `.3` 并使用证书已有的 TLS 名称 `192.168.0.10`，由 kubeconfig CA 完成验证，结果为 `s1u-01-x86` Ready，RLark Agent、Node Agent 和 CSI Pod 均 Running/Ready。本地 controller-manager 至 `01:23:02Z` 持续报告三个已注册 RLark Node 为 `Online/AgentLeaseActive`。机器人 `.3:22` 仅验证 TCP 可达，SSH 登录未验证：现有 key 被拒绝，也没有收到机器人密码。环境缺少 `wg` 命令，且没有权限读取 debugfs peer 状态，因此本次无法核对最新握手时间。接口计数是累计值（2 个 TX error、1 个 dropped），不能据此认定本轮发生丢包。
 
-网关源码现提供只读 `--status` 命令，无需安装 `wg` 即可检查 peer 握手时间和计数；单元、race、`go vet` 及真实内核 Docker 隔离测试通过，镜像也已离线构建。运行中的网关尚未部署该版本。详见[网关说明](../../../extensions/station-gateway/README.zh-CN.md)。
+网关源码现提供只读 `--status` 命令，无需安装 `wg` 即可检查 peer 握手时间和计数；单元、race、`go vet` 及真实内核 Docker 隔离测试通过，镜像也已离线构建。运行中的网关尚未部署该版本。详见[网关说明](https://github.com/astribot-post-train/RLark/blob/main/extensions/station-gateway/README.zh-CN.md)。
 
 2026-11-11 01:51 UTC，使用本地构建的状态镜像启动一次性 host-network Docker 容器，以 `CAP_NET_ADMIN` 只读查询 `st-wg0`，未更改运行中的网关。公钥和地址现由 `station-wireguard-config` 管理；本地网关看到三个远端 Peer 有近期握手，随后到各隧道地址的 ICMP 均成功。这只是本地网关视角，不能据此证明整机重启、清空镜像缓存后的恢复。
 
@@ -34,9 +85,9 @@
 
 私钥分别生成并保存在宿主机 `/var/lib/rlark-station/site` 或 `/var/lib/rlark-station/hub`，由 Pod 挂载，清单不含私钥。应安全保护并备份；丢失或克隆系统盘需要明确更换密钥并更新对端。变更时保留独立于隧道的管理通道。ConfigMap 投影和 10 秒协调周期会使配置生效延迟；应用后检查 Pod 日志、路由、公钥、握手及具体服务访问。
 
-网关创建内核路由，退出时不会清除，包括机器人两条指定源地址的上联路由。组件不提供自动回滚、防火墙转发、路由删除、端到端健康探针或整机重启编排；exec 探针只检查近期协调和当前配置，不证明隧道或业务可达；部分失败可能留下部分状态。移除或更改路由前须通过独立管理通道核验归属，不能仅凭协议号或 metric 删除。重启时没有归属别名的接口会被拒绝接管。限制详见[网关文档](../../../extensions/station-gateway/README.zh-CN.md)。
+网关创建内核路由，退出时不会清除，包括机器人两条指定源地址的上联路由。组件不提供自动回滚、防火墙转发、路由删除、端到端健康探针或整机重启编排；exec 探针只检查近期协调和当前配置，不证明隧道或业务可达；部分失败可能留下部分状态。移除或更改路由前须通过独立管理通道核验归属，不能仅凭协议号或 metric 删除。重启时没有归属别名的接口会被拒绝接管。限制详见[网关文档](https://github.com/astribot-post-train/RLark/blob/main/extensions/station-gateway/README.zh-CN.md)。
 
-云端 `rlark-system/rlark-server` Service 和 Endpoints 指向 10.254.240.1，是当前 RLark Agent 的依赖；本地按云端两个 Pod CIDR 将回程分配给两个 WireGuard Peer。本地 `rlark-station-nas-forwarder` Pod 仅为源 10.254.240.4 到 NAS 10.11.5.12 的 TCP 445 安装转发和 SNAT；详见[转发器文档](../../../extensions/station-forwarder/README.zh-CN.md)。Pod 删除后规则仍保留，需核对后准确手工清理。云端 worker Agent 镜像单独导入；5555 端口的开放测试仓库仅用于引导，不能等同于带认证的 Distribution。机器人 RLark 和 CSI 部署仍含旧镜像地址，目前依靠缓存启动，空节点恢复尚未验证。
+云端 `rlark-system/rlark-server` Service 和 Endpoints 指向 10.254.240.1，是当前 RLark Agent 的依赖；本地按云端两个 Pod CIDR 将回程分配给两个 WireGuard Peer。本地 `rlark-station-nas-forwarder` Pod 仅为源 10.254.240.4 到 NAS 10.11.5.12 的 TCP 445 安装转发和 SNAT；详见[转发器文档](https://github.com/astribot-post-train/RLark/blob/main/extensions/station-forwarder/README.zh-CN.md)。Pod 删除后规则仍保留，需核对后准确手工清理。云端 worker Agent 镜像单独导入；5555 端口的开放测试仓库仅用于引导，不能等同于带认证的 Distribution。机器人 RLark 和 CSI 部署仍含旧镜像地址，目前依靠缓存启动，空节点恢复尚未验证。
 
 云端节点 2 的引导仓库是 Kubernetes DaemonSet，仅监听 `127.0.0.1:5556`，使用节点本地持久目录。它没有认证：宿主机管理员和该节点的 hostNetwork 工作负载均可推拉；它不是租户隔离仓库或独立备份。启动仓库 Pod 前，其自身镜像必须已经存在于节点运行时。本地转发 Pod 的 exec readiness 检查固定配置、接口和精确防火墙规则，但不能证明 NAS 端到端访问或规则顺序。
 
@@ -48,7 +99,9 @@
 
 同目录另含 `agent-images.tar` 和 `csi-local-images.tar`，各有 SHA-256 文件。Agent 包包含本地、机器人及云端实际引用的旧 Agent 与云端 v3 Agent 标签；两个 manifest 及全部 OCI 内容摘要已验证，四个标签在独立空 containerd 内容库中导入成功；随后在机器人隔离网络中的独立 containerd 全部解包，并分别运行旧 Agent 和云端 v3 Agent 的 `--help` 成功，测试临时文件已清理。CSI 包包含本地仓库地址的四个 CSI 镜像，归档校验和及独立内容库导入通过；三地运行中的四种 CSI 镜像摘要已逐一核对一致，另生成 `csi-three-site-images.tar`（附 SHA-256），包含三地共 12 个现场标签，独立空 containerd 内容库导入通过；随后在机器人隔离网络中的独立 containerd 全部解包成功，临时文件已清理。以上包尚未验证空节点 Kubernetes 上的完整 Agent/CSI 启动，不含证书、私钥、NAS 凭据、Kubernetes 组件或业务镜像，也没有独立备份。
 
-2026-11-11 云端 Agent 现场核对：`rlark-system/rlark-agent` Deployment 的容器镜像是 `10.254.240.1:5555/rlark-cloud-agent:drift-recovery-v3-20261111`，工作负载初始化参数 `--image` 仍引用 `10.254.240.1:5555/rlark-current:20261106-agent-67eaa39`；两者都在 Agent 恢复包中。Agent 使用 `rlark-agent` ServiceAccount、`rlark-agent-cert` Secret 和 `https://rlark-server:8443`，并依赖此目录的云端 Service/Endpoints 清单；证书和私钥不在恢复包或快照中。管理面 `rlark-ksyun-gpu/csi-driver-rclone` 的 `controllerNodeSelector` 和 `nodeSelector` 均为 `kubernetes.io/hostname=10-0-2-196`，CSI 镜像引用依赖节点本地 5556 仓库。恢复时需先恢复独立管理通道、私钥与证书、节点镜像及仓库，再检查服务、Addon 和存储；仅导入镜像不足以恢复。
+2026-11-11 云端 Agent 现场核对：`rlark-system/rlark-agent` Deployment 的容器镜像更新为 `10.254.240.1:5555/rlark-cloud-agent:wg-nodeport-1deb4ef-20261111`，并设置 `RLARK_WG_NODEPORT_ENABLED=true`；工作负载初始化参数 `--image` 仍引用 `10.254.240.1:5555/rlark-current:20261106-agent-67eaa39`。新 Agent 镜像已预载到节点 `10-0-2-196`，备份归档位于该节点的 `/var/backups/rlark-datatools-20261111-173832/agent-image.tar.gz`，尚未纳入独立恢复包。云节点直接从 5555 仓库拉取该镜像因 HTTPS 与 HTTP 不匹配而失败，不能假设空节点可拉取；恢复时须先验证归档校验、预载镜像及仓库配置。Agent 使用 `rlark-agent` ServiceAccount、`rlark-agent-cert` Secret 和 `https://rlark-server:8443`，并依赖此目录的云端 Service/Endpoints 清单；证书和私钥不在恢复包或快照中。管理面 `rlark-ksyun-gpu/csi-driver-rclone` 的 `controllerNodeSelector` 和 `nodeSelector` 均为 `kubernetes.io/hostname=10-0-2-196`，CSI 镜像引用依赖节点本地 5556 仓库。恢复时需先恢复独立管理通道、私钥与证书、节点镜像及仓库，再检查服务、Addon 和存储；仅导入镜像不足以恢复。
+
+同日为 WG 端口预览将云集群 kube-proxy 的 `nodePortAddresses` 限制为 `10.254.240.0/24` 并重启两个节点的 kube-proxy。变更前该集群没有 NodePort 或 LoadBalancer Service；此限制对集群所有 NodePort 生效。临时测试 Service 在开发机访问两个 WG 地址均返回 HTTP 200，从云节点测试两个非 WG 地址均无法连接；测试 Service 已删除，不能据此推断其他来源的全部网络策略。变更前 kube-proxy ConfigMap、DaemonSet 和 Agent Deployment 快照保存在云控制节点 `/var/backups/rlark-datatools-20261111-173832/`。回滚前先关闭依赖 WG 隔离的端口及 Agent 开关，再通过独立管理通道恢复配置并逐节点验证。Data Tools 管理员已初始化；30085 曾短暂映射并可通过两个 WG 地址访问，但验证发现未登录也可读取数据集接口，已撤回映射并确认两个地址均无法连接。此前 30086 测试期间也曾短暂暴露服务；无法据此确认是否有其他 Peer 访问。重新开放前须修复并验证服务端认证或部署等效访问控制。端口配置变更还触发滚动更新，新副本因节点反亲和规则无法调度；恢复原配置后 Task 已回到 Running。
 
 2026-11-11 只读核验证书有效期：本地与机器人使用 `rlark-system/agent-certs`，客户端证书分别于 2027-10-28 12:58:27 UTC、08:33:16 UTC 到期；云端 `rlark-system/rlark-agent-cert` 客户端证书于 2027-11-10 12:43:37 UTC 到期。三处 CA 证书均于 2046-10-21 03:02:38 UTC 到期。这只检查证书元数据，不证明私钥备份、自动续期、撤销或轮换可用；恢复与轮换方案需另行验证。
 

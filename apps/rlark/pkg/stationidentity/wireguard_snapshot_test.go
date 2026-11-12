@@ -18,7 +18,9 @@ func TestWireguardSnapshotFreshnessAndValidation(t *testing.T) {
 		name, body string
 		valid      bool
 	}{
-		{"fresh", fmt.Sprintf(`{"observedAt":%q,"interface":"st-wg0","addresses":["10.254.240.1/32"]}`, now.Format(time.RFC3339)), true},
+		{"fresh with public key", fmt.Sprintf(`{"observedAt":%q,"interface":"st-wg0","publicKey":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=","addresses":["10.254.240.1/32"]}`, now.Format(time.RFC3339)), true},
+		{"legacy fresh", fmt.Sprintf(`{"observedAt":%q,"interface":"st-wg0","addresses":["10.254.240.1/32"]}`, now.Format(time.RFC3339)), true},
+		{"invalid public key", fmt.Sprintf(`{"observedAt":%q,"interface":"st-wg0","publicKey":"bad","addresses":[]}`, now.Format(time.RFC3339)), false},
 		{"stale", fmt.Sprintf(`{"observedAt":%q,"interface":"st-wg0","addresses":["10.254.240.1/32"]}`, now.Add(-31*time.Second).Format(time.RFC3339)), false},
 		{"future", fmt.Sprintf(`{"observedAt":%q,"interface":"st-wg0","addresses":[]}`, now.Add(6*time.Second).Format(time.RFC3339)), false},
 		{"invalid address", fmt.Sprintf(`{"observedAt":%q,"interface":"st-wg0","addresses":["bad"]}`, now.Format(time.RFC3339)), false},

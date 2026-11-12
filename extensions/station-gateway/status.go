@@ -10,10 +10,11 @@ import (
 	"time"
 
 	"github.com/vishvananda/netlink"
+	"golang.zx2c4.com/wireguard/wgctrl"
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 )
 
-// publishObservation never includes device keys, peer configuration or endpoints.
+// publishObservation exposes only the interface public key and assigned addresses.
 func publishObservation(path string, data []byte, now time.Time) error {
 	d, err := parse(data)
 	if err != nil {
@@ -25,6 +26,18 @@ func publishObservation(path string, data []byte, now time.Time) error {
 	}
 	if link.Type() != "wireguard" || link.Attrs().Alias != owner {
 		return fmt.Errorf("interface is not owned by station gateway")
+	}
+	deviceClient, err := wgctrl.New()
+	if err != nil {
+		return fmt.Errorf("open wireguard device: %w", err)
+	}
+	device, err := deviceClient.Device(d.Interface)
+	closeErr := deviceClient.Close()
+	if err != nil {
+		return fmt.Errorf("read wireguard public key: %w", err)
+	}
+	if closeErr != nil {
+		return fmt.Errorf("close wireguard device client: %w", closeErr)
 	}
 	addresses, err := netlink.AddrList(link, netlink.FAMILY_ALL)
 	if err != nil {
@@ -40,8 +53,9 @@ func publishObservation(path string, data []byte, now time.Time) error {
 	content, err := json.Marshal(struct {
 		ObservedAt time.Time `json:"observedAt"`
 		Interface  string    `json:"interface"`
+		PublicKey  string    `json:"publicKey"`
 		Addresses  []string  `json:"addresses"`
-	}{now.UTC(), d.Interface, values})
+	}{now.UTC(), d.Interface, device.PublicKey.String(), values})
 	if err != nil {
 		return err
 	}

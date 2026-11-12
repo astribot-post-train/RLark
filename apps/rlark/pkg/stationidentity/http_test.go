@@ -98,6 +98,7 @@ func TestHTTPObservationAuthenticatesAndReturnsGenericFailures(t *testing.T) {
 		`{"cluster_id":"c","observation":{"roles":["worker","worker"]}}`,
 		`{"cluster_id":"c","observation":{"wireguard":{}}}`,
 		`{"cluster_id":"c","observation":{"wireguard":{"interface":"st-wg0","privateKey":"secret"}}}`,
+		`{"cluster_id":"c","observation":{"wireguard":{"interface":"st-wg0","publicKey":"not-a-wireguard-key"}}}`,
 		`{"cluster_id":"c","observation":{"wireguard":{"interface":"st-wg0","peers":[{"name":"peer","receivedBytes":-1}]}}}`,
 		`{"cluster_id":"c","observation":{"wireguard":{"interface":"st-wg0","addresses":["10.0.0.1/32","10.0.0.1/32"]}}}`,
 	} {

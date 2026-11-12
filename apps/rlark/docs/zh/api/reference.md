@@ -57,12 +57,19 @@ Agent 证书签发仅在管理面 Secret 保存后返回凭证；存储失败会
 | `POST` | `/api/v1/station/rebinds` |
 | `GET` | `/api/v1/station/rebinds/{name}?cluster_id={cluster_id}` |
 | `GET` | `/api/v1/station/observations?cluster_id={cluster_id}&limit={limit}&continue={token}` |
+| `POST` | `/api/v1/station/node-operations` |
+| `GET` | `/api/v1/station/node-operations?cluster_id={cluster_id}&limit={limit}&continue={token}` |
+| `GET` | `/api/v1/station/node-operations/{name}?cluster_id={cluster_id}` |
 
 两个 `GET` 接口均需要管理员权限。列表从管理面 Kubernetes API 读取 Station 自定义资源；`cluster_id` 是已注册 Cluster 对象名，Gateway 会将其解析为权威的 `spec.agentNamespace`。不要把 namespace 当作 `cluster_id` 传入。分页 `limit` 为 1 到 500（默认 200），`continue` 使用接口返回的不透明 token。Station 名称具有 namespace 作用域，因此详情接口必须提供 `cluster_id`。Cluster 到 namespace 映射冲突返回 `409`；管理面 API 不可用返回 `502`。这两个 GET 接口为只读预览。
 
-`GET /api/v1/station/observations` 需要 `cluster_id`，返回该 Cluster 映射 namespace 中最近一次经服务端验证的快照，其中的 Node UID 可用于选择重绑目标；controller 执行前仍会重新读取成员 Node。`POST /api/v1/station/rebinds` 是仅管理员可调用的预览操作接口。请求提交 `cluster_id`、稳定的 `request_id`、`station_name`、页面读取到的 `station_uid` 与 `expected_binding_version`、`target_node_name`、`target_node_uid` 和操作者填写的 `reason`；`target_system_uuid` 是可选辅助证据。请求必须为严格 JSON，不超过 16 KiB，且不能包含未知字段。Gateway 按已注册 Cluster 解析 namespace，并拒绝 Station UID 过期、Station 已退役或 binding 版本变化的请求。接口创建名称确定的 `StationRebind` operation 并返回 `202`；相同 ID 和载荷重试返回同一 operation，复用 ID 但载荷不同返回 `409`。`GET /api/v1/station/rebinds/{name}` 返回当前异步状态。controller 会再次从成员集群读取目标 Node、核对 UID，并拒绝已绑定给其他 Station 的 UID 后才修改绑定。`202` 不代表重绑已完成。控制台已支持对 `Conflict` Station 提交并跟踪 operation；实际完成仍需安装 Station CRD/controller。
+`StationObservation.status.wireguard.publicKey` 是可选字段，报告观测到的本地接口公钥，供资产清单和配置流程使用；它不是认证凭证，不包含私钥、Peer 公钥、端点或 AllowedIPs。旧版 Agent 可以省略此字段。
+
+`GET /api/v1/station/observations` 需要 `cluster_id`，返回该 Cluster 映射 namespace 中最近一次经服务端验证的快照，其中的 Node UID 可用于选择重绑目标；controller 执行前仍会重新读取成员 Node。`POST /api/v1/station/rebinds` 是仅管理员可调用的预览操作接口。请求提交 `cluster_id`、稳定的 `request_id`、`station_name`、页面读取到的 `station_uid` 与 `expected_binding_version`、`target_node_name`、`target_node_uid` 和操作者填写的 `reason`；`target_system_uuid` 是可选辅助证据。请求必须为严格 JSON，不超过 16 KiB，且不能包含未知字段。Gateway 按已注册 Cluster 解析 namespace，并拒绝 Station UID 过期、Station 已退役或 binding 版本变化的请求。接口创建名称确定的 `StationRebind` operation 并返回 `202`；相同 ID 和载荷重试返回同一 operation，复用 ID 但载荷不同返回 `409`。`GET /api/v1/station/rebinds/{name}` 返回当前异步状态。controller 会再次从成员集群读取目标 Node、核对 UID，并拒绝已绑定给其他 Station 的 UID 后才修改绑定。`202` 不代表重绑已完成。控制台支持对 `Conflict` 或 `Offline` Station 提交并跟踪 operation，但必须先有显示不同 Node UID 的新鲜观测；实际完成仍需安装 Station CRD/controller。
 
 Station 发现和 Rebind reconcile 在 controller-manager leader election 下共享串行协调器；race 测试验证二者同时处理同一 Node UID 时最终只有一个 owner。leader 故障切换与真实 CRD operation 尚未测试，因此此预览接口还不能作为生产身份唯一性保证。
+
+节点生命周期路由仅管理员可用，当前为实验能力。`POST /api/v1/station/node-operations` 接受严格 JSON，包含 `cluster_id`、稳定的 `request_id`、`action`、`node_name`，以及已人工确认 SHA256 主机指纹的 SSH 连接信息。SSH 密码和私钥必须且只能提供一种；sudo 密码可选。凭证保存在独立 `station-operation-credentials` namespace，以 Kubernetes operation UID 绑定，完成后清理；响应不返回凭证值或引用。只有 ID 和完整载荷（包括凭证）相同才按重放返回原操作；内容变化返回 `409`。列表接口的 `limit` 为 1 到 500（默认 100），`continue` 为不透明 token。`Join` 的 `containerd_runtime` 可选 `containerd`（默认 socket `/run/containerd/containerd.sock`）或 `fleet`（`/run/containerd-fleet/containerd.sock`）。成员集群须先安装匹配的 node-agent DaemonSet profile；controller 会核验所选 socket，并在 Kubernetes Node UID 验证后写入 runtime 标签。Join 默认拒绝已有 kubelet 配置。显式设置 `reset_existing_kubeadm: true` 后，controller 才会先清理旧 kubeadm 状态；前提是主机名匹配、目标集群内没有同名 Node 或相同 systemUUID、主机不是控制面且 sudo 成功。此检查不查询其他集群，也不会接管已有 Node。Join 前置条件要求 `net.ipv4.ip_forward=1`。如果 Station 仍绑定旧 Node UID，kubeadm 可能先完成而 RLark readiness 保持阻塞；新鲜观测报告新 UID 后，提交显式 Station Rebind，Join 调谐器会继续推进。Join 使用专用操作成员 kubeconfig、kubeadm bootstrap discovery 和固定 CA 的 SSH 验证，直到 Kubernetes Node 和 RLark Node 均就绪才完成。失败的一次性 kubeadm 尝试不会自动重放；恢复前须检查主机和操作拥有的 marker。`Remove` 会遵守 PDB 排空，扫描所有登记成员集群，并从可读配置中仅删除按 Node UID 归属或由新鲜身份观测匹配的 WireGuard Peer；关闭网络 DaemonSet 并等其 Pod 停止后再 reset 和删除 Node。所有集群凭证和 ConfigMap 均须可访问；缺凭证、API 故障、更新冲突或残留引用都会阻止剔除。旧配置归属无法确认时会在排空前阻止。`EnableWireGuard` 因尚未实现 Peer 分配而拒绝。`202` 只代表已记录，不代表完成。操作控制器仍属实验能力，不可视为生产就绪。
 
 ## 认证与 SSH 密钥
 
@@ -99,6 +106,7 @@ Station 发现和 Rebind reconcile 在 controller-manager leader election 下共
 | `GET` | `/api/v1/image-registries/{id}/password` |
 | `GET` | `/api/v1/image-registries/{id}/repositories` |
 | `GET` | `/api/v1/image-registries/{id}/tags?repository={name}` |
+| `GET` | `/api/v1/image-registries/{id}/tag-details?repository={name}` |
 | `GET` | `/api/v1/image-registries/{id}/manifest?repository={name}&tag={tag}` |
 | `GET, PUT` | `/api/v1/system-config` |
 
@@ -116,7 +124,7 @@ Station 发现和 Rebind reconcile 在 controller-manager leader election 下共
 
 `clusterSelection.mode` 可为 `None`（仅保存）、`Selected`（一个或多个逻辑集群名）或 `All`（当前及未来集群）。`None` 和 `All` 模式下 `clusters` 必须为空。普通凭据响应不返回密码，但会返回 `id`。`POST` 返回 `201 Created`。执行 `PUT` 时，省略 `password` 表示保留原密码，显式空密码非法。`DELETE` 返回 `202 Accepted`，因为 Replication 和 Delivery 会异步删除已分发的 Secret。
 
-三个只读浏览接口仅限管理员。Gateway 需配置 `--registry-browse-allowed-hosts=registry.example.com:5443`（多个精确 `host[:port]` 或 IP CIDR 以逗号分隔）；默认空列表关闭浏览。CIDR 允许该网段内的 IP 字面地址使用任意端口，不对域名解析后匹配；应将网段限制在可信网络。只访问显式允许的 HTTPS 地址，不跟随重定向或使用代理，保存的凭证不返回给浏览器。Gateway 必须能访问仓库，并通过系统 CA 信任其证书；私有 CA 应在 Gateway 启动前加入其运行环境，不要关闭证书校验。仓库必须支持目录、分页标签查询、返回 `sha256` 摘要的 manifest HEAD 和 Basic 认证；暂不支持 token 认证或不提供目录接口的仓库。目录和标签每页最多 50 项，使用返回的 `next` 作为下一次请求的 `last`。仓库失败返回 502，不视为空结果。已有 `GET /api/v1/images` 是 Job 镜像使用历史，不是仓库库存。查询期间标签和摘要可能变化，发布时应固定经过验证的摘要。
+四个只读浏览接口仅限管理员。Gateway 需配置 `--registry-browse-allowed-hosts=registry.example.com:5443`（多个精确 `host[:port]` 或 IP CIDR 以逗号分隔）；默认空列表关闭浏览。CIDR 允许该网段内的 IP 字面地址使用任意端口，不对域名解析后匹配；应将网段限制在可信网络。只访问显式允许的 HTTPS 地址，不跟随重定向或使用代理，保存的凭证不返回给浏览器。Gateway 必须能访问仓库，并通过系统 CA 信任其证书；私有 CA 应在 Gateway 启动前加入其运行环境，不要关闭证书校验。仓库必须支持目录、分页标签查询、返回 `sha256` 摘要的 manifest HEAD 和 Basic 认证；暂不支持 token 认证或不提供目录接口的仓库。目录和标签每页最多 50 项，使用返回的 `next` 作为下一次请求的 `last`。仓库失败返回 502，不视为空结果。`tag-details` 读取同一页标签，并对每个标签 GET manifest 和镜像 config blob，按仓库顺序返回 `{items: [{tag, digest, created, size, platforms, error}], next}`。`created` 是镜像 config 中的构建时间（RFC 3339），不是推送时间；`size` 是 config 与压缩层字节数之和；`platforms` 列出 `os/architecture[/variant]`。对于 OCI index 或 Docker manifest list，会跳过 attestation 条目并列出全部平台，`created` 和 `size` 取 `linux/amd64`（没有时取第一个平台）。manifest 和 config 内容上限 4 MiB，且必须与其 `sha256` 摘要一致。无法读取元数据的标签（例如不支持的媒体类型，或 blob 重定向到外部存储）返回 `error: "unavailable"` 且不带元数据；只有标签列表本身失败时整个请求才失败。Gateway 每次请求都会重新解析标签，最多同时读取四个标签，并在内存中按 manifest 摘要缓存元数据（最多 4096 条，重启后清空）。已有 `GET /api/v1/images` 是 Job 镜像使用历史，不是仓库库存。查询期间标签和摘要可能变化，发布时应固定经过验证的摘要。
 
 ## 存储
 

@@ -1,10 +1,10 @@
-# Station API 契约（试验性，尚未安装）
+# Station API 契约（试验性）
 
-本文定义 `extensions/station` 中已登记的 `station.rlark.io/v1alpha1` 类型和生成 CRD。它仍是试验性扩展 API：CRD 尚未安装到生产 kcp 或成员集群；controller manager 与 Station API 可执行原型及示例 Deployment 均已存在，但尚未部署或达到生产就绪。
+本文定义 `extensions/station` 中已登记的 `station.rlark.io/v1alpha1` 类型和生成 CRD。五份 Station 身份 CRD 在本地开发集群运行，尚非生产可用。`NodeOperation` CRD 已安装在 KCP root workspace，controller 在本地开发集群以 opt-in 参数运行；Join/Remove 仍未完成端到端验收。
 
 ## 范围与 namespace 映射
 
-五种资源均为 namespaced。可信注册记录把一个稳定 cluster ID 映射到成员 Kubernetes API 客户端和一个 `Cluster.spec.agentNamespace`。namespace 是资源放置边界，不等于集群身份。两个活动注册不得声明同一个 namespace。稳定 cluster ID 写入 `StationSequence.spec.clusterID` 并由服务端解析；请求 namespace 或标签本身不能证明成员关系。
+五种 Station 身份资源和 `NodeOperation` 均为 namespaced。可信注册记录把一个稳定 cluster ID 映射到成员 Kubernetes API 客户端和一个 `Cluster.spec.agentNamespace`。namespace 是资源放置边界，不等于集群身份。两个活动注册不得声明同一个 namespace。稳定 cluster ID 写入 `StationSequence.spec.clusterID` 并由服务端解析；请求 namespace 或标签本身不能证明成员关系。
 
 ## 资源与写入方
 
@@ -15,6 +15,9 @@
 | `StationSequence` | `station-controller` | 每个已注册集群一个序号分配器。`status.lastAssigned` 使用 resourceVersion 比较并交换递增；允许跳号，永不复用。`spec.clusterID` 不可变。 |
 | `StationRebind` | 管理员 Gateway 接口，随后由 `station-controller` 处理 | 不可变的一次性操作，包含稳定 request ID、精确 Station 对象 UID、期望 binding 版本、目标 Node 身份、已认证请求者和原因。仅管理员可调用的 Gateway 接口解析 Cluster namespace、核对页面显示的 Station UID/版本，并派生确定的 operation 名称。相同 request ID/载荷重试返回既有操作；同 ID 不同载荷返回冲突。controller 会从成员 API 独立核验目标 Node UID。更改 Station Spec 前 controller 先记录 `status.previousBinding`，然后 Status 在 `Accepted`、`Applied`、`Rejected` 间流转。操作状态不是审计日志。 |
 | `StationAuditEvent` | `station-controller` | 与 Rebind 状态分离的不可变追加式安全记录。名称由操作对象 UID 确定性派生。Create 重试核对已存事件并拒绝冲突载荷；首次服务端时间保留。运行时 RBAC 仅授予 create/get，不授予 update/delete。 |
+| `NodeOperation` | 管理员 Gateway 接口，随后由 opt-in `station-controller` 处理 | 试验性的一次性 Join/Remove 操作，包含稳定 request ID、注册 Cluster ID、剔除时的精确 Node UID，以及由操作拥有的短期凭证 Secret。Join 默认拒绝旧 kubeadm 状态；显式设置 `resetExistingKubeadm` 后，controller 先验证目标集群中没有同名 Node 或相同硬件 systemUUID，并确认 SSH 主机不是控制面，再执行带操作标记且不自动重放的 reset。此检查不查询其他集群。剔除要求 WG 配置按 UID 所有，或由身份观测验证，并等待网络 DaemonSet Pod 停止后才 reset 和删除精确 Node UID。尚未实现 WG Peer 分配，现场端到端仍在验证。 |
+
+`StationObservation.status.wireguard` 是最新状态快照，不是期望 Peer 配置。可选字段 `publicKey` 是观测接口的公钥，由 `station-gateway` 从内核读取并由身份 Agent 转发；服务端校验其为 32 字节 WireGuard 公钥，并与接口和地址一同保存。旧 Agent 可以省略此字段。它只是公开观测值：不认证 Node、不授权 Peer 变更，也不会暴露 Peer 公钥、端点、AllowedIPs 或任何私钥。
 
 所有资源使用注册记录指定的 `agentNamespace`，不设 cluster-scoped 资源。Node 名称、systemUUID、标签和源 IP 只能作为辅助证据。首次心跳可在服务端完成 TokenReview 并新鲜读取 Pod、ServiceAccount 和 Node 后接受，即使 Station 尚不存在，以便 controller 创建首个 Station。此 bootstrap Observation 仅归属已验证的 cluster ID 与 Node UID；Station 创建后，challenge 和敏感操作必须同时匹配当前 Station 对象 UID 与 binding version。Node UID 变化不得自动接管。
 
@@ -50,7 +53,7 @@ Station 序号、binding 和状态 patch 现显式携带 resourceVersion 前置�
 
 `extensions/station/api/v1alpha1` 已包含 Go 类型、scheme 注册和生成的 deep-copy 方法；`extensions/station/config/crd/bases` 有五份使用仓库固定 `controller-gen v0.18.0` 生成的 CRD。2026-11-11 在临时 kcp workspace 安装五份 CRD 均达到 Established。Admission 接受有效 Station、Sequence、Observation、Rebind 和 AuditEvent；Observation status 与 Rebind `previousBinding` status 可写入；CEL 拒绝 Station 显示名修改、binding 错误递增、退役恢复、sequence 倒退、Rebind spec 改写和 AuditEvent spec 修改。临时 workspace 与 kubeconfig 已清理。这不能证明 APIExport/APIBinding 权限、生产 RBAC 或 manager rollout；生产安装前仍需验证。
 
-controller 当前含 Observation 状态协调、Rebind 状态机、独立 Kubernetes AuditEvent sink、唯一 Cluster namespace resolver、RLark Node Ready 查询及成员 kubeconfig Secret reader。RLark identity 包新增动态注册表和 Kubernetes Observation sink：按当前 Cluster 的唯一 `spec.agentNamespace` 解析作用域，从带 cluster-id annotation 的专用 Secret 读取 member kubeconfig 和 station-agent ServiceAccount UID；Secret kubeconfig 变化时刷新内存 client。首次已验证上报可先以 cluster/Node UID 创建 Observation，由 controller 创建 Station；之后的上报通过独立的 resourceVersion 条件 metadata patch 将 Observation 绑定到精确的 Station 对象 UID，再写 status。不同 Cluster/Node UID 或既有 Station UID 不匹配均拒绝接管。`station-api` 可执行原型已加入 HTTPS、PostgreSQL challenge store、Observation 写入、有限内存的逐 Node UID rate limit，以及独立 health/readiness；示例 Deployment 和管理面/成员集群 RBAC 也已加入，API 示例固定单副本。Station binding 创建前 challenge 和敏感操作返回 403。Rebind controller 会先保存旧 binding，再校验目标 Node UID 和期望版本、应用一次版本递增、幂等写入独立不可变审计资源，最后才结束操作；并发重复请求也收敛。race 测试覆盖并发重复 reconcile、身份冲突、超时恢复、依赖故障恢复、Rebind 版本冲突、Station 对象替换、binding patch 后审计故障恢复、并发幂等及 identity registry/sink 的 bootstrap、归属、轮换和冲突行为；handler 级 fake Kubernetes 串联测试覆盖首次上报、Station 创建、UID 绑定及 challenge 签发。Gateway 管理员重绑接口已实现操作创建/查询，并通过 fake Kubernetes 与 JWT 权限测试；CRD/controller 未部署，尚未进行现场 operation。manager 与 API 均未部署；生产 kcp 身份、准确 RBAC、凭据 Secret 轮换、对外 TLS/网络入口、真实 CRD status 写入、敏感操作授权和审计查询仍需验证。
+controller 当前含 Observation 状态协调、Rebind 状态机、独立 Kubernetes AuditEvent sink、唯一 Cluster namespace resolver、RLark Node Ready 查询及成员 kubeconfig Secret reader。RLark identity 包新增动态注册表和 Kubernetes Observation sink：按当前 Cluster 的唯一 `spec.agentNamespace` 解析作用域，从带 cluster-id annotation 的专用 Secret 读取 member kubeconfig 和 station-agent ServiceAccount UID；Secret kubeconfig 变化时刷新内存 client。首次已验证上报可先以 cluster/Node UID 创建 Observation，由 controller 创建 Station；之后的上报通过独立的 resourceVersion 条件 metadata patch 将 Observation 绑定到精确的 Station 对象 UID，再写 status。不同 Cluster/Node UID 或既有 Station UID 不匹配均拒绝接管。`station-api` 提供 HTTPS、PostgreSQL challenge store、Observation 写入、有限内存的逐 Node UID rate limit，以及独立 health/readiness；本地开发集群当前运行 Station API/controller 和身份/网络 DaemonSet。Station binding 创建前 challenge 和敏感操作返回 403。Rebind controller 会先保存旧 binding，再校验目标 Node UID 和期望版本、应用一次版本递增、幂等写入独立不可变审计资源，最后才结束操作；并发重复请求也收敛。race 测试覆盖并发重复 reconcile、身份冲突、超时恢复、依赖故障恢复、Rebind 版本冲突、Station 对象替换、binding patch 后审计故障恢复、并发幂等及 identity registry/sink 的 bootstrap、归属、轮换和冲突行为；handler 级 fake Kubernetes 串联测试覆盖首次上报、Station 创建、UID 绑定及 challenge 签发。生产 kcp 身份、准确 RBAC、凭据 Secret 轮换、对外 TLS/网络入口、真实 CRD status 写入、敏感操作授权和审计查询仍需验证。NodeOperation CRD 和 controller 已部署在开发拓扑；现场 Join/Remove 端到端尚未验证。Gateway 管理员 Rebind 接口已通过 fake Kubernetes 与 JWT 权限测试。
 
 试验性 `StationReconciler` 只消费可信注册 namespace 中当前的服务端验证 Observation。Station 名称由 cluster ID 与 Node UID 确定性派生，重复和并发首次通知收敛到同一对象；如果进程在预留序号后崩溃或并发创建输掉竞争，序号允许留空洞。状态更新会基于 API 新读对象并有界重试冲突；90 秒是心跳有效窗口，同名 Node UID 替换只进入 Conflict，不会改绑定。`RebindReconciler` 和 Kubernetes AuditEvent sink 已有原型。race 测试覆盖重复/并发通知、UID 冲突、精确超时及恢复、Observation 缺失、退役、序号归属冲突、readiness 依赖恢复、Rebind 版本/对象 UID 冲突、审计故障恢复和并发重复 Rebind。manager 可执行入口及示例容器/RBAC manifest 已加入，但尚未部署；生产 Node/read API 权限和 kcp 认证方式仍待验证。
 

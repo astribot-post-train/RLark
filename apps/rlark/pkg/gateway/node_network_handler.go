@@ -28,6 +28,8 @@ type stationNetworkClient struct {
 	http                     *http.Client
 }
 
+var errStationNetworkCredentialRejected = errors.New("Station network service credential rejected")
+
 func newStationNetworkClient(address, caFile, credentialFile string) (*stationNetworkClient, error) {
 	u, err := url.Parse(address)
 	if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || (u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.Fragment != "" || caFile == "" || credentialFile == "" {
@@ -75,6 +77,9 @@ func (s *stationNetworkClient) Read(ctx context.Context, cluster, node string) (
 		return result, err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		return result, errStationNetworkCredentialRejected
+	}
 	if resp.StatusCode != http.StatusOK {
 		return result, errors.New("Station network query failed")
 	}
@@ -119,6 +124,10 @@ func (g *Gateway) handleNodeNetwork(c *gin.Context) {
 	}
 	summary, err := g.networkSummary.Read(c.Request.Context(), clusterID, nodeName)
 	if err != nil {
+		if errors.Is(err, errStationNetworkCredentialRejected) {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "network summary service authentication failed"})
+			return
+		}
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "network summary unavailable"})
 		return
 	}

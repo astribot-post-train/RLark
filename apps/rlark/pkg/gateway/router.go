@@ -28,6 +28,12 @@ func (g *Gateway) RegisterRoutes(r gin.IRouter) {
 		stationRebinds.POST("", g.handleCreateStationRebind)
 		stationRebinds.GET("/:name", g.handleGetStationRebind)
 	}
+	stationNodeOperations := adminAPI.Group("/station/node-operations")
+	{
+		stationNodeOperations.POST("", g.handleCreateNodeOperation)
+		stationNodeOperations.GET("", g.handleListNodeOperations)
+		stationNodeOperations.GET("/:name", g.handleGetNodeOperation)
+	}
 	adminAPI.GET("/station/observations", g.handleListStationObservations)
 	api.GET("/node-networks/:name", g.handleNodeNetwork)
 
@@ -162,6 +168,7 @@ func (g *Gateway) RegisterRoutes(r gin.IRouter) {
 		imageRegistries.DELETE("/:id", g.handleDeleteImageRegistry)
 		imageRegistries.GET("/:id/repositories", g.handleRegistryRepositories)
 		imageRegistries.GET("/:id/tags", g.handleRegistryTags)
+		imageRegistries.GET("/:id/tag-details", g.handleRegistryTagDetails)
 		imageRegistries.GET("/:id/manifest", g.handleRegistryManifest)
 	}
 	api.GET("/image-registries/:id/password", g.auditRegistryPasswordAccess(), requireAdmin(), g.handleGetImageRegistryPassword)

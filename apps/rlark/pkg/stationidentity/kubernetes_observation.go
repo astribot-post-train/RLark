@@ -147,10 +147,35 @@ func (s *KubernetesObservationSink) Store(ctx context.Context, evidence Evidence
 		}
 		annotations := current.GetAnnotations()
 		storedStationUID := annotations[observationStationUIDKey]
-		if annotations[observationClusterIDKey] != evidence.ClusterID || annotations[observationNodeUIDKey] != evidence.NodeUID || storedStationUID != "" && storedStationUID != evidence.StationUID || evidence.StationUID == "" && storedStationUID != "" {
+		storedNodeUID := annotations[observationNodeUIDKey]
+		storedBindingVersion, versionErr := strconv.ParseInt(annotations[observationBindingVersionKey], 10, 64)
+		reboundIdentity := evidence.StationUID != "" && storedStationUID == evidence.StationUID && storedNodeUID != evidence.NodeUID && versionErr == nil && storedBindingVersion > 0 && evidence.Generation > storedBindingVersion
+		if annotations[observationClusterIDKey] != evidence.ClusterID || storedNodeUID != evidence.NodeUID && !reboundIdentity || storedStationUID != "" && storedStationUID != evidence.StationUID || evidence.StationUID == "" && storedStationUID != "" {
 			return ErrObservationOwnershipConflict
 		}
 		metadataPatch := map[string]interface{}{}
+		if reboundIdentity {
+			oldStatus, found, nestedErr := unstructured.NestedMap(current.Object, "status")
+			if nestedErr != nil {
+				return fmt.Errorf("read previous observation status: %w", nestedErr)
+			}
+			if found && len(oldStatus) > 0 {
+				clearStatus, marshalErr := json.Marshal(map[string]interface{}{
+					"metadata": map[string]interface{}{"resourceVersion": current.GetResourceVersion()},
+					"status":   map[string]interface{}{"reportedAt": nil, "nodeUID": nil, "systemUUID": nil, "bootTime": nil, "roles": nil, "probes": nil, "wireguard": nil},
+				})
+				if marshalErr != nil {
+					return marshalErr
+				}
+				if _, patchErr := resource.Patch(ctx, evidence.NodeName, types.MergePatchType, clearStatus, metav1.PatchOptions{}, "status"); apierrors.IsConflict(patchErr) {
+					continue
+				} else if patchErr != nil {
+					return fmt.Errorf("clear previous Node identity observation: %w", patchErr)
+				}
+				continue
+			}
+			metadataPatch[observationNodeUIDKey] = evidence.NodeUID
+		}
 		if evidence.StationUID != "" && storedStationUID == "" {
 			metadataPatch[observationStationUIDKey] = evidence.StationUID
 		}

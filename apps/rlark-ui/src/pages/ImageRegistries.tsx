@@ -479,12 +479,7 @@ function ImageRegistryDetailPage({
             <Database size={15} />
             {zh ? "凭据信息" : "Registry Info"}
           </span>
-          <p className="storage-detail-section-copy">
-            {zh
-              ? "镜像仓库的访问地址与认证信息"
-              : "Registry access address and credentials"}
-          </p>
-          <div className="node-detail-grid storage-detail-info-grid">
+          <div className="node-detail-grid storage-detail-info-grid registry-info-strip">
             <div>
               <span className="muted">{zh ? "名称" : "Name"}</span>
               <strong>{item.name}</strong>

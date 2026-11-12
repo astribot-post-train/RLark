@@ -123,7 +123,6 @@ nav:
   - Developer Guide:
     - Developer Guide Overview: developer-guide/index.md
     - Project Design Principles: developer-guide/design-principles.md
-    - Shared Storage and Registry Plan: developer-guide/shared-storage-registry-plan.md
     - API Conventions: developer-guide/api-conventions.md
     - Local Development and Debugging: developer-guide/local-development.md
     - Debugging: developer-guide/debugging.md

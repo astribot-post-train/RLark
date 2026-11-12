@@ -1,6 +1,29 @@
 # Private Image Registry Operations (Pilot)
 
-Updated 2026-11-05. This environment-specific guide is not a production-readiness claim and is not part of the MkDocs navigation. See the [shared storage and registry plan](../../apps/rlark/docs/developer-guide/shared-storage-registry-plan.md) for design, earlier tests and open work. [中文](private-registry.zh-CN.md)
+On 2026-11-12, robot worker `s1u-02-x86` reached `10.11.14.128:5443` through a persistent host route sourced from `192.168.31.251`. Its dedicated containerd was configured with the existing registry CA and completed a TLS-verified authenticated `busybox:latest` pull. This validates that worker and image at that time; it does not validate automatic credential distribution, other repositories, or cross-node Pod networking.
+
+
+Updated 2026-11-12 (topology section); other sections last updated 2026-11-05. This environment-specific guide is not a production-readiness claim. See the [shared storage and registry plan](../design/shared-storage-registry-plan.md) for design, earlier tests and open work. [中文](private-registry.zh-CN.md)
+
+## Current registry topology: 2026-11-12
+
+This section supersedes the address table below where they differ. The `192.168.31.2:5443` address and the `rlark-ks3-registry` container described later are historical.
+
+| Entry | Served by | Storage | Who uses it |
+| --- | --- | --- | --- |
+| `10.11.14.128:5443` (HTTPS, `rlark` account) | `rlark-ks3-registry-migrated` container on the development host | KS3 `stardust/ks3-regular/post_train/rlark/registry` | Development host pushes; RLark credential `ir-e9a22bbb4e156a1b` (Local registry 10.11.14.128) |
+| `10.254.240.1:5443` (WireGuard, plain HTTP, no auth) | `rlark-ks3-registry-wg` container on the development host | Same KS3 path | Image name used by Kingsoft cloud workloads; cloud nodes resolve it through their local mirror first |
+| `127.0.0.1:5444` on each cloud node (read-only) | `rlark-registry/rlark-registry-mirror` DaemonSet | Same KS3 path, KS3 internal endpoint | containerd `certs.d` mirror for `10.11.14.128:5443` and `10.254.240.1:5443`; falls back to `10.254.240.1:5443` over WireGuard |
+| `10.254.240.2:5443` (HTTPS, `rlark` account, writable) | `rlark-registry/rlark-registry-cloud` Deployment on `10-0-2-57`, `hostNetwork`, bound to the WireGuard address only | Same KS3 path, KS3 internal endpoint | Pushes from the Kingsoft cloud; RLark credential `ir-667c8af90d294c2b` (金山云 KS3, store only) |
+| `localhost:5555`, `10.11.14.128:5555`, `10.254.240.1:5555` | `local-registry` container on the development host | Local Docker volume, **not** KS3 | Development cluster and robot cluster |
+
+**Placement rule.** The development cluster and the robot cluster pull from `local-registry` (`:5555`). The Kingsoft cloud cluster pulls from KS3: reference `10.254.240.1:5443/<repo>@sha256:<digest>` so that nodes read through their local KS3 mirror. An image used by cloud workloads must exist in KS3 before it is referenced; push it to `10.254.240.2:5443` from the cloud, to `10.11.14.128:5443` from the development host, or copy it from `:5555` with `skopeo copy --all --preserve-digests`. All KS3 entries share one storage path, so an image pushed through any of them is visible through all of them.
+
+**Naming.** Use namespaced repositories: `rlark/agent`, `rlark/cloud-agent`, `rlark/gateway`, `rlark/controller-manager`, `rlark/station-*`, `data-tools/*`, `fleet/*`. Push a time-prefixed tag `YYYYMMDD-HHMM-<alias>` together with the plain `<alias>`, and pin deployments by manifest digest.
+
+**Migration record (2026-11-12).** All 35 tags in `local-registry` and 19 images that existed only in the development host Docker cache were copied to KS3 under the names above, with digests verified after copy; one existing KS3 tag (`rlark/station-agent:wg-observation-20261111`, pointing to the running `c5b1b05f…`) was kept rather than overwritten. Each copy also received a `20261112-1541-<tag>` alias. Three images pushed to `:5555` after the bulk copy (`rlark-cloud-agent:fleet-storage-20261112`, `station-controller:enroll-20261112`, `station-services:enroll-20261112`) were copied separately. The cloud `rlark-agent` (`rlark/cloud-agent@sha256:3c8e38c8…`, `--image=rlark/agent@sha256:82c2d7b8…`), `rlark-agent-node` and two data_tools Jobs now reference `10.254.240.1:5443`. The development and robot clusters were intentionally not changed, and `local-registry` keeps running. `kube-system/rlark-nvidia-device-plugin` on the cloud uses each cloud node's own `localhost:5555` and is unrelated. To roll back a cloud workload, set its image back to the `10.254.240.1:5555/...` reference; the previous manifests were backed up outside Git.
+
+**Cloud registry service.** The deployment is described in [ksyun-registry.yaml](ksyun-registry.yaml); Secrets are created separately. The TLS certificate (`CN=rlark-registry-ksyun`, `IP:10.254.240.2`, valid until 2027-11-12) is signed by the same `rlark-registry-local` CA as the development-host registry, so the Gateway's existing `SSL_CERT_FILE` trust and `--registry-browse-allowed-hosts` CIDR already cover it. It reuses the `rlark` htpasswd, reads KS3 keys from Secret `rlark-registry-mirror-s3`, disables backend redirects and **disables deletion**, because every entry shares the same storage. Verified: unauthenticated `401`, authenticated catalog and manifest reads, an upload session that was opened and cancelled, and Gateway browsing with build times. Not verified: a full image push from a cloud host, node reboot recovery, and use of `10.254.240.2:5443` directly as a Pod image reference (nodes do not yet trust its CA or hold a pull credential for it; use the `10.254.240.1:5443` name instead). Do not run garbage collection while any registry entry is writable.
 
 ## Registry and access
 
@@ -30,7 +53,7 @@ Suggested names use a new version, Git revision and architecture for each releas
 192.168.31.2:5443/robot/runtime:<version>-amd64
 ```
 
-These are naming examples, not evidence that the images have been uploaded. Check free space, network and KS3 charges before pushing. The development host's Docker listing shows an existing Fleet GPU image at approximately 15.5 GB; actual transfer depends on compression and layer reuse. One approximately 256 MiB random layer was pushed and pulled by the robot, but this does not establish duration, reliability or recovery for a 15.5 GB image; see the [design and progress record](../../apps/rlark/docs/developer-guide/shared-storage-registry-plan.md). A KS3 backend does not eliminate local disk use by builds, Docker/containerd caches or unpacking.
+These are naming examples, not evidence that the images have been uploaded. Check free space, network and KS3 charges before pushing. The development host's Docker listing shows an existing Fleet GPU image at approximately 15.5 GB; actual transfer depends on compression and layer reuse. One approximately 256 MiB random layer was pushed and pulled by the robot, but this does not establish duration, reliability or recovery for a 15.5 GB image; see the [design and progress record](../design/shared-storage-registry-plan.md). A KS3 backend does not eliminate local disk use by builds, Docker/containerd caches or unpacking.
 
 ## Uploaded service snapshots: 2026-11-05
 
@@ -105,7 +128,7 @@ On 2026-11-05 the local `rlark-gateway` container was switched to the locally bu
 
 At `http://127.0.0.1:5173`, authenticated read-only checks returned the registry catalog, tags and a manifest digest as well as users, clusters, container-runtime clusters and Jobs. This is a local pilot, not a full regression, workload-submission or restart/reboot acceptance. The Vite UI itself is a development process, not a durable UI deployment. To roll back during an agreed maintenance window, preserve the current container under an unused name, then restore the stopped `rlark-gateway-rollback-20261105-registry` container as `rlark-gateway` and start it. The rollback returns the old Gateway without the browser endpoints; verify the service afterward. Do not remove the rollback container or old image until recovery has been validated.
 
-A robot Kubernetes Job pulled the test image with explicit `imagePullSecrets`; the test credential name is `ir-a818414375f542f8`, and it is available only in the namespaces to which it was delivered. Current RLark source includes prefix-based credential matching, but **automatic injection by the deployed version and an end-to-end RLark Job remain unverified**; inspect the resulting Pod. Development node `cailiang` now uses a single containerd CRI trust directory; after its runtime was restarted, an explicit-credential Kubernetes Job pulled and verified a new 1 MiB random layer built on the robot. Other development nodes and cloud runtimes have not passed trust validation. See the [design and progress record](../../apps/rlark/docs/developer-guide/shared-storage-registry-plan.md) for the configuration backup and maintenance record. Do not restart busy containerd or replace active workloads without coordination.
+A robot Kubernetes Job pulled the test image with explicit `imagePullSecrets`; the test credential name is `ir-a818414375f542f8`, and it is available only in the namespaces to which it was delivered. Current RLark source includes prefix-based credential matching, but **automatic injection by the deployed version and an end-to-end RLark Job remain unverified**; inspect the resulting Pod. Development node `cailiang` now uses a single containerd CRI trust directory; after its runtime was restarted, an explicit-credential Kubernetes Job pulled and verified a new 1 MiB random layer built on the robot. Other development nodes and cloud runtimes have not passed trust validation. See the [design and progress record](../design/shared-storage-registry-plan.md) for the configuration backup and maintenance record. Do not restart busy containerd or replace active workloads without coordination.
 
 ## Troubleshooting and recovery
 
@@ -122,4 +145,4 @@ curl --noproxy '*' -sS -o /dev/null -w '%{http_code}\n' \
 - For slow or failed transfers, inspect KS3 connectivity, capacity and costs. Do not repeatedly push large images concurrently, delete objects directly, or run garbage collection. Image layers and Docker/containerd caches can consume local disk.
 - If a restart is necessary, restart only the separate service with `docker restart rlark-ks3-registry`. Container restart was tested, but host reboot recovery and address readiness remain unverified. Do not delete the container configuration, certificate, credentials or KS3 data as a recovery shortcut.
 
-See the [design and progress record](../../apps/rlark/docs/developer-guide/shared-storage-registry-plan.md) for further details and security limitations.
+See the [design and progress record](../design/shared-storage-registry-plan.md) for further details and security limitations.

@@ -13,6 +13,7 @@ import (
 	"strings"
 	"text/template"
 	"time"
+	"unicode"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -35,25 +36,32 @@ import (
 
 // StorageClassData 定义StorageClass的响应数据结构.
 type StorageClassData struct {
-	Name             string   `json:"name"`
-	StorageClassName string   `json:"storageClassName"`
-	Clusters         []string `json:"clusters"`
-	Description      string   `json:"description"`
-	Type             string   `json:"type"`
-	Bucket           string   `json:"bucket"`
-	Provider         string   `json:"provider"`
-	Endpoint         string   `json:"endpoint"`
-	Region           string   `json:"region"`
-	PathStyle        bool     `json:"pathStyle"`
-	AccessKeyId      string   `json:"accessKeyId"`
-	Host             string   `json:"host,omitempty"`
-	Share            string   `json:"share,omitempty"`
-	SubPath          string   `json:"subPath,omitempty"`
-	Username         string   `json:"username,omitempty"`
-	Domain           string   `json:"domain,omitempty"`
-	TenantID         string   `json:"tenantID"`
-	CreatedBy        string   `json:"createdBy,omitempty"`
-	CreatedAt        string   `json:"createdAt"`
+	Name                    string            `json:"name"`
+	StorageClassName        string            `json:"storageClassName"`
+	Clusters                []string          `json:"clusters"`
+	Description             string            `json:"description"`
+	Type                    string            `json:"type"`
+	Bucket                  string            `json:"bucket"`
+	Provider                string            `json:"provider"`
+	Endpoint                string            `json:"endpoint"`
+	MountEndpoint           string            `json:"mount_endpoint,omitempty"`
+	Prefix                  string            `json:"prefix,omitempty"`
+	VFSCacheMode            string            `json:"vfs_cache_mode,omitempty"`
+	MountProfile            string            `json:"mount_profile,omitempty"`
+	MountOptions            []string          `json:"mount_options"`
+	EffectiveMountOptions   []string          `json:"effective_mount_options"`
+	EffectiveBackendOptions map[string]string `json:"effective_backend_options,omitempty"`
+	Region                  string            `json:"region"`
+	PathStyle               bool              `json:"pathStyle"`
+	AccessKeyId             string            `json:"accessKeyId"`
+	Host                    string            `json:"host,omitempty"`
+	Share                   string            `json:"share,omitempty"`
+	SubPath                 string            `json:"subPath,omitempty"`
+	Username                string            `json:"username,omitempty"`
+	Domain                  string            `json:"domain,omitempty"`
+	TenantID                string            `json:"tenantID"`
+	CreatedBy               string            `json:"createdBy,omitempty"`
+	CreatedAt               string            `json:"createdAt"`
 }
 
 // Provider 定义存储提供商信息.
@@ -89,12 +97,22 @@ func (g *Gateway) listStorageClass(c *gin.Context) {
 		}
 		entry := &StorageClassData{
 			Name: stored.Name, StorageClassName: id, Clusters: clusters, Description: stored.Description, Type: stored.Type,
-			Bucket: stored.Bucket, Provider: stored.Provider, Endpoint: stored.Endpoint, Region: stored.Region, PathStyle: stored.PathStyle,
+			Bucket: stored.Bucket, Provider: stored.Provider, Endpoint: stored.Endpoint, MountEndpoint: stored.MountEndpoint, Prefix: stored.Prefix, VFSCacheMode: effectiveVFSCacheMode(stored.VFSCacheMode), Region: stored.Region, PathStyle: stored.PathStyle,
 			Host: stored.Host, Share: stored.Share, SubPath: stored.SubPath, Username: stored.Username, Domain: stored.Domain,
 			TenantID: tenant.IDOf(&secrets[i]), CreatedBy: secrets[i].Annotations[tenant.CreatedByAnnotation], CreatedAt: secrets[i].CreationTimestamp.UTC().Format(time.RFC3339),
 		}
 		if stored.Type == storageTypeS3 {
 			entry.AccessKeyId = maskStorageAccessKeyID(stored.AccessKeyID)
+			entry.MountProfile = stored.MountProfile
+			if entry.MountProfile == "" {
+				entry.MountProfile = "default"
+			}
+			entry.MountOptions = append([]string{}, stored.MountOptions...)
+			entry.EffectiveMountOptions, entry.EffectiveBackendOptions, _, err = resolveS3MountOptions(stored.MountProfile, stored.VFSCacheMode, stored.MountOptions)
+			if err != nil {
+				respondError(c, http.StatusInternalServerError, CodeInternalError, "invalid storage mount policy")
+				return
+			}
 		}
 		data[stored.Name] = entry
 	}
@@ -180,20 +198,25 @@ type storedStorageClass struct {
 	Clusters    []string `json:"clusters"`
 	// Type is "s3" or "smb". Records written before SMB support omit it and
 	// are read back as "s3"; all new fields are optional to stay on v1.
-	Type        string `json:"type,omitempty"`
-	Provider    string `json:"provider"`
-	Endpoint    string `json:"endpoint"`
-	AccessKeyID string `json:"access_key_id"`
-	AccessKey   string `json:"access_key_secret"`
-	Bucket      string `json:"bucket"`
-	Region      string `json:"region"`
-	PathStyle   bool   `json:"path_style"`
-	Host        string `json:"host,omitempty"`
-	Share       string `json:"share,omitempty"`
-	SubPath     string `json:"sub_path,omitempty"`
-	Username    string `json:"username,omitempty"`
-	Password    string `json:"password,omitempty"`
-	Domain      string `json:"domain,omitempty"`
+	Type          string   `json:"type,omitempty"`
+	Provider      string   `json:"provider"`
+	Endpoint      string   `json:"endpoint"`
+	MountEndpoint string   `json:"mount_endpoint,omitempty"`
+	Prefix        string   `json:"prefix,omitempty"`
+	VFSCacheMode  string   `json:"vfs_cache_mode,omitempty"`
+	MountProfile  string   `json:"mount_profile,omitempty"`
+	MountOptions  []string `json:"mount_options,omitempty"`
+	AccessKeyID   string   `json:"access_key_id"`
+	AccessKey     string   `json:"access_key_secret"`
+	Bucket        string   `json:"bucket"`
+	Region        string   `json:"region"`
+	PathStyle     bool     `json:"path_style"`
+	Host          string   `json:"host,omitempty"`
+	Share         string   `json:"share,omitempty"`
+	SubPath       string   `json:"sub_path,omitempty"`
+	Username      string   `json:"username,omitempty"`
+	Password      string   `json:"password,omitempty"`
+	Domain        string   `json:"domain,omitempty"`
 }
 
 func newStorageClassID() string {
@@ -224,13 +247,18 @@ type CreateStorageClassRequest struct {
 
 	Clusters []string `json:"clusters"`
 
-	Provider        string `json:"provider"`
-	Endpoint        string `json:"endpoint"`
-	AccessKeyId     string `json:"access_key_id"`
-	AccessKeySecret string `json:"access_key_secret"`
-	Bucket          string `json:"bucket"`
-	Region          string `json:"region"`
-	PathStyle       bool   `json:"path_style"`
+	Provider        string    `json:"provider"`
+	Endpoint        string    `json:"endpoint"`
+	MountEndpoint   string    `json:"mount_endpoint"`
+	Prefix          string    `json:"prefix"`
+	VFSCacheMode    string    `json:"vfs_cache_mode"`
+	MountProfile    string    `json:"mount_profile"`
+	MountOptions    *[]string `json:"mount_options"`
+	AccessKeyId     string    `json:"access_key_id"`
+	AccessKeySecret string    `json:"access_key_secret"`
+	Bucket          string    `json:"bucket"`
+	Region          string    `json:"region"`
+	PathStyle       bool      `json:"path_style"`
 
 	Type     string `json:"type"`
 	Host     string `json:"host"`
@@ -244,7 +272,7 @@ type CreateStorageClassRequest struct {
 // ssSecretTemplate is the rclone remote config rendered into the StorageClass
 // Secret from a CreateStorageClassRequest.
 const ssSecretTemplate = `
-[s3]
+[{{ .Remote }}]
 type = s3
 provider = {{ .Provider }}
 endpoint = {{ .Endpoint }}
@@ -323,7 +351,7 @@ func (g *Gateway) updateStorageClass(c *gin.Context) {
 	isSMB := normalizeStorageType(req.Type) == storageTypeSMB
 	needsExisting := req.Password == ""
 	if !isSMB {
-		needsExisting = req.AccessKeyId == "" || isMaskedStorageAccessKeyID(req.AccessKeyId) || req.AccessKeySecret == ""
+		needsExisting = req.AccessKeyId == "" || isMaskedStorageAccessKeyID(req.AccessKeyId) || req.AccessKeySecret == "" || req.VFSCacheMode == "" || req.MountProfile == "" || req.MountOptions == nil
 	}
 	if needsExisting {
 		secret, err := getStorageClassSecretByName(c.Request.Context(), g.rawClient, g.managementNamespace(), name)
@@ -353,6 +381,16 @@ func (g *Gateway) updateStorageClass(c *gin.Context) {
 			}
 			if req.AccessKeySecret == "" {
 				req.AccessKeySecret = existing.AccessKey
+			}
+			if req.MountOptions == nil {
+				options := append([]string{}, existing.MountOptions...)
+				req.MountOptions = &options
+			}
+			if req.VFSCacheMode == "" && (req.MountProfile == "" || req.MountProfile == existing.MountProfile) {
+				req.VFSCacheMode = effectiveVFSCacheMode(existing.VFSCacheMode)
+			}
+			if req.MountProfile == "" {
+				req.MountProfile = existing.MountProfile
 			}
 		}
 	}
@@ -502,6 +540,12 @@ func normalizeStorageClass(req CreateStorageClassRequest) (storedStorageClass, e
 	sort.Strings(clusters)
 	clusters = slices.Compact(clusters)
 	if storageType == storageTypeSMB {
+		if strings.TrimSpace(req.MountEndpoint) != "" {
+			return storedStorageClass{}, fmt.Errorf("mount_endpoint is only supported for S3 storage")
+		}
+		if strings.TrimSpace(req.Prefix) != "" || strings.TrimSpace(req.VFSCacheMode) != "" || req.MountProfile != "" || req.MountOptions != nil {
+			return storedStorageClass{}, fmt.Errorf("prefix and vfs_cache_mode are only supported for S3 storage")
+		}
 		stored := storedStorageClass{Version: storageClassVersion, Name: name, Description: req.Description, Clusters: clusters}
 		if err := normalizeSMBFields(req, &stored); err != nil {
 			return storedStorageClass{}, err
@@ -521,9 +565,38 @@ func normalizeStorageClass(req CreateStorageClassRequest) (storedStorageClass, e
 	if err != nil {
 		return storedStorageClass{}, err
 	}
+	mountEndpoint := strings.TrimSpace(req.MountEndpoint)
+	if mountEndpoint != "" {
+		mountEndpoint, err = storage.NormalizeEndpoint(provider.Value, mountEndpoint, req.Region)
+		if err != nil {
+			return storedStorageClass{}, fmt.Errorf("mount_endpoint: %w", err)
+		}
+	}
+	prefix := strings.Trim(strings.TrimSpace(req.Prefix), "/")
+	if strings.Contains(prefix, "\\") || strings.Contains(prefix, "//") || strings.IndexFunc(prefix, unicode.IsControl) >= 0 {
+		return storedStorageClass{}, fmt.Errorf("prefix must be a slash-separated object path")
+	}
+	for _, segment := range strings.Split(prefix, "/") {
+		if segment == "." || segment == ".." {
+			return storedStorageClass{}, fmt.Errorf("prefix must not contain dot segments")
+		}
+	}
+	profile := strings.TrimSpace(req.MountProfile)
+	if profile == "" {
+		profile = "default"
+	}
+	var overrides []string
+	if req.MountOptions != nil {
+		overrides = append([]string{}, (*req.MountOptions)...)
+	}
+	_, _, cacheMode, err := resolveS3MountOptions(profile, strings.TrimSpace(req.VFSCacheMode), overrides)
+	if err != nil {
+		return storedStorageClass{}, err
+	}
+
 	return storedStorageClass{
 		Version: storageClassVersion, Name: name, Description: req.Description, Clusters: clusters, Type: storageTypeS3,
-		Provider: provider.Value, Endpoint: endpoint, AccessKeyID: req.AccessKeyId, AccessKey: req.AccessKeySecret,
+		Provider: provider.Value, Endpoint: endpoint, MountEndpoint: mountEndpoint, Prefix: prefix, VFSCacheMode: cacheMode, MountProfile: profile, MountOptions: overrides, AccessKeyID: req.AccessKeyId, AccessKey: req.AccessKeySecret,
 		Bucket: req.Bucket, Region: strings.TrimSpace(req.Region),
 		PathStyle: storage.EffectivePathStyle(provider.Value, req.PathStyle),
 	}, nil
@@ -535,7 +608,22 @@ func buildStorageClassReplicationSecret(namespace, id string, stored storedStora
 		Provider: stored.Provider, Endpoint: stored.Endpoint, AccessKeyId: stored.AccessKeyID, AccessKeySecret: stored.AccessKey,
 		Bucket: stored.Bucket, Region: stored.Region, PathStyle: stored.PathStyle,
 	}
-	remote, remotePath, mountOptions := "s3", req.Bucket, s3MountOptions
+	// Gateway clients retain Endpoint; only CSI uses the optional override.
+	if stored.MountEndpoint != "" {
+		req.Endpoint = stored.MountEndpoint
+	}
+	remote, remotePath, mountOptions := "s3", req.Bucket, s3MountOptionsForCacheMode(stored.VFSCacheMode)
+	var backendOptions map[string]string
+	if stored.Type != storageTypeSMB {
+		var err error
+		mountOptions, backendOptions, _, err = resolveS3MountOptions(stored.MountProfile, stored.VFSCacheMode, stored.MountOptions)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if stored.Prefix != "" {
+		remotePath += "/" + stored.Prefix
+	}
 	var config strings.Builder
 	switch stored.Type {
 	case storageTypeSMB:
@@ -550,8 +638,23 @@ func buildStorageClassReplicationSecret(namespace, id string, stored storedStora
 		}
 		remote, remotePath, mountOptions = "smb", smbRemotePath(stored), smbMountOptions
 	default:
-		if err := ssSecretTmpl.Execute(&config, req); err != nil {
+		// The CSI driver receives configData per StorageClass. A class-specific
+		// alias prevents mounts with different profiles from sharing one rclone
+		// remote name in a node plugin process.
+		remote = "s3-" + id
+		if err := ssSecretTmpl.Execute(&config, struct {
+			CreateStorageClassRequest
+			Remote string
+		}{CreateStorageClassRequest: req, Remote: remote}); err != nil {
 			return nil, fmt.Errorf("render secret config: %w", err)
+		}
+		keys := make([]string, 0, len(backendOptions))
+		for key := range backendOptions {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		for _, key := range keys {
+			fmt.Fprintf(&config, "%s = %s\n", key, backendOptions[key])
 		}
 	}
 	secretName := id + "-secret"
@@ -621,6 +724,26 @@ func buildStorageClassReplicationSecret(namespace, id string, stored storedStora
 		Type: distribution.ReplicationSecretType,
 		Data: map[string][]byte{"storageclass": storedJSON, "config": replicationConfigYAML, "manifests": deliveryManifest},
 	}, nil
+}
+
+func effectiveVFSCacheMode(mode string) string {
+	if mode == "" {
+		return "writes"
+	}
+	return mode
+}
+
+func s3MountOptionsForCacheMode(mode string) []string {
+	options := slices.Clone(s3MountOptions)
+	if effectiveVFSCacheMode(mode) == "off" {
+		for i, option := range options {
+			if strings.HasPrefix(option, "vfs-cache-mode=") {
+				options[i] = "vfs-cache-mode=off"
+				break
+			}
+		}
+	}
+	return options
 }
 
 func storageClassFromSecret(secret *v1.Secret) (string, storedStorageClass, error) {

@@ -29,6 +29,8 @@ const routePriority = 49321
 
 type config struct {
 	Interface    string        `json:"interface"`
+	NodeUID      string        `json:"nodeUID,omitempty"`
+	PublicKey    string        `json:"publicKey,omitempty"`
 	Address      string        `json:"address"`
 	ListenPort   int           `json:"listenPort"`
 	MTU          int           `json:"mtu"`
@@ -44,6 +46,7 @@ type uplinkRoute struct {
 }
 type peer struct {
 	PublicKey        string   `json:"publicKey"`
+	NodeUID          string   `json:"nodeUID,omitempty"`
 	Endpoint         string   `json:"endpoint"`
 	AllowedIPs       []string `json:"allowedIPs"`
 	KeepaliveSeconds int      `json:"keepaliveSeconds"`
@@ -72,6 +75,14 @@ func parse(data []byte) (*desired, error) {
 	if c.ListenPort < 1 || c.ListenPort > 65535 || c.MTU < 576 || c.MTU > 9000 {
 		return nil, errors.New("invalid listen port or MTU")
 	}
+	if strings.ContainsAny(c.NodeUID, " \t\r\n\x00") || strings.ContainsAny(c.PublicKey, " \t\r\n\x00") || len(c.NodeUID) > 128 {
+		return nil, errors.New("invalid node ownership metadata")
+	}
+	if c.PublicKey != "" {
+		if _, err := wgtypes.ParseKey(c.PublicKey); err != nil {
+			return nil, errors.New("invalid interface public key")
+		}
+	}
 	addr, err := netlink.ParseAddr(c.Address)
 	if err != nil {
 		return nil, fmt.Errorf("address: %w", err)
@@ -80,6 +91,9 @@ func parse(data []byte) (*desired, error) {
 	seen := map[string]bool{}
 	prefixes := map[string]bool{}
 	for _, p := range c.Peers {
+		if strings.ContainsAny(p.NodeUID, " \t\r\n\x00") || len(p.NodeUID) > 128 {
+			return nil, errors.New("invalid peer node UID")
+		}
 		key, e := wgtypes.ParseKey(p.PublicKey)
 		if e != nil {
 			return nil, fmt.Errorf("peer public key: %w", e)
@@ -209,6 +223,12 @@ func deviceConfig(d *desired, key wgtypes.Key, current *wgtypes.Device) (wgtypes
 }
 
 func apply(d *desired, key wgtypes.Key) error {
+	if d == nil {
+		return errors.New("desired configuration is required")
+	}
+	if err := validateNodeWireGuardOwnership(d, key); err != nil {
+		return err
+	}
 	link, err := netlink.LinkByName(d.Interface)
 	if err != nil {
 		var notFound netlink.LinkNotFoundError
@@ -332,6 +352,16 @@ func apply(d *desired, key wgtypes.Key) error {
 				return fmt.Errorf("add route %s: %w", dst, err)
 			}
 		}
+	}
+	return nil
+}
+
+func validateNodeWireGuardOwnership(d *desired, key wgtypes.Key) error {
+	if d == nil {
+		return errors.New("desired configuration is required")
+	}
+	if d.PublicKey != "" && d.PublicKey != key.PublicKey().String() {
+		return errors.New("configured interface public key does not match the host key")
 	}
 	return nil
 }

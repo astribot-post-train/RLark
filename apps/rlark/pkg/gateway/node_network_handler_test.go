@@ -51,8 +51,8 @@ func TestStationNetworkClientTLSAndCredentialRotation(t *testing.T) {
 		t.Fatalf("result=%+v err=%v", got, err)
 	}
 	token = strings.Repeat("b", 32)
-	if _, err := client.Read(context.Background(), "cluster", "node"); err == nil {
-		t.Fatal("accepted revoked credential")
+	if _, err := client.Read(context.Background(), "cluster", "node"); !errors.Is(err, errStationNetworkCredentialRejected) {
+		t.Fatalf("expected credential rejection, got %v", err)
 	}
 	if err := os.WriteFile(tokenPath, []byte(token), 0600); err != nil {
 		t.Fatal(err)
