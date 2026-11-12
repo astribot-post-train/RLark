@@ -105,3 +105,36 @@ func TestAgentConfigIdentityFileNeedsConfigFile(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestAgentProbesEveryConfiguredPeerThroughTheTunnel(t *testing.T) {
+	target := filepath.Join(t.TempDir(), "config.json")
+	config := `{"interface":"st-wg0","address":"10.254.240.3/32","listenPort":51820,"mtu":1380,"peers":[` +
+		`{"publicKey":"a","allowedIPs":["10.254.240.1/32","10.254.240.0/24"]},{"publicKey":"b","allowedIPs":["10.254.240.2/32","10.0.2.57/32"]}],"routes":[]}`
+	agent, err := newAgent(AgentConfig{
+		APIURL: "https://station.example", ClusterID: "c", TokenFile: "token", Interval: 30 * time.Second, RequestLimit: 2 * time.Second,
+		ProbeAddress: ":18082", NetworkConfigFile: target,
+	}, func(string) ([]byte, error) { return []byte("token"), nil }, time.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if probes := agent.probePeers(context.Background()); probes != nil {
+		t.Fatalf("a node without a computed configuration reports no probes: %v", probes)
+	}
+	if err := os.WriteFile(target, []byte(config), 0644); err != nil {
+		t.Fatal(err)
+	}
+	agent.dial = func(_ context.Context, address string) error {
+		if address == "10.254.240.1:18082" {
+			return nil
+		}
+		return errors.New("no route to host")
+	}
+	probes := agent.probePeers(context.Background())
+	if len(probes) != 2 || probes[0].Target != "10.254.240.1" || !probes[0].OK || probes[0].RTTMillis == nil || probes[0].Via != "st-wg0" ||
+		probes[1].Target != "10.254.240.2" || probes[1].OK || probes[1].RTTMillis != nil {
+		t.Fatalf("probes %+v", probes)
+	}
+	if err := validateObservation(Observation{Probes: probes}); err != nil {
+		t.Fatal(err)
+	}
+}

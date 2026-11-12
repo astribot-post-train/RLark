@@ -338,7 +338,7 @@ func (a *API) now() time.Time {
 }
 
 func validateObservation(o Observation) error {
-	if len(o.SystemUUID) > 128 || len(o.Roles) > 32 || len(o.Probes) > 64 || len(o.Wireguard) > 16*1024 {
+	if len(o.SystemUUID) > 128 || len(o.Roles) > 32 || len(o.Probes) > 256 || len(o.Wireguard) > 16*1024 {
 		return errors.New("observation exceeds limits")
 	}
 	roles := make(map[string]struct{}, len(o.Roles))

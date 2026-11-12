@@ -74,6 +74,7 @@ type Agent struct {
 	mu                   sync.RWMutex
 	lastSuccessfulReport time.Time
 	observe              func() (Observation, error)
+	dial                 func(context.Context, string) error
 }
 
 func NewAgent(config AgentConfig) (*Agent, error) {
@@ -121,6 +122,13 @@ func newAgent(config AgentConfig, read func(string) ([]byte, error), now func() 
 	}
 	agent := &Agent{config: config, client: client, read: read, now: now, observe: collectSystemObservation}
 	agent.post = agent.postObservation
+	agent.dial = func(ctx context.Context, address string) error {
+		connection, err := (&net.Dialer{}).DialContext(ctx, "tcp4", address)
+		if err == nil {
+			_ = connection.Close()
+		}
+		return err
+	}
 	return agent, nil
 }
 
@@ -221,6 +229,9 @@ func (a *Agent) Report(ctx context.Context) error {
 	}
 	if a.config.WireguardObservationFile != "" {
 		observation.Wireguard = readWireguardSnapshot(a.config.WireguardObservationFile, a.now())
+	}
+	if a.config.NetworkConfigFile != "" {
+		observation.Probes = a.probePeers(ctx)
 	}
 	body, err := json.Marshal(observationRequest{ClusterID: a.config.ClusterID, Observation: observation})
 	if err != nil {

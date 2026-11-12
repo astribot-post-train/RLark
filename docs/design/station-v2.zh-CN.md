@@ -62,13 +62,17 @@
 {
   "cluster_id": "rlark-robot-s1u-01", "node_name": "s1u-01-x86",
   "site_node_id": "stn-…", "sequence": 3, "binding_version": 1,
-  "phase": "Bound", "online": true, "last_seen_time": "2026-11-12T08:00:00Z",
+  "phase": "Bound", "online": true, "tunnel": "verified", "rlark_node": "ready",
+  "last_seen_time": "2026-11-12T08:00:00Z", "boot_time": "2026-11-12T03:58:58Z", "reboots": 1,
   "network": {"state": "Enrolled", "site": "lab", "role": "Leaf",
               "address": "10.254.240.3", "tunnel_address": "10.254.240.3"},
   "robot_id": "s1u-01", "workstation_id": ""
 }
 ```
 
+- "在线"是三件分开的事（1.7）：`online` 只是心跳；`tunnel` 是隧道端到端通不通；`rlark_node` 是 RLark 的 Node 是否 Ready。Fleet 准入一台机器要求 `online` 且 `tunnel` 不是 `failed`。
+- `boot_time` 和 `reboots`：机器重启过就会变，即使重启快到没掉线。
+- `labels` 是节点的全部标签。
 - `site_node_id` 重装不变；`binding_version` 在管理员重绑后加一，缓存了旧值的一方据此知道机器换过。
 - `network.address` 是"别的节点用哪个地址找它"的唯一答案：有 `nodeAddress` 的节点（云上的 VPC 地址）是它，其余是隧道地址，Routed 模式是节点自己的地址。Ray 的节点地址就用它。
 - `network` 只在节点按当前绑定入网后出现：重绑以后旧地址不会再被返回。
@@ -92,6 +96,19 @@ Fleet 的用法：Run 的 station 配置只写 `cluster` + `node`（以及 Fleet
 
 - 机器人编号是机器的固定属性：管理员在节点上打标签 `rlark.io/robot-id`，接口原样返回。**沿用。**
 - 工位号是 Fleet 的观测（机器人开机读桌上的二维码），机器人推到另一张桌子它就变。RLark 只做显示：满血版由 agent 读设备层写在节点上的一个文件，随心跳上报；过渡阶段**不做**，接口字段先留着，取标签。
+
+### 1.7 "在线"是三件事
+
+**结论：心跳、隧道、RLark 节点就绪分开报，重启单独留痕。** 起因是 11-12 中午 3090 重启后"还显示在线"：它确实在线（重启 21 s 后 pod 就又上报了），问题是"在线"只有心跳一个含义。
+
+| 事实 | 条件 | 怎么得到 |
+|---|---|---|
+| 心跳 | `Observed`；`phase` 的 Bound / Offline 只看它 | agent 每 30 s 上报，90 s 没有就是 Offline（原有） |
+| 隧道 | `NetworkVerified` | agent 每次上报前，对配置里每个对端的隧道地址经隧道建一次 TCP 连接（连对端 agent 的健康端口，网络节点都在听，不需要额外权限），把结果放进上报的 `probes`。连得通说明路由、隧道双向、对端主机都是好的 |
+| RLark 节点 | `RLarkLinked` | 同名 RLark Node 的 Ready（原有） |
+| 重启 | `Rebooted` 条件 + `status.reboots` 计数 | 上报的开机时间比上次晚 30 s 以上（30 s 是为了不把校时引起的开机时间抖动算成重启） |
+
+隧道的判定规则：**一台节点连得上所有"自己也在线"的对端，就是 verified**。对端自己已经 Offline 的不算：一台机器人关机，不应该让工作站和三台云节点都变成"隧道异常"。连不上一个在线的对端才是 failed，条件里写出是哪几个。没有上报探测（还没入网、旧 agent）是 unknown。
 
 ## 2. 入网
 
@@ -145,7 +162,7 @@ Fleet 的用法：Run 的 station 配置只写 `cluster` + `node`（以及 Fleet
 连接规则，四条：
 
 1. 两台之间有隧道，当且仅当至少一台是枢纽，且至少一方能拨到另一方。叶子之间没有隧道。
-2. 同一场站的两台枢纽只在 `mesh: true` 时建隧道。
+2. 同一场站的两台枢纽只在 `mesh: true` 时建隧道。场站设了 `leavesViaRelay: true` 时，它的叶子只和自己的转发枢纽建隧道，别的都经它走（2.4 的"只连场站入口"）。
 3. 能拨的一方写对端端点和 keepalive 25 s；被拨的一方不写端点，等对方拨入。
 4. 每个对端的 AllowedIPs = 它的隧道地址 + 它的 `nodeAddress` 和 `advertise`（只给别的场站）；转发枢纽对拨它的叶子再加整个地址池。
 
@@ -155,19 +172,23 @@ controller 每次算完都沿着算出来的配置检查任意两台之间有没
 
 96 台机器人（各在自己的 Orin NAT 后面）+ 场站工作站（转发枢纽）+ 3 台云节点（公网端点），数字来自 `extensions/station/network` 的单测：
 
-| | 全互联 | 单一中心 | 本方案 |
+| | 全互联 | 只连场站入口（`leavesViaRelay`） | 叶子直连各枢纽（默认） |
 |---|---|---|---|
 | 隧道数 | 4950 | 99 | 387 |
 | 每台机器人的对端 | 99 | 1 | 4 |
-| 每台机器人的配置 | 约 8 KB | 约 0.3 KB | 1.0 KB |
-| 最大的一份配置 | 约 8 KB × 100 台 | 8 KB（中心） | 8.1 KB（工作站，99 个对端） |
-| 加一台机器人，别人改几份 | 99 | 1 | 4（都是枢纽，叶子一份不改） |
-| 机器人 ↔ 云 的路径 | 直连 | 绕中心，多一次解密加密 | 直连 |
-| 机器人 ↔ 机器人 | 建不起来：两边都在 NAT 后 | 经中心 | 经工作站 |
-| 中心停了 | — | 全断 | 只断机器人之间；机器人 ↔ 云不受影响 |
+| 每台机器人的配置 | 约 8 KB | 约 0.4 KB | 1.0 KB |
+| 最大的一份配置 | 约 8 KB × 100 台 | 8 KB（工作站） | 8.1 KB（工作站，99 个对端） |
+| 加一台机器人，别人改几份 | 99 | 4（工作站加对端，三台云节点各加一个网段） | 4（都是枢纽，叶子一份不改） |
+| 机器人 ↔ 云 的路径 | 直连 | 经工作站，多一次解密加密 | 直连 |
+| 机器人 ↔ 机器人 | 建不起来：两边都在 NAT 后 | 经工作站 | 经工作站 |
+| 工作站停了 | — | 机器人全断 | 只断机器人之间；机器人 ↔ 云不受影响 |
+| 云节点要不要公网端点让机器人拨 | — | 不要，只让工作站拨 | 要 |
+
+两种都实现了，声明里一行之差（场站的 `leavesViaRelay`），都有单测。"每个场站一个集群、机器人是其中的节点"两种都支持，而且比每台机器人一个集群省事：场站的 `clusters` 里只有一项，新机器人不用改声明。
+
+怎么选：机器人 → 云的图像流量大、工作站不想当全场单点，用默认；云节点不想对每台机器人开放端口、想让机器人的配置和云上有几台无关，用 `leavesViaRelay`。过渡阶段（2–3 台机器人）两者差别不大；满血版没有隧道，这个选择不存在。
 
 - 全互联在这里不成立：机器人之间没有任何一方可拨。而且同一集群 96 份 8 KB 的配置放在一个 ConfigMap 里约 770 KB，贴着 1 MiB 的上限。
-- 单一中心让所有机器人 → 云的图像流在工作站上多转一次，工作站成为全场的单点。
 - 本方案的保活和握手负载可以忽略：每台机器人 4 个对端 × 每 25 s 一个保活包 = 0.16 包/秒；每台云节点收 96 ÷ 25 ≈ 3.8 包/秒；会话每 2 分钟重新握手一次，全场 387 ÷ 120 ≈ 3.2 次/秒。算一次全网配置 28 ms。
 - MTU 统一 1380：1500 − 60（IPv4 20 + UDP 8 + WireGuard 32）= 1440 是上限，留 60 字节给运营商侧的封装。转发枢纽是解密后再加密，不嵌套，所以经不经转发都是同一个值。
 
@@ -269,7 +290,10 @@ liangcai 现有的件：
 | agent 登记 | `apps/rlark/pkg/stationidentity/agent_enrollment.go` | 登记、校验 hash、原子写；pending / 拒绝 / 出错都保留上一份 |
 | 网关 | `extensions/station-gateway` | 配置来源的先后；对端增删改是增量；真实内核（一次性网络命名空间，含他原有的两个内核测试）上加入、离开、删路由 |
 | 两个模块之间的文件格式 | `extensions/station-gateway/testdata/computed-s1u-01-x86.json` | 计算侧必须产出它，网关侧必须能解析它 |
-| 只读接口 | `apps/rlark/pkg/gateway/site_node_handler.go` | 身份 + 网络 + 机器人标签；重绑后不返回旧地址 |
+| 只读接口 | `apps/rlark/pkg/gateway/site_node_handler.go` | 身份 + 网络 + 机器人标签；心跳、隧道、节点就绪、开机时间分开返回；重绑后不返回旧地址 |
+| 隧道探测 | `apps/rlark/pkg/stationidentity/agent_enrollment.go`（`probePeers`） | 按配置里的对端逐个探测；没有配置就不报 |
+| 隧道判定和重启留痕 | `extensions/station/controller/station_reconciler.go` | 在线的对端连不上是 failed，对端自己离线不算；校时不算重启，短于心跳窗口的重启被记下 |
+| 只连场站入口的拓扑 | `extensions/station/network`（`LeavesViaRelay`） | 96+1+3 台是 99 条隧道、机器人 1 个对端、任意两台可达 |
 | 界面改名 | `apps/rlark-ui` | 原有 246 个界面测试通过 |
 
 只设计、没实现：
@@ -280,6 +304,8 @@ liangcai 现有的件：
 - 密钥轮换的审计事件。
 - CRD 组改名的迁移（1.3）。
 - 入网状态在界面上的显示（现在用 `kubectl get netenroll -A` 和 `kubectl get sitenet`）。
+
+1.7 的隧道探测和重启留痕、`leavesViaRelay` 是端到端演练之后加的，只有单测：再跑端到端要等 3090 能起 5 个 kind 节点。
 
 端到端：在隔离环境（一次性的 kcp、PostgreSQL、station-api、station-controller，三个 kind 集群 5 个节点，真实内核 WireGuard）里跑过入网、新节点加入、转发、换密钥、重装和重绑、移除、station-api 停机、Routed 模式，以及从线上现在的镜像起步的整套上线步骤和回退。环境脚本在 `extensions/station/hack/e2e/`，结果在上线文档第 6 节。
 

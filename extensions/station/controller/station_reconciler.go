@@ -28,6 +28,8 @@ const (
 	// DefaultOfflineAfter is the heartbeat freshness window in the API contract.
 	DefaultOfflineAfter = 90 * time.Second
 	sequenceCASAttempts = 8
+	// rebootMargin is how much later a reported boot time must be to count as a reboot.
+	rebootMargin = 30 * time.Second
 )
 
 var (
@@ -216,6 +218,14 @@ func (r *StationReconciler) observeStation(ctx context.Context, registration Clu
 	}
 	want.LastSeenTime = observation.Status.ReportedAt.DeepCopy()
 	if observation.Status.BootTime != nil {
+		// A restart shorter than the heartbeat window never shows as Offline;
+		// the boot time is what records it. The margin absorbs the kernel
+		// recomputing its boot time when the clock is stepped.
+		if before := station.Status.BootTime; before != nil && observation.Status.BootTime.Time.After(before.Time.Add(rebootMargin)) {
+			want.Reboots++
+			setCondition(want, now, "Rebooted", metav1.ConditionTrue, "BootTimeChanged", fmt.Sprintf("booted at %s; the boot before was at %s",
+				observation.Status.BootTime.UTC().Format(time.RFC3339), before.UTC().Format(time.RFC3339)))
+		}
 		want.BootTime = observation.Status.BootTime.DeepCopy()
 	}
 	observedStatus, observedReason, observedMessage := metav1.ConditionFalse, "HeartbeatExpired", "last authenticated observation is outside the freshness window"
@@ -227,14 +237,23 @@ func (r *StationReconciler) observeStation(ctx context.Context, registration Clu
 	if len(observation.Status.Probes) == 0 {
 		setCondition(want, now, "NetworkVerified", metav1.ConditionUnknown, "NoProbeResults", "no network probes were reported")
 	} else {
-		allOK := true
+		var failed []string
 		for _, probe := range observation.Status.Probes {
-			allOK = allOK && probe.OK
+			if !probe.OK {
+				failed = append(failed, probe.Target)
+			}
 		}
-		if allOK {
-			setCondition(want, now, "NetworkVerified", metav1.ConditionTrue, "AllProbesSucceeded", "all reported network probes succeeded")
+		unreachable, err := r.livePeers(ctx, failed)
+		if err != nil {
+			return reconcile.Result{}, err
+		}
+		reached := len(observation.Status.Probes) - len(failed)
+		if len(unreachable) == 0 {
+			setCondition(want, now, "NetworkVerified", metav1.ConditionTrue, "AllLivePeersReached",
+				fmt.Sprintf("reached %d of %d peers through the tunnel; the other %d are offline themselves", reached, len(observation.Status.Probes), len(failed)))
 		} else {
-			setCondition(want, now, "NetworkVerified", metav1.ConditionFalse, "ProbeFailed", "one or more reported network probes failed")
+			setCondition(want, now, "NetworkVerified", metav1.ConditionFalse, "ProbeFailed",
+				fmt.Sprintf("reached %d of %d peers through the tunnel; no reply from %d that are online: %s", reached, len(observation.Status.Probes), len(unreachable), strings.Join(unreachable[:min(5, len(unreachable))], ", ")))
 		}
 	}
 	if r.nodeReadiness == nil {
@@ -417,4 +436,40 @@ func uniqueStations(stations []stationv1alpha1.Station) []stationv1alpha1.Statio
 		result = append(result, stations[i])
 	}
 	return result
+}
+
+// livePeers returns the probe targets that failed although the peer is online
+// by its own heartbeat. A node is not unverified because a peer is switched
+// off; a target the network does not know counts as online.
+func (r *StationReconciler) livePeers(ctx context.Context, failed []string) ([]string, error) {
+	if len(failed) == 0 {
+		return nil, nil
+	}
+	var enrollments stationv1alpha1.NetworkEnrollmentList
+	if err := r.client.List(ctx, &enrollments); err != nil {
+		return nil, fmt.Errorf("list NetworkEnrollments for probe targets: %w", err)
+	}
+	var stations stationv1alpha1.StationList
+	if err := r.client.List(ctx, &stations); err != nil {
+		return nil, fmt.Errorf("list Stations for probe targets: %w", err)
+	}
+	bound := map[types.NamespacedName]bool{}
+	for i := range stations.Items {
+		station := &stations.Items[i]
+		bound[types.NamespacedName{Namespace: station.Namespace, Name: station.Spec.Binding.NodeName}] = station.Status.Phase == stationv1alpha1.StationPhaseBound
+	}
+	offline := map[string]bool{}
+	for i := range enrollments.Items {
+		enrollment := &enrollments.Items[i]
+		if enrollment.Status.TunnelAddress != "" && !bound[types.NamespacedName{Namespace: enrollment.Namespace, Name: enrollment.Name}] {
+			offline[enrollment.Status.TunnelAddress] = true
+		}
+	}
+	var live []string
+	for _, target := range failed {
+		if !offline[target] {
+			live = append(live, target)
+		}
+	}
+	return live, nil
 }

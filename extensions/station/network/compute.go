@@ -44,6 +44,10 @@ type Site struct {
 	Mesh bool
 	// Reaches lists the sites whose Site-scoped endpoints this site can dial.
 	Reaches []string
+	// LeavesViaRelay makes the leaves of this site peer with their relay
+	// only: everything else is reached through it. Without it a leaf also
+	// dials every other hub it can, which keeps its traffic to them off the relay.
+	LeavesViaRelay bool
 }
 
 type Endpoint struct {
@@ -126,6 +130,9 @@ type node struct {
 	address netip.Addr
 	// routable is the address other members use for this node.
 	routable netip.Addr
+	// relay is the hub that carries this leaf's traffic to the nodes it has
+	// no tunnel to.
+	relay *node
 }
 
 // Compute returns the configuration of every member. An invalid topology is an
@@ -222,21 +229,19 @@ func Compute(topology Topology, members []Member) (Result, error) {
 	}
 	sort.Slice(nodes, func(i, j int) bool { return nodes[i].address.Less(nodes[j].address) })
 
-	// relayOf picks at most one relay per leaf: a relay in its own site first,
-	// then the lowest tunnel address. Two peers cannot own the same prefix.
-	relayOf := map[*node]*node{}
+	// A leaf has at most one relay: a relay in its own site first, then the
+	// lowest tunnel address. Two peers cannot own the same prefix.
 	for _, leaf := range nodes {
 		if leaf.Role != RoleLeaf {
 			continue
 		}
 		for _, hub := range nodes {
-			if !hub.Relay || !linked(leaf, hub) {
-				continue
+			if hub.Relay && dialable(leaf, hub) && (leaf.relay == nil || hub.Site == leaf.Site && leaf.relay.Site != leaf.Site) {
+				leaf.relay = hub
 			}
-			current := relayOf[leaf]
-			if current == nil || (hub.Site == leaf.Site && current.Site != leaf.Site) {
-				relayOf[leaf] = hub
-			}
+		}
+		if leaf.site.LeavesViaRelay && leaf.relay == nil {
+			result.Problems[leaf.ID] = append(result.Problems[leaf.ID], "the site sends its leaves through a relay and this leaf can dial none")
 		}
 	}
 
@@ -264,27 +269,28 @@ func Compute(topology Topology, members []Member) (Result, error) {
 			}
 			c.prefixes = append(c.prefixes, netip.PrefixFrom(other.address, 32))
 			if other.Site != self.Site {
-				if other.routable != other.address {
-					c.prefixes = append(c.prefixes, netip.PrefixFrom(other.routable, 32))
-				}
 				for _, advertisement := range other.Advertise {
-					prefix, err := netip.ParsePrefix(advertisement.CIDR)
-					if err != nil || !prefix.Addr().Is4() || prefix.Bits() == 0 {
+					if prefix, err := netip.ParsePrefix(advertisement.CIDR); err != nil || !prefix.Addr().Is4() || prefix.Bits() == 0 {
 						result.Problems[other.ID] = appendOnce(result.Problems[other.ID], fmt.Sprintf("advertised prefix %q is not a non-default IPv4 prefix", advertisement.CIDR))
+					}
+				}
+				c.prefixes = append(c.prefixes, beyond(other, self.Site, pool)...)
+			}
+			if self.relay == other {
+				c.prefixes = append(c.prefixes, pool)
+				// What lies behind the relay's other tunnels and is not a
+				// tunnel address: the leaf has no tunnel of its own to it.
+				for _, far := range nodes {
+					if far == self || far == other || far.Site == self.Site || linked(self, far) || !linked(other, far) {
 						continue
 					}
-					if len(advertisement.Sites) == 0 || contains(advertisement.Sites, self.Site) {
-						c.prefixes = append(c.prefixes, prefix.Masked())
-					}
+					c.prefixes = append(c.prefixes, beyond(far, self.Site, pool)...)
 				}
-			}
-			if relayOf[self] == other {
-				c.prefixes = append(c.prefixes, pool)
 			}
 			if other.Relay && self.Role == RoleHub {
 				// A hub that a relayed leaf cannot dial still has to answer it.
 				for _, leaf := range nodes {
-					if relayOf[leaf] == other && !linked(self, leaf) {
+					if leaf.relay == other && !linked(self, leaf) {
 						c.prefixes = append(c.prefixes, netip.PrefixFrom(leaf.address, 32))
 					}
 				}
@@ -356,9 +362,25 @@ func dial(from, to *node) (netip.AddrPort, bool) {
 	return public, public.IsValid()
 }
 
-// linked reports whether two members share a tunnel: at least one is a hub,
-// one side can dial the other, and hubs of one site link only when it meshes.
-func linked(a, b *node) bool {
+// beyond lists what a member of site reaches through far besides far's tunnel
+// address: its node address and the prefixes it advertises to that site.
+func beyond(far *node, site string, pool netip.Prefix) []netip.Prefix {
+	var prefixes []netip.Prefix
+	if far.routable != far.address {
+		prefixes = append(prefixes, netip.PrefixFrom(far.routable, 32))
+	}
+	for _, advertisement := range far.Advertise {
+		prefix, err := netip.ParsePrefix(advertisement.CIDR)
+		if err == nil && prefix.Addr().Is4() && prefix.Bits() != 0 && (len(advertisement.Sites) == 0 || contains(advertisement.Sites, site)) {
+			prefixes = append(prefixes, prefix.Masked())
+		}
+	}
+	return prefixes
+}
+
+// dialable reports whether two members could share a tunnel: at least one is
+// a hub, one side can dial the other, and hubs of one site link only when it meshes.
+func dialable(a, b *node) bool {
 	if a.Role == RoleLeaf && b.Role == RoleLeaf {
 		return false
 	}
@@ -368,6 +390,17 @@ func linked(a, b *node) bool {
 	_, forward := dial(a, b)
 	_, backward := dial(b, a)
 	return forward || backward
+}
+
+// linked reports whether two members share a tunnel. A leaf of a site that
+// sends its leaves through a relay has a tunnel to that relay only.
+func linked(a, b *node) bool {
+	for _, pair := range [][2]*node{{a, b}, {b, a}} {
+		if leaf, other := pair[0], pair[1]; leaf.Role == RoleLeaf && leaf.site.LeavesViaRelay && leaf.relay != other {
+			return false
+		}
+	}
+	return dialable(a, b)
 }
 
 // reaches follows the computed configurations from one member to another's

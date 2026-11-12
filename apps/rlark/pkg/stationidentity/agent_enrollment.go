@@ -15,6 +15,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"time"
 )
 
 // Enroll registers the node's WireGuard public key under the agent's verified
@@ -118,4 +120,50 @@ func (a *Agent) localAddress() string {
 	}
 	defer connection.Close()
 	return connection.LocalAddr().(*net.UDPAddr).IP.String()
+}
+
+// probePeers checks the tunnel end to end: it opens a TCP connection to every
+// configured peer's tunnel address on the port the agents serve their health
+// probes on, which every network node listens on. A reply proves the route,
+// both directions of the tunnel and the peer's host; a heartbeat alone proves
+// none of them. The targets come from the configuration computed for this
+// node, so a node without one reports no probes.
+func (a *Agent) probePeers(ctx context.Context) []Probe {
+	data, err := os.ReadFile(a.config.NetworkConfigFile)
+	if err != nil {
+		return nil
+	}
+	var config struct {
+		Interface string `json:"interface"`
+		Peers     []struct {
+			AllowedIPs []string `json:"allowedIPs"`
+		} `json:"peers"`
+	}
+	if json.Unmarshal(data, &config) != nil {
+		return nil
+	}
+	_, port, _ := net.SplitHostPort(a.config.ProbeAddress)
+	probes := make([]Probe, 0, len(config.Peers))
+	for _, peer := range config.Peers {
+		// The first prefix of a peer is its own tunnel address.
+		if len(peer.AllowedIPs) > 0 && strings.HasSuffix(peer.AllowedIPs[0], "/32") && len(probes) < 256 {
+			probes = append(probes, Probe{Target: strings.TrimSuffix(peer.AllowedIPs[0], "/32"), Via: config.Interface})
+		}
+	}
+	probeCtx, cancel := context.WithTimeout(ctx, min(a.config.RequestLimit, 3*time.Second))
+	defer cancel()
+	var wait sync.WaitGroup
+	for i := range probes {
+		wait.Add(1)
+		go func(probe *Probe) {
+			defer wait.Done()
+			start := a.now()
+			if a.dial(probeCtx, net.JoinHostPort(probe.Target, port)) == nil {
+				rtt := a.now().Sub(start).Milliseconds()
+				probe.OK, probe.RTTMillis = true, &rtt
+			}
+		}(&probes[i])
+	}
+	wait.Wait()
+	return probes
 }

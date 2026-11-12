@@ -28,13 +28,26 @@ type siteNode struct {
 	Sequence   int64  `json:"sequence"`
 	// BindingVersion increases when an administrator rebinds the identity to
 	// a reinstalled machine; a consumer that cached it knows to look again.
-	BindingVersion int64            `json:"binding_version"`
-	Phase          string           `json:"phase"`
-	Online         bool             `json:"online"`
-	LastSeenTime   string           `json:"last_seen_time,omitempty"`
-	Network        *siteNodeNetwork `json:"network,omitempty"`
-	RobotID        string           `json:"robot_id,omitempty"`
-	WorkstationID  string           `json:"workstation_id,omitempty"`
+	BindingVersion int64  `json:"binding_version"`
+	Phase          string `json:"phase"`
+	// Online is the heartbeat alone: the node's agent reported within the
+	// last 90 s. The three fields after it are separate facts; a consumer
+	// that needs the node reachable checks Tunnel as well.
+	Online bool `json:"online"`
+	// Tunnel is "verified" when the node reaches every peer that is itself
+	// online, "failed" when it does not, "unknown" when it reports no probes.
+	Tunnel string `json:"tunnel"`
+	// RLarkNode is "ready" when the RLark Node of the same name is Ready.
+	RLarkNode    string `json:"rlark_node"`
+	LastSeenTime string `json:"last_seen_time,omitempty"`
+	// BootTime changes when the machine restarts, also when the restart was
+	// too short to show as offline; Reboots counts the changes seen.
+	BootTime      string            `json:"boot_time,omitempty"`
+	Reboots       int64             `json:"reboots"`
+	Labels        map[string]string `json:"labels,omitempty"`
+	Network       *siteNodeNetwork  `json:"network,omitempty"`
+	RobotID       string            `json:"robot_id,omitempty"`
+	WorkstationID string            `json:"workstation_id,omitempty"`
 }
 
 type siteNodeNetwork struct {
@@ -91,7 +104,27 @@ func (g *Gateway) handleGetSiteNode(c *gin.Context) {
 	result.BindingVersion, _, _ = unstructured.NestedInt64(station.Object, "spec", "binding", "version")
 	result.Phase, _, _ = unstructured.NestedString(station.Object, "status", "phase")
 	result.LastSeenTime, _, _ = unstructured.NestedString(station.Object, "status", "lastSeenTime")
+	result.BootTime, _, _ = unstructured.NestedString(station.Object, "status", "bootTime")
+	result.Reboots, _, _ = unstructured.NestedInt64(station.Object, "status", "reboots")
 	result.Online = result.Phase == "Bound"
+	result.Tunnel, result.RLarkNode = "unknown", "unknown"
+	conditions, _, _ := unstructured.NestedSlice(station.Object, "status", "conditions")
+	for _, raw := range conditions {
+		condition, _ := raw.(map[string]interface{})
+		status, _ := condition["status"].(string)
+		switch condition["type"] {
+		case "NetworkVerified":
+			result.Tunnel = map[string]string{"True": "verified", "False": "failed"}[status]
+		case "RLarkLinked":
+			result.RLarkNode = map[string]string{"True": "ready", "False": "not-ready"}[status]
+		}
+	}
+	if result.Tunnel == "" {
+		result.Tunnel = "unknown"
+	}
+	if result.RLarkNode == "" {
+		result.RLarkNode = "unknown"
+	}
 
 	enrollment, err := g.stationClient.Resource(networkEnrollmentGVR).Namespace(namespace).Get(ctx, nodeName, metav1.GetOptions{})
 	if err != nil && !apierrors.IsNotFound(err) {
@@ -112,7 +145,8 @@ func (g *Gateway) handleGetSiteNode(c *gin.Context) {
 		return
 	}
 	if err == nil {
-		result.RobotID, result.WorkstationID = node.GetLabels()[siteNodeRobotLabel], node.GetLabels()[siteNodeWorkstationID]
+		result.Labels = node.GetLabels()
+		result.RobotID, result.WorkstationID = result.Labels[siteNodeRobotLabel], result.Labels[siteNodeWorkstationID]
 	}
 	c.Header("Cache-Control", "no-store")
 	c.JSON(http.StatusOK, result)

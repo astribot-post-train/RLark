@@ -3,6 +3,7 @@ package gateway
 import (
 	"encoding/json"
 	"net/http/httptest"
+	"reflect"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -31,7 +32,9 @@ func TestGetSiteNodeJoinsIdentityNetworkAndRobot(t *testing.T) {
 	_ = unstructured.SetNestedField(station.Object, "s1u-01-x86", "spec", "binding", "nodeName")
 	_ = unstructured.SetNestedField(station.Object, int64(2), "spec", "binding", "version")
 	_ = unstructured.SetNestedField(station.Object, int64(3), "spec", "sequence")
-	_ = unstructured.SetNestedMap(station.Object, map[string]interface{}{"phase": "Bound", "lastSeenTime": "2026-11-12T08:00:00Z"}, "status")
+	_ = unstructured.SetNestedMap(station.Object, map[string]interface{}{"phase": "Bound", "lastSeenTime": "2026-11-12T08:00:00Z",
+		"bootTime": "2026-11-12T03:58:58Z", "reboots": int64(1), "conditions": []interface{}{
+			map[string]interface{}{"type": "NetworkVerified", "status": "False"}, map[string]interface{}{"type": "Observed", "status": "True"}}}, "status")
 	enrollment := &unstructured.Unstructured{Object: map[string]interface{}{
 		"apiVersion": "station.rlark.io/v1alpha1", "kind": "NetworkEnrollment",
 		"metadata": map[string]interface{}{"name": "s1u-01-x86", "namespace": "agent-a"},
@@ -49,12 +52,15 @@ func TestGetSiteNodeJoinsIdentityNetworkAndRobot(t *testing.T) {
 
 	code, got := siteNodeRequest(t, gateway, "s1u-01-x86", "?cluster_id=cluster-a")
 	want := siteNode{ClusterID: "cluster-a", NodeName: "s1u-01-x86", SiteNodeID: "stn-7f3a", Sequence: 3, BindingVersion: 2, Phase: "Bound", Online: true,
-		LastSeenTime: "2026-11-12T08:00:00Z", RobotID: "s1u-01"}
+		LastSeenTime: "2026-11-12T08:00:00Z", RobotID: "s1u-01", Tunnel: "failed", RLarkNode: "unknown", BootTime: "2026-11-12T03:58:58Z", Reboots: 1}
 	if code != 200 || got.Network == nil || *got.Network != (siteNodeNetwork{State: "Enrolled", Site: "lab", Role: "Leaf", Address: "10.254.240.3", TunnelAddress: "10.254.240.3"}) {
 		t.Fatalf("status %d, network %+v", code, got.Network)
 	}
-	got.Network = nil
-	if got != want {
+	if got.Labels["rlark.io/robot-id"] != "s1u-01" {
+		t.Fatalf("labels %v", got.Labels)
+	}
+	got.Network, got.Labels = nil, nil
+	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("site node %+v, want %+v", got, want)
 	}
 

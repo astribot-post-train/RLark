@@ -39,6 +39,8 @@ BK=/var/backups/station-v2-$(date +%Y%m%d-%H%M%S)  # 每步开头 mkdir -p，先
 
 ## 0.5 镜像（已构建、已演练、已推送）
 
+**上线前要重新构建一次**：下表的镜像是 16:05 演练用的那一批，之后加了隧道探测、重启留痕、`/site-nodes` 的状态字段和"只连场站入口"的拓扑选项（设计文档 1.7、2.4），station-agent、station-api、station-controller 三个镜像变了，网关镜像没变。新加的部分只有单测；重新构建后要在隔离环境里再跑一遍第 6 节，才算可以上线。隔离环境不再放在 liangcai 的机器上（它是线上的控制面），等 3090 把 `fs.inotify.max_user_instances` 调到 8192。
+
 | 镜像 | 标签 | 仓库里的摘要 |
 |---|---|---|
 | `localhost:5555/station-services`（station-api） | `enroll-20261112` | `sha256:3f79779e03ba287dc9c334c69ee71de9fc09bb60270cdef0cecb42547c46214a` |
@@ -61,8 +63,11 @@ cd $REPO
 
 # 管理面：必须是已经有五个 Station CRD 的那个 workspace
 kubectl --kubeconfig $KCP get crd stations.station.rlark.io            # 必须成功，否则 kubeconfig 指错了 workspace
+# 两个新 CRD，加上改过的两个（Station 多了 status.reboots，StationObservation 的 probes 上限从 64 提到 256）
 kubectl --kubeconfig $KCP apply -f extensions/station/config/crd/bases/station.rlark.io_sitenetworks.yaml \
-                                -f extensions/station/config/crd/bases/station.rlark.io_networkenrollments.yaml
+                                -f extensions/station/config/crd/bases/station.rlark.io_networkenrollments.yaml \
+                                -f extensions/station/config/crd/bases/station.rlark.io_stations.yaml \
+                                -f extensions/station/config/crd/bases/station.rlark.io_stationobservations.yaml
 kubectl --kubeconfig $KCP apply -f extensions/station/deploy/management-rbac.yaml
 
 # 本地集群：两个 Deployment 换镜像
@@ -348,6 +353,9 @@ for c in e2e-office e2e-lab e2e-ksyun; do ./e2e.sh enable $c; done
 10. **端到端环境** `extensions/station/hack/e2e/`：`e2e.sh up` 在一台机器上起一次性的 kcp、PostgreSQL、station-api、station-controller 和三个 kind 集群，节点上跑真实的 DaemonSet 和内核 WireGuard；`migrate.sh` 是上线演练。
 
 和你正在写的 `NodeOperation` 的关系：`EnableWireGuard` 的 `AllocateAddress`、`ApplyPeer` 两步和这里的入网是同一件事。建议 `NodeOperation` 只做它独有的（SSH 进新机器 `kubeadm join`、移除），`EnableWireGuard` 缩成"打标签，等这台的 `NetworkEnrollment` 变成 Enrolled、握手成功"。
+
+11. **"在线"拆成三件事**（起因：3090 中午重启后仍显示在线）。agent 每次上报前经隧道探测配置里的每个对端（TCP 连对端 agent 的健康端口），结果放进你已有的 `probes` 字段（上限 64 → 256，枢纽的对端会超过 64）；`StationReconciler` 的 `NetworkVerified` 从"所有探测都成功"改成"连得上所有自己也在线的对端"；开机时间变化记成 `Rebooted` 条件和 `status.reboots`。`phase` 的含义没动，仍只看心跳。
+12. **场站可以让叶子只连转发枢纽**（`SiteNetwork.spec.sites[].leavesViaRelay`）：机器人只有一个对端，云上的地址由枢纽带给它。
 
 没做、需要你定的：
 

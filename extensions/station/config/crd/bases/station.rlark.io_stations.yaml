@@ -201,6 +201,12 @@ spec:
                 - Conflict
                 - Retired
                 type: string
+              reboots:
+                description: |-
+                  Reboots counts the boot-time changes seen since the Station was created.
+                  The Rebooted condition describes the last one.
+                format: int64
+                type: integer
             type: object
         required:
         - spec

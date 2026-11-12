@@ -78,6 +78,10 @@ type SiteNetworkSite struct {
 	// +kubebuilder:validation:MaxItems=64
 	// +listType=set
 	Reaches []string `json:"reaches,omitempty"`
+	// LeavesViaRelay makes the leaves of this site peer with their relay only
+	// and reach everything else through it. Without it a leaf also dials
+	// every other hub it can.
+	LeavesViaRelay bool `json:"leavesViaRelay,omitempty"`
 }
 
 type SiteNetworkNode struct {

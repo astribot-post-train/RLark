@@ -138,8 +138,13 @@ paths:
                   sequence: {type: integer}
                   binding_version: {type: integer}
                   phase: {type: string, enum: [Bound, Offline, Conflict, Retired]}
-                  online: {type: boolean}
+                  online: {type: boolean, description: Heartbeat only; the agent reported within 90 s}
+                  tunnel: {type: string, enum: [verified, failed, unknown], description: Whether the node reaches every peer that is itself online}
+                  rlark_node: {type: string, enum: [ready, not-ready, unknown]}
                   last_seen_time: {type: string, format: date-time}
+                  boot_time: {type: string, format: date-time}
+                  reboots: {type: integer, description: Boot-time changes seen since the identity was created}
+                  labels: {type: object, additionalProperties: {type: string}}
                   robot_id: {type: string}
                   workstation_id: {type: string}
                   network:
