@@ -297,3 +297,41 @@ func TestLiveSiteDeclarationEnrollsTheFiveNodes(t *testing.T) {
 		t.Fatalf("status %+v", siteNetwork.Status)
 	}
 }
+
+// A cloud node cannot reach Station API before its tunnel is up: declaring its
+// key puts it into its peers' configurations first, and its own enrollment
+// takes over once it arrives.
+func TestNetworkAdmitsDeclaredKeyBeforeEnrollment(t *testing.T) {
+	siteNetwork := testSiteNetwork()
+	siteNetwork.Spec.Sites = append(siteNetwork.Spec.Sites, stationv1alpha1.SiteNetworkSite{Name: "ksyun", Clusters: []string{"cloud"}})
+	siteNetwork.Spec.Nodes = append(siteNetwork.Spec.Nodes, stationv1alpha1.SiteNetworkNode{
+		ClusterID: "cloud", NodeName: "h100-3", Role: "Hub", Address: "10.254.240.9", NodeAddress: "10.0.2.9", PublicKey: "key-cloud",
+		Endpoints: []stationv1alpha1.SiteNetworkEndpoint{{Address: "36.103.180.169:51822", Scope: "Public"}},
+	})
+	objects := append([]client.Object{siteNetwork}, testMember("dev", "cailiang", "key-dev", "10.11.14.128")...)
+	r, c := newNetworkTest(t, objects...)
+	reconcileNetwork(t, r)
+	entry := configOf(t, enrollmentStatus(t, c, "dev", "cailiang"))
+	if len(entry.Peers) != 1 || entry.Peers[0].PublicKey != "key-cloud" || entry.Peers[0].Endpoint != "36.103.180.169:51822" || entry.Peers[0].AllowedIPs[1] != "10.0.2.9/32" {
+		t.Fatalf("the site entry must dial the declared node: %+v", entry.Peers)
+	}
+
+	// The node enrolls through the tunnel with a rotated key: its enrollment wins.
+	for _, object := range testMember("cloud", "h100-3", "key-cloud-rotated", "10.0.2.9") {
+		if err := c.Create(context.Background(), object); err != nil {
+			t.Fatal(err)
+		}
+	}
+	reconcileNetwork(t, r)
+	cloud := enrollmentStatus(t, c, "cloud", "h100-3")
+	if cloud.Phase != stationv1alpha1.NetworkEnrollmentEnrolled || cloud.TunnelAddress != "10.254.240.9" || cloud.Address != "10.0.2.9" {
+		t.Fatalf("enrolled cloud node: %+v", cloud)
+	}
+	if entry = configOf(t, enrollmentStatus(t, c, "dev", "cailiang")); len(entry.Peers) != 1 || entry.Peers[0].PublicKey != "key-cloud-rotated" {
+		t.Fatalf("the enrolled key replaces the declared one: %+v", entry.Peers)
+	}
+	var updated stationv1alpha1.SiteNetwork
+	if err := c.Get(context.Background(), testNetworkKey, &updated); err != nil || updated.Status.Members != 2 {
+		t.Fatalf("members %d, %v", updated.Status.Members, err)
+	}
+}

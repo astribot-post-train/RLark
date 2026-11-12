@@ -127,6 +127,7 @@ func (r *NetworkReconciler) Reconcile(ctx context.Context, req reconcile.Request
 	}
 
 	answers := make(map[string]*stationv1alpha1.NetworkEnrollmentStatus, len(enrollments.Items))
+	enrolled, declaredOnly := map[string]bool{}, map[string]bool{}
 	var members []network.Member
 	for i := range enrollments.Items {
 		enrollment := &enrollments.Items[i]
@@ -201,6 +202,28 @@ func (r *NetworkReconciler) Reconcile(ctx context.Context, req reconcile.Request
 			member.Uplink = &network.Uplink{Gateway: node.Uplink.Gateway, Source: node.Uplink.Source, Interface: node.Uplink.Interface}
 		}
 		members = append(members, member)
+		enrolled[id] = true
+	}
+
+	// A declared node with a key takes part before it can enroll: its peers
+	// must know it for its tunnel, and with it its path to Station API, to exist.
+	for _, node := range spec.Nodes {
+		id := node.ClusterID + "/" + node.NodeName
+		if node.PublicKey == "" || node.Address == "" || spec.Mode == stationv1alpha1.SiteNetworkModeRouted || enrolled[id] {
+			continue
+		}
+		declaredOnly[id] = true
+		member := network.Member{
+			ID: id, Site: siteOfCluster[node.ClusterID], Role: network.Role(node.Role), Relay: node.Relay, PublicKey: node.PublicKey,
+			Address: node.Address, NodeAddress: node.NodeAddress, Interface: node.Interface, ListenPort: int(node.ListenPort),
+		}
+		for _, endpoint := range node.Endpoints {
+			member.Endpoints = append(member.Endpoints, network.Endpoint{Address: endpoint.Address, Scope: network.EndpointScope(endpoint.Scope)})
+		}
+		for _, advertisement := range node.Advertise {
+			member.Advertise = append(member.Advertise, network.Advertisement{CIDR: advertisement.CIDR, Sites: advertisement.Sites})
+		}
+		members = append(members, member)
 	}
 
 	// Addresses are durable before any node is told to use one.
@@ -225,13 +248,23 @@ func (r *NetworkReconciler) Reconcile(ctx context.Context, req reconcile.Request
 		if err != nil {
 			ready = metav1.Condition{Type: "Ready", Status: metav1.ConditionFalse, Reason: "InvalidTopology", Message: err.Error()}
 			for _, member := range members {
-				answers[member.ID].Phase, answers[member.ID].Reason = stationv1alpha1.NetworkEnrollmentPending, "the SiteNetwork is invalid: "+err.Error()
+				if !declaredOnly[member.ID] {
+					answers[member.ID].Phase, answers[member.ID].Reason = stationv1alpha1.NetworkEnrollmentPending, "the SiteNetwork is invalid: "+err.Error()
+				}
 			}
 		}
 		for _, member := range members {
 			answer := answers[member.ID]
-			answer.Problems = result.Problems[member.ID]
 			config, ok := result.Configs[member.ID]
+			if declaredOnly[member.ID] {
+				// Declared ahead of its enrollment: it is in its peers'
+				// configurations and has no enrollment to answer.
+				if ok {
+					status.Members++
+				}
+				continue
+			}
+			answer.Problems = result.Problems[member.ID]
 			if !ok {
 				if err == nil {
 					answer.Reason = "the node is not configurable: " + fmt.Sprint(answer.Problems)

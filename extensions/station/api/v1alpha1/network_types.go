@@ -104,6 +104,11 @@ type SiteNetworkNode struct {
 	// +kubebuilder:validation:Minimum=0
 	// +kubebuilder:validation:Maximum=65535
 	ListenPort int32 `json:"listenPort,omitempty"`
+	// PublicKey admits the node before it has enrolled. It is for a node that
+	// cannot reach Station API until its tunnel is up; it needs Address too.
+	// Once the node enrolls, the key it enrolled with is used.
+	// +kubebuilder:validation:MaxLength=44
+	PublicKey string `json:"publicKey,omitempty"`
 	// +kubebuilder:validation:MaxItems=4
 	Endpoints []SiteNetworkEndpoint `json:"endpoints,omitempty"`
 	// +kubebuilder:validation:MaxItems=16

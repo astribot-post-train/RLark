@@ -29,9 +29,10 @@ type AgentConfig struct {
 	RequestLimit             time.Duration
 	ProbeAddress             string
 	WireguardObservationFile string
-	// NetworkIdentityFile is where the gateway container publishes its public
-	// key; NetworkConfigFile is where the agent stores the computed
-	// configuration for it. Both empty disables network enrollment.
+	// NetworkConfigFile enables network enrollment: it is where the agent
+	// stores the configuration computed for the node. NetworkIdentityFile is
+	// where the gateway container publishes its public key; without it the
+	// node enrolls its address only, for a network that runs no tunnel.
 	NetworkIdentityFile string
 	NetworkConfigFile   string
 }
@@ -54,8 +55,8 @@ func (c AgentConfig) Validate() error {
 			return errors.New("agent probe address must contain a valid TCP port")
 		}
 	}
-	if (c.NetworkIdentityFile == "") != (c.NetworkConfigFile == "") {
-		return errors.New("network identity and configuration files are set together")
+	if c.NetworkIdentityFile != "" && c.NetworkConfigFile == "" {
+		return errors.New("a network identity file requires a network configuration file")
 	}
 	return nil
 }

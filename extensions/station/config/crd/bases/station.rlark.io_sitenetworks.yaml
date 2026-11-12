@@ -155,6 +155,13 @@ spec:
                       maxLength: 253
                       minLength: 1
                       type: string
+                    publicKey:
+                      description: |-
+                        PublicKey admits the node before it has enrolled. It is for a node that
+                        cannot reach Station API until its tunnel is up; it needs Address too.
+                        Once the node enrolls, the key it enrolled with is used.
+                      maxLength: 44
+                      type: string
                     relay:
                       description: Relay makes a hub carry traffic between the leaves
                         that dial it.

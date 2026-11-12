@@ -94,9 +94,14 @@ func TestAgentEnrollsPublicKeyAndStoresComputedConfiguration(t *testing.T) {
 	}
 }
 
-func TestAgentConfigRequiresBothNetworkFiles(t *testing.T) {
-	config := AgentConfig{APIURL: "https://station.example", ClusterID: "c", TokenFile: "token", Interval: 30 * time.Second, RequestLimit: time.Second, NetworkConfigFile: "/x"}
+func TestAgentConfigIdentityFileNeedsConfigFile(t *testing.T) {
+	config := AgentConfig{APIURL: "https://station.example", ClusterID: "c", TokenFile: "token", Interval: 30 * time.Second, RequestLimit: time.Second, NetworkIdentityFile: "/x"}
 	if err := config.Validate(); err == nil {
-		t.Fatal("accepted a configuration file without an identity file")
+		t.Fatal("accepted an identity file without a configuration file")
+	}
+	// Without a tunnel the node enrolls its address only.
+	config.NetworkIdentityFile, config.NetworkConfigFile = "", "/x"
+	if err := config.Validate(); err != nil {
+		t.Fatal(err)
 	}
 }
