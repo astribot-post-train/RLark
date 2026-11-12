@@ -9,8 +9,13 @@
 #   migrate-node.sh OLD_KUBECONFIG NEW_KUBECONFIG NEW_CLUSTER_ID NODE API_SERVER STATION_API IMAGE [label=value ...]
 #
 # Environment: KCP (management kubeconfig), CA (Station API's CA file), TAINTS,
-# PULL_SECRET, CONTROL_PLANE=yes to move the old cluster's control-plane node
-# (its cluster ends there, so it is moved last).
+# PULL_SECRET and JOB_NAMESPACE (where it is and the Job runs; kube-system),
+# TIMEOUT (seconds to Ready in the new cluster; 600), CONTROL_PLANE=yes to
+# move the old cluster's control-plane node (its cluster ends there, so it is
+# moved last; its etcd is snapshot to /var/backups/rlark-node-migrate first).
+# A node that does not become Ready in the new cluster goes back to the old
+# one by itself (install.sh); this script then withdraws its admission, so
+# that its enrollment in the old cluster stands again.
 # Afterwards the node's leftovers in the old cluster are removed: its Node
 # object, its NetworkEnrollment, and its Station is retired.
 set -euo pipefail
@@ -23,6 +28,7 @@ mgmt() { kubectl --kubeconfig "$KCP" "$@"; }
 stamp() { echo "$(date +%T) $*"; }
 started=$(date +%s)
 pull=; [[ -z ${PULL_SECRET:-} ]] || pull="imagePullSecrets: [{name: $PULL_SECRET}]"
+NS=${JOB_NAMESPACE:-kube-system}
 
 # What the node has now is what it keeps.
 read -r old_namespace address port < <(mgmt get networkenrollments.station.rlark.io -A -o json | python3 -c '
@@ -44,11 +50,17 @@ stamp "$NODE: $old_cluster -> $CLUSTER, keeps $address port $port${uplink:+ upli
 command=$(KCP=$KCP ADDRESS=$address LISTEN_PORT=$port UPLINK=$uplink TAINTS=${TAINTS:-} "$HERE/admit-node.sh" "$CLUSTER" "$NODE" "$API_SERVER" "$STATION_API" "$@")
 code=$(echo "$command" | sed -n 's#.*/b/\([a-z0-9]*\) .*#\1#p')
 name=$(echo "node-migrate-$NODE" | cut -c1-63)
-old -n kube-system delete job "$name" --ignore-not-found >/dev/null
+if [[ $mode == control-plane ]]; then
+  old -n kube-system exec "etcd-$NODE" -- etcdctl --endpoints https://127.0.0.1:2379 --cacert /etc/kubernetes/pki/etcd/ca.crt \
+    --cert /etc/kubernetes/pki/etcd/server.crt --key /etc/kubernetes/pki/etcd/server.key \
+    snapshot save /var/lib/etcd/rlark-snapshot-before-migrate.db >/dev/null
+  stamp "$NODE: etcd snapshot saved (the installer moves it to /var/backups/rlark-node-migrate)"
+fi
+old -n "$NS" delete job "$name" --ignore-not-found >/dev/null
 old apply -f - >/dev/null <<JOB
 apiVersion: batch/v1
 kind: Job
-metadata: {name: $name, namespace: kube-system}
+metadata: {name: $name, namespace: $NS}
 spec:
   backoffLimit: 0
   ttlSecondsAfterFinished: 86400
@@ -74,7 +86,15 @@ spec:
 $(sed 's/^/            /' "$CA")
 JOB
 stamp "$NODE: the move is running on the node"
-until [[ $(new get node "$NODE" -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null) == True ]]; do sleep 2; done
+until [[ $(new get node "$NODE" -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null) == True ]]; do
+  if (( $(date +%s) - started > ${TIMEOUT:-600} )); then
+    mgmt -n "$(mgmt get clusters.rlinf.io "$CLUSTER" -o jsonpath='{.spec.agentNamespace}')" delete nodeadmissions.station.rlark.io "$NODE" --ignore-not-found >/dev/null
+    new delete node "$NODE" --ignore-not-found >/dev/null
+    echo "$NODE is not Ready in $CLUSTER after ${TIMEOUT:-600} s; its admission is withdrawn. The node returns to $old_cluster by itself when its join fails: old get node $NODE" >&2
+    exit 1
+  fi
+  sleep 2
+done
 stamp "$NODE: Ready in $CLUSTER after $(( $(date +%s) - started )) s"
 namespace=$(mgmt get clusters.rlinf.io "$CLUSTER" -o jsonpath='{.spec.agentNamespace}')
 until [[ $(mgmt -n "$namespace" get nodeadmissions.station.rlark.io "$NODE" -o jsonpath='{.status.phase}') == Joined ]]; do sleep 2; done
