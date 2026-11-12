@@ -38,22 +38,25 @@ type StorageClassData struct {
 	Name             string   `json:"name"`
 	StorageClassName string   `json:"storageClassName"`
 	Clusters         []string `json:"clusters"`
-	Description      string   `json:"description"`
-	Type             string   `json:"type"`
-	Bucket           string   `json:"bucket"`
-	Provider         string   `json:"provider"`
-	Endpoint         string   `json:"endpoint"`
-	Region           string   `json:"region"`
-	PathStyle        bool     `json:"pathStyle"`
-	AccessKeyId      string   `json:"accessKeyId"`
-	Host             string   `json:"host,omitempty"`
-	Share            string   `json:"share,omitempty"`
-	SubPath          string   `json:"subPath,omitempty"`
-	Username         string   `json:"username,omitempty"`
-	Domain           string   `json:"domain,omitempty"`
-	TenantID         string   `json:"tenantID"`
-	CreatedBy        string   `json:"createdBy,omitempty"`
-	CreatedAt        string   `json:"createdAt"`
+	// MountProfile is empty for the default; MountOptions is what the class is mounted with.
+	MountProfile string   `json:"mountProfile,omitempty"`
+	MountOptions []string `json:"mountOptions"`
+	Description  string   `json:"description"`
+	Type         string   `json:"type"`
+	Bucket       string   `json:"bucket"`
+	Provider     string   `json:"provider"`
+	Endpoint     string   `json:"endpoint"`
+	Region       string   `json:"region"`
+	PathStyle    bool     `json:"pathStyle"`
+	AccessKeyId  string   `json:"accessKeyId"`
+	Host         string   `json:"host,omitempty"`
+	Share        string   `json:"share,omitempty"`
+	SubPath      string   `json:"subPath,omitempty"`
+	Username     string   `json:"username,omitempty"`
+	Domain       string   `json:"domain,omitempty"`
+	TenantID     string   `json:"tenantID"`
+	CreatedBy    string   `json:"createdBy,omitempty"`
+	CreatedAt    string   `json:"createdAt"`
 }
 
 // Provider 定义存储提供商信息.
@@ -91,6 +94,7 @@ func (g *Gateway) listStorageClass(c *gin.Context) {
 			Name: stored.Name, StorageClassName: id, Clusters: clusters, Description: stored.Description, Type: stored.Type,
 			Bucket: stored.Bucket, Provider: stored.Provider, Endpoint: stored.Endpoint, Region: stored.Region, PathStyle: stored.PathStyle,
 			Host: stored.Host, Share: stored.Share, SubPath: stored.SubPath, Username: stored.Username, Domain: stored.Domain,
+			MountProfile: stored.MountProfile, MountOptions: mountOptionsFor(stored),
 			TenantID: tenant.IDOf(&secrets[i]), CreatedBy: secrets[i].Annotations[tenant.CreatedByAnnotation], CreatedAt: secrets[i].CreationTimestamp.UTC().Format(time.RFC3339),
 		}
 		if stored.Type == storageTypeS3 {
@@ -194,6 +198,9 @@ type storedStorageClass struct {
 	Username    string `json:"username,omitempty"`
 	Password    string `json:"password,omitempty"`
 	Domain      string `json:"domain,omitempty"`
+	// MountProfile and MountOptions choose the rclone VFS options (storage_mount.go).
+	MountProfile string   `json:"mount_profile,omitempty"`
+	MountOptions []string `json:"mount_options,omitempty"`
 }
 
 func newStorageClassID() string {
@@ -239,6 +246,9 @@ type CreateStorageClassRequest struct {
 	Username string `json:"username"`
 	Password string `json:"password"`
 	Domain   string `json:"domain"`
+
+	MountProfile string   `json:"mount_profile"`
+	MountOptions []string `json:"mount_options"`
 }
 
 // ssSecretTemplate is the rclone remote config rendered into the StorageClass
@@ -501,8 +511,12 @@ func normalizeStorageClass(req CreateStorageClassRequest) (storedStorageClass, e
 	}
 	sort.Strings(clusters)
 	clusters = slices.Compact(clusters)
+	mountProfile, mountOptions, err := normalizeMount(storageType, req.MountProfile, req.MountOptions)
+	if err != nil {
+		return storedStorageClass{}, err
+	}
 	if storageType == storageTypeSMB {
-		stored := storedStorageClass{Version: storageClassVersion, Name: name, Description: req.Description, Clusters: clusters}
+		stored := storedStorageClass{Version: storageClassVersion, Name: name, Description: req.Description, Clusters: clusters, MountOptions: mountOptions}
 		if err := normalizeSMBFields(req, &stored); err != nil {
 			return storedStorageClass{}, err
 		}
@@ -525,7 +539,8 @@ func normalizeStorageClass(req CreateStorageClassRequest) (storedStorageClass, e
 		Version: storageClassVersion, Name: name, Description: req.Description, Clusters: clusters, Type: storageTypeS3,
 		Provider: provider.Value, Endpoint: endpoint, AccessKeyID: req.AccessKeyId, AccessKey: req.AccessKeySecret,
 		Bucket: req.Bucket, Region: strings.TrimSpace(req.Region),
-		PathStyle: storage.EffectivePathStyle(provider.Value, req.PathStyle),
+		PathStyle:    storage.EffectivePathStyle(provider.Value, req.PathStyle),
+		MountProfile: mountProfile, MountOptions: mountOptions,
 	}, nil
 }
 
@@ -535,7 +550,7 @@ func buildStorageClassReplicationSecret(namespace, id string, stored storedStora
 		Provider: stored.Provider, Endpoint: stored.Endpoint, AccessKeyId: stored.AccessKeyID, AccessKeySecret: stored.AccessKey,
 		Bucket: stored.Bucket, Region: stored.Region, PathStyle: stored.PathStyle,
 	}
-	remote, remotePath, mountOptions := "s3", req.Bucket, s3MountOptions
+	remote, remotePath := "s3", req.Bucket
 	var config strings.Builder
 	switch stored.Type {
 	case storageTypeSMB:
@@ -548,7 +563,7 @@ func buildStorageClassReplicationSecret(namespace, id string, stored storedStora
 		if err := smbSecretTmpl.Execute(&config, data); err != nil {
 			return nil, fmt.Errorf("render secret config: %w", err)
 		}
-		remote, remotePath, mountOptions = "smb", smbRemotePath(stored), smbMountOptions
+		remote, remotePath = "smb", smbRemotePath(stored)
 	default:
 		if err := ssSecretTmpl.Execute(&config, req); err != nil {
 			return nil, fmt.Errorf("render secret config: %w", err)
@@ -576,7 +591,7 @@ func buildStorageClassReplicationSecret(namespace, id string, stored storedStora
 			"csi.storage.k8s.io/node-publish-secret-name":      secretName,
 			"csi.storage.k8s.io/node-publish-secret-namespace": req.Namespace,
 		},
-		MountOptions: slices.Clone(mountOptions),
+		MountOptions: mountOptionsFor(stored),
 	}
 	storageManifests, err := yaml.Marshal([]any{storageSecret, storageClass})
 	if err != nil {
