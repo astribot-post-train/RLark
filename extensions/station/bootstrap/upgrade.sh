@@ -55,6 +55,11 @@ control)
     kubeadm upgrade apply "$KUBE_VERSION" --yes $patches > "$keep/upgrade-apply.log" 2>&1 || { tail -25 "$keep/upgrade-apply.log" >&2; fail "kubeadm upgrade apply"; }
     stamp "control plane at $KUBE_VERSION"
   else
+    # kubeadm reads the node's runtime socket from an annotation of the Node,
+    # which a node that was not joined by kubeadm join alone may lack.
+    node=$(kubectl --kubeconfig /etc/kubernetes/kubelet.conf config view -o jsonpath='{.users[0].name}' | sed 's/^system:node://')
+    [ -n "$(kubectl --kubeconfig /etc/kubernetes/kubelet.conf get node "$node" -o jsonpath='{.metadata.annotations.kubeadm\.alpha\.kubernetes\.io/cri-socket}')" ] ||
+      kubectl --kubeconfig /etc/kubernetes/kubelet.conf annotate node "$node" "kubeadm.alpha.kubernetes.io/cri-socket=unix://$SOCKET" >/dev/null
     kubeadm upgrade node $patches > "$keep/upgrade-node.log" 2>&1 || { tail -25 "$keep/upgrade-node.log" >&2; fail "kubeadm upgrade node"; }
     stamp "node configuration at $KUBE_VERSION"
   fi
@@ -68,7 +73,17 @@ kubelet)
   tries=0
   until curl -fsS -m 2 http://127.0.0.1:10248/healthz >/dev/null 2>&1; do
     tries=$((tries + 1))
-    [ $tries -lt 90 ] || fail "the kubelet is not healthy 3 min after its restart: journalctl -u kubelet; the old binaries are in $keep"
+    if [ $tries -ge 60 ]; then
+      # Without a kubelet nothing reaches this node through the cluster, so
+      # the node goes back to what it ran before, by itself.
+      journalctl -u kubelet --no-pager --since "-3min" > "$keep/kubelet-failed.log" 2>&1 || true
+      grep -v -E 'Failed to ensure lease|Unable to register node|node .* not found' "$keep/kubelet-failed.log" | tail -15 >&2
+      install -m 755 "$keep/bin/kubelet" "$BIN/kubelet.old" && mv "$BIN/kubelet.old" "$BIN/kubelet"
+      install -m 755 "$keep/bin/kubectl" "$BIN/kubectl.old" && mv "$BIN/kubectl.old" "$BIN/kubectl"
+      [ ! -d "$keep/kubelet" ] || cp -a "$keep/kubelet/config.yaml" "$keep/kubelet/kubeadm-flags.env" /var/lib/kubelet/
+      systemctl restart kubelet
+      fail "the kubelet of $KUBE_VERSION was not healthy 2 min after its start; the node is back on $from, the kubelet's log is $keep/kubelet-failed.log"
+    fi
     sleep 2
   done
   stamp "kubelet $("$BIN/kubelet" --version | awk '{print $2}') healthy"

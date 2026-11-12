@@ -16,7 +16,7 @@
 # (etcd-snapshot.db). ROLLBACK=yes with the old version as VERSION and the
 # image of the failed upgrade takes the worker nodes back, after the control
 # plane has been taken back on its node (upgrade.sh, PHASE=rollback).
-# Environment: PULL_SECRET (name of an image pull secret in kube-system).
+# Environment: PULL_SECRET (name of an image pull secret in kube-system), NODES.
 set -euo pipefail
 K=$1 VERSION=$2 IMAGE=$3
 k() { kubectl --kubeconfig "$K" "$@"; }
@@ -32,6 +32,10 @@ if [[ -z ${ROLLBACK:-} ]]; then
   k get nodes -o jsonpath='{range .items[*]}{.metadata.name} {.status.conditions[?(@.type=="Ready")].status}{"\n"}{end}' | grep -v ' True$' && { echo "every node must be Ready before an upgrade" >&2; exit 1; }
 fi
 nodes="$(k get nodes -l node-role.kubernetes.io/control-plane -o name) $(k get nodes -l '!node-role.kubernetes.io/control-plane' -o name)"
+# NODES limits the run to these nodes ("node/a node/b", control plane first):
+# to go on after a stop, or to leave out a node that cannot be upgraded yet. A
+# kubelet may stay up to three minor versions behind the control plane.
+nodes=${NODES:-$nodes}
 stamp "cluster at $current -> $VERSION; order:$(echo $nodes | sed 's#node/# #g')"
 
 # job runs one phase of upgrade.sh on one node and waits for it; the API may
