@@ -29,6 +29,11 @@ type AgentConfig struct {
 	RequestLimit             time.Duration
 	ProbeAddress             string
 	WireguardObservationFile string
+	// NetworkIdentityFile is where the gateway container publishes its public
+	// key; NetworkConfigFile is where the agent stores the computed
+	// configuration for it. Both empty disables network enrollment.
+	NetworkIdentityFile string
+	NetworkConfigFile   string
 }
 
 func (c AgentConfig) Validate() error {
@@ -48,6 +53,9 @@ func (c AgentConfig) Validate() error {
 		if err != nil || portErr != nil || n < 1 || n > 65535 {
 			return errors.New("agent probe address must contain a valid TCP port")
 		}
+	}
+	if (c.NetworkIdentityFile == "") != (c.NetworkConfigFile == "") {
+		return errors.New("network identity and configuration files are set together")
 	}
 	return nil
 }
@@ -131,7 +139,7 @@ func (a *Agent) Run(ctx context.Context) error {
 		defer cancel()
 		_ = probeServer.Shutdown(shutdownCtx)
 	}()
-	backoff := time.Second
+	backoff, enrollment := time.Second, ""
 	maxBackoff := min(a.config.Interval, 30*time.Second)
 	for {
 		select {
@@ -156,6 +164,16 @@ func (a *Agent) Run(ctx context.Context) error {
 			continue
 		}
 		backoff = time.Second
+		if a.config.NetworkConfigFile != "" {
+			state, err := a.Enroll(ctx)
+			if err != nil {
+				state = err.Error()
+			}
+			if state != enrollment {
+				enrollment = state
+				fmt.Fprintln(os.Stderr, "network enrollment:", state)
+			}
+		}
 		timer := time.NewTimer(a.config.Interval)
 		select {
 		case <-ctx.Done():

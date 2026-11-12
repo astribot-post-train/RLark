@@ -101,6 +101,10 @@ func run(ctx context.Context, kubeConfig configs.KubernetesClientConfig, address
 	if err != nil {
 		return errors.New("configure Station observation rate limiter")
 	}
+	enrollmentLimiter, err := stationidentity.NewTokenBucketObservationLimiter(1, 5, 10000, 10*time.Minute)
+	if err != nil {
+		return errors.New("configure network enrollment rate limiter")
+	}
 	api := &stationidentity.API{
 		Registry:           registry,
 		Challenges:         challenges,
@@ -108,6 +112,10 @@ func run(ctx context.Context, kubeConfig configs.KubernetesClientConfig, address
 		Observations: &stationidentity.KubernetesObservationSink{
 			Client: management, Namespaces: stationidentity.KubernetesClusterNamespaceResolver{Client: management},
 		},
+		Enrollments: &stationidentity.KubernetesNetworkEnroller{
+			Client: management, Namespaces: stationidentity.KubernetesClusterNamespaceResolver{Client: management},
+		},
+		EnrollmentLimiter: enrollmentLimiter,
 		Ready: func(readyCtx context.Context) error {
 			if err := db.PingContext(readyCtx); err != nil {
 				return err

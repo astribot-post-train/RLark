@@ -70,6 +70,8 @@ type API struct {
 	TTL                time.Duration
 	Now                func() time.Time
 	NetworkSummary     *NodeNetworkSummaryReader
+	Enrollments        NetworkEnroller
+	EnrollmentLimiter  ObservationLimiter
 	GatewayCredential  func() ([]byte, error)
 }
 
@@ -123,6 +125,8 @@ func (a *API) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case r.URL.Path == "/v1/observations":
 		a.observe(w, r, token)
+	case r.URL.Path == "/v1/network/enrollments":
+		a.enroll(w, r, token)
 	case r.URL.Path == "/v1/challenges":
 		a.issue(w, r, token)
 	case strings.HasPrefix(r.URL.Path, "/v1/sensitive/"):
