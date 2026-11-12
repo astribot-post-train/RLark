@@ -64,7 +64,7 @@ func newNetworkTest(t *testing.T, objects ...client.Object) (*NetworkReconciler,
 		t.Fatal(err)
 	}
 	c := fake.NewClientBuilder().WithScheme(scheme).
-		WithStatusSubresource(&stationv1alpha1.SiteNetwork{}, &stationv1alpha1.NetworkEnrollment{}, &stationv1alpha1.Station{}).
+		WithStatusSubresource(&stationv1alpha1.SiteNetwork{}, &stationv1alpha1.NetworkEnrollment{}, &stationv1alpha1.Station{}, &stationv1alpha1.NodeAdmission{}).
 		WithObjects(objects...).Build()
 	reconciler, err := NewNetworkReconciler(c, c, testNetworkKey, func() time.Time { return time.Unix(1_800_000_000, 0) })
 	if err != nil {
@@ -334,5 +334,89 @@ func TestNetworkAdmitsDeclaredKeyBeforeEnrollment(t *testing.T) {
 	var updated stationv1alpha1.SiteNetwork
 	if err := c.Get(context.Background(), testNetworkKey, &updated); err != nil || updated.Status.Members != 2 {
 		t.Fatalf("members %d, %v", updated.Status.Members, err)
+	}
+}
+
+// A machine admitted by a one-time code gets its address before it has
+// redeemed the code, its tunnel once it has, and keeps both when the node
+// enrolls under its own identity. A machine that replaces a node of the same
+// name pushes the old machine's key out the moment it redeems.
+func TestNetworkAdmitsAMachineByCode(t *testing.T) {
+	keyHub, keyOld, keyNew := strings.Repeat("A", 43)+"=", strings.Repeat("B", 43)+"=", strings.Repeat("C", 43)+"="
+	objects := append(testMember("dev", "cailiang", keyHub, "10.11.14.128"), testMember("dev", "robot", keyOld, "192.168.0.10")...)
+	admission := &stationv1alpha1.NodeAdmission{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "ns-dev", Name: "robot", Generation: 1},
+		Spec: stationv1alpha1.NodeAdmissionSpec{ClusterID: "dev", CodeHash: strings.Repeat("0", 64), APIServer: "10.11.14.128:16443",
+			ExpiresAt: metav1.NewTime(time.Unix(1_800_000_600, 0)), ListenPort: 51831,
+			Uplink: &stationv1alpha1.SiteNetworkUplink{Gateway: "192.168.0.11", Source: "192.168.31.250", Interface: "enp2s0"}},
+	}
+	r, c := newNetworkTest(t, append(objects, testSiteNetwork(), admission)...)
+	admissionStatus := func() stationv1alpha1.NodeAdmissionStatus {
+		t.Helper()
+		reconcileNetwork(t, r)
+		var got stationv1alpha1.NodeAdmission
+		if err := c.Get(context.Background(), types.NamespacedName{Namespace: "ns-dev", Name: "robot"}, &got); err != nil {
+			t.Fatal(err)
+		}
+		return got.Status
+	}
+	hubPeers := func() map[string]bool {
+		keys := map[string]bool{}
+		for _, peer := range configOf(t, enrollmentStatus(t, c, "dev", "cailiang")).Peers {
+			keys[peer.PublicKey] = true
+		}
+		return keys
+	}
+
+	pending := admissionStatus()
+	old := enrollmentStatus(t, c, "dev", "robot")
+	if pending.Phase != stationv1alpha1.NodeAdmissionPending || pending.Address != old.TunnelAddress || pending.Config != "" ||
+		old.Phase != stationv1alpha1.NetworkEnrollmentEnrolled || !hubPeers()[keyOld] {
+		t.Fatalf("an unredeemed admission must leave the old machine in place and take over its address: %+v, old %+v", pending, old)
+	}
+
+	var stored stationv1alpha1.NodeAdmission
+	if err := c.Get(context.Background(), types.NamespacedName{Namespace: "ns-dev", Name: "robot"}, &stored); err != nil {
+		t.Fatal(err)
+	}
+	stored.Spec.PublicKey = keyNew
+	if err := c.Update(context.Background(), &stored); err != nil {
+		t.Fatal(err)
+	}
+	redeemed := admissionStatus()
+	var config network.NodeConfig
+	if err := json.Unmarshal([]byte(redeemed.Config), &config); err != nil {
+		t.Fatalf("a redeemed admission must carry a configuration: %+v: %v", redeemed, err)
+	}
+	if redeemed.Phase != stationv1alpha1.NodeAdmissionRedeemed || redeemed.Address != pending.Address || config.Address != pending.Address+"/32" ||
+		config.ListenPort != 51831 || len(config.UplinkRoutes) == 0 || len(config.Peers) != 1 || config.Peers[0].PublicKey != keyHub {
+		t.Fatalf("redeemed admission: %+v config %+v", redeemed, config)
+	}
+	if peers := hubPeers(); !peers[keyNew] || peers[keyOld] || enrollmentStatus(t, c, "dev", "robot").Phase != stationv1alpha1.NetworkEnrollmentRejected {
+		t.Fatalf("the hub must know the admitted machine and drop the replaced one: %v", peers)
+	}
+
+	// The node joins: its Station is rebound to the new Node and it enrolls with the same key.
+	var station stationv1alpha1.Station
+	if err := c.Get(context.Background(), types.NamespacedName{Namespace: "ns-dev", Name: "stn-robot"}, &station); err != nil {
+		t.Fatal(err)
+	}
+	station.Spec.Binding.NodeUID, station.Spec.Binding.Version = "node-robot-new", 2
+	if err := c.Update(context.Background(), &station); err != nil {
+		t.Fatal(err)
+	}
+	var enrollment stationv1alpha1.NetworkEnrollment
+	if err := c.Get(context.Background(), types.NamespacedName{Namespace: "ns-dev", Name: "robot"}, &enrollment); err != nil {
+		t.Fatal(err)
+	}
+	enrollment.Spec.NodeUID, enrollment.Spec.BindingVersion, enrollment.Spec.PublicKey = "node-robot-new", 2, keyNew
+	if err := c.Update(context.Background(), &enrollment); err != nil {
+		t.Fatal(err)
+	}
+	joined := admissionStatus()
+	own := enrollmentStatus(t, c, "dev", "robot")
+	if joined.Phase != stationv1alpha1.NodeAdmissionJoined || joined.Config != "" || own.Phase != stationv1alpha1.NetworkEnrollmentEnrolled ||
+		own.TunnelAddress != pending.Address || configOf(t, own).ListenPort != 51831 || !hubPeers()[keyNew] {
+		t.Fatalf("joined: admission %+v enrollment %+v", joined, own)
 	}
 }

@@ -21,6 +21,7 @@ func AddToScheme(scheme *runtime.Scheme) error {
 		&StationAuditEvent{}, &StationAuditEventList{},
 		&SiteNetwork{}, &SiteNetworkList{},
 		&NetworkEnrollment{}, &NetworkEnrollmentList{},
+		&NodeAdmission{}, &NodeAdmissionList{},
 	)
 	metav1.AddToGroupVersion(scheme, GroupVersion)
 	return nil

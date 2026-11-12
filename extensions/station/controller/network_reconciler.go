@@ -57,6 +57,7 @@ func (r *NetworkReconciler) SetupWithManager(mgr manager.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).Named("site-network").
 		For(&stationv1alpha1.SiteNetwork{}).
 		Watches(&stationv1alpha1.NetworkEnrollment{}, whole).
+		Watches(&stationv1alpha1.NodeAdmission{}, whole).
 		Watches(&stationv1alpha1.Station{}, whole, builder.WithPredicates(predicate.Funcs{
 			// Heartbeats touch every Station's status; only a binding,
 			// retirement or phase change alters the network.
@@ -97,6 +98,14 @@ func (r *NetworkReconciler) reconcile(ctx context.Context) (reconcile.Result, er
 	if err := r.reader.List(ctx, &stations); err != nil {
 		return reconcile.Result{}, fmt.Errorf("list Stations: %w", err)
 	}
+	var admissionList stationv1alpha1.NodeAdmissionList
+	if err := r.reader.List(ctx, &admissionList); err != nil {
+		return reconcile.Result{}, fmt.Errorf("list NodeAdmissions: %w", err)
+	}
+	sort.Slice(admissionList.Items, func(i, j int) bool {
+		a, b := &admissionList.Items[i], &admissionList.Items[j]
+		return a.Spec.ClusterID+"/"+a.Name < b.Spec.ClusterID+"/"+b.Name
+	})
 	sort.Slice(enrollments.Items, func(i, j int) bool {
 		a, b := &enrollments.Items[i], &enrollments.Items[j]
 		return a.Spec.ClusterID+"/"+a.Name < b.Spec.ClusterID+"/"+b.Name
@@ -136,6 +145,54 @@ func (r *NetworkReconciler) reconcile(ctx context.Context) (reconcile.Result, er
 		}
 	}
 
+	// An admission is the declaration of a node that joins by a one-time
+	// code. Its address is durable in its own status before anything uses it.
+	admissions := map[string]*stationv1alpha1.NodeAdmission{}
+	for i := range admissionList.Items {
+		if admission := &admissionList.Items[i]; admission.Spec.Address != "" {
+			taken = append(taken, admission.Spec.Address)
+		} else if admission.Status.Address != "" {
+			taken = append(taken, admission.Status.Address)
+		}
+	}
+	for i := range admissionList.Items {
+		admission := &admissionList.Items[i]
+		id := admission.Spec.ClusterID + "/" + admission.Name
+		if _, ok := declared[id]; ok || spec.Mode == stationv1alpha1.SiteNetworkModeRouted {
+			continue
+		}
+		address := admission.Spec.Address
+		if address == "" {
+			address = admission.Status.Address
+		}
+		// A machine that replaces a node keeps the node's address.
+		for _, allocation := range allocated {
+			if address == "" && allocation.ClusterID == admission.Spec.ClusterID && allocation.NodeName == admission.Name {
+				address = allocation.Address
+			}
+		}
+		if address == "" {
+			free, err := network.Allocate(spec.Pool, taken)
+			if err != nil {
+				continue
+			}
+			address = free
+			taken = append(taken, free)
+		}
+		if admission.Status.Address != address {
+			admission.Status.Address = address
+			if err := r.client.Status().Update(ctx, admission); err != nil {
+				return reconcile.Result{}, fmt.Errorf("record the address of NodeAdmission %s/%s: %w", admission.Namespace, admission.Name, err)
+			}
+		}
+		admissions[id] = admission
+		declared[id] = stationv1alpha1.SiteNetworkNode{
+			ClusterID: admission.Spec.ClusterID, NodeName: admission.Name, Role: string(network.RoleLeaf),
+			Address: address, ListenPort: admission.Spec.ListenPort, Uplink: admission.Spec.Uplink,
+		}
+	}
+
+	admitted := map[string]stationv1alpha1.NodeAdmissionStatus{}
 	answers := make(map[string]*stationv1alpha1.NetworkEnrollmentStatus, len(enrollments.Items))
 	enrolled, declaredOnly := map[string]bool{}, map[string]bool{}
 	var members []network.Member
@@ -153,6 +210,13 @@ func (r *NetworkReconciler) reconcile(ctx context.Context) (reconcile.Result, er
 		answer.Site = siteOfCluster[enrollment.Spec.ClusterID]
 		if answer.Site == "" {
 			answer.Reason = "cluster " + enrollment.Spec.ClusterID + " is not in any site of the SiteNetwork"
+			continue
+		}
+		// A redeemed admission names the machine that now holds this node
+		// name; an enrollment with another key is the machine it replaced.
+		if admission := admissions[id]; admission != nil && admission.Status.Phase != stationv1alpha1.NodeAdmissionJoined &&
+			admission.Spec.PublicKey != "" && admission.Spec.PublicKey != enrollment.Spec.PublicKey {
+			answer.Reason = "superseded by the machine admitted under this node name"
 			continue
 		}
 		node := declared[id]
@@ -236,6 +300,23 @@ func (r *NetworkReconciler) reconcile(ctx context.Context) (reconcile.Result, er
 		members = append(members, member)
 	}
 
+	// A redeemed admission takes part the same way until the node has enrolled
+	// under its own identity; the admission then only declares the node.
+	for id, admission := range admissions {
+		site := siteOfCluster[admission.Spec.ClusterID]
+		if admission.Spec.PublicKey == "" || enrolled[id] || site == "" {
+			continue
+		}
+		node := declared[id]
+		declaredOnly[id] = true
+		member := network.Member{ID: id, Site: site, Role: network.RoleLeaf, PublicKey: admission.Spec.PublicKey, Address: node.Address, ListenPort: int(node.ListenPort)}
+		if node.Uplink != nil {
+			member.Uplink = &network.Uplink{Gateway: node.Uplink.Gateway, Source: node.Uplink.Source, Interface: node.Uplink.Interface}
+		}
+		members = append(members, member)
+	}
+	sort.Slice(members, func(i, j int) bool { return members[i].ID < members[j].ID })
+
 	// Addresses are durable before any node is told to use one.
 	status := *siteNetwork.Status.DeepCopy()
 	status.Allocations = status.Allocations[:0]
@@ -271,6 +352,14 @@ func (r *NetworkReconciler) reconcile(ctx context.Context) (reconcile.Result, er
 				// configurations and has no enrollment to answer.
 				if ok {
 					status.Members++
+				}
+				if admission := admissions[member.ID]; admission != nil && ok {
+					data, marshalErr := json.Marshal(config)
+					if marshalErr != nil {
+						return reconcile.Result{}, marshalErr
+					}
+					digest := sha256.Sum256(data)
+					admitted[member.ID] = stationv1alpha1.NodeAdmissionStatus{Config: string(data), ConfigHash: hex.EncodeToString(digest[:]), PublicKey: member.PublicKey}
 				}
 				continue
 			}
@@ -315,6 +404,30 @@ func (r *NetworkReconciler) reconcile(ctx context.Context) (reconcile.Result, er
 		enrollment.Status = *answer
 		if err := r.client.Status().Update(ctx, enrollment); err != nil {
 			return reconcile.Result{}, fmt.Errorf("answer NetworkEnrollment %s/%s: %w", enrollment.Namespace, enrollment.Name, err)
+		}
+	}
+
+	for id, admission := range admissions {
+		answer := admitted[id]
+		answer.ObservedGeneration, answer.Address = admission.Generation, admission.Status.Address
+		switch {
+		case enrolled[id] && admission.Spec.PublicKey != "" || admission.Status.Phase == stationv1alpha1.NodeAdmissionJoined:
+			answer = stationv1alpha1.NodeAdmissionStatus{ObservedGeneration: admission.Generation, Address: admission.Status.Address, Phase: stationv1alpha1.NodeAdmissionJoined}
+		case answer.Config != "":
+			answer.Phase = stationv1alpha1.NodeAdmissionRedeemed
+		case admission.Spec.PublicKey != "":
+			answer.Phase, answer.Reason = stationv1alpha1.NodeAdmissionRedeemed, "the node is not configurable in the current SiteNetwork"
+		case !r.now().Before(admission.Spec.ExpiresAt.Time):
+			answer.Phase = stationv1alpha1.NodeAdmissionExpired
+		default:
+			answer.Phase = stationv1alpha1.NodeAdmissionPending
+		}
+		if reflect.DeepEqual(answer, admission.Status) {
+			continue
+		}
+		admission.Status = answer
+		if err := r.client.Status().Update(ctx, admission); err != nil {
+			return reconcile.Result{}, fmt.Errorf("answer NodeAdmission %s/%s: %w", admission.Namespace, admission.Name, err)
 		}
 	}
 
