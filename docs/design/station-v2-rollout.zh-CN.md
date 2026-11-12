@@ -2,6 +2,44 @@
 
 设计见 [station-v2.zh-CN.md](station-v2.zh-CN.md)。本文只写做什么、怎么验、怎么退。
 
+## 0. 上线记录（2026-11-12 16:27–17:17）
+
+**已上线**：五个在线节点（`cailiang`、`alexfu`、`wendychen`、`10-0-2-57`、`10-0-2-196`）第 1–5 步全部完成，网关用的是算出来的配置。机器人 `s1u-01-x86` 做完第 2 步（已登记），17:04 起整机断电，第 3–5 步等它开机后补（三条命令见本节末）。
+
+**从现在起不再手改 `station-wireguard-config`。** 对端表 = `SiteNetwork default`（管理面 `station-system`）+ 各节点自己的登记，由 station-controller 算出来；改拓扑只改 `SiteNetwork.spec`。ConfigMap 只剩兜底：节点登记不到时网关退回它。加机器人见"之后：加一台机器人"。
+
+| 步 | 时间 | Pod 重建 | 结果 |
+|---|---|---|---|
+| 1 管理面 | 16:27–16:31 | station-controller、station-api | 第一次换 controller 镜像崩溃循环（hostNetwork + 固定探针端口 + RollingUpdate 抢端口），回退，改 `Recreate` 后通过 |
+| 2 本地 | 16:33 | 三个节点 | 登记 `.1/.5/.6`，网关仍读 ConfigMap |
+| 2 机器人 | 17:03:25 | 一个 | 16:51 第一次失败并回退：DaemonSet 是 `imagePullPolicy: Never`，新镜像不在机器人的 containerd 里；预拉后重做通过 |
+| 2 云端 | 17:05:12、17:05:14 | 两个 | 同样先预拉（两个一次性 Pod，`IfNotPresent`），再做 |
+| 对比 | 17:07 | — | 五个节点算出来的配置相对手写的：+8、+4、+4、+2、0，**删除 0** |
+| 3 本地、云端 | 17:09:13–17:10:46 | 五个 | 启动 10 s 后 `using the computed configuration`；新增的路由（管理机到 `10.0.2.57`、`10.0.2.196`）通 |
+| 4 本地、云端 | 17:12 | 五个 | 管理机 `st-wg0` 路由前后一致 |
+| 5 station-api、本地 | 17:15:26、17:16:10 | station-api、三个节点 | 监听 `*:18443`；本地集群的 agent 改走内网地址，登记来源变成各自的内网地址 |
+
+每一步之后：在线节点全部 Bound、心跳连续，管理机到各隧道地址和 3090 到各隧道地址 ping 0 丢包（重建后头 2–3 s 偶有 1–2 个丢包），HG 集群云端两个 Ray 节点一直 alive。备份都在开发机 `/var/backups/station-v2-20261112-162720/`（第 5 步在其下 `step5/`，只有 root 可读）。
+
+现场和演练不一样、文档原来写错的地方：
+
+- **镜像要先到节点上**。机器人和云端的 DaemonSet 都是 `imagePullPolicy: Never`，节点上的镜像是事先按摘要拉好的。机器人：`ctr -a /run/containerd-robot/containerd.sock -n k8s.io images pull --hosts-dir /etc/containerd-robot/certs.d 10.254.240.1:5443/rlark/<镜像>@<摘要>`（集群用的是第二个 containerd，配置在 `/etc/containerd-robot/`）。云端两个节点没有 ssh：在 `station-system` 里给每个节点起一个一次性 Pod（两个容器用这两个镜像、`IfNotPresent`），事件里看到 `Pulled` 后删掉。
+- **回退用 `rollout undo`**，不是 `replace -f 备份.yaml`（备份带 `resourceVersion`，会冲突）。
+- **station-api 的证书没有单独的 CA**：原来那张是自签的、带 `CA:TRUE`，各集群的 `station-api-ca` 信任的就是它。第 5 步用它当 CA 签了一张服务证书（`CN=station-api`，SAN `10.254.240.1`、`10.11.14.128`，10 年），放进 `station-api-tls`；原证书和私钥另存为 Secret `station-system/station-api-ca-signer`，以后续签用。各集群的 `station-api-ca` 没动。
+- **办公室节点的端点先写死在声明里**：第 2 步时节点经隧道连 station-api，登记来源是隧道地址，不能当端点。第 5 步后本地集群经内网登记，来源已是内网地址；"端点留空、跟着登记来源走"随下一个版本启用（agent 改成上报默认路由的源地址）。
+- **机器人的监听端口改成了 51830**（声明里已写）。机器人 16:39 非正常重启后仍用固定源端口 51820，实验室路由器上旧的 NAT 映射一直被对端的保活包续着，三个对端的回包被吃掉；换端口后 30 s 内全通。下一个版本：NAT 后的叶子节点不用固定源端口，枢纽对"等对方拨入"的对端不发保活。
+
+机器人开机后补做（开发机上，root）：
+
+```bash
+K=/dev/shm/rlark-robot-kubeconfig
+kubectl --kubeconfig $K -n station-system set env ds/station-agent-network -c wireguard \
+  STATION_GATEWAY_COMPUTED_CONFIG=/var/run/station-network/config.json STATION_GATEWAY_PRUNE_ROUTES=true
+kubectl --kubeconfig $K -n station-system patch cm station-agent --type=merge -p '{"data":{"api-url":"https://10.11.14.128:18443"}}'
+kubectl --kubeconfig $K -n station-system rollout restart ds/station-agent-network
+# 验：wireguard 容器日志 using the computed configuration；机器人到 10.254.240.1/.2/.4/.5/.6 通；Station Bound
+```
+
 ## 0. 结论
 
 - 五步。第 1、2 步不改任何节点的隧道行为；第 3 步才让网关读算出来的配置，逐个集群做，每个集群做完都验；第 4 步收尾；第 5 步让以后的新节点零配置入网。
@@ -221,7 +259,19 @@ kubectl --kubeconfig $K -n station-system set env ds/station-agent-network -c wi
 
 退：`api-url` 改回去；`--addr` 改回去。
 
-## 之后：加一台节点
+## 之后：加一台机器人
+
+前提只有两条，都是机器本身的事：它已经是某个成员集群的节点（现在的做法：每台机器人自带一个单节点集群，已注册进 RLark）；它的 containerd 里有 Station 的两个镜像（上面"镜像要先到节点上"）。
+
+1. 这台机器人的集群第一次入网时，在 `SiteNetwork default` 的 `sites` 里把它的集群 ID 加进 `lab` 的 `clusters`（机器人并进同一个集群以后，这一步没有了）；它的集群里 `station-agent` 的 `api-url` 是 `https://10.11.14.128:18443`。
+2. 默认路由出不去、要经 Orin 的机器人，在 `nodes` 里给它写一条 `uplink`（照 `s1u-01-x86` 那条）。默认路由能出去的不用写任何东西。
+3. `kubectl --kubeconfig $K label node $NODE station.rlark.io/network=enabled`。
+
+之后不用做任何事：agent 向 station-api 登记自己的公钥，controller 从地址池分一个地址、算出它和各枢纽的对端表，各枢纽的网关自己把它加进去。演练实测打标签后 16 s 连上第一台枢纽，28 s 连上全部。看结果：`kubectl --kubeconfig $KCP get netenroll -A` 多一行 `Enrolled` 和它的地址，`get stn -A` 里它是 `Bound`。不改任何 ConfigMap，不抄公钥，不动别的节点。
+
+第二台机器人入网时还要做一次（只一次）：把场站入口声明为 `relay: true` 并在那台机器上放行转发（下面"要额外声明的情况"），否则机器人之间不通。
+
+## 之后：加一台其他节点
 
 机器人、办公室或实验室的一台机器（已经是某个成员集群的节点，containerd 能拉 Station 的两个镜像）：
 
