@@ -25,6 +25,14 @@ from=$("$BIN/kubelet" --version | awk '{print $2}')
 keep=/var/backups/rlark-kube-upgrade/$from
 [ "$PHASE" = rollback ] || install -d "$keep"
 export PATH="$BIN:$PATH"
+# A kubelet checks for swap only when it starts. On a node where swap was
+# turned on under a running kubelet that is not configured for it, no kubelet
+# starts again, the old one included: nothing is changed on such a node.
+if [ "$PHASE" != rollback ] && [ "$(wc -l < /proc/swaps)" -gt 1 ] &&
+  ! grep -rqs -E '^failSwapOn: *false' /var/lib/kubelet/config.yaml /etc/kubernetes/kubelet.conf.d &&
+  ! grep -qs -e '--fail-swap-on=false' /var/lib/kubelet/kubeadm-flags.env /etc/default/kubelet /etc/sysconfig/kubelet; then
+  fail "swap is on ($(sed -n 2p /proc/swaps | cut -d' ' -f1)) and this node's kubelet is not configured for it (failSwapOn: false): a restarted kubelet would exit at once. Turn the swap off or declare failSwapOn: false for the node, then upgrade it"
+fi
 
 case $PHASE in
 control)
