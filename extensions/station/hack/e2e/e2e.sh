@@ -105,7 +105,7 @@ services() {
   docker run -d --name e2e-station-api --network kind -v "$D/kcp.kubeconfig:/kubeconfig:ro" -v "$D/pki:/pki:ro" \
     -e STATION_API_DATABASE_DSN="postgres://postgres:e2e@e2e-station-postgres:5432/station?sslmode=verify-full&sslrootcert=/pki/ca.crt" \
     station-v2/station-services:"$TAG" /usr/local/bin/station-api --addr=:18443 --kubeconfig=/kubeconfig \
-    --member-credentials-namespace=station-member-credentials --tls-cert-file=/pki/e2e-station-api.crt --tls-key-file=/pki/e2e-station-api.key >/dev/null
+    --member-credentials-namespace=station-member-credentials --tls-cert-file=/pki/e2e-station-api.crt --tls-key-file=/pki/e2e-station-api.key ${STATION_API_ARGS:-} >/dev/null
 }
 
 # load puts the agent and gateway images of IMAGES_TAG on every node of a cluster.

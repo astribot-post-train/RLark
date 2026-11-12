@@ -15,7 +15,7 @@ import (
 // +kubebuilder:resource:scope=Namespaced,shortName=admit
 // +kubebuilder:printcolumn:name="Phase",type=string,JSONPath=`.status.phase`
 // +kubebuilder:printcolumn:name="Address",type=string,JSONPath=`.status.address`
-// +kubebuilder:printcolumn:name="Expires",type=date,JSONPath=`.spec.expiresAt`
+// +kubebuilder:printcolumn:name="Expires",type=string,JSONPath=`.spec.expiresAt`
 type NodeAdmission struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`

@@ -313,6 +313,8 @@ spec:
       labels:
         app: station-agent-host
     spec:
+      # Pod networking does not cross the NAT such a node sits behind.
+      hostNetwork: true
       serviceAccountName: station-agent
       automountServiceAccountToken: false
       tolerations:
