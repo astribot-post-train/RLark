@@ -155,6 +155,27 @@ for item in $nodes; do
     sleep 2
   done
   job "$node" confirm
+  # A container that ran through the kubelet's replacement may have lost its
+  # devices: a GPU device plugin then offers none, or cannot see them. The
+  # node's device-plugin pods are made anew, and what the node offers checked.
+  plugins='
+import json, sys
+for p in json.load(sys.stdin)["items"]:
+    if any(o["kind"] == "DaemonSet" for o in p["metadata"].get("ownerReferences", [])) and any(v.get("hostPath", {}).get("path", "").rstrip("/") == "/var/lib/kubelet/device-plugins" for v in p["spec"].get("volumes", [])):
+        ready = any(c["type"] == "Ready" and c["status"] == "True" for c in p["status"].get("conditions", []))
+        print(p["metadata"]["namespace"] + "/" + p["metadata"]["name"], ready)'
+  short='
+import json, sys
+s = json.load(sys.stdin)["status"]
+print(" ".join("%s %s/%s" % (r, s["allocatable"].get(r), c) for r, c in s["capacity"].items() if "/" in r and s["allocatable"].get(r) != c))'
+  old=$(k get pods -A --field-selector "spec.nodeName=$node" -o json | python3 -c "$plugins" | cut -d' ' -f1)
+  for pod in $old; do k -n "${pod%/*}" delete pod "${pod#*/}" >/dev/null; done
+  t1=$(date +%s)
+  until now=$(k get pods -A --field-selector "spec.nodeName=$node" -o json | python3 -c "$plugins") && [[ $(echo "$now" | grep -c ' True$') == $(echo "$old" | grep -c .) ]] &&
+    less=$(k get node "$node" -o json | python3 -c "$short") && [[ -z $less ]]; do
+    (( $(date +%s) - t1 < 180 )) || { echo "$node: 180 s after its device plugins were made anew they are not all Ready or the node offers fewer devices than it has: ${less:-}" >&2; exit 1; }
+    sleep 3
+  done
   [[ $cordoned == true ]] || k uncordon "$node" >/dev/null
   k annotate node "$node" rlark.io/unschedulable-before-upgrade- >/dev/null
   stamp "$node: kubelet $VERSION and Ready in $(( $(date +%s) - t0 )) s"
