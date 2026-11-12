@@ -100,15 +100,16 @@ index 33498c0f..47fe1ed8 100644
  	if err != nil {
 diff --git a/vendor/github.com/rclone/rclone/backend/s3/ks3_crc64.go b/vendor/github.com/rclone/rclone/backend/s3/ks3_crc64.go
 new file mode 100644
-index 00000000..43a60780
+index 00000000..c07d74cb
 --- /dev/null
 +++ b/vendor/github.com/rclone/rclone/backend/s3/ks3_crc64.go
-@@ -0,0 +1,146 @@
+@@ -0,0 +1,153 @@
 +package s3
 +
 +import (
 +	"bytes"
 +	"context"
++	"errors"
 +	"fmt"
 +	"hash"
 +	"hash/crc64"
@@ -120,6 +121,7 @@ index 00000000..43a60780
 +	"time"
 +
 +	"github.com/aws/aws-sdk-go-v2/service/s3"
++	smithy "github.com/aws/smithy-go"
 +	"github.com/aws/smithy-go/middleware"
 +	smithyhttp "github.com/aws/smithy-go/transport/http"
 +	"github.com/rclone/rclone/fs"
@@ -250,6 +252,11 @@ index 00000000..43a60780
 +	}
 +	return *stringClone(deref(resp.ETag)), time.Now(), stringClonePointer(resp.VersionId), nil
 +}
++
++func ks3AlreadyExists(err error) bool {
++	var apiErr smithy.APIError
++	return errors.As(err, &apiErr) && apiErr.ErrorCode() == "ObjectAlreadyExists"
++}
 diff --git a/vendor/github.com/rclone/rclone/backend/s3/ks3_crc64_test.go b/vendor/github.com/rclone/rclone/backend/s3/ks3_crc64_test.go
 new file mode 100644
 index 00000000..e530d90a
@@ -324,10 +331,10 @@ index 00000000..e530d90a
 +}
 diff --git a/vendor/github.com/rclone/rclone/backend/s3/ks3_retry_test.go b/vendor/github.com/rclone/rclone/backend/s3/ks3_retry_test.go
 new file mode 100644
-index 00000000..927bf3e6
+index 00000000..6814aeea
 --- /dev/null
 +++ b/vendor/github.com/rclone/rclone/backend/s3/ks3_retry_test.go
-@@ -0,0 +1,55 @@
+@@ -0,0 +1,89 @@
 +package s3
 +
 +import (
@@ -339,6 +346,7 @@ index 00000000..927bf3e6
 +	"testing"
 +	"time"
 +
++	"github.com/aws/aws-sdk-go-v2/service/s3"
 +	"github.com/rclone/rclone/fs"
 +	"github.com/rclone/rclone/fs/config/configmap"
 +	"github.com/rclone/rclone/fs/object"
@@ -383,8 +391,41 @@ index 00000000..927bf3e6
 +	require.NoError(t, err)
 +	require.Equal(t, int32(4), puts.Load())
 +}
++
++// KS3 refuses CopyObject onto an existing key; a rename over a file must still replace it.
++func TestKS3CopyOntoExistingObject(t *testing.T) {
++	var calls []string
++	exists := true
++	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		calls = append(calls, r.Method)
++		switch {
++		case r.Method == http.MethodHead:
++			w.WriteHeader(http.StatusNotFound)
++		case r.Method == http.MethodDelete:
++			exists = false
++			w.WriteHeader(http.StatusNoContent)
++		case r.Method == http.MethodPut && exists:
++			w.Header().Set("Content-Type", "application/xml")
++			w.WriteHeader(http.StatusBadRequest)
++			_, _ = w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?><Error><Code>ObjectAlreadyExists</Code><Message>target object already exists</Message></Error>`))
++		default:
++			_, _ = w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?><CopyObjectResult><ETag>"0123456789abcdef0123456789abcdef"</ETag></CopyObjectResult>`))
++		}
++	}))
++	defer srv.Close()
++	ctx := context.Background()
++	info, _ := fs.Find("s3")
++	f, err := NewFs(ctx, "ks3copy", "bucket/dir", fs.ConfigMap(info.Prefix, info.Options, "ks3copy", configmap.Simple{"provider": "Other", "endpoint": srv.URL, "access_key_id": "a", "secret_access_key": "b", "region": "cn", "no_check_bucket": "true", "force_path_style": "true"}))
++	require.NoError(t, err)
++	s3fs := f.(*Fs)
++	s3fs.opt.Endpoint = "https://ks3-cn-test.ksyuncs.com"
++	calls = nil
++	bucket, key, source := "bucket", "dir/x", "bucket/dir/x.partial"
++	require.NoError(t, s3fs.copy(ctx, &s3.CopyObjectInput{Bucket: &bucket, Key: &key, CopySource: &source}, bucket, key, bucket, "dir/x.partial", &Object{fs: s3fs, bytes: 5}))
++	require.Equal(t, []string{"PUT", "DELETE", "PUT"}, calls)
++}
 diff --git a/vendor/github.com/rclone/rclone/backend/s3/s3.go b/vendor/github.com/rclone/rclone/backend/s3/s3.go
-index 71967f12..0f65eaa2 100644
+index 71967f12..c2d79c72 100644
 --- a/vendor/github.com/rclone/rclone/backend/s3/s3.go
 +++ b/vendor/github.com/rclone/rclone/backend/s3/s3.go
 @@ -3956,6 +3956,11 @@ func NewFs(ctx context.Context, name, root string, m configmap.Mapper) (fs.Fs, e
@@ -399,7 +440,21 @@ index 71967f12..0f65eaa2 100644
  	if opt.ServerSideEncryption == "aws:kms" || opt.SSECustomerAlgorithm != "" {
  		// From: https://docs.aws.amazon.com/AmazonS3/latest/API/RESTCommonResponseHeaders.html
  		//
-@@ -5249,6 +5254,9 @@ func (f *Fs) Copy(ctx context.Context, src fs.Object, remote string) (fs.Object,
+@@ -5070,6 +5075,13 @@ func (f *Fs) copy(ctx context.Context, req *s3.CopyObjectInput, dstBucket, dstPa
+ 	}
+ 	return f.pacer.Call(func() (bool, error) {
+ 		_, err := f.c.CopyObject(ctx, req)
++		if f.isKS3() && ks3AlreadyExists(err) {
++			// KS3 does not copy onto an existing key, which is what renaming
++			// over a file is: remove the target and copy again.
++			if _, err = f.c.DeleteObject(ctx, &s3.DeleteObjectInput{Bucket: req.Bucket, Key: req.Key}); err == nil {
++				_, err = f.c.CopyObject(ctx, req)
++			}
++		}
+ 		return f.shouldRetry(ctx, err)
+ 	})
+ }
+@@ -5249,6 +5261,9 @@ func (f *Fs) Copy(ctx context.Context, src fs.Object, remote string) (fs.Object,
  
  // Hashes returns the supported hash sets.
  func (f *Fs) Hashes() hash.Set {
@@ -409,7 +464,7 @@ index 71967f12..0f65eaa2 100644
  	return hash.Set(hash.MD5)
  }
  
-@@ -5942,7 +5950,7 @@ var matchMd5 = regexp.MustCompile(`^[0-9a-f]{32}$`)
+@@ -5942,7 +5957,7 @@ var matchMd5 = regexp.MustCompile(`^[0-9a-f]{32}$`)
  
  // Set the MD5 from the etag
  func (o *Object) setMD5FromEtag(etag string) {
@@ -418,7 +473,7 @@ index 71967f12..0f65eaa2 100644
  		o.md5 = ""
  		return
  	}
-@@ -5961,6 +5969,9 @@ func (o *Object) setMD5FromEtag(etag string) {
+@@ -5961,6 +5976,9 @@ func (o *Object) setMD5FromEtag(etag string) {
  
  // Hash returns the Md5sum of an object returning a lowercase hex string
  func (o *Object) Hash(ctx context.Context, t hash.Type) (string, error) {
@@ -428,7 +483,7 @@ index 71967f12..0f65eaa2 100644
  	if t != hash.MD5 {
  		return "", hash.ErrUnsupported
  	}
-@@ -6008,7 +6019,11 @@ func (f *Fs) headObject(ctx context.Context, req *s3.HeadObjectInput) (resp *s3.
+@@ -6008,7 +6026,11 @@ func (f *Fs) headObject(ctx context.Context, req *s3.HeadObjectInput) (resp *s3.
  	}
  	err = f.pacer.Call(func() (bool, error) {
  		var err error
@@ -441,7 +496,7 @@ index 71967f12..0f65eaa2 100644
  		return f.shouldRetry(ctx, err)
  	})
  	if err != nil {
-@@ -6301,6 +6316,10 @@ func (o *Object) Open(ctx context.Context, options ...fs.OpenOption) (in io.Read
+@@ -6301,6 +6323,10 @@ func (o *Object) Open(ctx context.Context, options ...fs.OpenOption) (in io.Read
  	fs.FixRangeOption(options, o.bytes)
  
  	var APIOptions []func(*middleware.Stack) error
@@ -452,7 +507,7 @@ index 71967f12..0f65eaa2 100644
  
  	// Set the SDK to always download compressed files as-is
  	APIOptions = append(APIOptions, o.fs.acceptEncoding()...)
-@@ -6368,6 +6387,10 @@ func (o *Object) Open(ctx context.Context, options ...fs.OpenOption) (in io.Read
+@@ -6368,6 +6394,10 @@ func (o *Object) Open(ctx context.Context, options ...fs.OpenOption) (in io.Read
  		})
  	}
  
@@ -463,7 +518,7 @@ index 71967f12..0f65eaa2 100644
  	return resp.Body, nil
  }
  
-@@ -6653,6 +6676,9 @@ func (o *Object) uploadMultipart(ctx context.Context, src fs.ObjectInfo, in io.R
+@@ -6653,6 +6683,9 @@ func (o *Object) uploadMultipart(ctx context.Context, src fs.ObjectInfo, in io.R
  
  // Upload a single part using PutObject
  func (o *Object) uploadSinglepartPutObject(ctx context.Context, req *s3.PutObjectInput, size int64, in io.Reader) (etag string, lastModified time.Time, versionID *string, err error) {
@@ -473,7 +528,7 @@ index 71967f12..0f65eaa2 100644
  	req.Body = io.NopCloser(in)
  	var options = []func(*s3.Options){}
  	if o.fs.opt.UseUnsignedPayload.Value {
-@@ -6918,6 +6944,13 @@ func (o *Object) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, op
+@@ -6918,6 +6951,13 @@ func (o *Object) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, op
  		return errNotWithVersionAt
  	}
  	size := src.Size()
@@ -487,7 +542,7 @@ index 71967f12..0f65eaa2 100644
  	multipart := size < 0 || size >= int64(o.fs.opt.UploadCutoff)
  
  	var wantETag string        // Multipart upload Etag to check
-@@ -6954,7 +6987,7 @@ func (o *Object) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, op
+@@ -6954,7 +6994,7 @@ func (o *Object) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, op
  	// so make up the object as best we can assuming it got
  	// uploaded properly. If size < 0 then we need to do the HEAD.
  	var head *s3.HeadObjectOutput
@@ -496,7 +551,7 @@ index 71967f12..0f65eaa2 100644
  		head = new(s3.HeadObjectOutput)
  		//structs.SetFrom(head, &req)
  		setFrom_s3HeadObjectOutput_s3PutObjectInput(head, ui.req)
-@@ -6977,10 +7010,15 @@ func (o *Object) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, op
+@@ -6977,10 +7017,15 @@ func (o *Object) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, op
  			return err
  		}
  	}
