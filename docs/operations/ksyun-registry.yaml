@@ -1,0 +1,102 @@
+# Writable KS3-backed registry on the Kingsoft cloud node 10-0-2-57 (2026-11-12).
+# See private-registry.md / private-registry.zh-CN.md, "Current registry topology".
+#
+# Secrets are created out of band and are not stored here:
+#   rlark-registry-cloud-tls     kubernetes.io/tls; cert signed by the rlark-registry-local CA,
+#                                SAN IP:10.0.2.57, IP:10.254.240.2 (ksyun-registry-cert.sh)
+#   rlark-registry-cloud-config  config.yml (the ConfigMap content below plus http.secret)
+#                                and htpasswd (the existing rlark account)
+#   rlark-registry-mirror-s3     accesskey / secretkey for KS3 (shared with the read-only mirror)
+#
+# Example:
+#   kubectl -n rlark-registry create secret tls rlark-registry-cloud-tls --cert=server.crt --key=server.key
+#   kubectl -n rlark-registry create secret generic rlark-registry-cloud-config \
+#     --from-file=config.yml=config.yml --from-file=htpasswd=htpasswd
+---
+# Reference content for config.yml inside Secret rlark-registry-cloud-config.
+# Add `http.secret: <random 32-byte hex>` before creating the Secret.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: rlark-registry-cloud-config-reference
+  namespace: rlark-registry
+data:
+  config.yml: |
+    version: 0.1
+    log:
+      level: info
+      accesslog:
+        disabled: true
+    storage:
+      s3:
+        region: cn-ningxia
+        regionendpoint: https://ks3-cn-ningxia-internal.ksyuncs.com
+        bucket: stardust
+        rootdirectory: /ks3-regular/post_train/rlark/registry
+        secure: true
+        v4auth: true
+        chunksize: 5242880
+      redirect:
+        disable: true
+      delete:
+        enabled: false
+    auth:
+      htpasswd:
+        realm: RLark registry
+        path: /auth/htpasswd
+    http:
+      addr: 10.0.2.57:5443
+      tls:
+        certificate: /tls/tls.crt
+        key: /tls/tls.key
+    health:
+      storagedriver:
+        enabled: true
+        interval: 30s
+        threshold: 3
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rlark-registry-cloud
+  namespace: rlark-registry
+  labels: {app: rlark-registry-cloud}
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector: {matchLabels: {app: rlark-registry-cloud}}
+  template:
+    metadata:
+      labels: {app: rlark-registry-cloud}
+    spec:
+      automountServiceAccountToken: false
+      hostNetwork: true
+      nodeSelector: {kubernetes.io/hostname: 10-0-2-57}
+      tolerations: [{key: node-role.kubernetes.io/control-plane, operator: Exists, effect: NoSchedule}]
+      containers:
+      - name: registry
+        image: 10.254.240.1:5443/rlark/registry@sha256:e681a91fae320795d41e98897eff8f61c01359cfc1dde1ddd716d7d0be22b18e
+        args: ["/etc/distribution/config.yml"]
+        env:
+        - {name: OTEL_TRACES_EXPORTER, value: none}
+        - name: REGISTRY_STORAGE_S3_ACCESSKEY
+          valueFrom: {secretKeyRef: {name: rlark-registry-mirror-s3, key: accesskey}}
+        - name: REGISTRY_STORAGE_S3_SECRETKEY
+          valueFrom: {secretKeyRef: {name: rlark-registry-mirror-s3, key: secretkey}}
+        readinessProbe:
+          httpGet: {host: 10.0.2.57, port: 5443, path: /, scheme: HTTPS}
+          periodSeconds: 10
+        livenessProbe:
+          tcpSocket: {host: 10.0.2.57, port: 5443}
+          initialDelaySeconds: 30
+          periodSeconds: 20
+        resources:
+          requests: {cpu: 100m, memory: 128Mi}
+          limits: {memory: 1Gi}
+        volumeMounts:
+        - {name: config, mountPath: /etc/distribution/config.yml, subPath: config.yml, readOnly: true}
+        - {name: config, mountPath: /auth/htpasswd, subPath: htpasswd, readOnly: true}
+        - {name: tls, mountPath: /tls, readOnly: true}
+      volumes:
+      - {name: config, secret: {secretName: rlark-registry-cloud-config}}
+      - {name: tls, secret: {secretName: rlark-registry-cloud-tls}}
