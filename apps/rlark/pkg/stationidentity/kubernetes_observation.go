@@ -159,10 +159,21 @@ func (s *KubernetesObservationSink) Store(ctx context.Context, evidence Evidence
 			if nestedErr != nil {
 				return fmt.Errorf("read previous observation status: %w", nestedErr)
 			}
-			if found && len(oldStatus) > 0 {
+			hasOldSnapshot := false
+			if found {
+				for _, field := range []string{"systemUUID", "bootTime", "roles", "probes", "wireguard"} {
+					if _, exists := oldStatus[field]; exists {
+						hasOldSnapshot = true
+						break
+					}
+				}
+			}
+			if hasOldSnapshot {
 				clearStatus, marshalErr := json.Marshal(map[string]interface{}{
 					"metadata": map[string]interface{}{"resourceVersion": current.GetResourceVersion()},
-					"status":   map[string]interface{}{"reportedAt": nil, "nodeUID": nil, "systemUUID": nil, "bootTime": nil, "roles": nil, "probes": nil, "wireguard": nil},
+					// nodeUID and reportedAt are required by the CRD schema. Keep
+					// their old values until the fresh snapshot replaces them.
+					"status": map[string]interface{}{"systemUUID": nil, "bootTime": nil, "roles": nil, "probes": nil, "wireguard": nil},
 				})
 				if marshalErr != nil {
 					return marshalErr

@@ -160,6 +160,25 @@ func TestKubernetesObservationSinkTransfersObservationAfterVerifiedStationRebind
 		},
 	}}
 	client := testDynamicClient(previous)
+	client.PrependReactor("patch", stationObservationResource, func(action ktesting.Action) (bool, runtime.Object, error) {
+		patchAction, ok := action.(ktesting.PatchAction)
+		if !ok || patchAction.GetSubresource() != "status" {
+			return false, nil, nil
+		}
+		var body struct {
+			Status map[string]interface{} `json:"status"`
+		}
+		if err := json.Unmarshal(patchAction.GetPatch(), &body); err != nil {
+			return true, nil, err
+		}
+		// Mirror the live CRD's required status.nodeUID and status.reportedAt fields.
+		for _, field := range []string{"nodeUID", "reportedAt"} {
+			if value, present := body.Status[field]; present && value == nil {
+				return true, nil, errors.New("StationObservation required status field cannot be cleared")
+			}
+		}
+		return false, nil, nil
+	})
 	sink := &KubernetesObservationSink{Client: client, Namespaces: observationNamespaceMap{"cluster-a": "agent-a"}}
 	evidence := validEvidence()
 	evidence.ClusterID, evidence.RegisteredClusterID = "cluster-a", "cluster-a"

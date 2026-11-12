@@ -25,7 +25,7 @@
 
 生成的 CRD schema 限制字符串和列表长度、要求 binding version 与 Station sequence 为正数、probe RTT 非负，并限定 phase enum。CEL 规则令 Station 显示名和序号不可变；binding 变化必须且只能递增一个版本；sequence 的 cluster ID 不可变、计数不下降；rebind 请求 spec 创建后不可变。API Server 是 schema 校验权威，客户端不得依赖 UI 校验。
 
-Observation 是最新状态快照，不是历史。API 在写入前须限制请求体大小和速率，并依据新鲜成员集群身份授权。Station 不存在时，只允许普通心跳端点提交已验证 Node 身份，敏感操作不可用；Station 创建后，API 还要求当前 Station UID 和 binding version。Controller 根据当前资源和时间戳计算 `Observed`、`IdentityMatched`、`RLarkLinked`、`NetworkVerified` conditions。Spec 驱动结果才设置 `ObservedGeneration`；外部健康状态不能一概按 generation 不匹配判为陈旧。
+Observation 是最新状态快照，不是历史。API 在写入前须限制请求体大小和速率，并依据新鲜成员集群身份授权。Station 不存在时，只允许普通心跳端点提交已验证 Node 身份，敏感操作不可用；Station 创建后，API 还要求当前 Station UID 和 binding version。经显式验证的 Rebind 将 Node UID 更换后，sink 会先清除旧快照中的可选字段，但保留 schema 必填的 `status.nodeUID` 和 `status.reportedAt`，直到写入新快照；旧心跳仍是陈旧数据，不能作为新 binding 的证明。Controller 根据当前资源和时间戳计算 `Observed`、`IdentityMatched`、`RLarkLinked`、`NetworkVerified` conditions。Spec 驱动结果才设置 `ObservedGeneration`；外部健康状态不能一概按 generation 不匹配判为陈旧。
 
 退役是持久期望状态，退役 Station 不因心跳而重新激活，CEL 阻止撤销退役。API 不提供硬删除端点。生产安装前仍需决定 Rebind 操作及审计事件保留期、Station 删除/finalizer 策略，以及 Node 改名后的 Observation 清理规则。
 
