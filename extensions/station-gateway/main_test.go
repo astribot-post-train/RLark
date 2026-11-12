@@ -37,13 +37,86 @@ func TestUnchangedPeerKeepsLearnedEndpoint(t *testing.T) {
 	endpoint := &net.UDPAddr{IP: net.ParseIP("192.0.2.1"), Port: 1234}
 	current := &wgtypes.Device{PrivateKey: key, ListenPort: 51820, Peers: []wgtypes.Peer{{PublicKey: peerKey.PublicKey(), AllowedIPs: []net.IPNet{*prefix}, Endpoint: endpoint}}}
 	cfg, changed := deviceConfig(d, key, current)
-	if changed || cfg.Peers[0].Endpoint.String() != endpoint.String() {
-		t.Fatal("unchanged peer lost learned endpoint")
+	if changed || len(cfg.Peers) != 0 {
+		t.Fatal("an unchanged peer must not be sent to the kernel, which keeps its learned endpoint")
 	}
 	d.ListenPort = 51821
 	cfg, changed = deviceConfig(d, key, current)
-	if !changed || cfg.Peers[0].Endpoint.String() != endpoint.String() {
-		t.Fatal("changed device did not retain learned endpoint")
+	if !changed || cfg.ListenPort == nil || len(cfg.Peers) != 0 || cfg.PrivateKey != nil || cfg.ReplacePeers {
+		t.Fatal("a changed device must not replace its peers")
+	}
+}
+
+func TestPeerChangesAreIncremental(t *testing.T) {
+	key, _ := wgtypes.GeneratePrivateKey()
+	keep := 25 * time.Second
+	var peers []wgtypes.PeerConfig
+	var current []wgtypes.Peer
+	for i := 0; i < 4; i++ {
+		peerKey, _ := wgtypes.GeneratePrivateKey()
+		_, prefix, _ := net.ParseCIDR(fmt.Sprintf("10.254.240.%d/32", i+2))
+		peers = append(peers, wgtypes.PeerConfig{PublicKey: peerKey.PublicKey(), AllowedIPs: []net.IPNet{*prefix}, PersistentKeepaliveInterval: &keep})
+		current = append(current, wgtypes.Peer{PublicKey: peerKey.PublicKey(), AllowedIPs: []net.IPNet{*prefix}, PersistentKeepaliveInterval: keep})
+	}
+	// The kernel has peers 0..2; the document drops 0, widens 1 and adds 3.
+	_, pool, _ := net.ParseCIDR("10.254.240.0/24")
+	peers[1].AllowedIPs = append(peers[1].AllowedIPs, *pool)
+	d := &desired{config: config{ListenPort: 51820}, peers: peers[1:]}
+	cfg, changed := deviceConfig(d, key, &wgtypes.Device{PrivateKey: key, ListenPort: 51820, Peers: current[:3]})
+	if !changed || cfg.ReplacePeers || cfg.PrivateKey != nil || cfg.ListenPort != nil || len(cfg.Peers) != 3 {
+		t.Fatalf("unexpected device update: %+v", cfg)
+	}
+	if cfg.Peers[0].PublicKey != peers[1].PublicKey || len(cfg.Peers[0].AllowedIPs) != 2 || cfg.Peers[1].PublicKey != peers[3].PublicKey || !cfg.Peers[2].Remove || cfg.Peers[2].PublicKey != peers[0].PublicKey {
+		t.Fatalf("expected one update, one addition and one removal; peer 2 untouched: %+v", cfg.Peers)
+	}
+}
+
+func TestConfigurationSourcesPreferComputedThenLastApplied(t *testing.T) {
+	dir := t.TempDir()
+	document := func(address string) []byte {
+		return []byte(`{"interface":"st-wg0","address":"` + address + `/32","listenPort":51820,"mtu":1380}`)
+	}
+	from := sources{static: filepath.Join(dir, "static.json"), computed: filepath.Join(dir, "computed.json"), lastApplied: filepath.Join(dir, "last-applied.json")}
+	if _, _, _, err := from.read(); err == nil {
+		t.Fatal("no file is not a configuration")
+	}
+	write := func(path string, data []byte) {
+		t.Helper()
+		if err := os.WriteFile(path, data, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(from.static, document("10.254.240.5"))
+	if _, d, origin, err := from.read(); err != nil || origin != "static" || d.Address != "10.254.240.5/32" {
+		t.Fatalf("before enrollment the static file applies: %s %v", origin, err)
+	}
+	write(from.lastApplied, document("10.254.240.6"))
+	if _, _, origin, _ := from.read(); origin != "last-applied" {
+		t.Fatalf("after a restart without Station API: %s", origin)
+	}
+	write(from.computed, document("10.254.240.7"))
+	if _, d, origin, _ := from.read(); origin != "computed" || d.Address != "10.254.240.7/32" {
+		t.Fatalf("enrolled node: %s", origin)
+	}
+	write(from.computed, []byte(`{"interface":"st-wg0","routes":["0.0.0.0/0"]}`))
+	if _, _, origin, _ := from.read(); origin != "last-applied" {
+		t.Fatalf("an invalid computed document must not be applied: %s", origin)
+	}
+	// Without enrollment only the static file is ever read.
+	if _, _, origin, _ := (sources{static: from.static}).read(); origin != "static" {
+		t.Fatalf("static-only deployment: %s", origin)
+	}
+}
+
+func TestPublishIdentityHoldsOnlyThePublicKey(t *testing.T) {
+	key, _ := wgtypes.GeneratePrivateKey()
+	path := filepath.Join(t.TempDir(), "identity.json")
+	if err := publishIdentity(path, key); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(path)
+	if string(data) != `{"publicKey":"`+key.PublicKey().String()+`"}` {
+		t.Fatalf("identity file %s", data)
 	}
 }
 func TestKeyPersists(t *testing.T) {
@@ -117,5 +190,21 @@ func TestUplinkRouteValidation(t *testing.T) {
 		if _, err := parse([]byte(fmt.Sprintf(base, bad))); err == nil {
 			t.Errorf("accepted invalid uplink %s", bad)
 		}
+	}
+}
+
+// testdata/computed-s1u-01-x86.json is written by extensions/station's
+// network package (TestComputedDocumentIsTheGatewayContract).
+func TestParsesComputedDocument(t *testing.T) {
+	data, err := os.ReadFile("testdata/computed-s1u-01-x86.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	d, err := parse(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.Interface != "st-wg0" || len(d.peers) != 4 || len(d.routes) != 6 || len(d.UplinkRoutes) != 3 || d.peers[0].Endpoint.String() != "10.11.14.128:51820" || *d.peers[0].PersistentKeepaliveInterval != 25*time.Second {
+		t.Fatalf("computed document parsed as %+v", d)
 	}
 }

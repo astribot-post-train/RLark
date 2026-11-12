@@ -9,12 +9,10 @@ import (
 
 func TestReadinessTracksReconciliationAndConfig(t *testing.T) {
 	dir := t.TempDir()
-	config, state := filepath.Join(dir, "config"), filepath.Join(dir, "ready")
+	state := filepath.Join(dir, "ready")
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	data := []byte(`{"interface":"wg-site"}`)
-	if err := os.WriteFile(config, data, 0600); err != nil {
-		t.Fatal(err)
-	}
+	config := data
 	if err := checkReady(config, state, now); err == nil {
 		t.Fatal("ready without successful reconciliation")
 	}
@@ -30,9 +28,7 @@ func TestReadinessTracksReconciliationAndConfig(t *testing.T) {
 	if err := checkReady(config, state, now.Add(-time.Second)); err == nil {
 		t.Fatal("accepted future timestamp")
 	}
-	if err := os.WriteFile(config, []byte("changed"), 0600); err != nil {
-		t.Fatal(err)
-	}
+	config = []byte("changed")
 	if err := checkReady(config, state, now); err == nil {
 		t.Fatal("accepted unapplied config")
 	}

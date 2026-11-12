@@ -169,29 +169,29 @@ func keyFile(path string) (wgtypes.Key, error) {
 	return key, f.Close()
 }
 
+// deviceConfig returns only what differs from the kernel device. An unchanged
+// peer is not sent at all, so adding or removing one node never touches the
+// sessions of the others; a peer without a configured endpoint keeps the one
+// the kernel learned.
 func deviceConfig(d *desired, key wgtypes.Key, current *wgtypes.Device) (wgtypes.Config, bool) {
-	port := d.ListenPort
-	cfg := wgtypes.Config{PrivateKey: &key, ListenPort: &port, ReplacePeers: true, Peers: append([]wgtypes.PeerConfig(nil), d.peers...)}
-	changed := current.PrivateKey != key || current.ListenPort != port || len(current.Peers) != len(cfg.Peers)
+	var cfg wgtypes.Config
+	if current.PrivateKey != key {
+		cfg.PrivateKey = &key
+	}
+	if current.ListenPort != d.ListenPort {
+		port := d.ListenPort
+		cfg.ListenPort = &port
+	}
 	existing := make(map[wgtypes.Key]wgtypes.Peer, len(current.Peers))
 	for _, p := range current.Peers {
 		existing[p.PublicKey] = p
 	}
-	for i := range cfg.Peers {
-		want := &cfg.Peers[i]
+	wanted := make(map[wgtypes.Key]bool, len(d.peers))
+	for _, want := range d.peers {
+		wanted[want.PublicKey] = true
 		got, ok := existing[want.PublicKey]
-		if !ok {
-			changed = true
-			continue
-		}
-		if want.Endpoint == nil {
-			want.Endpoint = got.Endpoint
-		} else if got.Endpoint == nil || want.Endpoint.String() != got.Endpoint.String() {
-			changed = true
-		}
-		if want.PersistentKeepaliveInterval == nil || *want.PersistentKeepaliveInterval != got.PersistentKeepaliveInterval {
-			changed = true
-		}
+		changed := !ok || want.Endpoint != nil && (got.Endpoint == nil || want.Endpoint.String() != got.Endpoint.String()) ||
+			*want.PersistentKeepaliveInterval != got.PersistentKeepaliveInterval
 		wantIPs, gotIPs := make([]string, 0, len(want.AllowedIPs)), make([]string, 0, len(got.AllowedIPs))
 		for _, ip := range want.AllowedIPs {
 			wantIPs = append(wantIPs, ip.String())
@@ -201,14 +201,22 @@ func deviceConfig(d *desired, key wgtypes.Key, current *wgtypes.Device) (wgtypes
 		}
 		sort.Strings(wantIPs)
 		sort.Strings(gotIPs)
-		if strings.Join(wantIPs, ",") != strings.Join(gotIPs, ",") {
-			changed = true
+		if changed || strings.Join(wantIPs, ",") != strings.Join(gotIPs, ",") {
+			cfg.Peers = append(cfg.Peers, want)
 		}
 	}
-	return cfg, changed
+	for _, got := range current.Peers {
+		if !wanted[got.PublicKey] {
+			cfg.Peers = append(cfg.Peers, wgtypes.PeerConfig{PublicKey: got.PublicKey, Remove: true})
+		}
+	}
+	return cfg, cfg.PrivateKey != nil || cfg.ListenPort != nil || len(cfg.Peers) > 0
 }
 
-func apply(d *desired, key wgtypes.Key) error {
+// apply reconciles the kernel with d. With prune it removes the routes it
+// installed on its own interface that d no longer lists; without it such a
+// route stops reconciliation until an administrator removes it.
+func apply(d *desired, key wgtypes.Key, prune bool) error {
 	link, err := netlink.LinkByName(d.Interface)
 	if err != nil {
 		var notFound netlink.LinkNotFoundError
@@ -282,18 +290,24 @@ func apply(d *desired, key wgtypes.Key) error {
 		}
 	}
 	// Preflight route removal before touching the device. Route protocol and
-	// metric are not proof of ownership, so never delete any kernel route.
+	// metric are not proof of ownership on their own; together with the
+	// interface this program created and marked they are, and only then, and
+	// only when asked to prune, is a route removed.
 	existing, err := netlink.RouteListFiltered(netlink.FAMILY_ALL, &netlink.Route{LinkIndex: link.Attrs().Index, Protocol: routeProtocol}, netlink.RT_FILTER_OIF|netlink.RT_FILTER_PROTOCOL)
 	if err != nil {
 		return err
 	}
 	wanted := map[string]bool{}
+	var stale []netlink.Route
 	for _, dst := range d.routes {
 		wanted[dst.String()] = true
 	}
 	for _, r := range existing {
 		if r.Priority == routePriority && r.Dst != nil && !wanted[r.Dst.String()] {
-			return fmt.Errorf("route %s requires manual removal before changing configuration", r.Dst)
+			if !prune {
+				return fmt.Errorf("route %s requires manual removal before changing configuration", r.Dst)
+			}
+			stale = append(stale, r)
 		}
 	}
 	c, err := wgctrl.New()
@@ -333,6 +347,11 @@ func apply(d *desired, key wgtypes.Key) error {
 			}
 		}
 	}
+	for i := range stale {
+		if err = netlink.RouteDel(&stale[i]); err != nil {
+			return fmt.Errorf("remove route %s: %w", stale[i].Dst, err)
+		}
+	}
 	return nil
 }
 func main() {
@@ -340,7 +359,10 @@ func main() {
 	if defaultConfigPath == "" {
 		defaultConfigPath = "/config/config.json"
 	}
-	configPath := flag.String("config", defaultConfigPath, "desired configuration")
+	configPath := flag.String("config", defaultConfigPath, "static configuration written by an administrator")
+	computedPath := flag.String("computed-config", os.Getenv("STATION_GATEWAY_COMPUTED_CONFIG"), "optional configuration stored by station-agent from this node's enrollment; preferred over --config")
+	identityPath := flag.String("identity-file", os.Getenv("STATION_GATEWAY_IDENTITY_FILE"), "optional file to publish the public key in, for station-agent to enroll")
+	prune := flag.Bool("prune-routes", os.Getenv("STATION_GATEWAY_PRUNE_ROUTES") == "true", "remove this program's routes on its own interface when the configuration drops them")
 	keyPath := flag.String("key", "/var/lib/station/wg/private.key", "node-local private key")
 	check := flag.Bool("check", false, "check recent reconciliation readiness")
 	status := flag.Bool("status", false, "show non-secret WireGuard peer status as JSON")
@@ -349,17 +371,14 @@ func main() {
 	if *check && *status {
 		log.Fatal("check and status are mutually exclusive")
 	}
+	from := sources{static: *configPath, computed: *computedPath}
+	if *computedPath != "" {
+		from.lastApplied = filepath.Join(filepath.Dir(*keyPath), "last-applied.json")
+	}
 	if *status {
-		data, err := os.ReadFile(*configPath)
+		_, configured, _, err := from.read()
 		if err != nil {
 			log.Fatalf("read config: %v", err)
-		}
-		var configured config
-		if err := json.Unmarshal(data, &configured); err != nil {
-			log.Fatalf("parse config: %v", err)
-		}
-		if configured.Interface == "" {
-			log.Fatal("config has no interface")
 		}
 		client, err := wgctrl.New()
 		if err != nil {
@@ -376,7 +395,11 @@ func main() {
 		return
 	}
 	if *check {
-		if err := checkReady(*configPath, readinessPath, time.Now()); err != nil {
+		data, _, _, err := from.read()
+		if err == nil {
+			err = checkReady(data, readinessPath, time.Now())
+		}
+		if err != nil {
 			log.Printf("not ready: %v", err)
 			os.Exit(1)
 		}
@@ -395,18 +418,35 @@ func main() {
 	if err != nil {
 		log.Fatalf("load identity: %v", err)
 	}
+	// The directory may have been created by the kubelet with a wider mode.
+	if err := os.Chmod(filepath.Dir(*keyPath), 0700); err != nil {
+		log.Fatalf("protect identity directory: %v", err)
+	}
 	log.Printf("wireguard public key: %s", key.PublicKey())
+	if *identityPath != "" {
+		if err := publishIdentity(*identityPath, key); err != nil {
+			log.Fatalf("publish identity: %v", err)
+		}
+	}
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGTERM, syscall.SIGINT)
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
+	origin := ""
 	for {
-		data, e := os.ReadFile(*configPath)
+		data, d, source, e := from.read()
 		if e == nil {
-			var d *desired
-			d, e = parse(data)
-			if e == nil {
-				e = apply(d, key)
+			if source != origin {
+				origin = source
+				log.Printf("using the %s configuration", source)
+			}
+			e = apply(d, key, *prune)
+		}
+		if e == nil && source == "computed" {
+			if saved, readErr := os.ReadFile(from.lastApplied); readErr != nil || string(saved) != string(data) {
+				if err := replaceFile(from.lastApplied, data, 0600); err != nil {
+					log.Printf("keep last applied configuration: %v", err)
+				}
 			}
 		}
 		if e != nil {
