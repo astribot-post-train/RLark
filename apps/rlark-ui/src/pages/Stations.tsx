@@ -76,7 +76,7 @@ function newRequestID() {
 }
 
 export function StationsPage({ copy: c }: { copy: Copy }) {
-  const zh = c.nav.stations === "工作站";
+  const zh = c.nav.stations === "场站节点";
   const [items, setItems] = useState<StationItem[]>([]);
   const [clusters, setClusters] = useState<ClusterSummary[]>([]);
   const [clusterID, setClusterID] = useState("");
@@ -344,15 +344,15 @@ export function StationsPage({ copy: c }: { copy: Copy }) {
       <div className="section-heading">
         <div>
           <span className="eyebrow"><MonitorSmartphone size={13} />{c.nav.stations}</span>
-          <h2>{zh ? "Station 身份" : "Station Identity"}</h2>
-          <p>{zh ? "查看各成员集群 Station 的身份、节点绑定与健康观测。数据来自 station-agent，每 30 秒刷新。" : "Inspect Station identity, Node binding and health observations across member clusters. Data comes from station-agent and refreshes every 30 seconds."}</p>
+          <h2>{zh ? "场站节点" : "Site Nodes"}</h2>
+          <p>{zh ? "场站节点是一台机器在场站里的长期身份和入网记录，不是 Fleet Run 里的 Station（Run 的 Station 引用这里的节点）。查看各成员集群节点的身份、绑定与健康观测。数据来自 station-agent，每 30 秒刷新。" : "A site node is one machine's long-lived identity and network membership in the site. It is not a Station of a Fleet Run, which refers to a site node. Inspect identity, Node binding and health observations across member clusters. Data comes from station-agent and refreshes every 30 seconds."}</p>
         </div>
       </div>
 
-      <section className="storage-overview-grid stations-overview-grid" aria-label={zh ? "Station 概况" : "Station overview"}>
+      <section className="storage-overview-grid stations-overview-grid" aria-label={zh ? "场站节点概况" : "Site node overview"}>
         <div className="storage-overview-card purple">
           <span><Fingerprint size={18} /></span>
-          <div><small>{zh ? "Station 总数" : "Stations"}</small><strong>{summary.total}</strong><em>{zh ? "已加载的身份记录" : "loaded identities"}</em></div>
+          <div><small>{zh ? "场站节点总数" : "Site nodes"}</small><strong>{summary.total}</strong><em>{zh ? "已加载的身份记录" : "loaded identities"}</em></div>
         </div>
         <div className="storage-overview-card green">
           <span><ShieldCheck size={18} /></span>
@@ -370,7 +370,7 @@ export function StationsPage({ copy: c }: { copy: Copy }) {
 
       <div className="stations-toolbar">
         <PageToolbar
-          placeholder={zh ? "搜索 Station、节点或 UID" : "Search Station, Node or UID"}
+          placeholder={zh ? "搜索场站节点、节点名或 UID" : "Search site node, Node or UID"}
           value={search}
           onChange={setSearch}
           count={visible.length}
@@ -392,15 +392,15 @@ export function StationsPage({ copy: c }: { copy: Copy }) {
 
       {error && <div className="cert-error" role="alert" style={{ marginBottom: 12 }}>{error}</div>}
 
-      <div className={`table-panel refreshable-region${refreshing ? " is-refreshing" : ""}`} aria-busy={refreshing} aria-label={zh ? "Station 列表" : "Station list"}>
+      <div className={`table-panel refreshable-region${refreshing ? " is-refreshing" : ""}`} aria-busy={refreshing} aria-label={zh ? "场站节点列表" : "Site node list"}>
         {loading && items.length === 0 ? (
           <div className="stations-state muted">{zh ? "正在加载…" : "Loading…"}</div>
         ) : visible.length === 0 ? (
-          <div className="stations-state muted">{zh ? "没有匹配的 Station" : "No matching Stations"}</div>
+          <div className="stations-state muted">{zh ? "没有匹配的场站节点" : "No matching site nodes"}</div>
         ) : (
           <table className="stations-table">
             <thead><tr>
-              <th>Station</th>
+              <th>{zh ? "场站节点" : "Site node"}</th>
               <th>{zh ? "集群" : "Cluster"}</th>
               <th>{zh ? "节点" : "Node"}</th>
               <th>{zh ? "状态" : "Phase"}</th>
@@ -466,7 +466,7 @@ export function StationsPage({ copy: c }: { copy: Copy }) {
             <section className="node-detail-section station-drawer-section">
               <span className="node-detail-label"><Fingerprint size={14} />{zh ? "身份" : "Identity"}</span>
               <div className="node-detail-grid station-detail-grid">
-                <div><span className="muted">Station ID</span><CopyValue value={selected.metadata.name} zh={zh} /></div>
+                <div><span className="muted">{zh ? "场站节点 ID" : "Site node ID"}</span><CopyValue value={selected.metadata.name} zh={zh} /></div>
                 <div><span className="muted">{zh ? "对象 UID" : "Object UID"}</span><CopyValue value={selected.metadata.uid} zh={zh} /></div>
                 <div><span className="muted">{zh ? "集群" : "Cluster"}</span><strong>{selectedCluster?.name ?? (zh ? "集群未确定" : "Cluster unresolved")}</strong></div>
                 <div><span className="muted">Namespace</span><strong>{selected.metadata.namespace}</strong></div>

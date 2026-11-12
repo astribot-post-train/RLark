@@ -21,7 +21,7 @@ export const copy = {
       workspace: "工作台",
       developers: "开发者",
       "ssh-keys": "SSH 公钥",
-      stations: "工作站",
+      stations: "场站节点",
       "access-control": "访问控制",
     },
     common: {
@@ -225,7 +225,7 @@ export const copy = {
       workspace: "Workspace",
       developers: "Developers",
       "ssh-keys": "SSH Keys",
-      stations: "Stations",
+      stations: "Site Nodes",
       "access-control": "Access Control",
     },
     common: {
