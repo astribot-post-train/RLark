@@ -51,9 +51,11 @@ certificates() {
 
 create_cluster() { # cluster nodes
   local cluster=$1 nodes=$2 config="$D/$1.kind.yaml"
-  { echo "kind: Cluster"; echo "apiVersion: kind.x-k8s.io/v1alpha4"; echo "nodes:"; echo "- role: control-plane"
-    for _ in $(seq 2 "$nodes"); do echo "- role: worker"; done; } > "$config"
-  kind create cluster --name "$cluster" --image "$NODE_IMAGE" --config "$config" --kubeconfig "$D/$cluster.kubeconfig" --wait 120s 2>&1 | tail -2
+  # /boot: kubeadm's system verification reads the kernel configuration, which a node container lacks.
+  local boot='  extraMounts: [{hostPath: /boot, containerPath: /boot, readOnly: true}]'
+  { echo "kind: Cluster"; echo "apiVersion: kind.x-k8s.io/v1alpha4"; echo "nodes:"; echo "- role: control-plane"; echo "$boot"
+    for _ in $(seq 2 "$nodes"); do echo "- role: worker"; echo "$boot"; done; echo "${KIND_NETWORKING:-}"; } > "$config"
+  kind create cluster --name "$cluster" --image "$NODE_IMAGE" --config "$config" --kubeconfig "$D/$cluster.kubeconfig" --wait "${KIND_WAIT:-120s}" 2>&1 | tail -2
   load "$cluster"
 }
 
