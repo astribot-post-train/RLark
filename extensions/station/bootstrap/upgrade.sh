@@ -32,7 +32,7 @@ SOCKET=$(sed -n 's/.*--container-runtime-endpoint=unix:\/\/\([^ "]*\).*/\1/p' /v
 [ -S "$SOCKET" ] || fail "cannot find the node's container runtime socket"
 # ctr is the one beside the containerd that serves that socket: a node's
 # containerd need not be in the PATH, nor be the only one on the node.
-CTR=$(dirname "$(readlink "/proc/$(ss -Hxlp | awk -v s="$SOCKET" '$5 == s' | sed -n 's/.*pid=\([0-9]*\).*/\1/p')/exe")")/ctr
+CTR=$(dirname "$(readlink "/proc/$(ss -Hxlp | awk -v s="$(readlink -f "$SOCKET")" '$5 == s' | sed -n 's/.*pid=\([0-9]*\).*/\1/p')/exe")")/ctr
 [ -x "$CTR" ] || fail "cannot find ctr beside the containerd of $SOCKET"
 from=$("$BIN/kubelet" --version | awk '{print $2}')
 keep=/var/backups/rlark-kube-upgrade/$from
