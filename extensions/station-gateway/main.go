@@ -367,7 +367,16 @@ func main() {
 	check := flag.Bool("check", false, "check recent reconciliation readiness")
 	status := flag.Bool("status", false, "show non-secret WireGuard peer status as JSON")
 	snapshotPath := flag.String("observation-file", os.Getenv("STATION_GATEWAY_OBSERVATION_FILE"), "optional non-secret interface observation file")
+	publicKey := flag.Bool("public-key", false, "create the node's key if it has none, print the public key and exit")
 	flag.Parse()
+	if *publicKey {
+		key, err := keyFile(*keyPath)
+		if err != nil {
+			log.Fatalf("load identity: %v", err)
+		}
+		fmt.Println(key.PublicKey())
+		return
+	}
 	if *check && *status {
 		log.Fatal("check and status are mutually exclusive")
 	}

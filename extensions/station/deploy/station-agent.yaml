@@ -120,6 +120,7 @@ spec:
                 operator: NotIn
                 values:
                 - enabled
+                - host
 ---
 apiVersion: apps/v1
 kind: DaemonSet
@@ -290,5 +291,134 @@ spec:
                 operator: In
                 values:
                 - enabled
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+---
+# A node whose station-gateway is a host service (installed by the node
+# bootstrap, started before the kubelet) is labelled
+# station.rlark.io/network=host and runs only the agent: it reads the public key
+# the host service publishes in /run/station-observation and stores the
+# computed configuration in /run/station-network, where the service reads it.
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: station-agent-host
+  namespace: station-system
+spec:
+  selector:
+    matchLabels:
+      app: station-agent-host
+  template:
+    metadata:
+      labels:
+        app: station-agent-host
+    spec:
+      serviceAccountName: station-agent
+      automountServiceAccountToken: false
+      tolerations:
+      - operator: Exists
+      containers:
+      - name: station-agent
+        image: REPLACE_RLARK_IMAGE
+        imagePullPolicy: IfNotPresent
+        command:
+        - /usr/local/bin/station-agent
+        args:
+        - --api-url=$(STATION_API_URL)
+        - --cluster-id=$(STATION_CLUSTER_ID)
+        - --token-file=/var/run/secrets/station/token
+        - --ca-file=$(STATION_API_CA_FILE)
+        - --interval=30s
+        - --request-timeout=10s
+        - --probe-address=:18082
+        - --wireguard-observation-file=/var/run/station-observation/wireguard.json
+        - --network-identity-file=/var/run/station-observation/identity.json
+        - --network-config-file=/var/run/station-network/config.json
+        env:
+        - name: STATION_API_URL
+          valueFrom:
+            configMapKeyRef:
+              name: station-agent
+              key: api-url
+        - name: STATION_CLUSTER_ID
+          valueFrom:
+            configMapKeyRef:
+              name: station-agent
+              key: cluster-id
+        - name: STATION_API_CA_FILE
+          value: /var/run/secrets/station-api-ca/ca.crt
+        ports:
+        - name: health
+          containerPort: 18082
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: health
+          periodSeconds: 20
+          timeoutSeconds: 3
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            port: health
+          periodSeconds: 10
+          timeoutSeconds: 3
+        resources:
+          requests:
+            cpu: 10m
+            memory: 24Mi
+          limits:
+            cpu: 200m
+            memory: 128Mi
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 65532
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+        volumeMounts:
+        - name: token
+          mountPath: /var/run/secrets/station
+          readOnly: true
+        - name: station-api-ca
+          mountPath: /var/run/secrets/station-api-ca
+          readOnly: true
+        - name: wireguard-observation
+          mountPath: /var/run/station-observation
+          readOnly: true
+        - name: wireguard-computed
+          mountPath: /var/run/station-network
+      volumes:
+      - name: token
+        projected:
+          sources:
+          - serviceAccountToken:
+              path: token
+              audience: station.rlark.io
+              expirationSeconds: 600
+      - name: station-api-ca
+        secret:
+          secretName: station-api-ca
+          items:
+          - key: ca.crt
+            path: ca.crt
+      - name: wireguard-observation
+        hostPath:
+          path: /run/station-observation
+          type: Directory
+      - name: wireguard-computed
+        hostPath:
+          path: /run/station-network
+          type: Directory
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: station.rlark.io/network
+                operator: In
+                values:
+                - host
       hostNetwork: true
       dnsPolicy: ClusterFirstWithHostNet
