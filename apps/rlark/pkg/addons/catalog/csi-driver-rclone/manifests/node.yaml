@@ -48,6 +48,10 @@ spec:
                   fieldPath: spec.nodeName
             - name: CSI_ENDPOINT
               value: unix:///csi/csi.sock
+            {{- if .Values.nodeTpsLimit }}
+            - name: RCLONE_TPSLIMIT
+              value: "{{ .Values.nodeTpsLimit }}"
+            {{- end }}
           securityContext:
             privileged: true
           livenessProbe:

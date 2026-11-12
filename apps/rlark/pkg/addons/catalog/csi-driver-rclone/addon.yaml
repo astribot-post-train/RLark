@@ -20,6 +20,14 @@ parameters:
     type: enum
     default: Always
     options: [Always, IfNotPresent]
+  - name: nodeTpsLimit
+    displayName: Node 每秒请求上限
+    description: |
+      节点插件对远端的每秒请求数上限（rclone --tpslimit），一个节点上的所有挂载共用。
+      对象存储对列目录限流（HTTP 429）时设置；留空不限。修改后需替换节点插件 Pod 才生效。
+    type: string
+    default: ""
+    required: false
   - name: rcloneImage
     displayName: RClone 驱动镜像
     description: CSI RClone 驱动容器镜像地址

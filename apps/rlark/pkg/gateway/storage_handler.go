@@ -247,18 +247,22 @@ type CreateStorageClassRequest struct {
 
 	Clusters []string `json:"clusters"`
 
-	Provider        string    `json:"provider"`
-	Endpoint        string    `json:"endpoint"`
-	MountEndpoint   string    `json:"mount_endpoint"`
-	Prefix          string    `json:"prefix"`
-	VFSCacheMode    string    `json:"vfs_cache_mode"`
-	MountProfile    string    `json:"mount_profile"`
-	MountOptions    *[]string `json:"mount_options"`
-	AccessKeyId     string    `json:"access_key_id"`
-	AccessKeySecret string    `json:"access_key_secret"`
-	Bucket          string    `json:"bucket"`
-	Region          string    `json:"region"`
-	PathStyle       bool      `json:"path_style"`
+	Provider      string    `json:"provider"`
+	Endpoint      string    `json:"endpoint"`
+	MountEndpoint string    `json:"mount_endpoint"`
+	Prefix        string    `json:"prefix"`
+	VFSCacheMode  string    `json:"vfs_cache_mode"`
+	MountProfile  string    `json:"mount_profile"`
+	MountOptions  *[]string `json:"mount_options"`
+	// CredentialsFrom names an existing S3 storage whose provider, endpoint,
+	// region and access key a new storage uses, so that several mounts of one
+	// bucket (read, archive) are declared without entering the key again.
+	CredentialsFrom string `json:"credentials_from"`
+	AccessKeyId     string `json:"access_key_id"`
+	AccessKeySecret string `json:"access_key_secret"`
+	Bucket          string `json:"bucket"`
+	Region          string `json:"region"`
+	PathStyle       bool   `json:"path_style"`
 
 	Type     string `json:"type"`
 	Host     string `json:"host"`
@@ -272,7 +276,7 @@ type CreateStorageClassRequest struct {
 // ssSecretTemplate is the rclone remote config rendered into the StorageClass
 // Secret from a CreateStorageClassRequest.
 const ssSecretTemplate = `
-[{{ .Remote }}]
+[s3]
 type = s3
 provider = {{ .Provider }}
 endpoint = {{ .Endpoint }}
@@ -301,6 +305,20 @@ func (g *Gateway) createStorageClass(c *gin.Context) {
 	if err := c.ShouldBindJSON(&req); err != nil {
 		respondError(c, http.StatusBadRequest, CodeInvalidRequestBody, err.Error())
 		return
+	}
+	if req.CredentialsFrom != "" {
+		secret, err := getStorageClassSecretByName(c.Request.Context(), g.rawClient, g.managementNamespace(), req.CredentialsFrom)
+		if err != nil {
+			respondKubeError(c, fmt.Sprintf("get storage class %q: %v", req.CredentialsFrom, err), err)
+			return
+		}
+		_, source, err := storageClassFromSecret(secret)
+		if err != nil {
+			respondKubeError(c, fmt.Sprintf("decode storage class replication: %v", err), err)
+			return
+		}
+		req.Provider, req.Endpoint, req.Region, req.PathStyle = source.Provider, source.Endpoint, source.Region, source.PathStyle
+		req.AccessKeyId, req.AccessKeySecret = source.AccessKeyID, source.AccessKey
 	}
 	stored, err := normalizeStorageClass(req)
 	if err != nil {
@@ -638,14 +656,10 @@ func buildStorageClassReplicationSecret(namespace, id string, stored storedStora
 		}
 		remote, remotePath, mountOptions = "smb", smbRemotePath(stored), smbMountOptions
 	default:
-		// The CSI driver receives configData per StorageClass. A class-specific
-		// alias prevents mounts with different profiles from sharing one rclone
-		// remote name in a node plugin process.
-		remote = "s3-" + id
-		if err := ssSecretTmpl.Execute(&config, struct {
-			CreateStorageClassRequest
-			Remote string
-		}{CreateStorageClassRequest: req, Remote: remote}); err != nil {
+		// The remote is "s3" for every class: a StorageClass's parameters are
+		// immutable, and the node plugin (extensions/csi-rclone-ks3) gives each
+		// published volume its own remote, so classes never share one.
+		if err := ssSecretTmpl.Execute(&config, req); err != nil {
 			return nil, fmt.Errorf("render secret config: %w", err)
 		}
 		keys := make([]string, 0, len(backendOptions))
@@ -672,7 +686,10 @@ func buildStorageClassReplicationSecret(namespace, id string, stored storedStora
 		ObjectMeta: metav1.ObjectMeta{
 			Name: id, Labels: map[string]string{"controller": "rlark"}, Annotations: annotations,
 		},
-		Provisioner: "rclone.csi.veloxpack.io", ReclaimPolicy: ptr.To(v1.PersistentVolumeReclaimRetain),
+		// Delete removes the PersistentVolume object with its claim; the driver's
+		// DeleteVolume does nothing to the remote. Retain left one Released
+		// volume per Task per submission.
+		Provisioner: "rclone.csi.veloxpack.io", ReclaimPolicy: ptr.To(v1.PersistentVolumeReclaimDelete),
 		VolumeBindingMode: ptr.To(storagev1.VolumeBindingImmediate), AllowVolumeExpansion: ptr.To(true),
 		Parameters: map[string]string{
 			"remote": remote, "remotePath": remotePath,

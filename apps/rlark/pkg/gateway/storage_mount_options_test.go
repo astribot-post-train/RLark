@@ -1,12 +1,18 @@
 package gateway
 
 import (
+	"context"
 	"encoding/base64"
+	"net/http"
+	"testing"
+
+	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"testing"
+	"k8s.io/client-go/kubernetes/fake"
 
+	"github.com/rlinf/rlark/apps/rlark/pkg/configs"
 	"github.com/rlinf/rlark/apps/rlark/pkg/distribution"
 )
 
@@ -16,10 +22,11 @@ func TestStorageMountProfiles(t *testing.T) {
 	require.Equal(t, "off", cache)
 	require.Contains(t, options, "dir-cache-time=5s")
 	require.Equal(t, map[string]string{"chunk_size": "32Mi", "upload_concurrency": "4"}, backend)
-	read, _, _, err := resolveS3MountOptions("read", "", []string{"tpslimit=2", "low-level-retries=10"})
+	require.Contains(t, options, "attr-timeout=1s")
+	read, _, _, err := resolveS3MountOptions("read", "", []string{"low-level-retries=30"})
 	require.NoError(t, err)
 	require.Contains(t, read, "read-only=true")
-	require.Contains(t, read, "tpslimit=2")
+	require.Contains(t, read, "low-level-retries=30")
 	require.NotContains(t, read, "ignore-checksum=true")
 	// Resolving one mount must not change another mount's defaults.
 	defaults, _, _, err := resolveS3MountOptions("default", "", nil)
@@ -31,10 +38,10 @@ func TestStorageMountProfiles(t *testing.T) {
 		options        []string
 	}{
 		{"invalid", "", nil}, {"archive", "writes", nil}, {"read", "", []string{"read-only=false"}},
-		{"default", "", []string{"ignore-checksum"}}, {"default", "", []string{"tpslimit=NaN"}},
-		{"default", "", []string{"tpslimit=0"}}, {"default", "", []string{"s3-chunk-size=4Mi"}},
+		{"default", "", []string{"ignore-checksum"}}, {"default", "", []string{"tpslimit=2"}},
+		{"default", "", []string{"low-level-retries=0"}}, {"default", "", []string{"s3-chunk-size=4Mi"}},
 		{"default", "", []string{"s3-chunk-size=6Gi"}}, {"default", "", []string{"dir-cache-time=-1s"}},
-		{"default", "", []string{"transfers=0"}}, {"default", "", []string{"tpslimit=1", "tpslimit=2"}},
+		{"default", "", []string{"transfers=0"}}, {"default", "", []string{"checkers=1", "checkers=2"}},
 		{"default", "", []string{"config=/tmp/credentials"}}, {"default", "", []string{"read-only=true\nfoo=bar"}},
 	} {
 		_, _, _, err := resolveS3MountOptions(tc.profile, tc.cache, tc.options)
@@ -43,7 +50,7 @@ func TestStorageMountProfiles(t *testing.T) {
 }
 
 func TestStorageMountPolicyRenderBackendAndRoundTrip(t *testing.T) {
-	options := []string{"s3-chunk-size=64Mi", "s3-upload-concurrency=2", "tpslimit=2"}
+	options := []string{"s3-chunk-size=64Mi", "s3-upload-concurrency=2", "low-level-retries=30"}
 	s, err := normalizeStorageClass(CreateStorageClassRequest{Name: "archive", Clusters: []string{"cloud"}, Provider: "Other", Endpoint: "https://s3.example.com", Bucket: "bucket", AccessKeySecret: "secret", MountProfile: "archive", MountOptions: &options})
 	require.NoError(t, err)
 	require.Equal(t, "off", s.VFSCacheMode)
@@ -58,34 +65,19 @@ func TestStorageMountPolicyRenderBackendAndRoundTrip(t *testing.T) {
 	require.Equal(t, "2", backend["upload_concurrency"])
 }
 
-func TestStorageClassesUseIndependentRcloneRemoteNames(t *testing.T) {
-	read, err := normalizeStorageClass(CreateStorageClassRequest{
-		Name: "read", Clusters: []string{"cloud"}, Provider: "Other", Endpoint: "https://s3.example.com",
-		Bucket: "bucket", AccessKeySecret: "read-secret", MountProfile: "read",
-	})
-	require.NoError(t, err)
+func TestStorageClassRemoteNameIsStable(t *testing.T) {
 	archive, err := normalizeStorageClass(CreateStorageClassRequest{
 		Name: "archive", Clusters: []string{"cloud"}, Provider: "Other", Endpoint: "https://s3.example.com",
 		Bucket: "bucket", AccessKeySecret: "archive-secret", MountProfile: "archive",
 	})
 	require.NoError(t, err)
-
-	readSecret, err := buildStorageClassReplicationSecret("default", "sc-read", read)
+	secret, err := buildStorageClassReplicationSecret("default", "sc-archive", archive)
 	require.NoError(t, err)
-	archiveSecret, err := buildStorageClassReplicationSecret("default", "sc-archive", archive)
-	require.NoError(t, err)
-	readManifest := parseStorageClassObjects(t, readSecret)
-	archiveManifest := parseStorageClassObjects(t, archiveSecret)
-
-	readRemote := nestedString(t, readManifest[0].Object, "stringData", "remote")
-	archiveRemote := nestedString(t, archiveManifest[0].Object, "stringData", "remote")
-	require.Equal(t, "s3-sc-read", readRemote)
-	require.Equal(t, "s3-sc-archive", archiveRemote)
-	require.NotEqual(t, readRemote, archiveRemote)
-	require.Contains(t, nestedString(t, readManifest[0].Object, "stringData", "configData"), "["+readRemote+"]")
-	require.Contains(t, nestedString(t, archiveManifest[0].Object, "stringData", "configData"), "["+archiveRemote+"]")
-	require.Equal(t, readRemote, nestedString(t, readManifest[1].Object, "parameters", "remote"))
-	require.Equal(t, archiveRemote, nestedString(t, archiveManifest[1].Object, "parameters", "remote"))
+	manifest := parseStorageClassObjects(t, secret)
+	config := nestedString(t, manifest[0].Object, "stringData", "configData")
+	require.Contains(t, config, "[s3]")
+	require.Contains(t, config, "chunk_size = 32Mi")
+	require.Equal(t, "s3", nestedString(t, manifest[1].Object, "parameters", "remote"))
 }
 
 func parseStorageClassObjects(t *testing.T, secret *v1.Secret) []*unstructured.Unstructured {
@@ -103,4 +95,25 @@ func parseStorageClassObjects(t *testing.T, secret *v1.Secret) []*unstructured.U
 	})
 	require.NoError(t, err)
 	return delivery.Objects
+}
+
+func TestStorageClassCredentialsFromExistingStorage(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	original := validateStorageClassCredentials
+	validateStorageClassCredentials = func(context.Context, storedStorageClass) error { return nil }
+	t.Cleanup(func() { validateStorageClassCredentials = original })
+	g := &Gateway{config: Config{KubeClientConfig: configs.KubernetesClientConfig{Namespace: "management"}}, rawClient: fake.NewSimpleClientset()}
+	router := gin.New()
+	router.POST("/storage", g.createStorageClass)
+	response := performJSONRequest(t, router, http.MethodPost, "/storage", map[string]any{"name": "archive", "clusters": []string{"cloud"}, "provider": "Other", "endpoint": "https://public.example.com", "region": "cn", "access_key_id": "access", "access_key_secret": "secret", "bucket": "bucket", "mount_profile": "archive"})
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	response = performJSONRequest(t, router, http.MethodPost, "/storage", map[string]any{"name": "read", "clusters": []string{"cloud"}, "credentials_from": "archive", "bucket": "bucket", "prefix": "data", "mount_profile": "read"})
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	secret, err := getStorageClassSecretByName(context.Background(), g.rawClient, "management", "read")
+	require.NoError(t, err)
+	_, read, err := storageClassFromSecret(secret)
+	require.NoError(t, err)
+	require.Equal(t, []string{"https://public.example.com", "cn", "access", "secret", "data", "read"}, []string{read.Endpoint, read.Region, read.AccessKeyID, read.AccessKey, read.Prefix, read.MountProfile})
+	response = performJSONRequest(t, router, http.MethodPost, "/storage", map[string]any{"name": "other", "clusters": []string{"cloud"}, "credentials_from": "missing", "bucket": "bucket"})
+	require.Equal(t, http.StatusNotFound, response.Code, response.Body.String())
 }

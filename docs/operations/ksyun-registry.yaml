@@ -3,7 +3,7 @@
 #
 # Secrets are created out of band and are not stored here:
 #   rlark-registry-cloud-tls     kubernetes.io/tls; cert signed by the rlark-registry-local CA,
-#                                SAN IP:10.254.240.2
+#                                SAN IP:10.0.2.57, IP:10.254.240.2 (ksyun-registry-cert.sh)
 #   rlark-registry-cloud-config  config.yml (the ConfigMap content below plus http.secret)
 #                                and htpasswd (the existing rlark account)
 #   rlark-registry-mirror-s3     accesskey / secretkey for KS3 (shared with the read-only mirror)
@@ -45,7 +45,7 @@ data:
         realm: RLark registry
         path: /auth/htpasswd
     http:
-      addr: 10.254.240.2:5443
+      addr: 10.0.2.57:5443
       tls:
         certificate: /tls/tls.crt
         key: /tls/tls.key
@@ -84,10 +84,10 @@ spec:
         - name: REGISTRY_STORAGE_S3_SECRETKEY
           valueFrom: {secretKeyRef: {name: rlark-registry-mirror-s3, key: secretkey}}
         readinessProbe:
-          httpGet: {host: 10.254.240.2, port: 5443, path: /, scheme: HTTPS}
+          httpGet: {host: 10.0.2.57, port: 5443, path: /, scheme: HTTPS}
           periodSeconds: 10
         livenessProbe:
-          tcpSocket: {host: 10.254.240.2, port: 5443}
+          tcpSocket: {host: 10.0.2.57, port: 5443}
           initialDelaySeconds: 30
           periodSeconds: 20
         resources:
