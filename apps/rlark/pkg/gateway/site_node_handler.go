@@ -2,9 +2,10 @@ package gateway
 
 import (
 	"net/http"
+	"sort"
+	"strings"
 
 	"github.com/gin-gonic/gin"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -59,95 +60,138 @@ type siteNodeNetwork struct {
 	TunnelAddress string `json:"tunnel_address,omitempty"`
 }
 
+// siteNodes joins, for one cluster, every unretired identity with its network
+// enrollment and its RLark Node.
+func (g *Gateway) siteNodes(c *gin.Context, clusterID, namespace string) ([]siteNode, error) {
+	ctx := c.Request.Context()
+	stations, err := g.stationClient.Resource(stationRecordGVR).Namespace(namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, err
+	}
+	enrollments, err := g.stationClient.Resource(networkEnrollmentGVR).Namespace(namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, err
+	}
+	nodes, err := g.stationClient.Resource(siteNodeGVR).Namespace(namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, err
+	}
+	enrollmentOf, nodeOf := map[string]*unstructured.Unstructured{}, map[string]*unstructured.Unstructured{}
+	for i := range enrollments.Items {
+		enrollmentOf[enrollments.Items[i].GetName()] = &enrollments.Items[i]
+	}
+	for i := range nodes.Items {
+		nodeOf[nodes.Items[i].GetName()] = &nodes.Items[i]
+	}
+	results := make([]siteNode, 0, len(stations.Items))
+	for i := range stations.Items {
+		station := &stations.Items[i]
+		if retired, _, _ := unstructured.NestedBool(station.Object, "spec", "retired"); retired {
+			continue
+		}
+		result := siteNode{ClusterID: clusterID, SiteNodeID: station.GetName(), Tunnel: "unknown", RLarkNode: "unknown"}
+		result.NodeName, _, _ = unstructured.NestedString(station.Object, "spec", "binding", "nodeName")
+		result.Sequence, _, _ = unstructured.NestedInt64(station.Object, "spec", "sequence")
+		result.BindingVersion, _, _ = unstructured.NestedInt64(station.Object, "spec", "binding", "version")
+		result.Phase, _, _ = unstructured.NestedString(station.Object, "status", "phase")
+		result.LastSeenTime, _, _ = unstructured.NestedString(station.Object, "status", "lastSeenTime")
+		result.BootTime, _, _ = unstructured.NestedString(station.Object, "status", "bootTime")
+		result.Reboots, _, _ = unstructured.NestedInt64(station.Object, "status", "reboots")
+		result.Online = result.Phase == "Bound"
+		conditions, _, _ := unstructured.NestedSlice(station.Object, "status", "conditions")
+		for _, raw := range conditions {
+			condition, _ := raw.(map[string]interface{})
+			status, _ := condition["status"].(string)
+			switch condition["type"] {
+			case "NetworkVerified":
+				result.Tunnel = map[string]string{"True": "verified", "False": "failed", "Unknown": "unknown"}[status]
+			case "RLarkLinked":
+				result.RLarkNode = map[string]string{"True": "ready", "False": "not-ready", "Unknown": "unknown"}[status]
+			}
+		}
+		// An answer for an earlier binding describes a machine that is gone.
+		if enrollment := enrollmentOf[result.NodeName]; enrollment != nil {
+			if version, _, _ := unstructured.NestedInt64(enrollment.Object, "spec", "bindingVersion"); version == result.BindingVersion {
+				status, _, _ := unstructured.NestedMap(enrollment.Object, "status")
+				text := func(key string) string { value, _ := status[key].(string); return value }
+				result.Network = &siteNodeNetwork{State: text("phase"), Site: text("site"), Role: text("role"), Address: text("address"), TunnelAddress: text("tunnelAddress")}
+			}
+		}
+		if node := nodeOf[result.NodeName]; node != nil {
+			result.Labels = node.GetLabels()
+			result.RobotID, result.WorkstationID = result.Labels[siteNodeRobotLabel], result.Labels[siteNodeWorkstationID]
+		}
+		results = append(results, result)
+	}
+	sort.Slice(results, func(i, j int) bool { return results[i].Sequence < results[j].Sequence })
+	return results, nil
+}
+
+// siteNodesOfRequest resolves cluster_id and lists that cluster's site nodes.
+func (g *Gateway) siteNodesOfRequest(c *gin.Context) ([]siteNode, bool) {
+	if g.stationClient == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Station API unavailable"})
+		return nil, false
+	}
+	clusterID := c.Query("cluster_id")
+	if clusterID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "cluster_id is required"})
+		return nil, false
+	}
+	namespace, err := g.stationNamespace(c, clusterID)
+	if err != nil {
+		return nil, false
+	}
+	results, err := g.siteNodes(c, clusterID, namespace)
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": "Station API request failed"})
+		return nil, false
+	}
+	c.Header("Cache-Control", "no-store")
+	return results, true
+}
+
+// handleListSiteNodes answers GET /api/v1/site-nodes?cluster_id=&label=key=value:
+// every site node of a cluster in one call, optionally those carrying a label.
+func (g *Gateway) handleListSiteNodes(c *gin.Context) {
+	results, ok := g.siteNodesOfRequest(c)
+	if !ok {
+		return
+	}
+	if key, value, found := strings.Cut(c.Query("label"), "="); found {
+		kept := results[:0]
+		for _, result := range results {
+			if result.Labels[key] == value {
+				kept = append(kept, result)
+			}
+		}
+		results = kept
+	}
+	c.JSON(http.StatusOK, gin.H{"items": results})
+}
+
 // handleGetSiteNode answers GET /api/v1/site-nodes/:name?cluster_id=. It is a
 // lookup by Node name: callers keep the name in their own configuration and
 // read everything else here.
 func (g *Gateway) handleGetSiteNode(c *gin.Context) {
-	if g.stationClient == nil {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Station API unavailable"})
+	results, ok := g.siteNodesOfRequest(c)
+	if !ok {
 		return
 	}
-	clusterID, nodeName := c.Query("cluster_id"), c.Param("name")
-	if clusterID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "cluster_id is required"})
-		return
-	}
-	namespace, err := g.stationNamespace(c, clusterID)
-	if err != nil {
-		return
-	}
-	ctx := c.Request.Context()
-	stations, err := g.stationClient.Resource(stationRecordGVR).Namespace(namespace).List(ctx, metav1.ListOptions{})
-	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "Station API request failed"})
-		return
-	}
-	var station *unstructured.Unstructured
-	for i := range stations.Items {
-		bound, _, _ := unstructured.NestedString(stations.Items[i].Object, "spec", "binding", "nodeName")
-		retired, _, _ := unstructured.NestedBool(stations.Items[i].Object, "spec", "retired")
-		if bound != nodeName || retired {
+	var found *siteNode
+	for i := range results {
+		if results[i].NodeName != c.Param("name") {
 			continue
 		}
-		if station != nil {
+		if found != nil {
 			c.JSON(http.StatusConflict, gin.H{"error": "more than one identity is bound to this node"})
 			return
 		}
-		station = &stations.Items[i]
+		found = &results[i]
 	}
-	if station == nil {
+	if found == nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "site node not found"})
 		return
 	}
-	result := siteNode{ClusterID: clusterID, NodeName: nodeName, SiteNodeID: station.GetName()}
-	result.Sequence, _, _ = unstructured.NestedInt64(station.Object, "spec", "sequence")
-	result.BindingVersion, _, _ = unstructured.NestedInt64(station.Object, "spec", "binding", "version")
-	result.Phase, _, _ = unstructured.NestedString(station.Object, "status", "phase")
-	result.LastSeenTime, _, _ = unstructured.NestedString(station.Object, "status", "lastSeenTime")
-	result.BootTime, _, _ = unstructured.NestedString(station.Object, "status", "bootTime")
-	result.Reboots, _, _ = unstructured.NestedInt64(station.Object, "status", "reboots")
-	result.Online = result.Phase == "Bound"
-	result.Tunnel, result.RLarkNode = "unknown", "unknown"
-	conditions, _, _ := unstructured.NestedSlice(station.Object, "status", "conditions")
-	for _, raw := range conditions {
-		condition, _ := raw.(map[string]interface{})
-		status, _ := condition["status"].(string)
-		switch condition["type"] {
-		case "NetworkVerified":
-			result.Tunnel = map[string]string{"True": "verified", "False": "failed"}[status]
-		case "RLarkLinked":
-			result.RLarkNode = map[string]string{"True": "ready", "False": "not-ready"}[status]
-		}
-	}
-	if result.Tunnel == "" {
-		result.Tunnel = "unknown"
-	}
-	if result.RLarkNode == "" {
-		result.RLarkNode = "unknown"
-	}
-
-	enrollment, err := g.stationClient.Resource(networkEnrollmentGVR).Namespace(namespace).Get(ctx, nodeName, metav1.GetOptions{})
-	if err != nil && !apierrors.IsNotFound(err) {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "network enrollment query failed"})
-		return
-	}
-	if err == nil {
-		// An answer for an earlier binding describes a machine that is gone.
-		if version, _, _ := unstructured.NestedInt64(enrollment.Object, "spec", "bindingVersion"); version == result.BindingVersion {
-			status, _, _ := unstructured.NestedMap(enrollment.Object, "status")
-			text := func(key string) string { value, _ := status[key].(string); return value }
-			result.Network = &siteNodeNetwork{State: text("phase"), Site: text("site"), Role: text("role"), Address: text("address"), TunnelAddress: text("tunnelAddress")}
-		}
-	}
-	node, err := g.stationClient.Resource(siteNodeGVR).Namespace(namespace).Get(ctx, nodeName, metav1.GetOptions{})
-	if err != nil && !apierrors.IsNotFound(err) {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "node query failed"})
-		return
-	}
-	if err == nil {
-		result.Labels = node.GetLabels()
-		result.RobotID, result.WorkstationID = result.Labels[siteNodeRobotLabel], result.Labels[siteNodeWorkstationID]
-	}
-	c.Header("Cache-Control", "no-store")
-	c.JSON(http.StatusOK, result)
+	c.JSON(http.StatusOK, found)
 }

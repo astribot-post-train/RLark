@@ -56,7 +56,7 @@
 
 ### 1.4 Fleet 需要的唯一接口
 
-`GET /api/v1/site-nodes/{nodeName}?cluster_id={cluster}`，只读，登录用户可用。
+`GET /api/v1/site-nodes/{nodeName}?cluster_id={cluster}`，只读，登录用户可用。一次取整个集群：`GET /api/v1/site-nodes?cluster_id={cluster}&label=key=value`，返回 `{"items": [...]}`，每项同下。
 
 ```json
 {
@@ -317,7 +317,7 @@ liangcai 现有的件：
 
 | 文件 | 行数 | 内容 |
 |---|---|---|
-| `apps/rlark/pkg/gateway/router.go` | +1 | 注册 `/site-nodes/:name` |
-| `apps/rlark/docs/api/swagger.yaml` | +46 | 这条路由的说明（`TestRegisteredRoutesAreDocumented` 要求） |
+| `apps/rlark/pkg/gateway/router.go` | +2 | 注册 `/site-nodes` 和 `/site-nodes/:name` |
+| `apps/rlark/docs/api/swagger.yaml` | +73 | 这两条路由的说明（`TestRegisteredRoutesAreDocumented` 要求） |
 
 界面的 `constants.ts`、`i18n.ts` 各改 1–2 行文案（上游文件里他加的那几行）。

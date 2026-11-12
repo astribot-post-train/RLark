@@ -64,6 +64,27 @@ func TestGetSiteNodeJoinsIdentityNetworkAndRobot(t *testing.T) {
 		t.Fatalf("site node %+v, want %+v", got, want)
 	}
 
+	// The whole cluster in one call, and by label.
+	list := func(query string) []siteNode {
+		recorder := httptest.NewRecorder()
+		ctx, _ := gin.CreateTestContext(recorder)
+		ctx.Request = httptest.NewRequest("GET", "/api/v1/site-nodes"+query, nil)
+		gateway.handleListSiteNodes(ctx)
+		var response struct {
+			Items []siteNode `json:"items"`
+		}
+		if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil || recorder.Code != 200 {
+			t.Fatalf("list %s: %d %v", query, recorder.Code, err)
+		}
+		return response.Items
+	}
+	if items := list("?cluster_id=cluster-a&label=rlark.io/robot-id=s1u-01"); len(items) != 1 || items[0].NodeName != "s1u-01-x86" || items[0].Network.Address != "10.254.240.3" {
+		t.Fatalf("list by label: %+v", items)
+	}
+	if items := list("?cluster_id=cluster-a&label=rlark.io/robot-id=other"); len(items) != 0 {
+		t.Fatalf("label filter: %+v", items)
+	}
+
 	// After a rebind the old enrollment's address is not served.
 	_ = unstructured.SetNestedField(station.Object, int64(3), "spec", "binding", "version")
 	if _, err := client.Resource(stationRecordGVR).Namespace("agent-a").Update(t.Context(), station, metav1.UpdateOptions{}); err != nil {

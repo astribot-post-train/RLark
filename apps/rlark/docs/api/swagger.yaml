@@ -110,6 +110,27 @@ paths:
         '404': {description: Cluster or node not visible}
         '409': {description: Ambiguous cluster namespace}
         '503': {description: Verified observation unavailable}
+  /api/v1/site-nodes:
+    get:
+      tags: [Station]
+      summary: List the site nodes of a cluster (read-only), optionally those carrying a label
+      parameters:
+        - {name: cluster_id, in: query, required: true, schema: {type: string}}
+        - {name: label, in: query, required: false, schema: {type: string}, description: key=value}
+      responses:
+        '200':
+          description: Site nodes in sequence order, each shaped as in GET /api/v1/site-nodes/{name}
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items: {type: array, items: {type: object}}
+        '400': {description: Missing cluster ID}
+        '404': {description: Cluster not found}
+        '409': {description: Ambiguous cluster namespace}
+        '502': {description: Management API request failed}
+        '503': {description: Station API unavailable}
   /api/v1/site-nodes/{name}:
     get:
       tags: [Station]
