@@ -9,7 +9,7 @@
 3. **拓扑是"叶子拨枢纽，枢纽之间互联，场站枢纽转发叶子之间的流量"**。96 台机器人 + 工作站 + 3 台云节点是 387 条隧道，每台机器人 4 个对端；全互联是 4950 条，而且机器人各在自己的 Orin NAT 后面，全互联建不起来。
 4. **专线通了以后同一套模型去掉 WireGuard**：`mode: Routed` 保留入网登记和地址表，不下发隧道配置。
 5. **epoch 和设备控制权不进 station-api**。机器人安全不依赖中心服务在线。
-6. 今天五台节点手写的配置，算出来的结果只多不少（单测逐条对过），所以切换不动内核里的会话，运行中的 Job 不断。
+6. 今天六台节点手写的配置，算出来的结果只多不少（单测逐条对过），所以切换不动内核里的会话。隔离环境里从线上现在的镜像起步把上线步骤走了一遍：每一步和回退都是 0 丢包（上线文档第 6 节）。
 
 ## 1. 概念和名字
 
@@ -185,12 +185,12 @@ controller 每次算完都沿着算出来的配置检查任意两台之间有没
 
 | 事情 | 怎么发生 | 管理员做什么 |
 |---|---|---|
-| 新叶子入网 | 打标签后 pod 起来，自动登记、分配地址、下发 | 给节点打 `station.rlark.io/network=enabled`（这就是审批） |
+| 新叶子入网 | 打标签后 pod 起来，自动登记、分配地址、下发（实测 16 s 连上第一台枢纽，28 s 连上全部） | 给节点打 `station.rlark.io/network=enabled`（这就是审批） |
 | 新枢纽、新端点、新网段、转发 | 在 `SiteNetwork.spec.nodes` 声明 | 审：这些会改别的节点的路由，节点自己报不了 |
 | 新场站、新成员集群 | 在 `SiteNetwork.spec.sites` 声明；集群注册沿用现有流程 | 审 |
-| 密钥轮换 | 删节点上的 `private.key`，重启 pod；新公钥用同一身份登记，controller 重算，各对端最迟约 40 s 换成新公钥 | 不用审：能删这个文件的人本来就拿得到旧私钥 |
-| 节点重装（Node UID 变了） | Station 进 Conflict，入网请求认证不过，全网把它的旧公钥去掉；管理员重绑后新公钥按新的绑定版本入网，**地址不变** | 重绑（已有流程） |
-| 移除 | Station 退役：全网去掉它，地址回池 | 退役 |
+| 密钥轮换 | 删节点上的 `private.key`，重启 pod；新公钥用同一身份登记，controller 重算，各对端最迟约 40 s 换成新公钥（实测业务中断 7.6 s） | 不用审：能删这个文件的人本来就拿得到旧私钥 |
+| 节点重装（Node UID 变了） | 重装后的节点作为"已验证、未绑定"的节点上报，Station 进 Conflict，它的入网被拒，全网把它的旧公钥去掉；管理员重绑后新公钥按新的绑定版本入网，**地址不变**（实测重绑后 49 s 恢复） | 重绑（已有流程） |
+| 移除 | Station 退役：全网去掉它（实测 25 s），地址回池 | 退役 |
 | 只是离线 | 什么都不变：离线的节点留在别人的对端表里，回来就能连 | — |
 
 ### 2.7 各部件停了会怎样
@@ -218,13 +218,13 @@ controller 每次算完都沿着算出来的配置检查任意两台之间有没
 3. 逐个集群让网关读算出来的配置（先不开删路由）：内核里对端和已有网段不变，只增加几个网段，会话不重置。
 4. 开删路由；ConfigMap 里办公室和机器人的条目可以删，云节点的缩成只剩一个对端的引导文件。
 
-单测 `TestComputeCoversLiveSite` 拿 11-12 13:18 快照里的五份手写配置逐项核对：对端、端点、保活、网段、路由、上联路由一条不少。多出来的只有：
+单测 `TestComputeCoversLiveSite` 拿 11-12 16:10 现场的六份手写配置逐项核对：对端、端点、保活、网段、路由、上联路由一条不少。多出来的只有：
 
 | 节点 | 多出来的 | 原因 |
 |---|---|---|
-| cailiang | 到两台云节点 VPC 地址的路由；对 3090 的端点和保活 | 云节点的 `nodeAddress` 对所有别的场站可见；两边都可拨时两边都拨 |
+| cailiang | 到两台云节点 VPC 地址的路由；对 3090 和 wendychen 的端点和保活 | 云节点的 `nodeAddress` 对所有别的场站可见；两边都可拨时两边都拨 |
 | 10-0-2-57 | 经 cailiang 到 NAS `10.11.5.12/32` | NAS 是给云场站的，原来只有 10-0-2-196 写了 |
-| alexfu | 到云上两个 Pod 网段的路由 | Pod 网段是给办公场站的，原来只有 cailiang 写了 |
+| alexfu、wendychen | 到云上两个 Pod 网段的路由 | Pod 网段是给办公场站的，原来只有 cailiang 写了 |
 | s1u-01-x86、10-0-2-196 | 无 | — |
 
 回退：第 3、4 步去掉网关的 `STATION_GATEWAY_COMPUTED_CONFIG`，网关回到 ConfigMap（开着删路由时它自己把多出来的路由删掉）；第 2 步 `kubectl rollout undo`；第 1 步换回旧镜像，新 CRD 留着无害。
@@ -233,7 +233,7 @@ controller 每次算完都沿着算出来的配置检查任意两台之间有没
 
 | | 现状（11-12） | 过渡（2–3 台机器人、云 GPU、公网 WireGuard） | 满血版（96 台、工作站、3 × 8 卡、专线） |
 |---|---|---|---|
-| 节点 | 5 台，3 个场站 | 工作站 + 2–3 台机器人 + 2–3 台云节点 + 开发机 | 约 100 台 |
+| 节点 | 6 台，3 个场站 | 工作站 + 2–3 台机器人 + 2–3 台云节点 + 开发机 | 约 100 台 |
 | 名字 | 都叫 Station | 界面和新接口叫场站节点；CRD 组名仍是 `station.rlark.io` | 组名迁到 `site.rlark.io` |
 | 入网 | 手改各集群 ConfigMap | 自动；云节点各留一份引导文件 | 自动，无引导文件 |
 | 拓扑 | 手写的两两互联 | 叶子拨枢纽 + 工作站转发 | 无隧道（`mode: Routed`） |
@@ -265,6 +265,7 @@ liangcai 现有的件：
 | CRD `SiteNetwork`、`NetworkEnrollment` | `extensions/station/api/v1alpha1/network_types.go`，CRD 用仓库固定的 controller-gen v0.18.0 生成 | — |
 | 网络 controller | `extensions/station/controller/network_reconciler.go` | 入网、分配、第二台机器人加入时叶子配置不变、DHCP 端点跟随、重绑后旧公钥全网去掉且地址不变、退役回收地址、Routed 模式、声明了公钥的节点先于登记被对端认得、今天场站的声明文件 |
 | 入网接口 | `apps/rlark/pkg/stationidentity/network_enrollment.go` | 必须是已绑定的已验证身份；公钥和地址格式；换公钥后不返回旧公钥的答案；别的集群不能接管 |
+| 重装节点的上报 | `kubernetes_registry.go`、`kubernetes_observation.go` | 同名新 UID 的节点按未绑定认证；它的上报替换旧节点的快照；别的集群的同名节点仍被拒 |
 | agent 登记 | `apps/rlark/pkg/stationidentity/agent_enrollment.go` | 登记、校验 hash、原子写；pending / 拒绝 / 出错都保留上一份 |
 | 网关 | `extensions/station-gateway` | 配置来源的先后；对端增删改是增量；真实内核（一次性网络命名空间，含他原有的两个内核测试）上加入、离开、删路由 |
 | 两个模块之间的文件格式 | `extensions/station-gateway/testdata/computed-s1u-01-x86.json` | 计算侧必须产出它，网关侧必须能解析它 |
@@ -273,14 +274,16 @@ liangcai 现有的件：
 
 只设计、没实现：
 
-- 转发枢纽的防火墙放行（上线步骤里手工加一条规则）。
+- 转发枢纽的防火墙放行（上线步骤里手工加一条规则；演练环境的 FORWARD 默认放行，这条规则本身没有被演练验证）。
 - 工位号上报。
 - 按场站分别设 Tunnel / Routed（现在是整张网一个模式）。
 - 密钥轮换的审计事件。
 - CRD 组改名的迁移（1.3）。
 - 入网状态在界面上的显示（现在用 `kubectl get netenroll -A` 和 `kubectl get sitenet`）。
 
-没有在真实集群上跑过：没有碰任何在线的集群、ConfigMap、DaemonSet。
+端到端：在隔离环境（一次性的 kcp、PostgreSQL、station-api、station-controller，三个 kind 集群 5 个节点，真实内核 WireGuard）里跑过入网、新节点加入、转发、换密钥、重装和重绑、移除、station-api 停机、Routed 模式，以及从线上现在的镜像起步的整套上线步骤和回退。环境脚本在 `extensions/station/hack/e2e/`，结果在上线文档第 6 节。
+
+没有在线上跑过：没有碰任何在线的集群、ConfigMap、DaemonSet。演练没有覆盖的：真实的 NAT 和跨公网时延、机器人经 Orin 的上联路由、云节点的 5.15 内核、Ray 的流量。
 
 ## 6. 动了哪些上游文件
 

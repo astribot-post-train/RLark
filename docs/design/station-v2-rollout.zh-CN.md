@@ -1,12 +1,14 @@
-# Station v2 上线步骤（现场：2026-11-12 的五台节点）
+# Station v2 上线步骤（现场：2026-11-12 的六台节点）
 
 设计见 [station-v2.zh-CN.md](station-v2.zh-CN.md)。本文只写做什么、怎么验、怎么退。
 
 ## 0. 结论
 
 - 五步。第 1、2 步不改任何节点的隧道行为；第 3 步才让网关读算出来的配置，逐个集群做，每个集群做完都验；第 4 步收尾；第 5 步让以后的新节点零配置入网。
+- 镜像已经构建并推送（第 0.5 节），整套步骤在隔离环境里从线上现在的镜像起步演练过一遍（第 6 节）。
 - 每一步的回退是一条命令，不需要到节点上手工清理（第 3 步以后回退时由新网关自己删多出来的路由）。
-- 运行中的 Job（`jo-9911056bc1f54b53`，两台金山云 + s1u_01）：第 1、2 步随时可做；第 3 步对机器人集群和云集群的那两次，放在 Run 处于 hold 或两批之间做。依据：切换时内核里的对端、端点、已有网段都不变，只多几个网段，WireGuard 会话不重置；但 pod 会重建一次，选一个不心疼的时刻。
+- 对运行中的 Run 的影响（第 6 节的演练实测）：每一步都会重建各节点的 Station 网络 pod，**pod 重建期间隧道不断**。从线上现在跑的那两个镜像起步，走完第 1–4 步和一次回退，5 条业务路径各 300–500 个 ping（间隔 0.2 s）**一个没丢**。原因：WireGuard 接口和会话在内核里，不随 pod 消失；新网关在配置和内核一致时不调用设备配置，有差别时只改有差别的那个对端。Ray 的 150–180 s 容忍度远大于实测的 0 s。所以第 1、2 步可以在两个 episode 之间做；第 3、4 步同样没有测到中断，是否也在 Run 中做由主会话定，稳妥的做法是放在 hold 时。
+- 演练和线上的差别（没有被演练覆盖的）：节点之间没有真实的 NAT 和 50 ms 时延；没有机器人经 Orin 的上联路由（只有内核单测覆盖）；节点共用一个内核（6.8，云节点线上是 5.15）；只测了 ICMP，没有跑 Ray。
 - 所有命令在开发机 `cailiang`（10.11.14.128）上执行，需要 root（docker、三个集群的 kubeconfig 只有 root 可读）。每一步写成一个脚本放 `/tmp/`，由用户执行。
 
 约定：
@@ -23,7 +25,8 @@ BK=/var/backups/station-v2-$(date +%Y%m%d-%H%M%S)  # 每步开头 mkdir -p，先
 
 ## 准备（不需要 root，liangcai 做）
 
-1. 把 `feat/station-enrollment` 合进他的工作树。他有 28 个未提交文件，其中和 Station 代码有关的只有 `apps/rlark/pkg/stationidentity/network_summary.go` 和它的测试，本分支没有动这两个文件，`git merge` 不冲突。现场的 station-api 镜像（`station-services:wg-unreported-20261112`）就是从这个未提交的工作树构建的，所以**必须从合并后的工作树构建**，不能从干净的分支构建，否则会丢掉他那处修改。
+1. 镜像已经构建、演练并推送（第 0.5 节），上线不需要再构建。源码 = 本分支的树 + 他工作树里已经部署在线上的那一处未提交修复（`network_summary.go`、`node_network_handler.go` 和它们的测试，共 4 个文件；现场的 `station-services:wg-unreported-20261112` 就是带着它构建的）。他 11-12 14:29 起在写的 `NodeOperation`（未提交）不在这些镜像里，线上镜像里也没有。
+   把 `feat/station-enrollment` 合进他的工作树时有三处要手工处理：`extensions/station/api/v1alpha1/groupversion_info.go`（两边各加了一行类型注册，都保留）、`zz_generated.deepcopy.go`（合并后用 controller-gen v0.18.0 重新生成）、两份 `extensions/station/README*.md`（开头的说明和他加的段落都保留）。
 2. 跑测试：
 
    ```bash
@@ -32,7 +35,21 @@ BK=/var/backups/station-v2-$(date +%Y%m%d-%H%M%S)  # 每步开头 mkdir -p，先
    (cd apps/rlark && GOWORK=off go test ./pkg/stationidentity/ ./pkg/gateway/)
    ```
 
-3. 核对声明文件 `extensions/station/deploy/site-network.live-20261112.yaml` 和现场一致：五个节点名、三个集群 ID、地址、端点。11-12 13:18 之后如果又改过任何一份 `station-wireguard-config`（加过对端或网段），先把改动补进声明文件；第 2 步的对比会把漏掉的查出来。
+3. 核对声明文件 `extensions/station/deploy/site-network.live-20261112.yaml` 和现场一致：六个节点名、三个集群 ID、地址、端点。它对应 11-12 16:10 读到的现场（15:5x 有人手工加了第六台 `wendychen`，`10.254.240.6`，六份配置都改了，声明文件和单测已经跟上）。之后如果又改过任何一份 `station-wireguard-config`，先把改动补进声明文件；第 2 步的对比会把漏掉的查出来。
+
+## 0.5 镜像（已构建、已演练、已推送）
+
+| 镜像 | 标签 | 仓库里的摘要 |
+|---|---|---|
+| `localhost:5555/station-services`（station-api） | `enroll-20261112` | `sha256:3f79779e03ba287dc9c334c69ee71de9fc09bb60270cdef0cecb42547c46214a` |
+| `localhost:5555/station-controller` | `enroll-20261112` | `sha256:c3e547a1e4d4add2b8c77d09d63cab65b90f89435cf34887f049e0e8197523fe` |
+| `rlark/station-agent`（`10.11.14.128:5443` 和 `10.254.240.1:5443` 是同一个仓库） | `enroll-20261112` | `sha256:6c31551dcf42d7a49b108367e6ff948d67db11674e4ce6c591857bd4bedc3aba` |
+| `rlark/station-wireguard` | `enroll-20261112` | `sha256:4fedb44376bdddf7df909aba8201661a5c0511df1c9c6444ef6ef08302b4bc4b` |
+
+- 构建目录留在开发机 `/var/tmp/station-v2-final/`：`build.sh`（构建脚本）、`station-v2-tree.tar`（源码树）、`liangcai-deployed-fix.diff`（上面说的那 4 个文件的修复）。重新构建：`sudo bash /var/tmp/station-v2-final/build.sh <标签>`。
+- 开发机的 docker 没有 buildx，`apps/rlark/Dockerfile` 的缓存挂载用不了，脚本用旧构建器构建一份去掉缓存挂载的 Dockerfile（阶段和产物相同）；buildah 在 root 下缺 netavark，用不了。
+- docker 不信任 `10.11.14.128:5443` 的自签证书，agent 和网关镜像是用 `skopeo --insecure-policy copy --dest-tls-verify=false docker-daemon:… docker://10.254.240.1:5443/rlark/…` 推的。
+- 演练用的是同一批镜像（本地镜像 ID：agent `85ec50f571d1`、网关 `a4dfb2584e39`、station-api `3f79779e03ba`、controller `c3e547a1e4d4`）。
 
 ## 第 1 步：管理面（不影响任何节点）
 
@@ -40,10 +57,7 @@ BK=/var/backups/station-v2-$(date +%Y%m%d-%H%M%S)  # 每步开头 mkdir -p，先
 
 ```bash
 cd $REPO
-docker build -f apps/rlark/Dockerfile -t localhost:5555/station-services:$TAG .
-docker build -f extensions/station/Dockerfile -t localhost:5555/station-controller:$TAG .
-docker push localhost:5555/station-services:$TAG
-docker push localhost:5555/station-controller:$TAG
+# 镜像已在仓库里（第 0.5 节），TAG=enroll-20261112
 
 # 管理面：必须是已经有五个 Station CRD 的那个 workspace
 kubectl --kubeconfig $KCP get crd stations.station.rlark.io            # 必须成功，否则 kubeconfig 指错了 workspace
@@ -80,12 +94,10 @@ kubectl --kubeconfig $LOCAL -n station-system logs deploy/station-controller --t
 改什么：三个集群的 DaemonSet `station-system/station-agent-network` 换两个容器的镜像；agent 加登记参数；网关加"发布公钥"。网关**不**加 `STATION_GATEWAY_COMPUTED_CONFIG`，所以它仍只读 ConfigMap。
 
 ```bash
-cd $REPO
-docker build -f extensions/station/deploy/Dockerfile.agent -t 10.11.14.128:5443/rlark/station-agent:$TAG .
-docker build -t 10.11.14.128:5443/rlark/station-wireguard:$TAG extensions/station-gateway
-docker push 10.11.14.128:5443/rlark/station-agent:$TAG
-docker push 10.11.14.128:5443/rlark/station-wireguard:$TAG
-# 记下两个 digest。云和机器人集群经 10.254.240.1:5443 拉同一个仓库（同一份 KS3 后端），按 digest 引用。
+# 镜像已在仓库里（第 0.5 节）：
+AGENT_DIGEST=sha256:6c31551dcf42d7a49b108367e6ff948d67db11674e4ce6c591857bd4bedc3aba
+WG_DIGEST=sha256:4fedb44376bdddf7df909aba8201661a5c0511df1c9c6444ef6ef08302b4bc4b
+# 云和机器人集群经 10.254.240.1:5443 拉同一个仓库（同一份 KS3 后端），按摘要引用。
 ```
 
 对每个集群（顺序：`$LOCAL` → `$ROBOT` → `$CLOUD`；镜像前缀本地集群用 `10.11.14.128:5443`，另外两个用 `10.254.240.1:5443`）：
@@ -112,13 +124,13 @@ kubectl --kubeconfig $K -n station-system rollout status ds/station-agent-networ
 
 这一步 pod 会重建。接口 `st-wg0` / `st-hub0` 和内核里的会话不随 pod 消失；新网关起来后读的还是同一份 ConfigMap，和内核状态一致，不下发任何改动（新网关在状态一致时不调用设备配置）。
 
-验（五台都要）：
+验（六台都要）：
 
 ```bash
 kubectl --kubeconfig $KCP get netenroll -A
-# 五行，PHASE 都是 Enrolled，ADDRESS 是 10.254.240.1 / 10.0.2.57 / 10.254.240.3 / 10.0.2.196 / 10.254.240.5
+# 六行，PHASE 都是 Enrolled，ADDRESS 是 10.254.240.1 / 10.0.2.57 / 10.254.240.3 / 10.0.2.196 / 10.254.240.5 / 10.254.240.6
 kubectl --kubeconfig $KCP -n station-system get sitenet default -o jsonpath='{.status.members} {.status.unreachable}{"\n"}'
-# 5，后面为空
+# 6，后面为空
 kubectl --kubeconfig $K -n station-system logs ds/station-agent-network -c station-agent | grep enrollment
 # network enrollment: enrolled
 
@@ -129,7 +141,16 @@ for each (K, NS, NODE):
   python3 extensions/station/deploy/compare-config.py /tmp/live-$NODE.json /tmp/computed-$NODE.json
 ```
 
-`$NS` 是该集群在管理面的 `Cluster.spec.agentNamespace`（`kubectl --kubeconfig $KCP get netenroll -A` 的第一列）。按 13:18 的快照，预期输出：`s1u-01-x86` 和 `10-0-2-196` 是 `0 added, 0 removed`；`cailiang` 是 `6 added, 0 removed`（两个 VPC 地址各在对端和路由里算一项，加 3090 对端的端点和保活）、`10-0-2-57` 是 `2 added`（NAS 网段）、`alexfu` 是 `4 added`（两个 Pod 网段），全是 `+`。出现任何 `-`：把它对应的对端或网段补进 `SiteNetwork` 的声明（`advertise`、`endpoints`），重新 apply，再比。
+`$NS` 是该集群在管理面的 `Cluster.spec.agentNamespace`（现场三个集群的 agentNamespace 和集群 ID 同名）。按 16:10 读到的六份配置，预期输出：
+
+| 节点 | 输出 | 多出来的 |
+|---|---|---|
+| `cailiang` | `8 added, 0 removed` | 两个 VPC 地址各在对端和路由里算一项；对 3090 和 `wendychen` 的端点和保活 |
+| `10-0-2-57` | `2 added, 0 removed` | NAS 网段 |
+| `alexfu`、`wendychen` | `4 added, 0 removed` | 两个 Pod 网段 |
+| `s1u-01-x86`、`10-0-2-196` | `0 added, 0 removed` | 无 |
+
+出现任何 `-`：把它对应的对端或网段补进 `SiteNetwork` 的声明（`advertise`、`endpoints`），重新 apply，再比。
 
 另外确认隧道没动：各节点 `wg show` 的 latest handshake 在 2 分钟以内，机器人 ping `10.0.2.57`、`10.0.2.196` 通，Job 的三个 Ray 节点都在。
 
@@ -147,7 +168,7 @@ kubectl --kubeconfig $K -n station-system set env ds/station-agent-network -c wi
 kubectl --kubeconfig $K -n station-system rollout status ds/station-agent-network --timeout=300s
 ```
 
-pod 重建后的过程：网关先按 ConfigMap 协调（和内核一致，无改动）；agent 第一次心跳后登记并写下算出来的配置（几秒内）；网关下一个 10 s 周期改读它，日志打 `using the computed configuration`，只把有差别的对端发给内核（按上表：`cailiang` 上两个云对端各加一个网段、3090 对端加端点和保活；`10-0-2-57` 上 cailiang 对端加一个网段；`alexfu` 上两个云对端各加一个网段；机器人和 `10-0-2-196` 没有任何改动），再加对应的路由。没开删路由时，如果算出来的配置少了内核里已有的路由，网关在动设备之前就报错停下，内核保持原样。
+pod 重建后的过程：网关先按 ConfigMap 协调（和内核一致，无改动）；agent 第一次心跳后登记并写下算出来的配置（几秒内）；网关下一个 10 s 周期改读它，日志打 `using the computed configuration`，只把有差别的对端发给内核（按上表：`cailiang` 上两个云对端各加一个网段、3090 和 `wendychen` 两个对端加端点和保活；`10-0-2-57` 上 cailiang 对端加一个网段；`alexfu`、`wendychen` 上两个云对端各加一个网段；机器人和 `10-0-2-196` 没有任何改动），再加对应的路由。没开删路由时，如果算出来的配置少了内核里已有的路由，网关在动设备之前就报错停下，内核保持原样。
 
 验：
 
@@ -200,7 +221,7 @@ kubectl --kubeconfig $K -n station-system set env ds/station-agent-network -c wi
 kubectl --kubeconfig $K label node $NODE station.rlark.io/network=enabled
 ```
 
-约 1 分钟后：`kubectl --kubeconfig $KCP get netenroll -A` 多一行 `Enrolled` 和它的地址；所有枢纽的对端表里多了它。不改任何 ConfigMap，不抄公钥。
+演练实测：打标签后 16 s 连上第一台枢纽，28 s 连上全部四台枢纽。`kubectl --kubeconfig $KCP get netenroll -A` 多一行 `Enrolled` 和它的地址。不改任何 ConfigMap，不抄公钥。
 
 要额外声明的情况（改 `SiteNetwork.spec` 一处）：
 
@@ -222,9 +243,92 @@ kubectl --kubeconfig $K label node $NODE station.rlark.io/network=enabled
 
 `/api/v1/site-nodes/{node}` 和界面改名在 RLark Gateway 和 UI 里。Gateway 是手工 `docker run` 的容器、UI 是 vite 开发服务，按他现在换 Gateway 镜像的方式换一次即可；不换不影响入网。Fleet 开始用这个接口之前要换。
 
+## 6. 隔离环境里的端到端演练（2026-11-12 14:30–16:05）
+
+**结论：整条链路在真实的 kcp、真实的 TokenReview、真实的内核 WireGuard 上跑通；上线的每一步和回退都没有丢一个 ping；演练查出 2 个代码问题和 1 个原有流程的问题，都已修并重测。**
+
+### 6.1 环境
+
+`extensions/station/hack/e2e/e2e.sh up`：一次性的 kcp v0.30.0（和线上同版本）、PostgreSQL 15（TLS，verify-full）、station-api、station-controller 四个容器，加三个 kind 集群（v1.31）共 5 个节点，对应今天的三个场站：
+
+| 演练里的节点 | 对应线上 | 角色 |
+|---|---|---|
+| `e2e-office-control-plane` | `cailiang` | 枢纽，场站内端点，替云场站代理一个"NAS"地址 |
+| `e2e-office-worker` | `alexfu` | 枢纽，端点取自己上报的地址 |
+| `e2e-lab-control-plane` | `s1u-01-x86` | 叶子 |
+| `e2e-ksyun-control-plane` | `10-0-2-57` | 枢纽，公网端点，另有一个"VPC"地址 |
+| `e2e-ksyun-worker` | `10-0-2-196` | 同上，接口 `st-hub0`、端口 51821 |
+
+每个节点是一个容器，有自己的网络命名空间；DaemonSet 用仓库里的清单原样部署，WireGuard 接口由网关容器建在节点自己的命名空间里。地址取自 `198.18.0.0/15`（基准测试保留段）：真实网络上没有主机会回应，离开隧道的 ping 一定是丢的（一开始用 `10.99.0.0/24`，公司内网里有 `10.99.0.1` 回包，把一次断线盖住了）。
+
+放在 liangcai 的开发机上跑：3090 的 `fs.inotify.max_user_instances=128` 只够起 2–3 个 kind 节点。和线上没有任何连接（容器名 `e2e-*`，docker 网络 `kind`，各自的 kcp 和 station-api），跑完全部删除；删除后线上 6 个 Station 仍是 Bound，隧道 ping 正常。
+
+### 6.2 入网和变更
+
+| 场景 | 做了什么 | 结果 |
+|---|---|---|
+| 五台入网 | 部署 DaemonSet，给节点打标签 | 75 s 内 5 个 Station Bound、5 个 `NetworkEnrollment` Enrolled；5 台互 ping 各自的唯一地址，0 丢包；同场站两台云节点的隧道地址互相不通（设计如此，它们用 VPC 地址） |
+| 新机器人入网 | 新建一个单节点集群，加进 `lab` 场站，打标签 | 分到池里下一个地址。打标签到连上第一台枢纽 16 s，连上全部四台枢纽 28 s（修掉 pending 等待之前是 73 s） |
+| 叶子之间 | 两台机器人互 ping | 不通，`SiteNetwork.status.unreachable` 列出这两对，`FullyConnected=False`；把办公室枢纽声明为 `relay: true` 后 50 s 内列表清空，互 ping 0 丢包 |
+| 换密钥 | 删节点上的私钥和 `last-applied.json`，删 pod，同时机器人 → 云持续 ping | 新公钥自动登记；600 个 ping（0.2 s 间隔）丢 38 个，最长连续中断 7.6 s |
+| 节点重装 | 删 Node 对象、删接口和密钥目录、重启 kubelet（新 Node UID） | Station 变 Conflict，入网变 Rejected，其他节点的对端表里去掉它（机器人 4 个对端变 3 个），旧地址不通 |
+| 重绑 | 建 `StationRebind`（旧 Station、新 Node UID） | Applied；49 s 后机器人能 ping 通重装的节点；绑定版本 2，隧道地址和节点地址都不变 |
+| 移除 | Station 置 `retired` | 25 s 后枢纽上它的对端和路由都没了（路由是网关自己删的）；地址回池 |
+| station-api 和 controller 停掉 | 停两个容器，删一台节点的 pod **和接口** | 网关日志 `using the last-applied configuration`，隧道重新建起，ping 0 丢包 |
+| 无隧道模式 | `mode` 改成 `Routed` 再改回 | 登记保持 Enrolled，地址变成节点自己的地址，不下发配置；已有隧道不受影响；改回后恢复 |
+
+### 6.3 上线演练
+
+`migrate.sh start` 造出上线前的状态：5 台节点跑**线上现在的两个镜像**（`station-agent@sha256:c5b1…`、`station-wireguard@sha256:b256…`，从仓库按线上 DaemonSet 的摘要核对过）和基准提交里的 DaemonSet 清单，读手写的 ConfigMap（形状和线上相同：算出来的配置去掉 6.2 表里那几项"多出来的"）；管理面没有 `SiteNetwork`。然后照本文的步骤逐条执行，同时 5 条路径各自每 0.2 s ping 一次（机器人 → 两台云节点的 VPC 地址、机器人 → 办公室枢纽、云 → 机器人、3090 → 机器人），每步前后各留 30 s。
+
+| 步骤 | 重建的 pod | 每条路径发出的 ping | 丢失 | 最长中断 |
+|---|---|---|---|---|
+| 第 1 步：建 `SiteNetwork` | 无 | 302–304 | 0 | 0.0 s |
+| 第 2 步：办公室集群换镜像 | 2 | 333–334 | 0 | 0.0 s |
+| 第 2 步：机器人集群 | 1 | 312–313 | 0 | 0.0 s |
+| 第 2 步：云集群 | 2 | 325–326 | 0 | 0.0 s |
+| 第 3 步：办公室集群读算出来的配置 | 2 | 506–507 | 0 | 0.0 s |
+| 第 3 步：机器人集群 | 1 | 306–307 | 0 | 0.0 s |
+| 第 3 步：云集群 | 2 | 365–366 | 0 | 0.0 s |
+| 第 4 步：三个集群开删路由 | 各自全部 | 307–322 | 0 | 0.0 s |
+| 回退办公室集群（去掉变量并开删路由） | 2 | 324–326 | 0 | 0.0 s |
+| 办公室集群再做一次第 3 步 | 2 | 316–318 | 0 | 0.0 s |
+
+- 第 2 步之后 `compare-config.py` 的输出和单测预测的一致：`6 added / 4 added / 0 / 2 added / 0`，全部 `0 removed`。
+- 第 3 步之后办公室枢纽的 `st-wg0` 上路由从 6 条变 8 条（两个 VPC 地址）；回退之后回到 6 条，是网关自己删的。
+- 量具本身验证过：把机器人的接口手工关 3 s，同一套 ping 报出 5.8–6.0 s 的中断。
+
+所以对"每台节点的 pod 重建时隧道断多久"的回答是：测不到（小于 0.2 s 的分辨率，19 次 pod 重建 × 5 条路径都是 0 丢包）。
+
+### 6.4 演练查出的问题
+
+| 问题 | 怎么发现的 | 处理 |
+|---|---|---|
+| 入网请求第一次总是 pending，agent 等满 30 s 才再问，新节点入网要 70 多秒 | 新机器人入网计时 | pending 时 5 s 后重试；重测 16 s / 28 s |
+| 重装后的同名节点永远报不上来，Station 不会变 Conflict；重绑后又被旧快照卡死（原有流程的问题） | 节点重装场景：Station 停在 Offline，重绑 Applied 后 agent 仍然 401 | 见"给 liangcai"第 8 条；重测通过（上表"节点重装""重绑"两行是修后的结果） |
+| agent 上报失败不打任何日志 | 上面那个问题排查不动 | 状态变化时打一行 |
+| controller 把和 station-api 的写冲突记成 error | 演练时看 controller 日志 | 冲突时安静地重排队；最终镜像的日志里 error 为 0 |
+| kcp 的证书只认它的容器地址和 `localhost` | 起环境时 | 环境脚本里按地址访问（线上的管理面 kubeconfig 也是这么写的） |
+| 退役的 Station 占着节点名 | 重建演练集群后同名节点上报 | 没改，列在"给 liangcai"里 |
+
+### 6.5 怎么重跑
+
+```bash
+cd extensions/station/hack/e2e
+IMAGES_TAG=<标签> ./e2e.sh up            # 约 6 分钟；镜像名 station-v2/<四个名字>:<标签>，在本机 docker 里
+./e2e.sh site_network                    # 声明三个场站
+for c in e2e-office e2e-lab e2e-ksyun; do ./e2e.sh enable $c; done
+./e2e.sh mgmt get stn,netenroll -A       # 管理面
+./e2e.sh ping e2e-lab-control-plane -c 3 198.19.2.57
+./migrate.sh start                       # 上线演练的起点；之后 measure / step2 / compare / step3 / step4 / back
+./e2e.sh down
+```
+
+需要 docker、kind、kubectl、openssl、python3，宿主机有 wireguard 模块，`fs.inotify.max_user_instances` ≥ 8192；`migrate.sh start` 还需要线上那两个镜像在本机 docker 里（`station-v2/station-agent:live-20261112`、`station-v2/station-wireguard:live-20261112`）。
+
 ## 给 liangcai：改了什么、为什么
 
-分支 `feat/station-enrollment`，基于 `feat/optimization` 1deb4ef，6 个提交，没有改你未提交的任何文件。
+分支 `feat/station-enrollment`，基于 `feat/optimization` 1deb4ef，没有改你 13:18 时未提交的任何文件；你 14:29 以后新写的 NodeOperation 和它在三处相碰（见"准备"第 1 条）。
 
 1. **新增 `extensions/station/network`**（纯函数，无 k8s 依赖）：输入拓扑声明和已登记的节点，输出每台节点的网关配置（就是你 `station-gateway` 读的那个 JSON）。原因：加一台节点时手改 N 份配置这件事，换成一处声明 + 计算。`TestComputeCoversLiveSite` 用 11-12 你那五份手写配置做基准，保证算出来的只多不少。
 2. **新增两个 CRD**（同一个组 `station.rlark.io/v1alpha1`）：`SiteNetwork`（管理员写：地址池、场站、不只是叶子的节点）和 `NetworkEnrollment`（一台节点的入网请求和答复，名字 = 节点名，放在集群的 agentNamespace，和 `StationObservation` 同一个约定）。`station-controller` 多一个 `NetworkReconciler`：整张网是一个协调键，所以地址分配不会并发。地址记在 `SiteNetwork.status.allocations`，键是 Station 的 UID，重绑不变、退役回收（和你 `StationSequence.status` 一样，是放在 status 里的持久状态）。
@@ -239,9 +343,16 @@ kubectl --kubeconfig $K label node $NODE station.rlark.io/network=enabled
 6. **Gateway 加 `GET /api/v1/site-nodes/:name`**，界面"Station 身份 / 工作站"改叫"场站节点 / Site Nodes"。原因见设计文档第 1 节：Station 在论文和 Fleet 里是一个 Run 里的位置，一台 8 卡节点上有好几个；你这个对象一台机器一个，是"节点"。组名、kind、可执行文件名都没动，迁移方案在设计文档 1.3。
 7. **清单**：`station-agent.yaml` 网络模板加了登记参数、共享卷、三个环境变量，hostPath 改成 `DirectoryOrCreate`，ConfigMap 卷改成 optional；`management-rbac.yaml` 加了两种新资源的权限；`Dockerfile`（gateway）多拷一个 `source.go`。
 
+8. **重装后的同名节点能上报了**（端到端演练查出来的，原有流程的问题）。原来 `KubernetesStationBindingResolver.Resolve` 遇到"同名、Node UID 不同"直接报错，这台节点的任何请求都被拒：Station 只会变 Offline，永远不会出现你界面上"仅 Conflict 可重绑"所依赖的那条新 UID 的观测；手工建 `StationRebind` 即使 Applied，旧 UID 留下的 `StationObservation` 又让 `StationReconciler` 把它标成 Conflict，agent 继续被拒，解不开。现在：这种节点按"已验证、未绑定"返回（`ErrStationBindingNotFound`），只能发观测，不能发 challenge、敏感操作和入网；`KubernetesObservationSink` 在同一集群里发现快照的 Node UID 和当前已验证的不同，就删掉旧快照重建。之后就是你原来设计的流程：Conflict → 重绑 → Bound。你那条测试"same name changed UID 必须报错"仍然成立（返回的还是错误）。
+9. **agent 上报失败会打一行日志**（原来完全不出声，演练里排查全靠它），入网 pending 时 5 s 后重问（原来等满 30 s）。
+10. **端到端环境** `extensions/station/hack/e2e/`：`e2e.sh up` 在一台机器上起一次性的 kcp、PostgreSQL、station-api、station-controller 和三个 kind 集群，节点上跑真实的 DaemonSet 和内核 WireGuard；`migrate.sh` 是上线演练。
+
+和你正在写的 `NodeOperation` 的关系：`EnableWireGuard` 的 `AllocateAddress`、`ApplyPeer` 两步和这里的入网是同一件事。建议 `NodeOperation` 只做它独有的（SSH 进新机器 `kubeadm join`、移除），`EnableWireGuard` 缩成"打标签，等这台的 `NetworkEnrollment` 变成 Enrolled、握手成功"。
+
 没做、需要你定的：
 
 - 转发枢纽的防火墙规则现在是手工一条 `iptables`。要不要让网关在声明了 `relay` 时自己加（它有 `NET_ADMIN`），你原来的原则是网关不碰宿主机防火墙，我没有改这个原则。
 - 入网状态在界面上还看不到，只能 `kubectl get netenroll -A`。
 - `station-api` 现在只听隧道地址；第 5 步要它也听内网地址，证书要加 SAN。
+- 退役的 Station 占着它的节点名：同名的新节点上报后只会让那个已退役的 Station 显示 Conflict，不会建新的（演练里重建一个集群时碰到）。退役机器人的主机名要复用时，现在只能删掉旧 Station 对象。要不要让"已退役"不参与同名判断，你定。
 - 你文档里计划的"Worker 租约、epoch、旧指令隔离"建议不做：这部分在 Fleet 的 HotSwarm 和机器人本地设备层里已经有了，放进 station-api 会让机器人安全依赖一个单副本的中心服务（设计文档 1.5）。
