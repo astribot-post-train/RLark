@@ -185,6 +185,9 @@ ExecStart=/opt/rlark/bin/kubelet \$KUBELET_KUBECONFIG_ARGS \$KUBELET_CONFIG_ARGS
 UNIT
 systemctl daemon-reload
 systemctl enable kubelet >/dev/null 2>&1
+# A node class's own profile (a robot's CPU partition) derives its drop-in
+# from the kubelet's unit, which has just changed.
+[ ! -x /usr/local/sbin/fleet-node-profile ] || /usr/local/sbin/fleet-node-profile install >> "$B"/node-profile.log 2>&1 || fail "the node profile did not accept the new kubelet unit: $B/node-profile.log"
 
 # 4. Join. The node registers with its tunnel address, its labels and taints.
 {
