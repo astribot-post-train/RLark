@@ -30,6 +30,10 @@ BIN=$(dirname "$(systemctl show kubelet -p ExecStart --value | sed -n 's/.*path=
 [ -x "$BIN/kubelet" ] || fail "cannot find the kubelet binary of kubelet.service"
 SOCKET=$(sed -n 's/.*--container-runtime-endpoint=unix:\/\/\([^ "]*\).*/\1/p' /var/lib/kubelet/kubeadm-flags.env)
 [ -S "$SOCKET" ] || fail "cannot find the node's container runtime socket"
+# ctr is the one beside the containerd that serves that socket: a node's
+# containerd need not be in the PATH, nor be the only one on the node.
+CTR=$(dirname "$(readlink "/proc/$(ss -Hxlp | awk -v s="$SOCKET" '$5 == s' | sed -n 's/.*pid=\([0-9]*\).*/\1/p')/exe")")/ctr
+[ -x "$CTR" ] || fail "cannot find ctr beside the containerd of $SOCKET"
 from=$("$BIN/kubelet" --version | awk '{print $2}')
 keep=/var/backups/rlark-kube-upgrade/$from
 [ "$PHASE" = rollback ] || install -d "$keep"
@@ -53,7 +57,7 @@ fi
 case $PHASE in
 images|control)
   for archive in "$B"/images/*.tar; do
-    ctr -a "$SOCKET" -n k8s.io images import "$archive" >/dev/null || fail "import $archive"
+    "$CTR" -a "$SOCKET" -n k8s.io images import "$archive" >/dev/null || fail "import $archive"
   done
   stamp "images of $KUBE_VERSION imported"
   [ "$PHASE" = control ] || exit 0
@@ -172,7 +176,7 @@ rollback)
     # holds a later resource version than the snapshot's would otherwise wait
     # for it for ever, and the other nodes are taken back through their kubelets.
     flag() { sed -n "s/^ *- --$1=//p" "$manifest"; }
-    ctr -a "$SOCKET" -n k8s.io run --rm --mount "type=bind,src=/var/lib,dst=/var/lib,options=rbind:rw" --mount "type=bind,src=$keep,dst=/keep,options=rbind:ro" \
+    "$CTR" -a "$SOCKET" -n k8s.io run --rm --mount "type=bind,src=/var/lib,dst=/var/lib,options=rbind:rw" --mount "type=bind,src=$keep,dst=/keep,options=rbind:ro" \
       "$(sed -n 's/^ *image: //p' "$manifest")" rlark-etcd-restore etcdctl snapshot restore /keep/etcd-snapshot.db --data-dir /var/lib/etcd \
       --bump-revision 1000000000 --mark-compacted \
       --name "$(flag name)" --initial-cluster "$(flag initial-cluster)" --initial-advertise-peer-urls "$(flag initial-advertise-peer-urls)" > "$aside/etcd-restore.log" 2>&1 ||
