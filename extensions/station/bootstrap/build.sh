@@ -19,10 +19,12 @@ mkdir -p "$W/bundle/bin" "$W/bundle/cni" "$W/bundle/images"
 (cd "$REPO/extensions/station-gateway" && GOWORK=off CGO_ENABLED=0 go build -trimpath -o "$W/bundle/bin/station-gateway" .)
 (cd "$REPO/extensions/station" && GOWORK=off CGO_ENABLED=0 go build -trimpath -o "$W/station-bootstrap" ./bootstrap)
 for binary in kubeadm kubelet kubectl; do install -m 755 "$KUBE_BIN/$binary" "$W/bundle/bin/"; done
-find "$CNI_BIN" -maxdepth 1 -type f -perm -u+x -exec install -m 755 {} "$W/bundle/cni/" \;
-cp "$IMAGES"/*.tar "$IMAGES"/pause.ref "$W/bundle/images/"
+[[ -z ${CNI_BIN:-} ]] || find "$CNI_BIN" -maxdepth 1 -type f -perm -u+x -exec install -m 755 {} "$W/bundle/cni/" \;
+cp "$IMAGES"/*.tar "$W/bundle/images/"
+[[ ! -e $IMAGES/pause.ref ]] || cp "$IMAGES/pause.ref" "$W/bundle/images/"
 [[ -z ${CERTS_D:-} ]] || cp -r "$CERTS_D" "$W/bundle/certs.d"
 install -m 755 "$HERE/install.sh" "$W/bundle/install.sh"
+install -m 755 "$HERE/upgrade.sh" "$W/bundle/upgrade.sh"
 cat > "$W/Dockerfile" <<'DOCKERFILE'
 FROM scratch
 COPY bundle /bundle

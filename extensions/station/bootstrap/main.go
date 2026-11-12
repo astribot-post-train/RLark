@@ -51,6 +51,10 @@ type answer struct {
 
 func main() {
 	log.SetFlags(log.Ltime)
+	if os.Getenv("PHASE") != "" {
+		upgrade()
+		return
+	}
 	server, code := os.Getenv("RLARK_SERVER"), os.Getenv("RLARK_CODE")
 	ca, err := os.ReadFile("/ca.crt")
 	if server == "" || code == "" || err != nil {
@@ -179,4 +183,24 @@ func copyTree(from, to string) error {
 		}
 		return nil
 	})
+}
+
+// upgrade is the other use of the image: a Job pinned to a node runs it to
+// take that node's Kubernetes one minor version up (upgrade.sh).
+func upgrade() {
+	if err := copyTree("/bundle", hostRoot+stage); err != nil {
+		log.Fatalf("copy the bundle: %v", err)
+	}
+	if err := syscall.Chroot(hostRoot); err != nil {
+		log.Fatalf("enter the host filesystem (the container must be privileged, with hostPID): %v", err)
+	}
+	if err := os.Chdir(stage); err != nil {
+		log.Fatal(err)
+	}
+	run := exec.Command("/bin/sh", stage+"/upgrade.sh")
+	run.Stdout, run.Stderr = os.Stdout, os.Stderr
+	run.Env = append(os.Environ(), "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin")
+	if err := run.Run(); err != nil {
+		log.Fatalf("upgrade: %v", err)
+	}
 }
