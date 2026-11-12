@@ -573,3 +573,34 @@ func ownedConfigMap(declaration *corev1.Secret, mode Mode, namespace string, uid
 		},
 	}}
 }
+
+func TestEngineReplacesStorageClassWhoseImmutableFieldsChanged(t *testing.T) {
+	declaration := testDeclaration(DeliverySecretType, DeliveryMode)
+	declaration.Data = map[string][]byte{
+		"config":    []byte("security:\n  allowClusterScoped: true"),
+		"manifests": []byte("- apiVersion: storage.k8s.io/v1\n  kind: StorageClass\n  metadata:\n    name: sc-1\n  provisioner: rclone\n  reclaimPolicy: Delete"),
+	}
+	engine, targetClient, _, _ := newTestEngine(t, DeliveryMode, declaration, staticNamespaces{})
+	gvr := schema.GroupVersionResource{Group: "storage.k8s.io", Version: "v1", Resource: "storageclasses"}
+	engine.TargetMapper.(*meta.DefaultRESTMapper).Add(gvr.GroupVersion().WithKind("StorageClass"), meta.RESTScopeRoot)
+	existing := &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "storage.k8s.io/v1", "kind": "StorageClass", "provisioner": "rclone", "reclaimPolicy": "Retain",
+		"metadata": map[string]any{"name": "sc-1", "annotations": map[string]any{DeliveryMode.OwnershipPrefix + "definition-uid": "definition-uid"}},
+	}}
+	require.NoError(t, targetClient.Tracker().Create(gvr, existing, ""))
+	var actions []string
+	targetClient.PrependReactor("*", "storageclasses", func(action clientgotesting.Action) (bool, runtime.Object, error) {
+		actions = append(actions, action.GetVerb())
+		if action.GetVerb() == "patch" && len(actions) == 2 {
+			return true, nil, apierrors.NewInvalid(schema.GroupKind{Group: "storage.k8s.io", Kind: "StorageClass"}, "sc-1", nil)
+		}
+		return false, nil, nil
+	})
+
+	_, err := engine.Reconcile(context.Background(), declaration)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"get", "patch", "delete", "patch"}, actions)
+	replaced, err := targetClient.Resource(gvr).Get(context.Background(), "sc-1", metav1.GetOptions{})
+	require.NoError(t, err)
+	assert.Equal(t, "Delete", replaced.Object["reclaimPolicy"])
+}

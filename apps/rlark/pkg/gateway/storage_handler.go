@@ -686,7 +686,10 @@ func buildStorageClassReplicationSecret(namespace, id string, stored storedStora
 		ObjectMeta: metav1.ObjectMeta{
 			Name: id, Labels: map[string]string{"controller": "rlark"}, Annotations: annotations,
 		},
-		Provisioner: "rclone.csi.veloxpack.io", ReclaimPolicy: ptr.To(v1.PersistentVolumeReclaimRetain),
+		// Delete removes the PersistentVolume object with its claim; the driver's
+		// DeleteVolume does nothing to the remote. Retain left one Released
+		// volume per Task per submission.
+		Provisioner: "rclone.csi.veloxpack.io", ReclaimPolicy: ptr.To(v1.PersistentVolumeReclaimDelete),
 		VolumeBindingMode: ptr.To(storagev1.VolumeBindingImmediate), AllowVolumeExpansion: ptr.To(true),
 		Parameters: map[string]string{
 			"remote": remote, "remotePath": remotePath,
