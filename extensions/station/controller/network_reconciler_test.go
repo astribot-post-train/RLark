@@ -253,9 +253,9 @@ func TestNetworkRoutedModeKeepsRegistryWithoutTunnel(t *testing.T) {
 	}
 }
 
-// The declaration shipped for the live site must enroll all five nodes of
+// The declaration shipped for the live site must enroll all six nodes of
 // 2026-11-12 with the addresses and peers they have today.
-func TestLiveSiteDeclarationEnrollsTheFiveNodes(t *testing.T) {
+func TestLiveSiteDeclarationEnrollsTheSixNodes(t *testing.T) {
 	data, err := os.ReadFile("../deploy/site-network.live-20261112.yaml")
 	if err != nil {
 		t.Fatal(err)
@@ -269,11 +269,12 @@ func TestLiveSiteDeclarationEnrollsTheFiveNodes(t *testing.T) {
 		cluster, node, key, reported, address string
 		peers                                 int
 	}{
-		{"rlark-local-dev-gpu", "cailiang", "DwjZS7W8Yab4SZN62rtBuvKzrzWwoa6nHwObl1Ck2XM=", "10.11.14.128", "10.254.240.1", 4},
-		{"rlark-ksyun-gpu", "10-0-2-57", "ixGRrgUmo9UMpnCg00v3DPbRT2NEqvmm6eI/lfzpEEc=", "10.0.2.57", "10.0.2.57", 3},
-		{"rlark-robot-s1u-01", "s1u-01-x86", "YxGnfRDiE+94DLi/fCMeVe3zl73UTudA9apw8/BWjXs=", "192.168.31.250", "10.254.240.3", 4},
-		{"rlark-ksyun-gpu", "10-0-2-196", "5Go4sNJOoyAwxL5PXdMYnVHRJJQWkNzdBRUKDWzDzS0=", "10.0.2.196", "10.0.2.196", 3},
-		{"rlark-local-dev-gpu", "alexfu", "Rpk1Y6lpJXIGOdNcgLMYs0J6mBG+67d85HVJs+upaR4=", "10.11.13.192", "10.254.240.5", 4},
+		{"rlark-local-dev-gpu", "cailiang", "DwjZS7W8Yab4SZN62rtBuvKzrzWwoa6nHwObl1Ck2XM=", "10.11.14.128", "10.254.240.1", 5},
+		{"rlark-ksyun-gpu", "10-0-2-57", "ixGRrgUmo9UMpnCg00v3DPbRT2NEqvmm6eI/lfzpEEc=", "10.0.2.57", "10.0.2.57", 4},
+		{"rlark-robot-s1u-01", "s1u-01-x86", "YxGnfRDiE+94DLi/fCMeVe3zl73UTudA9apw8/BWjXs=", "192.168.31.250", "10.254.240.3", 5},
+		{"rlark-ksyun-gpu", "10-0-2-196", "5Go4sNJOoyAwxL5PXdMYnVHRJJQWkNzdBRUKDWzDzS0=", "10.0.2.196", "10.0.2.196", 4},
+		{"rlark-local-dev-gpu", "alexfu", "Rpk1Y6lpJXIGOdNcgLMYs0J6mBG+67d85HVJs+upaR4=", "10.11.13.192", "10.254.240.5", 5},
+		{"rlark-local-dev-gpu", "wendychen", "uaC5QIh01DyQvTqCObM2dl4hcMIedM5lPYIhkrcQjQQ=", "10.11.14.135", "10.254.240.6", 5},
 	}
 	for _, node := range live {
 		objects = append(objects, testMember(node.cluster, node.node, node.key, node.reported)...)
@@ -293,7 +294,7 @@ func TestLiveSiteDeclarationEnrollsTheFiveNodes(t *testing.T) {
 	if err := c.Get(context.Background(), testNetworkKey, &siteNetwork); err != nil {
 		t.Fatal(err)
 	}
-	if len(siteNetwork.Status.Unreachable) != 0 || len(siteNetwork.Status.Allocations) != 0 || siteNetwork.Status.Members != 5 {
+	if len(siteNetwork.Status.Unreachable) != 0 || len(siteNetwork.Status.Allocations) != 0 || siteNetwork.Status.Members != 6 {
 		t.Fatalf("status %+v", siteNetwork.Status)
 	}
 }

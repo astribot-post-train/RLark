@@ -204,7 +204,7 @@ func TestParsesComputedDocument(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if d.Interface != "st-wg0" || len(d.peers) != 4 || len(d.routes) != 6 || len(d.UplinkRoutes) != 3 || d.peers[0].Endpoint.String() != "10.11.14.128:51820" || *d.peers[0].PersistentKeepaliveInterval != 25*time.Second {
+	if d.Interface != "st-wg0" || len(d.peers) != 5 || len(d.routes) != 7 || len(d.UplinkRoutes) != 4 || d.peers[0].Endpoint.String() != "10.11.14.128:51820" || *d.peers[0].PersistentKeepaliveInterval != 25*time.Second {
 		t.Fatalf("computed document parsed as %+v", d)
 	}
 }
