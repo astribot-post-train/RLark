@@ -182,6 +182,100 @@ paths:
         '409': {description: Ambiguous cluster namespace or node binding}
         '502': {description: Management API request failed}
         '503': {description: Station API unavailable}
+  /api/v1/secrets:
+    get:
+      tags: [Secrets]
+      summary: List job secrets without their values (administrator only)
+      responses:
+        '200': {description: "Name, description, clusters and keys of every job secret"}
+    post:
+      tags: [Secrets]
+      summary: Create a job secret and deliver it to the Job namespace of the selected clusters (administrator only)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, clusters, data]
+              properties:
+                name: {type: string, description: "Name of the delivered Kubernetes Secret; a Job refers to it by this name"}
+                description: {type: string}
+                clusters: {type: array, items: {type: string}}
+                data: {type: object, additionalProperties: {type: string}}
+      responses:
+        '201': {description: "Declared; each cluster's agent applies it"}
+        '400': {description: "Invalid or reserved name, no cluster, no data"}
+        '409': {description: "A secret of this name exists"}
+  /api/v1/secrets/{name}:
+    put:
+      tags: [Secrets]
+      summary: Replace the clusters and all values of a job secret (administrator only)
+      parameters:
+        - {name: name, in: path, required: true, schema: {type: string}}
+      responses:
+        '200': {description: "Replaced"}
+        '404': {description: "Secret not found"}
+    delete:
+      tags: [Secrets]
+      summary: Delete a job secret from the management plane and its clusters (administrator only)
+      parameters:
+        - {name: name, in: path, required: true, schema: {type: string}}
+      responses:
+        '200': {description: "Deleted"}
+        '404': {description: "Secret not found"}
+  /api/v1/service-accounts:
+    get:
+      tags: [Service accounts]
+      summary: List service accounts (administrator only); tokens are never returned
+      responses:
+        '200': {description: "Name, role, tenants and delivery of every service account"}
+    post:
+      tags: [Service accounts]
+      summary: Create a service account and return its token once (administrator only)
+      description: >-
+        A service account is how a program calls this API. Its token is sent as a Bearer token, does not expire,
+        and stops working when it is rotated or the account is deleted. With deliver, the token is kept as a job
+        secret (keys token and service-account) on the given clusters.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: {type: string}
+                description: {type: string}
+                role: {type: string, enum: [user, admin], default: user}
+                tenant_ids: {type: array, items: {type: string}}
+                deliver:
+                  type: object
+                  properties:
+                    clusters: {type: array, items: {type: string}}
+                    secret_name: {type: string}
+      responses:
+        '201': {description: "Created; the response carries the token"}
+        '400': {description: "Invalid name, role or delivery"}
+        '409': {description: "A service account of this name exists"}
+  /api/v1/service-accounts/{name}/token:
+    post:
+      tags: [Service accounts]
+      summary: Replace a service account's token; the previous one stops working at once (administrator only)
+      parameters:
+        - {name: name, in: path, required: true, schema: {type: string}}
+      responses:
+        '200': {description: "The new token"}
+        '404': {description: "Service account not found"}
+  /api/v1/service-accounts/{name}:
+    delete:
+      tags: [Service accounts]
+      summary: Delete a service account, revoking its token and removing its delivered secret (administrator only)
+      parameters:
+        - {name: name, in: path, required: true, schema: {type: string}}
+      responses:
+        '200': {description: "Deleted"}
+        '404': {description: "Service account not found"}
   /api/v1/station/stations:
     get:
       tags: [Station]

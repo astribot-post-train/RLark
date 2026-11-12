@@ -18,6 +18,20 @@ func (g *Gateway) RegisterRoutes(r gin.IRouter) {
 	rlinfv1alpha1 := api.Group("/rlinf.io/v1alpha1")
 	adminAPI := api.Group("", requireAdmin())
 	adminRlinfv1alpha1 := rlinfv1alpha1.Group("", requireAdmin())
+	jobSecrets := adminAPI.Group("/secrets")
+	{
+		jobSecrets.GET("", g.listJobSecrets)
+		jobSecrets.POST("", g.createJobSecret)
+		jobSecrets.PUT("/:name", g.updateJobSecret)
+		jobSecrets.DELETE("/:name", g.deleteJobSecret)
+	}
+	serviceAccounts := adminAPI.Group("/service-accounts")
+	{
+		serviceAccounts.GET("", g.listServiceAccounts)
+		serviceAccounts.POST("", g.createServiceAccount)
+		serviceAccounts.POST("/:name/token", g.rotateServiceAccountToken)
+		serviceAccounts.DELETE("/:name", g.deleteServiceAccount)
+	}
 	station := adminAPI.Group("/station/stations")
 	{
 		station.GET("", g.handleListStations)
