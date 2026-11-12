@@ -179,6 +179,15 @@ func (a *embeddedAddon) Render(values map[string]string, namespace string, addon
 			return nil, fmt.Errorf("parameter %s is required", p.Name)
 		}
 		renderValues[p.Name] = v
+		if a.dir == "csi-driver-rclone" && (p.Name == "nodeUpdateStrategy" || p.Name == "nodeImagePullPolicy") {
+			valid := false
+			for _, option := range p.Options {
+				valid = valid || v == option
+			}
+			if !valid {
+				return nil, fmt.Errorf("parameter %s must be one of %v", p.Name, p.Options)
+			}
+		}
 	}
 
 	addonLabels := map[string]string{

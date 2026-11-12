@@ -8,6 +8,18 @@ description: |
 icon: hard-drive
 
 parameters:
+  - name: nodeUpdateStrategy
+    displayName: Node 更新策略
+    description: OnDelete 保留现有节点插件，需操作方逐个安排替换；新增节点仍自动创建插件。
+    type: enum
+    default: RollingUpdate
+    options: [RollingUpdate, OnDelete]
+  - name: nodeImagePullPolicy
+    displayName: Node 镜像拉取策略
+    description: IfNotPresent 可使用经核对预载的镜像；节点重建后需保证镜像来源可用。
+    type: enum
+    default: Always
+    options: [Always, IfNotPresent]
   - name: rcloneImage
     displayName: RClone 驱动镜像
     description: CSI RClone 驱动容器镜像地址
