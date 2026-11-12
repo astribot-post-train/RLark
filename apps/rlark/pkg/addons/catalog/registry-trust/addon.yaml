@@ -3,7 +3,7 @@ displayName: 镜像仓库 CA 信任
 category: other
 version: v0.1.0
 description: |
-  让集群每个节点的 containerd 信任私有镜像仓库的 CA：在 certs.d 下为每个仓库地址写入 hosts.toml 和 ca.crt。
+  让集群每个节点的 containerd 信任私有镜像仓库的 CA：在节点 kubelet 所用运行时（containerd、containerd-robot、containerd-fleet 等）的 certs.d 下为每个仓库地址写入 hosts.toml 和 ca.crt，目录按节点自己找，不用按集群配置。
   containerd 每次拉取时读取该目录，不需要重启。拉取凭据仍由「镜像仓库」凭据分发到集群。
   这里列出的仓库地址由本 Addon 管理，其 hosts.toml 会被覆盖；卸载 Addon 不删除已写入的文件。
 icon: package
@@ -28,11 +28,4 @@ parameters:
     description: 任何带 /bin/sh 的镜像，须来自节点已经信任的仓库（例如集群 agent 所在的仓库）
     type: string
     default: ""
-    required: true
-
-  - name: certsDir
-    displayName: containerd certs.d 目录
-    description: 节点 containerd 的 registry config_path
-    type: string
-    default: /etc/containerd/certs.d
     required: true
