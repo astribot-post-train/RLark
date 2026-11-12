@@ -36,6 +36,8 @@ admit_up() {
   echo "$refs" | grep '/pause:' | head -1 > "$D/images/pause.ref"
   KUBE_BIN=${KUBE_BIN:-/usr/bin} CNI_BIN=${CNI_BIN:-/opt/cni/bin} IMAGES="$D/images" "$REPO/extensions/station/bootstrap/build.sh" "$INSTALLER" "$D/pki/installer.tar"
   chmod 644 "$D/pki/installer.tar"
+  # kind gives its own nodes a /kubelet cgroup; a machine that joins has none, as on a real site.
+  member e2e-office -n kube-system get cm kubelet-config -o yaml | sed '/^    cgroupRoot: /d' | member e2e-office apply -f - >/dev/null
   plane; agents e2e-office; enable e2e-office
   mgmt apply -f - <<SITE
 apiVersion: station.rlark.io/v1alpha1
