@@ -100,13 +100,14 @@ index 33498c0f..47fe1ed8 100644
  	if err != nil {
 diff --git a/vendor/github.com/rclone/rclone/backend/s3/ks3_crc64.go b/vendor/github.com/rclone/rclone/backend/s3/ks3_crc64.go
 new file mode 100644
-index 00000000..2c6a9b00
+index 00000000..43a60780
 --- /dev/null
 +++ b/vendor/github.com/rclone/rclone/backend/s3/ks3_crc64.go
-@@ -0,0 +1,121 @@
+@@ -0,0 +1,146 @@
 +package s3
 +
 +import (
++	"bytes"
 +	"context"
 +	"fmt"
 +	"hash"
@@ -116,7 +117,9 @@ index 00000000..2c6a9b00
 +	"strconv"
 +	"strings"
 +	"sync"
++	"time"
 +
++	"github.com/aws/aws-sdk-go-v2/service/s3"
 +	"github.com/aws/smithy-go/middleware"
 +	smithyhttp "github.com/aws/smithy-go/transport/http"
 +	"github.com/rclone/rclone/fs"
@@ -225,6 +228,28 @@ index 00000000..2c6a9b00
 +	n, err := fmt.Sscanf(*contentRange, "bytes %d-%d/%d", &start, &end, &total)
 +	return err == nil && n == 3 && start == 0 && end+1 == total && length != nil && *length == total
 +}
++
++// ks3BufferedPutSize bounds the single part uploads held in memory so that a
++// throttled PutObject can be sent again. Unbuffered VFS writes above the
++// streaming cutoff (100 KiB) are multipart, whose parts are already retried.
++const ks3BufferedPutSize = 1 << 20
++
++func (o *Object) ks3PutBuffered(ctx context.Context, req *s3.PutObjectInput, in io.Reader) (etag string, lastModified time.Time, versionID *string, err error) {
++	data, err := io.ReadAll(in)
++	if err != nil {
++		return "", lastModified, nil, err
++	}
++	var resp *s3.PutObjectOutput
++	err = o.fs.pacer.Call(func() (bool, error) {
++		req.Body = bytes.NewReader(data)
++		resp, err = o.fs.c.PutObject(ctx, req)
++		return o.fs.shouldRetry(ctx, err)
++	})
++	if err != nil {
++		return "", lastModified, nil, err
++	}
++	return *stringClone(deref(resp.ETag)), time.Now(), stringClonePointer(resp.VersionId), nil
++}
 diff --git a/vendor/github.com/rclone/rclone/backend/s3/ks3_crc64_test.go b/vendor/github.com/rclone/rclone/backend/s3/ks3_crc64_test.go
 new file mode 100644
 index 00000000..e530d90a
@@ -297,11 +322,84 @@ index 00000000..e530d90a
 +	_, err := io.ReadAll(r)
 +	require.Error(t, err)
 +}
+diff --git a/vendor/github.com/rclone/rclone/backend/s3/ks3_retry_test.go b/vendor/github.com/rclone/rclone/backend/s3/ks3_retry_test.go
+new file mode 100644
+index 00000000..927bf3e6
+--- /dev/null
++++ b/vendor/github.com/rclone/rclone/backend/s3/ks3_retry_test.go
+@@ -0,0 +1,55 @@
++package s3
++
++import (
++	"bytes"
++	"context"
++	"net/http"
++	"net/http/httptest"
++	"sync/atomic"
++	"testing"
++	"time"
++
++	"github.com/rclone/rclone/fs"
++	"github.com/rclone/rclone/fs/config/configmap"
++	"github.com/rclone/rclone/fs/object"
++	"github.com/stretchr/testify/require"
++)
++
++// KS3 answers throttled requests with an HTML page; lists and small uploads must be sent again.
++func TestKS3RetriesThrottledRequests(t *testing.T) {
++	var lists, puts atomic.Int32
++	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		n := &lists
++		if r.Method == http.MethodPut {
++			n = &puts
++		}
++		if n.Add(1) <= 3 {
++			w.Header().Set("Content-Type", "text/html")
++			w.WriteHeader(http.StatusTooManyRequests)
++			_, _ = w.Write([]byte("<html>\n<body>\n<center><h1>429 Too Many Requests</h1></center>\n<p>x\n</body>\n</html>\n"))
++			return
++		}
++		if r.Method == http.MethodPut || r.Method == http.MethodHead {
++			w.Header().Set("ETag", `"0123456789abcdef0123456789abcdef"`)
++			w.Header().Set("Content-Length", "5")
++			return
++		}
++		_, _ = w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?><ListBucketResult><Name>bucket</Name><IsTruncated>false</IsTruncated></ListBucketResult>`))
++	}))
++	defer srv.Close()
++	ctx, ci := fs.AddConfig(context.Background())
++	ci.LowLevelRetries = 10
++	info, _ := fs.Find("s3")
++	f, err := NewFs(ctx, "ks3", "bucket/dir", fs.ConfigMap(info.Prefix, info.Options, "ks3", configmap.Simple{"provider": "Other", "endpoint": srv.URL, "access_key_id": "a", "secret_access_key": "b", "region": "cn", "no_check_bucket": "true", "force_path_style": "true"}))
++	require.NoError(t, err)
++	// The test server stands in for a ks3-*.ksyuncs.com endpoint.
++	f.(*Fs).opt.Endpoint = "https://ks3-cn-test.ksyuncs.com"
++	f.(*Fs).pacer.SetRetries(ci.LowLevelRetries)
++	lists.Store(0)
++	_, err = f.List(ctx, "")
++	require.NoError(t, err)
++	require.Equal(t, int32(4), lists.Load())
++	_, err = f.Put(ctx, bytes.NewReader([]byte("fleet")), object.NewStaticObjectInfo("small", time.Now(), 5, true, nil, nil))
++	require.NoError(t, err)
++	require.Equal(t, int32(4), puts.Load())
++}
 diff --git a/vendor/github.com/rclone/rclone/backend/s3/s3.go b/vendor/github.com/rclone/rclone/backend/s3/s3.go
-index 71967f12..65adbfb7 100644
+index 71967f12..0f65eaa2 100644
 --- a/vendor/github.com/rclone/rclone/backend/s3/s3.go
 +++ b/vendor/github.com/rclone/rclone/backend/s3/s3.go
-@@ -5249,6 +5249,9 @@ func (f *Fs) Copy(ctx context.Context, src fs.Object, remote string) (fs.Object,
+@@ -3956,6 +3956,11 @@ func NewFs(ctx context.Context, name, root string, m configmap.Mapper) (fs.Fs, e
+ 		srv:     srv,
+ 		srvRest: rest.NewClient(fshttp.NewClient(ctx)),
+ 	}
++	if f.isKS3() {
++		// KS3's front end throttles with an HTML 429 that the SDK does not
++		// retry, so the pacer does (10ms doubling to 2s between tries).
++		pc.SetRetries(max(ci.LowLevelRetries, 2))
++	}
+ 	if opt.ServerSideEncryption == "aws:kms" || opt.SSECustomerAlgorithm != "" {
+ 		// From: https://docs.aws.amazon.com/AmazonS3/latest/API/RESTCommonResponseHeaders.html
+ 		//
+@@ -5249,6 +5254,9 @@ func (f *Fs) Copy(ctx context.Context, src fs.Object, remote string) (fs.Object,
  
  // Hashes returns the supported hash sets.
  func (f *Fs) Hashes() hash.Set {
@@ -311,7 +409,7 @@ index 71967f12..65adbfb7 100644
  	return hash.Set(hash.MD5)
  }
  
-@@ -5942,7 +5945,7 @@ var matchMd5 = regexp.MustCompile(`^[0-9a-f]{32}$`)
+@@ -5942,7 +5950,7 @@ var matchMd5 = regexp.MustCompile(`^[0-9a-f]{32}$`)
  
  // Set the MD5 from the etag
  func (o *Object) setMD5FromEtag(etag string) {
@@ -320,7 +418,7 @@ index 71967f12..65adbfb7 100644
  		o.md5 = ""
  		return
  	}
-@@ -5961,6 +5964,9 @@ func (o *Object) setMD5FromEtag(etag string) {
+@@ -5961,6 +5969,9 @@ func (o *Object) setMD5FromEtag(etag string) {
  
  // Hash returns the Md5sum of an object returning a lowercase hex string
  func (o *Object) Hash(ctx context.Context, t hash.Type) (string, error) {
@@ -330,7 +428,7 @@ index 71967f12..65adbfb7 100644
  	if t != hash.MD5 {
  		return "", hash.ErrUnsupported
  	}
-@@ -6008,7 +6014,11 @@ func (f *Fs) headObject(ctx context.Context, req *s3.HeadObjectInput) (resp *s3.
+@@ -6008,7 +6019,11 @@ func (f *Fs) headObject(ctx context.Context, req *s3.HeadObjectInput) (resp *s3.
  	}
  	err = f.pacer.Call(func() (bool, error) {
  		var err error
@@ -343,7 +441,7 @@ index 71967f12..65adbfb7 100644
  		return f.shouldRetry(ctx, err)
  	})
  	if err != nil {
-@@ -6301,6 +6311,10 @@ func (o *Object) Open(ctx context.Context, options ...fs.OpenOption) (in io.Read
+@@ -6301,6 +6316,10 @@ func (o *Object) Open(ctx context.Context, options ...fs.OpenOption) (in io.Read
  	fs.FixRangeOption(options, o.bytes)
  
  	var APIOptions []func(*middleware.Stack) error
@@ -354,7 +452,7 @@ index 71967f12..65adbfb7 100644
  
  	// Set the SDK to always download compressed files as-is
  	APIOptions = append(APIOptions, o.fs.acceptEncoding()...)
-@@ -6368,6 +6382,10 @@ func (o *Object) Open(ctx context.Context, options ...fs.OpenOption) (in io.Read
+@@ -6368,6 +6387,10 @@ func (o *Object) Open(ctx context.Context, options ...fs.OpenOption) (in io.Read
  		})
  	}
  
@@ -365,7 +463,17 @@ index 71967f12..65adbfb7 100644
  	return resp.Body, nil
  }
  
-@@ -6918,6 +6936,13 @@ func (o *Object) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, op
+@@ -6653,6 +6676,9 @@ func (o *Object) uploadMultipart(ctx context.Context, src fs.ObjectInfo, in io.R
+ 
+ // Upload a single part using PutObject
+ func (o *Object) uploadSinglepartPutObject(ctx context.Context, req *s3.PutObjectInput, size int64, in io.Reader) (etag string, lastModified time.Time, versionID *string, err error) {
++	if o.fs.isKS3() && size >= 0 && size <= ks3BufferedPutSize {
++		return o.ks3PutBuffered(ctx, req, in)
++	}
+ 	req.Body = io.NopCloser(in)
+ 	var options = []func(*s3.Options){}
+ 	if o.fs.opt.UseUnsignedPayload.Value {
+@@ -6918,6 +6944,13 @@ func (o *Object) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, op
  		return errNotWithVersionAt
  	}
  	size := src.Size()
@@ -379,7 +487,7 @@ index 71967f12..65adbfb7 100644
  	multipart := size < 0 || size >= int64(o.fs.opt.UploadCutoff)
  
  	var wantETag string        // Multipart upload Etag to check
-@@ -6954,7 +6979,7 @@ func (o *Object) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, op
+@@ -6954,7 +6987,7 @@ func (o *Object) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, op
  	// so make up the object as best we can assuming it got
  	// uploaded properly. If size < 0 then we need to do the HEAD.
  	var head *s3.HeadObjectOutput
@@ -388,7 +496,7 @@ index 71967f12..65adbfb7 100644
  		head = new(s3.HeadObjectOutput)
  		//structs.SetFrom(head, &req)
  		setFrom_s3HeadObjectOutput_s3PutObjectInput(head, ui.req)
-@@ -6977,10 +7002,15 @@ func (o *Object) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, op
+@@ -6977,10 +7010,15 @@ func (o *Object) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, op
  			return err
  		}
  	}

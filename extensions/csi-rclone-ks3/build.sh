@@ -5,7 +5,7 @@ set -euo pipefail
 source_root=${1:?usage: build.sh /absolute/new/build-directory}
 patch_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 base=5c9e16bbed61909dbe6e1a1b113e6037f550dd28 # upstream v0.2.0, rclone v1.71.2
-version=v0.2.0-ks3.1
+version=v0.2.0-ks3.2
 git init --quiet "$source_root"
 cd -- "$source_root"
 git fetch --quiet --depth 1 https://github.com/veloxpack/csi-driver-rclone.git "$base"
