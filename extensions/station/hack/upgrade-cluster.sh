@@ -45,6 +45,15 @@ if [[ -z ${ROLLBACK:-} ]]; then
   for item in $nodes; do
     [[ $(k get "$item" -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}') == True ]] || { echo "${item#node/} is not Ready: a node must be Ready before its upgrade" >&2; exit 1; }
   done
+  # kubeadm reaches etcd at the address etcd advertises and verifies etcd's
+  # certificate for it. On a control-plane node whose address has changed
+  # since the cluster was made it fails there, with etcd already replaced.
+  for item in $(k get nodes -l node-role.kubernetes.io/control-plane -o name); do
+    url=$(k -n kube-system get pod "etcd-${item#node/}" -o jsonpath='{.metadata.annotations.kubeadm\.kubernetes\.io/etcd\.advertise-client-urls}')
+    k -n kube-system exec "etcd-${item#node/}" -- etcdctl --endpoints "$url" --cacert /etc/kubernetes/pki/etcd/ca.crt \
+      --cert /etc/kubernetes/pki/etcd/server.crt --key /etc/kubernetes/pki/etcd/server.key endpoint health >/dev/null 2>&1 ||
+      { echo "etcd on ${item#node/} does not answer at $url, the address it advertises, with a certificate valid for it: kubeadm would fail after replacing etcd. Its certificates must be issued for the node's present address first" >&2; exit 1; }
+  done
 fi
 stamp "cluster at $current -> $VERSION; order:$(echo $nodes | sed 's#node/# #g')"
 
@@ -53,7 +62,8 @@ stamp "cluster at $current -> $VERSION; order:$(echo $nodes | sed 's#node/# #g')
 job() { # node phase
   local node=$1 phase=$2 name status
   name=$(echo "kube-upgrade-$phase-$node" | cut -c1-63 | sed 's/-*$//')
-  k -n "$NS" delete job "$name" --ignore-not-found >/dev/null
+  # With its pods: one left of a failed run would be taken for this run's.
+  k -n "$NS" delete job "$name" --ignore-not-found --cascade=foreground >/dev/null
   k apply -f - >/dev/null <<JOB
 apiVersion: batch/v1
 kind: Job
@@ -77,7 +87,13 @@ spec:
         securityContext: {privileged: true}
         env: [{name: PHASE, value: $phase}, {name: KUBE_VERSION, value: $VERSION}, {name: WATCHDOG_SECONDS, value: "$watchdog"}, {name: NODE_NAME, value: $node}]
 JOB
+  local began=$(date +%s)
   until status=$(k -n "$NS" get job "$name" -o jsonpath='{.status.succeeded}/{.status.failed}' 2>/dev/null) && [[ $status == 1/* || $status == */1 ]]; do
+    # No phase takes this long. A kubelet phase that does not end has left a
+    # node without a kubelet, the old one included: its Job never reports.
+    if (( $(date +%s) - began > watchdog + 300 )); then
+      echo "phase $phase on $node has not ended after $(( watchdog + 300 )) s: the node needs a person; on it, /var/lib/rlark/kube-upgrade/restored says what its watchdog did" >&2; exit 1
+    fi
     # A node that cannot pull the bundle would be waited for for ever.
     if k -n "$NS" get pods -l "job-name=$name" -o jsonpath='{.items[*].status.containerStatuses[*].state.waiting.reason}' 2>/dev/null | grep -q -E 'ErrImagePull|ImagePullBackOff'; then
       echo "$node cannot pull $IMAGE (phase $phase); nothing was changed on it by this phase" >&2; exit 1
@@ -92,6 +108,9 @@ JOB
 # first, on its node, where the API cannot be used for it (upgrade.sh,
 # PHASE=rollback); then this, for every other node.
 if [[ -n ${ROLLBACK:-} ]]; then
+  # The snapshot the control plane came back from holds the note the failed
+  # run left on its node; the scheduling state itself is the snapshot's.
+  k annotate node --all rlark.io/unschedulable-before-upgrade- >/dev/null
   for item in $(k get nodes -l '!node-role.kubernetes.io/control-plane' -o name); do
     node=${item#node/}
     job "$node" rollback
