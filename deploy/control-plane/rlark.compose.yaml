@@ -1,0 +1,83 @@
+# RLark 自己的三个控制面服务（server、controller-manager、gateway），从合并树一次构建出的镜像起。
+# 定义与 docker-compose.yaml 里的同名服务一致；那个文件还管着 kcp、数据库、仓库，整体接管另排窗口，
+# 这个文件只换这三个，kcp 和数据库不动。
+#
+# 切换（管理机上；RLark 接口中断约 10 秒，各集群 agent 自己重连，Cluster 在 40–70 秒之间会短暂显示 Offline）：
+#   1. 三个现有容器 docker stop，改名 <name>-pre，docker update --restart=no（留着回滚用）。
+#   2. docker compose -p rlark -f rlark.compose.yaml --env-file /var/lib/rlark/control-plane.env up -d
+#   3. 70 秒后核对；删掉旧 server 容器留在 kcp 里的 Lease default/rlark-server-peer-<旧容器主机名>。
+# 回滚：docker compose -p rlark -f rlark.compose.yaml --env-file … down，把 -pre 改回原名、恢复重启策略并启动。
+# 数据库和 CRD 不用动。
+#
+# /var/lib/rlark/control-plane.env（没有任何密钥）：
+#   R=/home/cailiang/.local/share/rlark-runtime
+#   RLARK_IMAGE=<registry>/rlark@sha256:…
+# ADDONS 是运行时加载的 Addon 目录（每个 Addon 一个子目录：addon.yaml 和它的清单），放进去 5 秒内生效。
+
+name: rlark
+
+x-rlark: &rlark
+  image: ${RLARK_IMAGE:?digest of the merged-tree build}
+  restart: unless-stopped
+  networks: [rlark]
+
+services:
+  rlark-server:
+    <<: *rlark
+    container_name: rlark-server
+    command:
+      - /usr/local/bin/server
+      - --kubeconfig=/etc/rlark/kubeconfig.yaml
+      - --https-port=8443
+      - --ssh-port=2222
+      - --auto-sign-tls-ca-cert
+      - --tls-domains=localhost,rlark-server
+      - --db-config=/etc/rlark/db-config.yaml
+    ports: ["2222:2222", "8443:8443"]
+    volumes: &rlark-config
+      - ${R}/kcp-admin.kubeconfig:/etc/rlark/kubeconfig.yaml:ro
+      - ${R}/db-config.yaml:/etc/rlark/db-config.yaml:ro
+
+  rlark-controller-manager:
+    <<: *rlark
+    container_name: rlark-controller-manager
+    command:
+      - /usr/local/bin/controller-manager
+      - --kubeconfig=/etc/rlark/kubeconfig.yaml
+      - --server-address=https://rlark-server:8443
+      - --leader-election=false
+      - --metrics-bind-address=:0
+      - --health-probe-bind-address=:0
+      - --db-config=/etc/rlark/db-config.yaml
+    volumes: *rlark-config
+    depends_on: [rlark-server]
+
+  rlark-gateway:
+    <<: *rlark
+    container_name: rlark-gateway
+    user: "0"
+    environment:
+      SSL_CERT_FILE: /etc/rlark/registry-ca.crt
+      RLARK_ADDON_CATALOG_DIR: /etc/rlark/addons
+    command:
+      - /usr/local/bin/gateway
+      - --kubeconfig=/etc/rlark/kubeconfig.yaml
+      - --addr=:8080
+      - --server-address=https://rlark-server:8443
+      - --db-config=/etc/rlark/db-config.yaml
+      - --registry-browse-allowed-hosts=10.0.0.0/8,192.168.0.0/16
+      - --station-api-address=https://10.254.240.1:18443
+      - --station-api-ca-file=/etc/rlark/station-ca.crt
+      - --station-gateway-credential-file=/etc/rlark/station-service/token
+    ports: ["19000:8080"]
+    volumes:
+      - ${R}/registry-ca.crt:/etc/rlark/registry-ca.crt:ro
+      - ${R}/station-network-summary/station-ca.crt:/etc/rlark/station-ca.crt:ro
+      - ${R}/station-service-credential:/etc/rlark/station-service:ro
+      - ${R}/kcp-admin.kubeconfig:/etc/rlark/kubeconfig.yaml:ro
+      - ${R}/db-config.yaml:/etc/rlark/db-config.yaml:ro
+      - ${ADDONS:-/var/lib/rlark/addons}:/etc/rlark/addons:ro
+    depends_on: [rlark-server]
+
+networks:
+  rlark: {external: true, name: fleet-rlark-env_rlark-network}
