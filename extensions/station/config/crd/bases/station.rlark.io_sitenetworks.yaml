@@ -348,6 +348,16 @@ spec:
                       maxItems: 64
                       type: array
                       x-kubernetes-list-type: set
+                    relay:
+                      description: |-
+                        Relay is the hub that relays for the leaves of this site, as
+                        "<clusterID>/<nodeName>": a hub with relay set that the site can dial.
+                        Without it a leaf takes a relay of its own site, or else the first one
+                        it can dial. Changing it moves each leaf when it next fetches its
+                        configuration; two leaves reach each other again once both have.
+                      maxLength: 382
+                      pattern: ^[^/]+/[^/]+$
+                      type: string
                   required:
                   - name
                   type: object

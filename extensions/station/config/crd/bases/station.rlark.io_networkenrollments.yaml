@@ -195,6 +195,9 @@ spec:
                 description: Reason explains Pending and Rejected in one line.
                 maxLength: 512
                 type: string
+              relay:
+                description: Relay is the hub that relays for this Leaf, "<clusterID>/<nodeName>".
+                type: string
               role:
                 type: string
               site:

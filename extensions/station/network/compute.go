@@ -50,7 +50,11 @@ type Site struct {
 	// only: everything else is reached through it. Without it a leaf also
 	// dials every other hub it can, which keeps its traffic to them off the relay.
 	LeavesViaRelay bool
-	Names          []HostName
+	// Relay is the ID of the hub that relays for the leaves of this site.
+	// Without it a leaf takes a relay of its own site, or else the first
+	// relay it can dial.
+	Relay string
+	Names []HostName
 	// DNS are the site\'s name servers, for the pods of its members.
 	DNS []string
 	// LeafUplink is the uplink of the site's leaves that have none of their own.
@@ -132,6 +136,8 @@ type UplinkRoute struct {
 type Result struct {
 	// Configs holds one configuration per member that takes part.
 	Configs map[string]NodeConfig
+	// Relays names, for every leaf that has one, the hub that relays for it.
+	Relays map[string]string
 	// Problems are per-member findings that did not stop the computation.
 	Problems map[string][]string
 	// Unreachable lists ordered pairs "from -> to" with no path at the
@@ -176,7 +182,7 @@ func Compute(topology Topology, members []Member) (Result, error) {
 		}
 	}
 
-	result := Result{Configs: map[string]NodeConfig{}, Problems: map[string][]string{}}
+	result := Result{Configs: map[string]NodeConfig{}, Relays: map[string]string{}, Problems: map[string][]string{}}
 	nodes := make([]*node, 0, len(members))
 	usedAddress, usedKey, usedID := map[netip.Addr]string{}, map[string]string{}, map[string]bool{}
 	for _, member := range members {
@@ -255,11 +261,21 @@ func Compute(topology Topology, members []Member) (Result, error) {
 			continue
 		}
 		for _, hub := range nodes {
-			if hub.Relay && dialable(leaf, hub) && (leaf.relay == nil || hub.Site == leaf.Site && leaf.relay.Site != leaf.Site) {
+			if !hub.Relay || !dialable(leaf, hub) {
+				continue
+			}
+			if leaf.site.Relay == "" && (leaf.relay == nil || hub.Site == leaf.Site && leaf.relay.Site != leaf.Site) || hub.ID == leaf.site.Relay {
 				leaf.relay = hub
 			}
 		}
-		if leaf.site.LeavesViaRelay && leaf.relay == nil {
+		if leaf.relay != nil {
+			result.Relays[leaf.ID] = leaf.relay.ID
+		}
+		// A relay the site names and the leaf cannot use is said, not
+		// replaced: which hub carries a site's leaves is the declaration's.
+		if leaf.site.Relay != "" && leaf.relay == nil {
+			result.Problems[leaf.ID] = append(result.Problems[leaf.ID], "the site's relay "+leaf.site.Relay+" is not a relaying hub this leaf can dial")
+		} else if leaf.site.LeavesViaRelay && leaf.relay == nil {
 			result.Problems[leaf.ID] = append(result.Problems[leaf.ID], "the site sends its leaves through a relay and this leaf can dial none")
 		}
 	}

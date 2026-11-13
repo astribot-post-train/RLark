@@ -753,3 +753,32 @@ func TestNetworkPutsANodeInTheSiteItNames(t *testing.T) {
 		t.Fatalf("a node of a site nothing declares: %+v", astray)
 	}
 }
+
+func TestNetworkSaysWhichHubRelaysForALeaf(t *testing.T) {
+	siteNetwork := testSiteNetwork()
+	siteNetwork.Spec.Nodes[1].Relay = true
+	objects := []client.Object{siteNetwork}
+	objects = append(objects, testMember("dev", "cailiang", "key-dev", "10.11.14.128")...)
+	objects = append(objects, testMember("dev", "alexfu", "key-3090", "10.11.13.192")...)
+	objects = append(objects, testMember("robot-01", "s1u-01-x86", "key-robot-1", "192.168.0.10")...)
+	r, c := newNetworkTest(t, objects...)
+	reconcileNetwork(t, r)
+	if robot := enrollmentStatus(t, c, "robot-01", "s1u-01-x86"); robot.Relay != "dev/cailiang" {
+		t.Fatalf("the first relay the leaf can dial: %+v", robot)
+	}
+
+	// The site names another: one value of the declaration.
+	var declared stationv1alpha1.SiteNetwork
+	if err := c.Get(context.Background(), testNetworkKey, &declared); err != nil {
+		t.Fatal(err)
+	}
+	declared.Spec.Sites[1].Relay = "dev/alexfu"
+	if err := c.Update(context.Background(), &declared); err != nil {
+		t.Fatal(err)
+	}
+	reconcileNetwork(t, r)
+	robot := enrollmentStatus(t, c, "robot-01", "s1u-01-x86")
+	if robot.Relay != "dev/alexfu" || robot.Phase != stationv1alpha1.NetworkEnrollmentEnrolled || len(robot.Problems) != 0 {
+		t.Fatalf("the relay the site names: %+v", robot)
+	}
+}

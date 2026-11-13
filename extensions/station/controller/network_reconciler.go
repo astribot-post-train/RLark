@@ -139,7 +139,7 @@ func (r *NetworkReconciler) reconcile(ctx context.Context) (reconcile.Result, er
 	topology := network.Topology{Pool: spec.Pool, MTU: int(spec.MTU), Interface: spec.Interface, ListenPort: int(spec.ListenPort), KeepaliveSeconds: int(spec.KeepaliveSeconds), Names: hostNames(spec.Names)}
 	for _, site := range spec.Sites {
 		names := hostNames(site.Names)
-		topology.Sites = append(topology.Sites, network.Site{Name: site.Name, Mesh: site.Mesh, Reaches: site.Reaches, LeavesViaRelay: site.LeavesViaRelay, Names: names, DNS: site.DNS})
+		topology.Sites = append(topology.Sites, network.Site{Name: site.Name, Mesh: site.Mesh, Reaches: site.Reaches, LeavesViaRelay: site.LeavesViaRelay, Relay: site.Relay, Names: names, DNS: site.DNS})
 		if site.LeafUplink != nil {
 			topology.Sites[len(topology.Sites)-1].LeafUplink = &network.Uplink{Gateway: site.LeafUplink.Gateway}
 		}
@@ -447,6 +447,7 @@ func (r *NetworkReconciler) reconcile(ctx context.Context) (reconcile.Result, er
 				continue
 			}
 			answer.Problems = result.Problems[member.ID]
+			answer.Relay = result.Relays[member.ID]
 			if !ok {
 				if err == nil {
 					answer.Reason = "the node is not configurable: " + fmt.Sprint(answer.Problems)
