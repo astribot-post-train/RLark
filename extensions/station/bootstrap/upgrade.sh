@@ -204,9 +204,10 @@ images|control)
   ;;
 kubelet)
   [ "$from" != "$KUBE_VERSION" ] || { stamp "the kubelet is already $KUBE_VERSION"; exit 0; }
-  [ -e "$keep/bin/kubelet" ] || { install -d "$keep/bin" && cp -a "$BIN/kubelet" "$BIN/kubectl" "$keep/bin/"; }
+  # kubectl is replaced where the node has one; none is given to a node without.
+  [ -e "$keep/bin/kubelet" ] || { install -d "$keep/bin" && cp -a "$BIN/kubelet" "$keep/bin/" && { [ ! -e "$BIN/kubectl" ] || cp -a "$BIN/kubectl" "$keep/bin/"; }; }
   install -m 755 "$B/bin/kubelet" "$BIN/kubelet.new" && mv "$BIN/kubelet.new" "$BIN/kubelet"
-  install -m 755 "$B/bin/kubectl" "$BIN/kubectl.new" && mv "$BIN/kubectl.new" "$BIN/kubectl"
+  [ ! -e "$keep/bin/kubectl" ] || { install -m 755 "$B/bin/kubectl" "$BIN/kubectl.new" && mv "$BIN/kubectl.new" "$BIN/kubectl"; }
   # The watchdog: the way back needs neither the kubelet, nor the API, nor
   # this process. It survives a reboot (the timer then counts anew).
   install -d "$WATCH"
@@ -216,7 +217,7 @@ kubelet)
 # Written by upgrade.sh before the kubelet of $KUBE_VERSION was started: back to $from.
 journalctl -u kubelet --no-pager --since "-5min" > "$keep/kubelet-failed.log" 2>&1
 install -m 755 "$keep/bin/kubelet" "$BIN/kubelet.old" && mv "$BIN/kubelet.old" "$BIN/kubelet"
-install -m 755 "$keep/bin/kubectl" "$BIN/kubectl.old" && mv "$BIN/kubectl.old" "$BIN/kubectl"
+[ ! -e "$keep/bin/kubectl" ] || { install -m 755 "$keep/bin/kubectl" "$BIN/kubectl.old" && mv "$BIN/kubectl.old" "$BIN/kubectl"; }
 cp -a "$keep/kubelet/config.yaml" "$keep/kubelet/kubeadm-flags.env" /var/lib/kubelet/
 systemctl disable --now $WATCHDOG.timer
 systemctl restart kubelet
@@ -292,7 +293,7 @@ rollback)
   cp -a "$keep/kubelet/config.yaml" "$keep/kubelet/kubeadm-flags.env" /var/lib/kubelet/
   if [ -e "$keep/bin/kubelet" ]; then
     install -m 755 "$keep/bin/kubelet" "$BIN/kubelet.old" && mv "$BIN/kubelet.old" "$BIN/kubelet"
-    install -m 755 "$keep/bin/kubectl" "$BIN/kubectl.old" && mv "$BIN/kubectl.old" "$BIN/kubectl"
+    [ ! -e "$keep/bin/kubectl" ] || { install -m 755 "$keep/bin/kubectl" "$BIN/kubectl.old" && mv "$BIN/kubectl.old" "$BIN/kubectl"; }
   fi
   systemctl start kubelet
   tries=0
