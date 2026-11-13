@@ -402,6 +402,19 @@ func apply(d *desired, key wgtypes.Key, prune bool) error {
 			return fmt.Errorf("configure wireguard: %w", err)
 		}
 	}
+	if config.ListenPort != nil && *config.ListenPort == 0 {
+		// A peer that answers learns the new port from the next packet it
+		// gets, so each gets one now: what it sends meanwhile goes to the old.
+		for _, p := range current.Peers {
+			if time.Since(p.LastHandshakeTime) > handshakeAge || len(p.AllowedIPs) == 0 {
+				continue
+			}
+			if conn, err := net.DialUDP("udp4", nil, &net.UDPAddr{IP: p.AllowedIPs[0].IP, Port: 9}); err == nil {
+				conn.Write([]byte{0})
+				conn.Close()
+			}
+		}
+	}
 	if err = netlink.LinkSetMTU(link, d.MTU); err != nil {
 		return err
 	}
@@ -465,16 +478,17 @@ func main() {
 	keepPath := flag.String("keep-host-program", "", "instead of running the tunnel: keep the machine's own station-gateway, this file as the container sees it, at this program's version")
 	keepName := flag.String("host-program-name", "/opt/rlark/bin/station-gateway", "the machine's station-gateway as its unit names it")
 	holdPath := flag.String("hold-directory", "", "a directory of the machine; while it holds a file the machine is in use and its program is not replaced")
-	kept := flag.Bool("host-program-kept", false, "with --keep-host-program: exit 0 when the machine runs this program's version")
+	dropIn := flag.String("unit-drop-in-directory", "", "with --keep-host-program: the drop-in directory of the machine's unit, as the container sees it")
+	settled := flag.Bool("host-program-settled", false, "with --keep-host-program: exit 0 unless a new program is on trial, this version was rejected, or the machine has this version and does not run it")
 	flag.Parse()
 	if *keepPath != "" {
-		k, err := newKeeper(*keepPath, *keepName, *holdPath, *snapshotPath)
+		k, err := newKeeper(*keepPath, *keepName, *holdPath, *snapshotPath, *dropIn)
 		if err != nil {
 			log.Fatalf("keep host program: %v", err)
 		}
-		if *kept {
-			if same, err := k.kept(); err != nil || !same {
-				log.Printf("the machine does not run this version: %v", err)
+		if *settled {
+			if err := k.settledState(); err != nil {
+				log.Print(err)
 				os.Exit(1)
 			}
 			return

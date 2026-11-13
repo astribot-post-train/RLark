@@ -329,6 +329,14 @@ metadata:
   name: station-agent-host
   namespace: station-system
 spec:
+  # A machine counts once its pod has been ready for longer than a trial
+  # lasts: a version that machines take back does not get past the first of
+  # them. One machine in ten at a time.
+  minReadySeconds: 150
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 10%
   selector:
     matchLabels:
       app: station-agent-host
@@ -419,21 +427,25 @@ spec:
       # there) at this image's version: this DaemonSet's image is the version
       # of every such node. The program is not replaced while the machine holds
       # a file in /run/rlark/in-use (whatever knows the machine is in use keeps
-      # one there), and a version that does not stay up is taken back.
+      # one there), and a version that does not stay up is taken back. The
+      # pod is not ready while a new program is on trial or after this version
+      # was rejected, so a rollout stops at the first machine that refuses a
+      # version; a machine that waits for its turn does not stop it.
       - name: gateway-program
         image: REPLACE_PRIVATE_WIREGUARD_IMAGE
         imagePullPolicy: IfNotPresent
         args:
         - --keep-host-program=/host/opt/rlark/bin/station-gateway
         - --hold-directory=/host/run/rlark/in-use
+        - --unit-drop-in-directory=/host/etc/systemd/system/rlark-station-gateway.service.d
         - --observation-file=/var/run/station-observation/wireguard.json
         readinessProbe:
           exec:
             command:
             - /station-gateway
             - --keep-host-program=/host/opt/rlark/bin/station-gateway
-            - --host-program-kept
-          periodSeconds: 30
+            - --host-program-settled
+          periodSeconds: 10
           timeoutSeconds: 5
         resources:
           requests:
@@ -446,6 +458,10 @@ spec:
           runAsUser: 0
           allowPrivilegeEscalation: false
           readOnlyRootFilesystem: true
+          # The runtime's default AppArmor profile lets a container signal
+          # and inspect only its own processes; this one ends the machine's.
+          appArmorProfile:
+            type: Unconfined
           capabilities:
             drop:
             - ALL
@@ -458,6 +474,8 @@ spec:
         - name: host-in-use
           mountPath: /host/run/rlark/in-use
           readOnly: true
+        - name: host-unit-drop-ins
+          mountPath: /host/etc/systemd/system/rlark-station-gateway.service.d
         - name: wireguard-observation
           mountPath: /var/run/station-observation
           readOnly: true
@@ -469,6 +487,10 @@ spec:
       - name: host-in-use
         hostPath:
           path: /run/rlark/in-use
+          type: DirectoryOrCreate
+      - name: host-unit-drop-ins
+        hostPath:
+          path: /etc/systemd/system/rlark-station-gateway.service.d
           type: DirectoryOrCreate
       - name: token
         projected:
