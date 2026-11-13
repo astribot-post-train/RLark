@@ -28,7 +28,7 @@
 
 `extensions/station/deploy/station-agent.yaml` 提供两个互斥的 DaemonSet。没有 `station.rlark.io/network=enabled` 标签的节点只运行身份容器；带标签的节点在同一个 host-network Pod 中运行身份和 WireGuard 容器。两个容器分别使用私有仓库镜像，只有 WireGuard 容器获得 `NET_ADMIN`。变更标签会替换 Pod，可能中断服务；切换不会删除接口或路由。
 
-源码支持通过 `STATION_GATEWAY_OBSERVATION_FILE` 将快照写入共享 `emptyDir`。协调成功后写入所管理接口的公钥、内核地址和采集时间；不写私钥、Peer 列表、端点或允许网段。身份容器使用 `--wireguard-observation-file` 读取；快照缺失、无效或超过 30 秒时清除 WireGuard 观测，身份心跳继续。公钥只是观测值，不授权 Peer 变更；旧版不带公钥的快照仍兼容。共享卷不含私钥。Station 的上报时间是服务端接收时间，不是快照采集时间。该链路需要重新构建镜像并更新 DaemonSet，本身不提供面向用户的地址 API 或界面。
+源码支持通过 `STATION_GATEWAY_OBSERVATION_FILE` 将快照写入共享 `emptyDir`。协调成功后写入所管理接口的公钥、内核地址、采集时间，以及每个 Peer 的公钥、最近一次握手时间和收发字节数：Leaf 掉线后，Hub 上的这些计数是唯一的旁证。不包含私钥、预共享密钥、Endpoint 或 AllowedIPs。身份容器使用 `--wireguard-observation-file` 读取；快照缺失、无效或超过 30 秒时清除 WireGuard 观测，身份心跳继续。共享卷不含私钥。Station 的上报时间是服务端接收时间，不是快照采集时间。该链路需要重新构建镜像并更新 DaemonSet，本身不提供面向用户的地址 API 或界面。
 
 Station 身份服务源码还包含内部网络摘要读取器：查询时重新核对成员集群当前 Node UID 与有效 Station 绑定，要求观测的集群、Node、Station 和绑定版本归属一致，服务端接收时间超过 90 秒时标记为过期。旧观测缺少绑定版本时会被拒绝，直到新的上报写入。内部接口 `POST /v1/internal/node-network` 默认关闭；通过 `station-api --gateway-credential-file=PATH` 启用，使用每次请求从文件读取的独立 Bearer 凭证，长度为 32 至 4096 个非空白字符。Gateway 需配置 `--station-api-address`、`--station-api-ca-file` 和 `--station-gateway-credential-file`，凭证文件内容与 Station API 一致。凭证文件应按 Secret 保护，并使用独立随机凭证及经过校验的 TLS。示例不负责凭证创建或现场部署；未配置集成时界面显示网络数据不可用。
 

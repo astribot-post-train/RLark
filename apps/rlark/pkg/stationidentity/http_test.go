@@ -2,8 +2,10 @@ package stationidentity
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -294,5 +296,42 @@ func TestHTTPSensitiveAuthorizationFailsClosed(t *testing.T) {
 	}
 	if action.calls != 1 {
 		t.Fatalf("authorized action calls=%d", action.calls)
+	}
+}
+
+func TestWireguardPeerObservationValidation(t *testing.T) {
+	now := time.Date(2026, 11, 14, 12, 0, 0, 0, time.UTC)
+	key, other := "bGVhZi1rZXktbGVhZi1rZXktbGVhZi1rZXktbGVhZi0=", "bW92ZWQta2V5LW1vdmVkLWtleS1tb3ZlZC1rZXktbW8="
+	many := make([]string, wireguardObservationPeers+1)
+	for i := range many {
+		many[i] = `{"publicKey":"` + base64.StdEncoding.EncodeToString(fmt.Appendf(nil, "%032d", i)) + `"}`
+	}
+	tests := []struct {
+		name, peers string
+		valid       bool
+	}{
+		{"an old agent reports none", ``, true},
+		{"key, handshake and counters", `{"publicKey":"` + key + `","latestHandshake":"2026-11-14T12:00:50Z","receivedBytes":148,"sentBytes":92},{"publicKey":"` + other + `"}`, true},
+		{"as many as allowed", strings.Join(many[1:], ","), true},
+		{"too many", strings.Join(many, ","), false},
+		{"a name the node chose", `{"publicKey":"` + key + `","name":"robot-01/s1u-01-x86"}`, false},
+		{"no key", `{"receivedBytes":148}`, false},
+		{"not a key", `{"publicKey":"c2hvcnQ="}`, false},
+		{"the same key twice", `{"publicKey":"` + key + `"},{"publicKey":"` + key + `"}`, false},
+		{"negative received", `{"publicKey":"` + key + `","receivedBytes":-1}`, false},
+		{"negative sent", `{"publicKey":"` + key + `","sentBytes":-1}`, false},
+		{"handshake in the future", `{"publicKey":"` + key + `","latestHandshake":"2026-11-14T12:01:01Z"}`, false},
+		{"an endpoint", `{"publicKey":"` + key + `","endpoint":"203.0.113.7:40000"}`, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			raw := `{"interface":"st-wg0"}`
+			if tc.peers != "" {
+				raw = `{"interface":"st-wg0","peers":[` + tc.peers + `]}`
+			}
+			if err := validateObservation(Observation{Wireguard: json.RawMessage(raw)}, now); (err == nil) != tc.valid {
+				t.Fatalf("error = %v, want valid = %v", err, tc.valid)
+			}
+		})
 	}
 }

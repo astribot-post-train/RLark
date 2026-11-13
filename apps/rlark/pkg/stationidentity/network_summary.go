@@ -92,8 +92,11 @@ func (s *NodeNetworkSummaryReader) Read(ctx context.Context, clusterID, nodeName
 	if !found {
 		return NodeNetworkSummary{State: "unreported", ReportedAt: &reportedAt}, nil
 	}
+	// The summary shows no peers; they are stored under the names the server
+	// gave them, not as the node reported them.
+	delete(raw, "peers")
 	data, err := json.Marshal(raw)
-	if err != nil || validateWireguardObservation(data) != nil {
+	if err != nil || validateWireguardObservation(data, now) != nil {
 		return NodeNetworkSummary{}, errors.New("invalid stored WireGuard observation")
 	}
 	var wg wireguardObservation

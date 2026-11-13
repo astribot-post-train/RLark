@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -134,7 +135,58 @@ func TestAgentProbesEveryConfiguredPeerThroughTheTunnel(t *testing.T) {
 		probes[1].Target != "10.254.240.2" || probes[1].OK || probes[1].RTTMillis != nil {
 		t.Fatalf("probes %+v", probes)
 	}
-	if err := validateObservation(Observation{Probes: probes}); err != nil {
+	if err := validateObservation(Observation{Probes: probes}, time.Now()); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// A node whose report station-api refuses still asks for its network.
+func TestAgentEnrollsWhenItsReportIsRefused(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var paths []string
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.URL.Path)
+		if r.URL.Path == "/v1/network/enrollments" {
+			_ = json.NewEncoder(w).Encode(NetworkEnrollmentAnswer{State: "pending"})
+			cancel()
+			return
+		}
+		w.WriteHeader(http.StatusBadRequest)
+	}))
+	defer server.Close()
+	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: server.Certificate().Raw})
+	free, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	free.Close()
+	agent, err := newAgent(AgentConfig{
+		APIURL: server.URL, ClusterID: "cluster-a", TokenFile: "token", CAFile: "ca", Interval: 30 * time.Second, RequestLimit: 2 * time.Second,
+		ProbeAddress: free.Addr().String(), NetworkIdentityFile: "identity", NetworkConfigFile: filepath.Join(t.TempDir(), "config.json"),
+	}, func(path string) ([]byte, error) {
+		switch path {
+		case "token":
+			return []byte("pod-token\n"), nil
+		case "ca":
+			return certPEM, nil
+		case "identity":
+			return []byte(`{"publicKey":"` + testPublicKey + `"}`), nil
+		}
+		return nil, errors.New("unexpected file")
+	}, time.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := agent.Run(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if len(paths) != 2 || paths[0] != "/v1/observations" || paths[1] != "/v1/network/enrollments" {
+		t.Fatalf("requests %v", paths)
+	}
+	recorder := httptest.NewRecorder()
+	agent.probeHandler().ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+	if recorder.Code == http.StatusOK {
+		t.Fatal("an agent whose report was refused is ready")
 	}
 }

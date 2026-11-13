@@ -11,6 +11,7 @@ import (
 	"reflect"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	stationv1alpha1 "github.com/rlinf/rlark/extensions/station/api/v1alpha1"
@@ -33,12 +34,28 @@ import (
 // it allocates addresses, computes each node's peers and routes, and writes
 // the result to the enrollment's status, where station-api serves it.
 // The whole network is one reconcile key, so allocations never race.
+//
+// It also says what the Hubs see of every Leaf (status.links). Hubs report
+// every 30 s; rather than compute the network on each report, the reconcile
+// repeats every linkInterval and reads the reports the Station reconciler's
+// cache already holds. A Leaf's status is written when a link changes state
+// and, while a link is Unanswered, once per Hub report to keep the counter
+// the next report is compared with; a Connected or Silent link writes nothing.
 type NetworkReconciler struct {
 	client  client.Client
 	reader  client.Reader
 	network types.NamespacedName
 	now     func() time.Time
 }
+
+const (
+	linkInterval = 30 * time.Second
+	// A session that is alive has a handshake at most two minutes old; a
+	// Leaf whose handshakes fail gives up the old session after three.
+	linkHandshakeAge = 3 * time.Minute
+	// A Hub that has not reported for this long says nothing about its Leaves.
+	linkReportAge = 2 * time.Minute
+)
 
 func NewNetworkReconciler(writer client.Client, reader client.Reader, siteNetwork types.NamespacedName, now func() time.Time) (*NetworkReconciler, error) {
 	if writer == nil || reader == nil || siteNetwork.Namespace == "" || siteNetwork.Name == "" {
@@ -360,7 +377,23 @@ func (r *NetworkReconciler) reconcile(ctx context.Context) (reconcile.Result, er
 	ready := metav1.Condition{Type: "Ready", Status: metav1.ConditionTrue, Reason: "Computed", Message: "every enrollment is answered from the current topology"}
 	connected := metav1.Condition{Type: "FullyConnected", Status: metav1.ConditionTrue, Reason: "AllPairsReachable", Message: "every pair of members has a path"}
 	status.Members, status.Unreachable = 0, nil
+	var again time.Duration
 	if spec.Mode != stationv1alpha1.SiteNetworkModeRouted {
+		again = linkInterval
+		var observationList stationv1alpha1.StationObservationList
+		if err := r.client.List(ctx, &observationList); err != nil {
+			return reconcile.Result{}, fmt.Errorf("list StationObservations: %w", err)
+		}
+		observations := map[string]*stationv1alpha1.StationObservation{}
+		for i := range observationList.Items {
+			observation := &observationList.Items[i]
+			observations[observation.Annotations["station.rlark.io/cluster-id"]+"/"+observation.Name] = observation
+		}
+		memberOfKey := map[string]string{}
+		for _, member := range members {
+			memberOfKey[member.PublicKey] = member.ID
+		}
+		now := r.now()
 		result, err := network.Compute(topology, members)
 		if err != nil {
 			ready = metav1.Condition{Type: "Ready", Status: metav1.ConditionFalse, Reason: "InvalidTopology", Message: err.Error()}
@@ -408,6 +441,98 @@ func (r *NetworkReconciler) reconcile(ctx context.Context) (reconcile.Result, er
 				answer.Address = member.NodeAddress
 			}
 			status.Members++
+			if member.Role != network.RoleLeaf {
+				continue
+			}
+			// The Hubs a Leaf dials are the peers its configuration gives an
+			// endpoint. Each one's latest report says what it sees of the Leaf.
+			var unanswered, silent, unknown []string
+			var silentSince time.Time
+			for _, peer := range config.Peers {
+				if peer.Endpoint == "" {
+					continue
+				}
+				link := stationv1alpha1.NetworkEnrollmentLink{Hub: memberOfKey[peer.PublicKey], State: stationv1alpha1.NetworkLinkUnknown}
+				var previous stationv1alpha1.NetworkEnrollmentLink
+				for _, stored := range enrollmentOf[member.ID].Status.Links {
+					if stored.Hub == link.Hub {
+						previous = stored
+					}
+				}
+				// What is kept of a report's time is kept to the second, as
+				// the API server stores it.
+				var seen *stationv1alpha1.WireguardPeerObservation
+				var reported metav1.Time
+				if observation := observations[link.Hub]; observation != nil && observation.Status.Wireguard != nil && now.Sub(observation.Status.ReportedAt.Time) < linkReportAge {
+					reported = observation.Status.ReportedAt.Rfc3339Copy()
+					for i := range observation.Status.Wireguard.Peers {
+						if observation.Status.Wireguard.Peers[i].Name == member.ID {
+							seen = &observation.Status.Wireguard.Peers[i]
+						}
+					}
+				}
+				stale := link
+				if seen != nil {
+					stale.LatestHandshake, stale.ReceivedBytes, stale.ObservedAt = seen.LatestHandshake, seen.ReceivedBytes, &reported
+				}
+				switch {
+				case seen == nil:
+				case seen.LatestHandshake != nil && now.Sub(seen.LatestHandshake.Time) < linkHandshakeAge:
+					link.State = stationv1alpha1.NetworkLinkConnected
+				case previous.ObservedAt == nil || seen.ReceivedBytes < previous.ReceivedBytes:
+					// The first report with a stale handshake, or with a
+					// counter the hub started again, only gives the counter
+					// to compare the next one with: until then the link
+					// keeps the state it had.
+					link = stale
+					if previous.State != "" {
+						link.State = previous.State
+					}
+				case !reported.After(previous.ObservedAt.Time):
+					link = previous
+				case seen.ReceivedBytes > previous.ReceivedBytes:
+					link = stale
+					link.State = stationv1alpha1.NetworkLinkUnanswered
+				case seen.ReceivedBytes == previous.ReceivedBytes && previous.State == stationv1alpha1.NetworkLinkSilent:
+					// Nothing moved: the stored counter still serves, and the
+					// status is not written again for a newer report time.
+					link = previous
+				default:
+					link = stale
+					link.State = stationv1alpha1.NetworkLinkSilent
+				}
+				link.Since = previous.Since
+				if link.State != previous.State {
+					link.Since = metav1.NewTime(now)
+				}
+				switch link.State {
+				case stationv1alpha1.NetworkLinkUnanswered:
+					unanswered = append(unanswered, link.Hub)
+				case stationv1alpha1.NetworkLinkSilent:
+					silent = append(silent, link.Hub)
+					if link.Since.After(silentSince) {
+						silentSince = link.Since.Time
+					}
+				case stationv1alpha1.NetworkLinkUnknown:
+					unknown = append(unknown, link.Hub)
+				}
+				answer.Links = append(answer.Links, link)
+			}
+			// The summary names hubs and, at most, the time the last one went
+			// silent, so it changes only when a link changes state.
+			var lines []string
+			if len(unanswered) > 0 {
+				lines = append(lines, "this node's requests arrive at "+strings.Join(unanswered, ", ")+" and no session forms: the answers do not get back to it")
+			}
+			if len(silent) > 0 && len(silent) == len(answer.Links) {
+				lines = append(lines, "nothing arrives from this node at any hub it dials since "+silentSince.UTC().Format(time.RFC3339))
+			} else if len(silent) > 0 {
+				lines = append(lines, "nothing arrives from this node at "+strings.Join(silent, ", "))
+			}
+			if len(unknown) > 0 {
+				lines = append(lines, "no current report of this node from "+strings.Join(unknown, ", "))
+			}
+			answer.LinkSummary = strings.Join(lines, "; ")
 		}
 		if len(result.Unreachable) > 0 {
 			status.Unreachable = result.Unreachable[:min(32, len(result.Unreachable))]
@@ -495,7 +620,7 @@ func (r *NetworkReconciler) reconcile(ctx context.Context) (reconcile.Result, er
 			return reconcile.Result{}, fmt.Errorf("update SiteNetwork status: %w", err)
 		}
 	}
-	return reconcile.Result{}, nil
+	return reconcile.Result{RequeueAfter: again}, nil
 }
 
 func hostNames(declared []stationv1alpha1.SiteNetworkName) []network.HostName {

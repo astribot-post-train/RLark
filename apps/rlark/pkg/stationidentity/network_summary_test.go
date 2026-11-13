@@ -115,7 +115,8 @@ func TestNodeNetworkSummaryChecksIdentityOwnershipAndFreshness(t *testing.T) {
 			"metadata": map[string]interface{}{"namespace": "ns", "name": "node", "annotations": map[string]interface{}{
 				observationClusterIDKey: "cluster", observationNodeUIDKey: uid, observationStationUIDKey: station, observationBindingVersionKey: "1",
 			}},
-			"status": map[string]interface{}{"nodeUID": uid, "reportedAt": received, "wireguard": map[string]interface{}{"interface": "st-wg0", "addresses": []interface{}{"10.254.240.1/32"}}},
+			"status": map[string]interface{}{"nodeUID": uid, "reportedAt": received, "wireguard": map[string]interface{}{"interface": "st-wg0", "addresses": []interface{}{"10.254.240.1/32"},
+				"peers": []interface{}{map[string]interface{}{"name": "robot-01/s1u-01-x86", "receivedBytes": int64(148)}}}},
 		}}
 	}
 	tests := []struct {
