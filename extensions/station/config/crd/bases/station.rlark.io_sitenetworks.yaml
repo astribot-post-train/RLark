@@ -278,6 +278,37 @@ spec:
                             is the one that has an address in the gateway's network.
                           maxLength: 15
                           type: string
+                        setup:
+                          description: |-
+                            Setup is what the gateway device of a new leaf runs once so that the
+                            leaf can reach the site at all: before it, the leaf can fetch nothing,
+                            its own installer included, and the device fetches this for it.
+                          properties:
+                            addon:
+                              maxLength: 63
+                              minLength: 1
+                              pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                              type: string
+                            login:
+                              description: |-
+                                Login is the account on the gateway device the printed command logs in
+                                as; the operator types its password.
+                              maxLength: 32
+                              minLength: 1
+                              pattern: ^[a-z_][a-z0-9_-]*$
+                              type: string
+                            path:
+                              description: Path is the file's path inside the Addon's
+                                package.
+                              maxLength: 255
+                              minLength: 1
+                              pattern: ^[A-Za-z0-9_][A-Za-z0-9._-]*(/[A-Za-z0-9_][A-Za-z0-9._-]*)*$
+                              type: string
+                          required:
+                          - addon
+                          - login
+                          - path
+                          type: object
                         source:
                           description: |-
                             Source is the address the node dials from. Without it, and that is the

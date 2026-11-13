@@ -177,6 +177,16 @@ paths:
                       role: {type: string, enum: [Leaf, Hub]}
                       address: {type: string}
                       tunnel_address: {type: string}
+                      link_summary: {type: string, description: 'For a leaf, what the hubs it dials see of it, in one line; empty while every link is connected'}
+                      links:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            hub: {type: string, description: 'The hub the leaf dials, <clusterID>/<nodeName>'}
+                            state: {type: string, enum: [Connected, Unanswered, Silent, Unknown]}
+                            since: {type: string, format: date-time}
+                            latest_handshake: {type: string, format: date-time}
         '400': {description: Missing cluster ID}
         '404': {description: Cluster or site node not found}
         '409': {description: Ambiguous cluster namespace or node binding}

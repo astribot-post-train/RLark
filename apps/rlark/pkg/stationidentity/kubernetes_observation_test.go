@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -32,6 +33,7 @@ func testDynamicClient(objects ...runtime.Object) *fake.FakeDynamicClient {
 		stationObservationGVR: "StationObservationList",
 		stationGVR:            "StationList",
 		rlarkClusterGVR:       "ClusterList",
+		networkEnrollmentGVR:  "NetworkEnrollmentList",
 	}, objects...)
 }
 
@@ -410,4 +412,129 @@ func TestReinstalledNodeReplacesThePreviousNodesSnapshot(t *testing.T) {
 	if err := other.Store(context.Background(), foreign, Observation{}); !errors.Is(err, ErrObservationOwnershipConflict) {
 		t.Fatalf("foreign cluster error = %v", err)
 	}
+}
+
+func TestObservationPeersAreStoredUnderTheMemberEnrolledWithTheirKey(t *testing.T) {
+	enrollment := func(namespace, cluster, name, phase, key string) *unstructured.Unstructured {
+		return &unstructured.Unstructured{Object: map[string]interface{}{
+			"apiVersion": "station.rlark.io/v1alpha1", "kind": "NetworkEnrollment",
+			"metadata": map[string]interface{}{"namespace": namespace, "name": name},
+			"spec":     map[string]interface{}{"clusterID": cluster},
+			"status":   map[string]interface{}{"phase": phase, "publicKey": key},
+		}}
+	}
+	leaf, moved, stranger := "bGVhZi1rZXktbGVhZi1rZXktbGVhZi1rZXktbGVhZi0=", "bW92ZWQta2V5LW1vdmVkLWtleS1tb3ZlZC1rZXktbW8=", "c3RyYW5nZXItc3RyYW5nZXItc3RyYW5nZXItc3RyYW4="
+	client := testDynamicClient(
+		enrollment("agent-robot", "robot-01", "s1u-01-x86", "Enrolled", leaf),
+		// A machine that moved leaves a rejected enrollment with its key behind.
+		enrollment("agent-old", "old", "desk", "Rejected", moved),
+		enrollment("agent-new", "new", "desk", "Enrolled", moved),
+	)
+	sink := &KubernetesObservationSink{Client: client, Namespaces: observationNamespaceMap{"cluster-a": "agent-a"}}
+	e := validEvidence()
+	e.ClusterID, e.RegisteredClusterID = "cluster-a", "cluster-a"
+	e.NodeName, e.PodNodeName = "hub", "hub"
+	store := func(wireguard string) []interface{} {
+		t.Helper()
+		// The first write of a node only creates its object.
+		for range 2 {
+			if err := sink.Store(context.Background(), e, Observation{Wireguard: json.RawMessage(wireguard)}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		stored, err := client.Resource(stationObservationGVR).Namespace("agent-a").Get(context.Background(), "hub", metav1.GetOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		peers, _, _ := unstructured.NestedSlice(stored.Object, "status", "wireguard", "peers")
+		return peers
+	}
+	peers := store(`{"interface":"st-wg0","peers":[
+		{"publicKey":"` + stranger + `","receivedBytes":7},
+		{"publicKey":"` + leaf + `","latestHandshake":"2026-11-14T01:02:03Z","receivedBytes":148,"sentBytes":92},
+		{"publicKey":"` + moved + `"}]}`)
+	want := []interface{}{
+		map[string]interface{}{"name": "robot-01/s1u-01-x86", "latestHandshake": "2026-11-14T01:02:03Z", "receivedBytes": int64(148), "sentBytes": int64(92)},
+		map[string]interface{}{"name": "new/desk"},
+	}
+	if got, _ := json.Marshal(peers); len(peers) != 2 || string(got) != string(mustJSON(t, want)) {
+		t.Fatalf("peers = %s", got)
+	}
+	if peers := store(`{"interface":"st-wg0"}`); len(peers) != 0 {
+		t.Fatalf("a report without peers kept %v", peers)
+	}
+}
+
+// Reports arrive from every node every 30 s; the enrollments are listed for
+// all of them together, and sooner only for a key that is new.
+func TestObservationSinkListsEnrollmentsOncePerInterval(t *testing.T) {
+	enrollment := func(name, key string) *unstructured.Unstructured {
+		return &unstructured.Unstructured{Object: map[string]interface{}{
+			"apiVersion": "station.rlark.io/v1alpha1", "kind": "NetworkEnrollment",
+			"metadata": map[string]interface{}{"namespace": "agent-robot", "name": name},
+			"spec":     map[string]interface{}{"clusterID": "robot-01"},
+			"status":   map[string]interface{}{"phase": "Enrolled", "publicKey": key},
+		}}
+	}
+	first, second := "bGVhZi1rZXktbGVhZi1rZXktbGVhZi1rZXktbGVhZi0=", "bW92ZWQta2V5LW1vdmVkLWtleS1tb3ZlZC1rZXktbW8="
+	client := testDynamicClient(enrollment("first", first))
+	clock := time.Date(2026, 11, 14, 12, 0, 0, 0, time.UTC)
+	sink := &KubernetesObservationSink{Client: client, Namespaces: observationNamespaceMap{"cluster-a": "agent-a"}, Now: func() time.Time { return clock }}
+	e := validEvidence()
+	e.ClusterID, e.RegisteredClusterID = "cluster-a", "cluster-a"
+	e.NodeName, e.PodNodeName = "hub", "hub"
+	// lists is how often the enrollments have been listed, names what is stored.
+	report := func(after time.Duration, keys ...string) (lists int, names string) {
+		t.Helper()
+		clock = clock.Add(after)
+		peers := make([]string, len(keys))
+		for i, key := range keys {
+			peers[i] = `{"publicKey":"` + key + `"}`
+		}
+		if err := sink.Store(context.Background(), e, Observation{Wireguard: json.RawMessage(`{"interface":"st-wg0","peers":[` + strings.Join(peers, ",") + `]}`)}); err != nil {
+			t.Fatal(err)
+		}
+		for _, action := range client.Actions() {
+			if action.Matches("list", "networkenrollments") {
+				lists++
+			}
+		}
+		stored, err := client.Resource(stationObservationGVR).Namespace("agent-a").Get(context.Background(), "hub", metav1.GetOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		entries, _, _ := unstructured.NestedSlice(stored.Object, "status", "wireguard", "peers")
+		for _, entry := range entries {
+			names += entry.(map[string]interface{})["name"].(string) + " "
+		}
+		return lists, names
+	}
+	report(0, first)
+	if lists, names := report(time.Second, first); lists != 1 || names != "robot-01/first " {
+		t.Fatalf("first reports: %d lists, %q", lists, names)
+	}
+	if _, err := client.Resource(networkEnrollmentGVR).Namespace("agent-robot").Create(context.Background(), enrollment("second", second), metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if lists, names := report(time.Second, first, second); lists != 1 || names != "robot-01/first " {
+		t.Fatalf("a new key within five seconds: %d lists, %q", lists, names)
+	}
+	if lists, names := report(4*time.Second, first, second); lists != 2 || names != "robot-01/first robot-01/second " {
+		t.Fatalf("a new key after five seconds: %d lists, %q", lists, names)
+	}
+	if lists, _ := report(29*time.Second, first, second); lists != 2 {
+		t.Fatalf("known keys within thirty seconds: %d lists", lists)
+	}
+	if lists, _ := report(2*time.Second, first, second); lists != 3 {
+		t.Fatalf("after thirty seconds: %d lists", lists)
+	}
+}
+
+func mustJSON(t *testing.T, value any) []byte {
+	t.Helper()
+	data, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return data
 }

@@ -136,12 +136,19 @@ type WireguardObservation struct {
 	// +kubebuilder:validation:items:MaxLength=64
 	// +listType=set
 	Addresses []string `json:"addresses,omitempty"`
-	// +kubebuilder:validation:MaxItems=64
+	// Peers are the node's WireGuard peers that are enrolled members, as the
+	// node's kernel counts them. A Hub's entry for a Leaf is the only account
+	// of a Leaf that has dropped off.
+	// +kubebuilder:validation:MaxItems=1024
+	// +listType=map
+	// +listMapKey=name
 	Peers []WireguardPeerObservation `json:"peers,omitempty"`
 }
 
 type WireguardPeerObservation struct {
-	// Name is a stable, non-secret peer label assigned by the server.
+	// Name is the peer's member id, "<clusterID>/<nodeName>". station-api
+	// assigns it from the public key the node reported: it is that of the
+	// Enrolled NetworkEnrollment with this key.
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=128
 	Name            string       `json:"name"`

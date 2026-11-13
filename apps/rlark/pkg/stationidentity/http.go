@@ -74,8 +74,8 @@ type API struct {
 	Enrollments        NetworkEnroller
 	EnrollmentLimiter  ObservationLimiter
 	// Bootstrap, when set, admits machines that are not nodes yet by a one-time code.
-	Bootstrap *Bootstrap
-	GatewayCredential  func() ([]byte, error)
+	Bootstrap         *Bootstrap
+	GatewayCredential func() ([]byte, error)
 }
 
 type observationRequest struct {
@@ -222,7 +222,7 @@ func (a *API) observe(w http.ResponseWriter, r *http.Request, token string) {
 		writeAuthError(w, err)
 		return
 	}
-	if err := validateObservation(req.Observation); err != nil {
+	if err := validateObservation(req.Observation, a.now()); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -344,8 +344,8 @@ func (a *API) now() time.Time {
 	return time.Now()
 }
 
-func validateObservation(o Observation) error {
-	if len(o.SystemUUID) > 128 || len(o.Roles) > 32 || len(o.Probes) > 256 || len(o.Wireguard) > 16*1024 {
+func validateObservation(o Observation, now time.Time) error {
+	if len(o.SystemUUID) > 128 || len(o.Roles) > 32 || len(o.Probes) > 256 || len(o.Wireguard) > wireguardObservationBytes {
 		return errors.New("observation exceeds limits")
 	}
 	roles := make(map[string]struct{}, len(o.Roles))
@@ -364,26 +364,37 @@ func validateObservation(o Observation) error {
 		}
 	}
 	if len(o.Wireguard) > 0 {
-		if err := validateWireguardObservation(o.Wireguard); err != nil {
+		if err := validateWireguardObservation(o.Wireguard, now); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
+// A hub of a hundred leaves reports a hundred peers, about 140 bytes each.
+const (
+	wireguardObservationBytes = 256 * 1024
+	wireguardObservationPeers = 1024
+)
+
+// wireguardObservation is what a node reports of its tunnel. It tells its
+// peers by public key and names none: the name a peer is stored under is the
+// member the server finds enrolled with that key.
 type wireguardObservation struct {
 	Interface string   `json:"interface"`
 	PublicKey string   `json:"publicKey,omitempty"`
 	Addresses []string `json:"addresses,omitempty"`
 	Peers     []struct {
-		Name            string     `json:"name"`
+		PublicKey       string     `json:"publicKey"`
 		LatestHandshake *time.Time `json:"latestHandshake,omitempty"`
 		ReceivedBytes   int64      `json:"receivedBytes,omitempty"`
 		SentBytes       int64      `json:"sentBytes,omitempty"`
 	} `json:"peers,omitempty"`
 }
 
-func validateWireguardObservation(raw json.RawMessage) error {
+// A handshake carries the node's clock, which may run ahead of the server's;
+// one further ahead than a minute is not a time the node observed.
+func validateWireguardObservation(raw json.RawMessage, now time.Time) error {
 	var observation wireguardObservation
 	decoder := json.NewDecoder(strings.NewReader(string(raw)))
 	decoder.DisallowUnknownFields()
@@ -394,7 +405,7 @@ func validateWireguardObservation(raw json.RawMessage) error {
 	if err := decoder.Decode(&extra); err != io.EOF {
 		return errors.New("invalid WireGuard observation")
 	}
-	if observation.Interface == "" || len(observation.Interface) > 15 || len(observation.Addresses) > 16 || len(observation.Peers) > 64 {
+	if observation.Interface == "" || len(observation.Interface) > 15 || len(observation.Addresses) > 16 || len(observation.Peers) > wireguardObservationPeers {
 		return errors.New("invalid WireGuard observation")
 	}
 	if observation.PublicKey != "" {
@@ -413,10 +424,14 @@ func validateWireguardObservation(raw json.RawMessage) error {
 		}
 		addresses[address] = struct{}{}
 	}
+	peers := make(map[string]struct{}, len(observation.Peers))
 	for _, peer := range observation.Peers {
-		if peer.Name == "" || len(peer.Name) > 128 || peer.ReceivedBytes < 0 || peer.SentBytes < 0 {
+		key, err := base64.StdEncoding.DecodeString(peer.PublicKey)
+		if _, exists := peers[peer.PublicKey]; exists || err != nil || len(key) != 32 || peer.ReceivedBytes < 0 || peer.SentBytes < 0 ||
+			peer.LatestHandshake != nil && peer.LatestHandshake.After(now.Add(time.Minute)) {
 			return errors.New("invalid WireGuard peer observation")
 		}
+		peers[peer.PublicKey] = struct{}{}
 	}
 	return nil
 }
