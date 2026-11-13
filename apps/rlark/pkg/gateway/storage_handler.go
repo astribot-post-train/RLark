@@ -835,6 +835,57 @@ func (g *Gateway) updateStorageClassByName(ctx context.Context, name string, sto
 	})
 }
 
+// smbPasswordLine matches the obscured SMB password in a rendered rclone
+// config. rclone obscures with a random IV, so the line differs on every render.
+var smbPasswordLine = regexp.MustCompile(`(?m)^(\s*pass = ).*$`)
+
+// storageClassRenderKey reduces a Replication declaration to what its render
+// means, so that two renders of one stored declaration compare equal.
+func storageClassRenderKey(data map[string][]byte) string {
+	var deliveries []v1.Secret
+	if err := yaml.Unmarshal(data["manifests"], &deliveries); err != nil || len(deliveries) != 1 {
+		return ""
+	}
+	manifests := smbPasswordLine.ReplaceAll(deliveries[0].Data["manifests"], []byte("${1}*"))
+	return strings.Join([]string{string(data["storageclass"]), string(data["config"]), string(deliveries[0].Data["config"]), string(manifests)}, "\x00")
+}
+
+// rerenderStorageClasses rewrites every storage declaration whose rendered
+// objects are not what this Gateway renders from its stored fields. A storage
+// is otherwise rendered only when it is created or edited, so a change in the
+// render (reclaim policy, mount options of a profile) would reach existing
+// storages one manual edit at a time. One storage failing does not stop the rest.
+func (g *Gateway) rerenderStorageClasses(ctx context.Context) {
+	logger := log.FromContext(ctx)
+	secrets, err := listStorageClassSecrets(ctx, g.rawClient, g.managementNamespace())
+	if err != nil {
+		logger.Error(err, "list storage class replications to re-render")
+		return
+	}
+	for i := range secrets {
+		secret := &secrets[i]
+		id, stored, err := storageClassFromSecret(secret)
+		if err != nil {
+			logger.Error(err, "skip re-rendering storage class", "secret", secret.Name)
+			continue
+		}
+		rebuilt, err := buildStorageClassReplicationSecret(secret.Namespace, id, stored)
+		if err != nil {
+			logger.Error(err, "re-render storage class", "storage", stored.Name)
+			continue
+		}
+		if storageClassRenderKey(secret.Data) == storageClassRenderKey(rebuilt.Data) {
+			continue
+		}
+		secret.Data = rebuilt.Data
+		if _, err := g.rawClient.CoreV1().Secrets(secret.Namespace).Update(ctx, secret, metav1.UpdateOptions{}); err != nil {
+			logger.Error(err, "update re-rendered storage class", "storage", stored.Name)
+			continue
+		}
+		logger.Info("re-rendered storage class", "storage", stored.Name, "storageClass", id)
+	}
+}
+
 // --- Storage class file operation handlers ---
 
 // getStorageClient resolves the storage.Client from the management-plane
