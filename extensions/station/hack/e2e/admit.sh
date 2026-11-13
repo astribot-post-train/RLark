@@ -83,7 +83,6 @@ spec:
   apiServer: $HUB:6443
   labels: {rlark.io/node-category: robot, rlark.io/robot-id: s1u-99, rlark.io/robot-model: s1u}
   taints: ["rlark.io/node-category=robot:NoSchedule"]
-  listenPort: 51831
 ADMISSION
   echo "the operator's command: curl -s https://e2e-station-api:18443/b/$code | sudo sh"
   # The script and the archive as the machine would fetch them.

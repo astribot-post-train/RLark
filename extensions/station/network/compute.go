@@ -234,6 +234,9 @@ func Compute(topology Topology, members []Member) (Result, error) {
 			problem("a leaf has no endpoints and does not relay")
 			valid = false
 		}
+		if member.Role == RoleLeaf && member.ListenPort != 0 {
+			problem("listenPort %d is not used: no one dials a leaf, and it dials from a port of its own choosing", member.ListenPort)
+		}
 		if member.Role == RoleHub && len(member.Endpoints) == 0 {
 			problem("a hub needs at least one endpoint")
 			valid = false
@@ -263,9 +266,18 @@ func Compute(topology Topology, members []Member) (Result, error) {
 	}
 
 	for _, self := range nodes {
+		// A leaf's packets leave through address translators, and the entry
+		// one keeps for a source port can outlive a restart of the leaf and
+		// stop carrying the answers. A leaf therefore has no port of its own
+		// (0): its gateway takes a new one with every boot and whenever a hub
+		// stops answering.
+		port := firstPositive(self.ListenPort, topology.ListenPort)
+		if self.Role == RoleLeaf {
+			port = 0
+		}
 		config := NodeConfig{
 			Interface: firstNonEmpty(self.Interface, topology.Interface), Address: self.address.String() + "/32",
-			ListenPort: firstPositive(self.ListenPort, topology.ListenPort), MTU: topology.MTU,
+			ListenPort: port, MTU: topology.MTU,
 			Peers: []Peer{}, Routes: []string{}, Names: append(topology.Names[:len(topology.Names):len(topology.Names)], self.site.Names...), DNS: self.site.DNS,
 		}
 		type candidate struct {

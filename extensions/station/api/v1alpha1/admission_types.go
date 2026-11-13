@@ -47,11 +47,8 @@ type NodeAdmissionSpec struct {
 	Taints []string `json:"taints,omitempty"`
 	// Address pins the tunnel address; empty lets the controller allocate one.
 	// +kubebuilder:validation:MaxLength=15
-	Address string `json:"address,omitempty"`
-	// +kubebuilder:validation:Minimum=0
-	// +kubebuilder:validation:Maximum=65535
-	ListenPort int32              `json:"listenPort,omitempty"`
-	Uplink     *SiteNetworkUplink `json:"uplink,omitempty"`
+	Address string             `json:"address,omitempty"`
+	Uplink  *SiteNetworkUplink `json:"uplink,omitempty"`
 	// PublicKey is written by Station API when the code is redeemed; the code
 	// then stays valid for this key only.
 	// +kubebuilder:validation:MaxLength=44

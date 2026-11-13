@@ -90,11 +90,6 @@ spec:
                   registers with.
                 maxProperties: 32
                 type: object
-              listenPort:
-                format: int32
-                maximum: 65535
-                minimum: 0
-                type: integer
               publicKey:
                 description: |-
                   PublicKey is written by Station API when the code is redeemed; the code

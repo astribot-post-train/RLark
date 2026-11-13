@@ -347,8 +347,8 @@ func TestNetworkAdmitsAMachineByCode(t *testing.T) {
 	admission := &stationv1alpha1.NodeAdmission{
 		ObjectMeta: metav1.ObjectMeta{Namespace: "ns-dev", Name: "robot", Generation: 1},
 		Spec: stationv1alpha1.NodeAdmissionSpec{ClusterID: "dev", CodeHash: strings.Repeat("0", 64), APIServer: "10.11.14.128:16443",
-			ExpiresAt: metav1.NewTime(time.Unix(1_800_000_600, 0)), ListenPort: 51831,
-			Uplink: &stationv1alpha1.SiteNetworkUplink{Gateway: "192.168.0.11", Source: "192.168.31.250", Interface: "enp2s0"}},
+			ExpiresAt: metav1.NewTime(time.Unix(1_800_000_600, 0)),
+			Uplink:    &stationv1alpha1.SiteNetworkUplink{Gateway: "192.168.0.11", Source: "192.168.31.250", Interface: "enp2s0"}},
 	}
 	r, c := newNetworkTest(t, append(objects, testSiteNetwork(), admission)...)
 	admissionStatus := func() stationv1alpha1.NodeAdmissionStatus {
@@ -389,7 +389,7 @@ func TestNetworkAdmitsAMachineByCode(t *testing.T) {
 		t.Fatalf("a redeemed admission must carry a configuration: %+v: %v", redeemed, err)
 	}
 	if redeemed.Phase != stationv1alpha1.NodeAdmissionRedeemed || redeemed.Address != pending.Address || config.Address != pending.Address+"/32" ||
-		config.ListenPort != 51831 || len(config.UplinkRoutes) == 0 || len(config.Peers) != 1 || config.Peers[0].PublicKey != keyHub {
+		config.ListenPort != 0 || len(config.UplinkRoutes) == 0 || len(config.Peers) != 1 || config.Peers[0].PublicKey != keyHub {
 		t.Fatalf("redeemed admission: %+v config %+v", redeemed, config)
 	}
 	if peers := hubPeers(); !peers[keyNew] || peers[keyOld] || enrollmentStatus(t, c, "dev", "robot").Phase != stationv1alpha1.NetworkEnrollmentRejected {
@@ -416,7 +416,7 @@ func TestNetworkAdmitsAMachineByCode(t *testing.T) {
 	joined := admissionStatus()
 	own := enrollmentStatus(t, c, "dev", "robot")
 	if joined.Phase != stationv1alpha1.NodeAdmissionJoined || joined.Config != "" || own.Phase != stationv1alpha1.NetworkEnrollmentEnrolled ||
-		own.TunnelAddress != pending.Address || configOf(t, own).ListenPort != 51831 || !hubPeers()[keyNew] {
+		own.TunnelAddress != pending.Address || configOf(t, own).ListenPort != 0 || !hubPeers()[keyNew] {
 		t.Fatalf("joined: admission %+v enrollment %+v", joined, own)
 	}
 }
@@ -487,14 +487,14 @@ func TestNetworkMovesAMachineToAnotherCluster(t *testing.T) {
 func TestNetworkLetsANodeJoinItsClustersNewControlPlane(t *testing.T) {
 	keyHub, keyRobot, keyListed := strings.Repeat("A", 43)+"=", strings.Repeat("B", 43)+"=", strings.Repeat("C", 43)+"="
 	siteNetwork := testSiteNetwork()
-	siteNetwork.Spec.Nodes = append(siteNetwork.Spec.Nodes, stationv1alpha1.SiteNetworkNode{ClusterID: "robot-01", NodeName: "listed", Address: "10.254.240.7", ListenPort: 51840})
+	siteNetwork.Spec.Nodes = append(siteNetwork.Spec.Nodes, stationv1alpha1.SiteNetworkNode{ClusterID: "robot-01", NodeName: "listed", Address: "10.254.240.7"})
 	objects := append(testMember("dev", "cailiang", keyHub, "10.11.14.128"), testMember("robot-01", "robot", keyRobot, "192.168.0.10")...)
 	objects = append(objects, testMember("robot-01", "listed", keyListed, "192.168.0.10")...)
 	redeemedAt := metav1.NewTime(time.Unix(1_799_990_000, 0))
 	first := &stationv1alpha1.NodeAdmission{
 		ObjectMeta: metav1.ObjectMeta{Namespace: "ns-robot-01", Name: "robot", Generation: 2},
 		Spec: stationv1alpha1.NodeAdmissionSpec{ClusterID: "robot-01", CodeHash: strings.Repeat("0", 64), APIServer: "192.168.31.250:6443",
-			ExpiresAt: metav1.NewTime(time.Unix(1_799_990_600, 0)), ListenPort: 51831, PublicKey: keyRobot, RedeemedAt: &redeemedAt},
+			ExpiresAt: metav1.NewTime(time.Unix(1_799_990_600, 0)), PublicKey: keyRobot, RedeemedAt: &redeemedAt},
 		// As the controller before this field left it: Joined, without the redemption it answered.
 		Status: stationv1alpha1.NodeAdmissionStatus{ObservedGeneration: 2, Phase: stationv1alpha1.NodeAdmissionJoined, Address: "10.254.240.4"},
 	}
@@ -526,7 +526,7 @@ func TestNetworkLetsANodeJoinItsClustersNewControlPlane(t *testing.T) {
 		renewed := &stationv1alpha1.NodeAdmission{
 			ObjectMeta: metav1.ObjectMeta{Namespace: "ns-robot-01", Name: node.name},
 			Spec: stationv1alpha1.NodeAdmissionSpec{ClusterID: "robot-01", CodeHash: strings.Repeat("1", 64), APIServer: "cp.robot-01.rlark.internal:6443",
-				ExpiresAt: metav1.NewTime(time.Unix(1_800_000_600, 0)), ListenPort: 51831},
+				ExpiresAt: metav1.NewTime(time.Unix(1_800_000_600, 0))},
 		}
 		if node.name == "robot" {
 			stored := admission("robot")

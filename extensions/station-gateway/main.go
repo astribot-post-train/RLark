@@ -75,7 +75,7 @@ func parse(data []byte) (*desired, error) {
 	if c.Interface == "" || len(c.Interface) > 15 || strings.ContainsAny(c.Interface, "/ \t\n") {
 		return nil, errors.New("invalid interface name")
 	}
-	if c.ListenPort < 1 || c.ListenPort > 65535 || c.MTU < 576 || c.MTU > 9000 {
+	if c.ListenPort < 0 || c.ListenPort > 65535 || c.MTU < 576 || c.MTU > 9000 {
 		return nil, errors.New("invalid listen port or MTU")
 	}
 	addr, err := netlink.ParseAddr(c.Address)
@@ -194,7 +194,7 @@ func deviceConfig(d *desired, key wgtypes.Key, current *wgtypes.Device) (wgtypes
 	if current.PrivateKey != key {
 		cfg.PrivateKey = &key
 	}
-	if current.ListenPort != d.ListenPort {
+	if d.ListenPort != 0 && current.ListenPort != d.ListenPort {
 		port := d.ListenPort
 		cfg.ListenPort = &port
 	}
@@ -227,6 +227,43 @@ func deviceConfig(d *desired, key wgtypes.Key, current *wgtypes.Device) (wgtypes
 		}
 	}
 	return cfg, cfg.PrivateKey != nil || cfg.ListenPort != nil || len(cfg.Peers) > 0
+}
+
+// redial is what a node that listens on no port of its own (listenPort 0: no
+// one dials it) remembers between passes. Its packets leave through address
+// translators that keep one entry per source port, and an entry that outlives
+// a restart of the node can stop carrying the answers while both ends keep it
+// alive by trying. Such a node therefore takes another port when a peer it
+// dials has not answered: the kernel picks the port, the sessions with the
+// peers that do answer move with the next packet. One peer that stays away
+// costs a new port after half a minute, then after twice as long each time.
+type redial struct {
+	since time.Time
+	wait  time.Duration
+}
+
+const redialFirst, redialLongest, handshakeAge = 30 * time.Second, 16 * time.Minute, 3 * time.Minute
+
+var dialling redial
+
+func (r *redial) due(d *desired, current *wgtypes.Device, now time.Time) bool {
+	dialled := map[wgtypes.Key]bool{}
+	for _, p := range d.peers {
+		dialled[p.PublicKey] = p.Endpoint != nil
+	}
+	unanswered := false
+	for _, p := range current.Peers {
+		unanswered = unanswered || dialled[p.PublicKey] && now.Sub(p.LastHandshakeTime) > handshakeAge
+	}
+	if !unanswered || r.since.IsZero() {
+		r.since, r.wait = now, redialFirst
+		return false
+	}
+	if now.Sub(r.since) < r.wait {
+		return false
+	}
+	r.since, r.wait = now, min(2*r.wait, redialLongest)
+	return true
 }
 
 // apply reconciles the kernel with d. With prune it removes the routes it
@@ -335,7 +372,12 @@ func apply(d *desired, key wgtypes.Key, prune bool) error {
 	if err != nil {
 		return fmt.Errorf("observe wireguard: %w", err)
 	}
-	if config, changed := deviceConfig(d, key, current); changed {
+	config, changed := deviceConfig(d, key, current)
+	if d.ListenPort == 0 && dialling.due(d, current, time.Now()) {
+		log.Printf("a dialled peer has not answered from port %d: taking another port", current.ListenPort)
+		config.ListenPort, changed = new(int), true
+	}
+	if changed {
 		if err = c.ConfigureDevice(d.Interface, config); err != nil {
 			return fmt.Errorf("configure wireguard: %w", err)
 		}

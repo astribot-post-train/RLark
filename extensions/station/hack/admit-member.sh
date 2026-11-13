@@ -4,7 +4,7 @@
 # Run on the management machine as root, in this order:
 #
 #   admit-member.sh install    MEMBER_KUBECONFIG CLUSTER_ID
-#   admit-member.sh bootstrap  MEMBER_KUBECONFIG CLUSTER_ID NODE LISTEN_PORT [COMPUTED.json]
+#   admit-member.sh bootstrap  MEMBER_KUBECONFIG CLUSTER_ID NODE [COMPUTED.json]
 #   admit-member.sh credential MEMBER_KUBECONFIG CLUSTER_ID MEMBER_SERVER [TLS_SERVER_NAME]
 #   admit-member.sh rebind     MEMBER_KUBECONFIG CLUSTER_ID NODE REASON      (a replaced machine that keeps its name)
 #   admit-member.sh finish     MEMBER_KUBECONFIG CLUSTER_ID NODE
@@ -42,16 +42,16 @@ install)
   stamp installed
   ;;
 bootstrap)
-  NODE=$4 PORT=$5 COMPUTED=${6:-}
+  NODE=$4 COMPUTED=${5:-}
   pod=$(member -n station-system get pod -l app=station-agent-network --field-selector spec.nodeName="$NODE" -o name)
   key=$(member -n station-system logs "$pod" -c wireguard | sed -n 's/.*wireguard public key: //p' | tail -1)
   [[ ${#key} == 44 ]]
   stamp "public key of $NODE: $key"
   mgmt -n station-system get sitenetwork default -o json > /tmp/sitenetwork.json
   mgmt get networkenrollments.station.rlark.io -A -o json > /tmp/enrollments.json
-  python3 - "$CLUSTER" "$NODE" "$PORT" "$key" "$COMPUTED" > /tmp/bootstrap.json <<'PY'
+  python3 - "$CLUSTER" "$NODE" "$key" "$COMPUTED" > /tmp/bootstrap.json <<'PY'
 import json, sys
-cluster, node, port, key, computed = sys.argv[1:6]
+cluster, node, key, computed = sys.argv[1:5]
 spec = json.load(open('/tmp/sitenetwork.json'))['spec']
 index = next(i for i, n in enumerate(spec['nodes']) if (n['clusterID'], n['nodeName']) == (cluster, node))
 if computed:
@@ -65,10 +65,9 @@ else:
                 'peers': [{'publicKey': h['publicKey'], 'endpoint': h['endpoints'][0]['address'],
                            'allowedIPs': [h['address'] + '/32'], 'keepaliveSeconds': spec['keepaliveSeconds']} for h in hubs],
                 'routes': [h['address'] + '/32' for h in hubs]}
-document['listenPort'] = int(port)
+document['listenPort'] = 0
 json.dump(document, sys.stdout)
-patch = [{'op': 'add', 'path': f'/spec/nodes/{index}/publicKey', 'value': key},
-         {'op': 'add', 'path': f'/spec/nodes/{index}/listenPort', 'value': int(port)}]
+patch = [{'op': 'add', 'path': f'/spec/nodes/{index}/publicKey', 'value': key}]
 json.dump(patch, open('/tmp/sitenetwork.patch.json', 'w'))
 PY
   member -n station-system create configmap station-wireguard-config --from-file="$NODE.json"=/tmp/bootstrap.json --dry-run=client -o yaml | member apply -f -
