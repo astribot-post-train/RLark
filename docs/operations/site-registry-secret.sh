@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Issues the site registries' server certificate and enters it, with the registry's other credentials, as the
-# RLark secret object "site-registry" (the Addon site-registry reads it on every cluster it is distributed to).
+# RLark secret object "site-registry" (the Addon site-registry reads it on every cluster it is distributed to);
+# then makes the image registry credential for registry.rlark.internal:5443, distributed to all clusters, with the
+# user and password of the existing credential for 10.11.14.128:5443 (copied from one API answer into the next request).
 # Run it in a real terminal on the machine that holds the CA key: the key is only read by openssl, the new
 # certificate key and every other value go from files straight into the request body; nothing is printed or kept.
 # Rerun it to renew the certificate or rotate a value; the object is replaced in place.
@@ -9,7 +11,8 @@
 #   <registry config.yml>  the running registry's distribution config: its storage keys and http secret are reused
 #   <htpasswd>             the running registry's htpasswd: existing pull credentials stay valid
 # env: GATEWAY (default http://10.11.14.128:19000), CLUSTERS (default rlark-local-dev-gpu,rlark-ksyun-gpu),
-#      SAN (default: the name plus every address the registries answer on today)
+#      SAN (default: the name plus every address the registries answer on today; rerun with the new addresses when a
+#      registry moves, image references use the name)
 set -euo pipefail
 ca_crt=$1 ca_key=$2 config=$3 htpasswd=$4
 G=${GATEWAY:-http://10.11.14.128:19000}
@@ -45,3 +48,18 @@ curl -sS -o "$work/reply" -w "$method HTTP %{http_code}\n" -X "$method" -H "Auth
   -H 'Content-Type: application/json' -d @"$work/body.json" "$url"
 jq -c '{success, message, error}' "$work/reply" 2>/dev/null || head -c 300 "$work/reply"
 curl -sS -H "Authorization: Bearer $TOKEN" "$G/api/v1/secrets" | jq -c '(.data // .)[] | select(.name == "site-registry") | {name, clusters, keys}'
+
+list=$(curl -sS -H "Authorization: Bearer $TOKEN" "$G/api/v1/image-registries")
+if jq -e 'any(.[]; .registry == "registry.rlark.internal:5443")' <<<"$list" >/dev/null; then
+  echo "image registry credential for registry.rlark.internal:5443 already exists"
+else
+  source=$(jq -r 'first(.[] | select(.registry == "10.11.14.128:5443")) | .id' <<<"$list")
+  curl -sS -H "Authorization: Bearer $TOKEN" "$G/api/v1/image-registries/$source/password" | jq -r .password > "$work/password"
+  jq -n --arg user "$(jq -r --arg id "$source" '.[] | select(.id == $id) | .username' <<<"$list")" --rawfile password "$work/password" \
+    '{name:"site-registry", registry:"registry.rlark.internal:5443", username:$user, password:($password | rtrimstr("\n")),
+      clusterSelection:{mode:"All", clusters:[]}}' > "$work/registry.json"
+  curl -sS -o "$work/reply" -w 'image registry credential: HTTP %{http_code}\n' -H "Authorization: Bearer $TOKEN" \
+    -H 'Content-Type: application/json' -d @"$work/registry.json" "$G/api/v1/image-registries"
+  jq -c '{id, name, registry, username, clusterSelection}' "$work/reply" 2>/dev/null || head -c 300 "$work/reply"
+fi
+echo "site-registry: done"
