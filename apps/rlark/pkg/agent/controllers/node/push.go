@@ -18,6 +18,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	rlarkv1alpha1 "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
+	"github.com/rlinf/rlark/apps/rlark/pkg/tenant"
 )
 
 // Constants used by the package.
@@ -360,11 +361,17 @@ func (r *pushNodeReconciler) updateManagementNode(ctx context.Context, logger lo
 
 	mgmtNode.Spec.AgentType = desiredNode.Spec.AgentType
 	mgmtNode.Spec.Unschedulable = desiredNode.Spec.Unschedulable
+	// The gateway writes the tenant onto every object it stores; the node has
+	// no such label, and the report must not take it off the management Node.
+	tenantID := mgmtNode.Labels[tenant.IDLabel]
 	mgmtNode.Labels = mergeManagementMetadata(
 		mgmtNode.Labels,
 		desiredNode.Labels,
 		isManagementOwnedNodeLabel,
 	)
+	if _, reported := mgmtNode.Labels[tenant.IDLabel]; !reported && tenantID != "" {
+		mgmtNode.Labels[tenant.IDLabel] = tenantID
+	}
 	mgmtNode.Annotations = mergeManagementAnnotations(mgmtNode.Annotations, desiredNode.Annotations)
 	if err := r.c.ManagementClient.Update(ctx, &mgmtNode); err != nil {
 		logger.Error(err, "failed to update management Node spec")

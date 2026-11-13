@@ -361,3 +361,35 @@ func TestManagementOwnedNodeLabels(t *testing.T) {
 		}
 	}
 }
+
+func TestReconcileKeepsTheTenantOfTheManagementNode(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := corev1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	if err := rlarkv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	local := fake.NewClientBuilder().WithScheme(scheme).WithIndex(&corev1.Pod{}, podNodeNameField, func(obj client.Object) []string {
+		return []string{obj.(*corev1.Pod).Spec.NodeName}
+	}).WithObjects(
+		&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node-a", Labels: map[string]string{"rlark.io/enabled": "true"}}},
+	).Build()
+	known := managementNode("node-a", rlarkv1alpha1.NodeOnline)
+	// The tenant as the gateway wrote it, and a label the node had once.
+	known.Labels = map[string]string{"rlark.io/tenant-id": "default", "example.com/gone": "x"}
+	management := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(&rlarkv1alpha1.Node{}).WithObjects(known).Build()
+	r := &pushNodeReconciler{c: &Controller{Controller: base.Controller{
+		LocalKubeClient: local, ManagementClient: management, ManagementNamespace: "cluster-a", AgentType: string(rlarkv1alpha1.AgentTypeKubernetes),
+	}}}
+	if _, err := r.Reconcile(context.Background(), reconcile.Request{NamespacedName: types.NamespacedName{Name: "node-a"}}); err != nil {
+		t.Fatal(err)
+	}
+	var node rlarkv1alpha1.Node
+	if err := management.Get(context.Background(), types.NamespacedName{Name: "node-a", Namespace: "cluster-a"}, &node); err != nil {
+		t.Fatal(err)
+	}
+	if node.Labels["rlark.io/tenant-id"] != "default" || node.Labels["example.com/gone"] != "" || node.Labels["rlark.io/enabled"] != "true" {
+		t.Fatalf("labels of the management Node after the report: %v", node.Labels)
+	}
+}
