@@ -432,7 +432,28 @@ func main() {
 		machineResolv = "/run/systemd/resolve/resolv.conf,/etc/resolv.conf"
 	}
 	publicKey := flag.Bool("public-key", false, "create the node's key if it has none, print the public key and exit")
+	keepPath := flag.String("keep-host-program", "", "instead of running the tunnel: keep the machine's own station-gateway, this file as the container sees it, at this program's version")
+	keepName := flag.String("host-program-name", "/opt/rlark/bin/station-gateway", "the machine's station-gateway as its unit names it")
+	holdPath := flag.String("hold-directory", "", "a directory of the machine; while it holds a file the machine is in use and its program is not replaced")
+	kept := flag.Bool("host-program-kept", false, "with --keep-host-program: exit 0 when the machine runs this program's version")
 	flag.Parse()
+	if *keepPath != "" {
+		k, err := newKeeper(*keepPath, *keepName, *holdPath, *snapshotPath)
+		if err != nil {
+			log.Fatalf("keep host program: %v", err)
+		}
+		if *kept {
+			if same, err := k.kept(); err != nil || !same {
+				log.Printf("the machine does not run this version: %v", err)
+				os.Exit(1)
+			}
+			return
+		}
+		stop := make(chan os.Signal, 1)
+		signal.Notify(stop, syscall.SIGTERM, syscall.SIGINT)
+		k.run(stop)
+		return
+	}
 	if *publicKey {
 		key, err := keyFile(*keyPath)
 		if err != nil {

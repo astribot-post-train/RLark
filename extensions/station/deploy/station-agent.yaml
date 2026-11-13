@@ -415,7 +415,61 @@ spec:
           readOnly: true
         - name: wireguard-computed
           mountPath: /var/run/station-network
+      # Keeps the machine's own station-gateway (the service the installer put
+      # there) at this image's version: this DaemonSet's image is the version
+      # of every such node. The program is not replaced while the machine holds
+      # a file in /run/rlark/in-use (whatever knows the machine is in use keeps
+      # one there), and a version that does not stay up is taken back.
+      - name: gateway-program
+        image: REPLACE_PRIVATE_WIREGUARD_IMAGE
+        imagePullPolicy: IfNotPresent
+        args:
+        - --keep-host-program=/host/opt/rlark/bin/station-gateway
+        - --hold-directory=/host/run/rlark/in-use
+        - --observation-file=/var/run/station-observation/wireguard.json
+        readinessProbe:
+          exec:
+            command:
+            - /station-gateway
+            - --keep-host-program=/host/opt/rlark/bin/station-gateway
+            - --host-program-kept
+          periodSeconds: 30
+          timeoutSeconds: 5
+        resources:
+          requests:
+            cpu: 5m
+            memory: 16Mi
+          limits:
+            cpu: 200m
+            memory: 96Mi
+        securityContext:
+          runAsUser: 0
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+            add:
+            - KILL
+            - SYS_PTRACE
+        volumeMounts:
+        - name: host-programs
+          mountPath: /host/opt/rlark/bin
+        - name: host-in-use
+          mountPath: /host/run/rlark/in-use
+          readOnly: true
+        - name: wireguard-observation
+          mountPath: /var/run/station-observation
+          readOnly: true
       volumes:
+      - name: host-programs
+        hostPath:
+          path: /opt/rlark/bin
+          type: Directory
+      - name: host-in-use
+        hostPath:
+          path: /run/rlark/in-use
+          type: DirectoryOrCreate
       - name: token
         projected:
           sources:
@@ -447,4 +501,6 @@ spec:
                 values:
                 - host
       hostNetwork: true
+      # The gateway-program container ends the machine's service process.
+      hostPID: true
       dnsPolicy: Default
