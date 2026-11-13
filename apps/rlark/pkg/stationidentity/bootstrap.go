@@ -203,6 +203,13 @@ func (b *Bootstrap) Redeem(ctx context.Context, code, publicKey string) (Bootstr
 	case redeemedBy != publicKey:
 		return BootstrapAnswer{State: "rejected", Reason: "the code was redeemed by another machine"}, http.StatusConflict, nil
 	}
+	// A status that has not seen this redemption yet is not an answer to it:
+	// a code given to a node for joining again leaves the old "Joined" there
+	// until station-controller has answered.
+	observed, _, _ := unstructured.NestedInt64(admission.Object, "status", "observedGeneration")
+	if observed != admission.GetGeneration() {
+		return BootstrapAnswer{State: "pending", Reason: "waiting for station-controller"}, http.StatusAccepted, nil
+	}
 	if text("status", "phase") == "Joined" {
 		return BootstrapAnswer{State: "rejected", Reason: "the node has already joined"}, http.StatusGone, nil
 	}

@@ -256,6 +256,16 @@ confirm)
   [ "$from" = "$KUBE_VERSION" ] || fail "the node runs $from, not $KUBE_VERSION: $(cat "$WATCH/restored" 2>/dev/null)"
   disarm
   stamp "watchdog removed: the node stays on $KUBE_VERSION"
+  # A node whose tunnel is a host service gets the bundle's station-gateway
+  # here: no DaemonSet brings it one. The interface stays up across the restart.
+  if systemctl is-enabled rlark-station-gateway >/dev/null 2>&1 && ! cmp -s "$B/bin/station-gateway" /opt/rlark/bin/station-gateway; then
+    (TUNNEL_INTERFACE=$(sed -n 's/.*addr show dev \([^ ]*\) .*/\1/p' /etc/systemd/system/rlark-station-gateway.service)
+     . "$B/lib.sh"
+     install -m 755 "$B/bin/station-gateway" /opt/rlark/bin/station-gateway
+     tunnel_service
+     [ "${changed:-}" = tunnel ] || systemctl restart rlark-station-gateway)
+    stamp "the tunnel service runs the station-gateway of this bundle"
+  fi
   # The node's install annotations follow it (lib.sh, node_install): the
   # bundle is this one now, the site settings are the ones the node was
   # installed from. A node the installer did not make declares nothing.

@@ -408,6 +408,9 @@ func certAddresses(pki string, addresses []string) {
 			log.Fatal(err)
 		}
 		block, _ := pem.Decode(encoded)
+		if block == nil {
+			log.Fatalf("%s holds no certificate", file)
+		}
 		certificate, err := x509.ParseCertificate(block.Bytes)
 		if err != nil {
 			log.Fatalf("%s: %v", file, err)

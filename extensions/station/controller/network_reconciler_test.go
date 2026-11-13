@@ -477,3 +477,115 @@ func TestNetworkMovesAMachineToAnotherCluster(t *testing.T) {
 		}
 	}
 }
+
+// A cluster gets a new control plane and its nodes join it again, each as
+// the node it is, with the key it has: the admission answers with the
+// node's configuration, the node stays among its peers while its Station is
+// rebound to its new Node, and the admission is Joined once it has enrolled
+// from there. So for a node that joined by a code and for one the
+// SiteNetwork declares; and a second time with a new code.
+func TestNetworkLetsANodeJoinItsClustersNewControlPlane(t *testing.T) {
+	keyHub, keyRobot, keyListed := strings.Repeat("A", 43)+"=", strings.Repeat("B", 43)+"=", strings.Repeat("C", 43)+"="
+	siteNetwork := testSiteNetwork()
+	siteNetwork.Spec.Nodes = append(siteNetwork.Spec.Nodes, stationv1alpha1.SiteNetworkNode{ClusterID: "robot-01", NodeName: "listed", Address: "10.254.240.7", ListenPort: 51840})
+	objects := append(testMember("dev", "cailiang", keyHub, "10.11.14.128"), testMember("robot-01", "robot", keyRobot, "192.168.0.10")...)
+	objects = append(objects, testMember("robot-01", "listed", keyListed, "192.168.0.10")...)
+	redeemedAt := metav1.NewTime(time.Unix(1_799_990_000, 0))
+	first := &stationv1alpha1.NodeAdmission{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "ns-robot-01", Name: "robot", Generation: 2},
+		Spec: stationv1alpha1.NodeAdmissionSpec{ClusterID: "robot-01", CodeHash: strings.Repeat("0", 64), APIServer: "192.168.31.250:6443",
+			ExpiresAt: metav1.NewTime(time.Unix(1_799_990_600, 0)), ListenPort: 51831, PublicKey: keyRobot, RedeemedAt: &redeemedAt},
+		// As the controller before this field left it: Joined, without the redemption it answered.
+		Status: stationv1alpha1.NodeAdmissionStatus{ObservedGeneration: 2, Phase: stationv1alpha1.NodeAdmissionJoined, Address: "10.254.240.4"},
+	}
+	r, c := newNetworkTest(t, append(objects, siteNetwork, first)...)
+	ctx := context.Background()
+	admission := func(node string) stationv1alpha1.NodeAdmission {
+		t.Helper()
+		reconcileNetwork(t, r)
+		var got stationv1alpha1.NodeAdmission
+		if err := c.Get(ctx, types.NamespacedName{Namespace: "ns-robot-01", Name: node}, &got); err != nil {
+			t.Fatal(err)
+		}
+		return got
+	}
+	hubKnows := func(key string) bool {
+		for _, peer := range configOf(t, enrollmentStatus(t, c, "dev", "cailiang")).Peers {
+			if peer.PublicKey == key {
+				return true
+			}
+		}
+		return false
+	}
+	if got := admission("robot").Status; got.Phase != stationv1alpha1.NodeAdmissionJoined || got.RejoinsNodeUID != "" || enrollmentStatus(t, c, "robot-01", "robot").TunnelAddress != "10.254.240.4" {
+		t.Fatalf("an admission joined before must stay as it is: %+v", got)
+	}
+
+	for _, node := range []struct{ name, key, address string }{{"robot", keyRobot, "10.254.240.4"}, {"listed", keyListed, "10.254.240.7"}} {
+		// A new code for the node (admit-node.sh): the last redemption is cleared.
+		renewed := &stationv1alpha1.NodeAdmission{
+			ObjectMeta: metav1.ObjectMeta{Namespace: "ns-robot-01", Name: node.name},
+			Spec: stationv1alpha1.NodeAdmissionSpec{ClusterID: "robot-01", CodeHash: strings.Repeat("1", 64), APIServer: "cp.robot-01.rlark.internal:6443",
+				ExpiresAt: metav1.NewTime(time.Unix(1_800_000_600, 0)), ListenPort: 51831},
+		}
+		if node.name == "robot" {
+			stored := admission("robot")
+			stored.Spec = renewed.Spec
+			if err := c.Update(ctx, &stored); err != nil {
+				t.Fatal(err)
+			}
+		} else if err := c.Create(ctx, renewed); err != nil {
+			t.Fatal(err)
+		}
+		if got := admission(node.name).Status; got.Phase != stationv1alpha1.NodeAdmissionPending || got.Address != node.address {
+			t.Fatalf("%s: a new code opens the admission at the node's address: %+v", node.name, got)
+		}
+		stored := admission(node.name)
+		now := metav1.NewTime(time.Unix(1_800_000_000, 0))
+		stored.Spec.PublicKey, stored.Spec.RedeemedAt = node.key, &now
+		if err := c.Update(ctx, &stored); err != nil {
+			t.Fatal(err)
+		}
+		redeemed := admission(node.name).Status
+		own := enrollmentStatus(t, c, "robot-01", node.name)
+		if redeemed.Phase != stationv1alpha1.NodeAdmissionRedeemed || redeemed.RejoinsNodeUID != "node-"+node.name || redeemed.Config == "" ||
+			redeemed.Config != own.Config || redeemed.PublicKey != node.key || own.Phase != stationv1alpha1.NetworkEnrollmentEnrolled || own.TunnelAddress != node.address {
+			t.Fatalf("%s: the admission must answer with the node's own configuration: %+v, enrollment %+v", node.name, redeemed, own)
+		}
+
+		// The node is registered by the new control plane under a new UID; its
+		// Station is rebound before its enrollment says so.
+		var station stationv1alpha1.Station
+		if err := c.Get(ctx, types.NamespacedName{Namespace: "ns-robot-01", Name: "stn-" + node.name}, &station); err != nil {
+			t.Fatal(err)
+		}
+		station.Spec.Binding.NodeUID, station.Spec.Binding.Version = "node-"+node.name+"-again", 2
+		if err := c.Update(ctx, &station); err != nil {
+			t.Fatal(err)
+		}
+		between := admission(node.name).Status
+		var config network.NodeConfig
+		if err := json.Unmarshal([]byte(between.Config), &config); err != nil || between.Phase != stationv1alpha1.NodeAdmissionRedeemed ||
+			config.Address != node.address+"/32" || !hubKnows(node.key) || enrollmentStatus(t, c, "robot-01", node.name).Phase != stationv1alpha1.NetworkEnrollmentRejected {
+			t.Fatalf("%s: while its Station is rebound the node keeps its address and its peers: %+v %v", node.name, between, err)
+		}
+
+		var enrollment stationv1alpha1.NetworkEnrollment
+		if err := c.Get(ctx, types.NamespacedName{Namespace: "ns-robot-01", Name: node.name}, &enrollment); err != nil {
+			t.Fatal(err)
+		}
+		enrollment.Spec.NodeUID, enrollment.Spec.BindingVersion = "node-"+node.name+"-again", 2
+		if err := c.Update(ctx, &enrollment); err != nil {
+			t.Fatal(err)
+		}
+		joined := admission(node.name).Status
+		own = enrollmentStatus(t, c, "robot-01", node.name)
+		if joined.Phase != stationv1alpha1.NodeAdmissionJoined || joined.Config != "" || joined.RejoinsNodeUID != "" ||
+			own.Phase != stationv1alpha1.NetworkEnrollmentEnrolled || own.TunnelAddress != node.address || !hubKnows(node.key) {
+			t.Fatalf("%s: joined again: admission %+v enrollment %+v", node.name, joined, own)
+		}
+		if again := admission(node.name).Status; again.Phase != stationv1alpha1.NodeAdmissionJoined {
+			t.Fatalf("%s: Joined must stay: %+v", node.name, again)
+		}
+	}
+}

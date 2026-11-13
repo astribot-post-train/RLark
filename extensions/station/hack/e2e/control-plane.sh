@@ -126,7 +126,10 @@ document() {
   # The names the site network declares (SiteNetwork, names): every machine's
   # document carries them and its tunnel service keeps them in /etc/hosts.
   local names="{\"name\":\"$ROBOT\",\"address\":\"${TUN[$(cat "$D/robot-cp" 2>/dev/null || echo ws)]}\"},{\"name\":\"$OFFICE\",\"address\":\"${TUN[office]}\"}"
-  echo "{\"interface\":\"st-wg0\",\"address\":\"${TUN[$node]}/32\",\"listenPort\":51820,\"mtu\":1380,\"peers\":[$peers],\"routes\":[\"10.254.240.0/24\"],\"names\":[$names],\"dns\":[\"${SITE_DNS:-172.18.0.1}\"]}"
+  # NO_NAMES: a site network that declares no names and no name servers yet.
+  local declared=",\"names\":[$names],\"dns\":[\"${SITE_DNS:-172.18.0.1}\"]"
+  [[ -z ${NO_NAMES:-} ]] || declared=
+  echo "{\"interface\":\"st-wg0\",\"address\":\"${TUN[$node]}/32\",\"listenPort\":51820,\"mtu\":1380,\"peers\":[$peers],\"routes\":[\"10.254.240.0/24\"]$declared}"
 }
 # tunnels: every machine gets its document the way its agent would store it:
 # beside a host service, or for the pod that runs the tunnel of an office node.
@@ -440,7 +443,7 @@ refusals() {
   }
   refusal "the name is an address" CONTROL_PLANE_NAME=${TUN[$node]} POD_SUBNET=10.242.0.0/16 SERVICE_SUBNET=10.243.0.0/16
   refusal "no name" POD_SUBNET=10.242.0.0/16 SERVICE_SUBNET=10.243.0.0/16
-  refusal "a name the site network does not give this machine" CONTROL_PLANE_NAME=cp.other.rlark.internal POD_SUBNET=10.242.0.0/16 SERVICE_SUBNET=10.243.0.0/16
+  refusal "a name the site network gives another machine" CONTROL_PLANE_NAME=$OFFICE POD_SUBNET=10.242.0.0/16 SERVICE_SUBNET=10.243.0.0/16
   refusal "a pod network in use on the machine's networks" CONTROL_PLANE_NAME=$ROBOT POD_SUBNET=172.18.0.0/16 SERVICE_SUBNET=10.243.0.0/16
   refusal "more reserved than the machine has" CONTROL_PLANE_NAME=$ROBOT POD_SUBNET=10.242.0.0/16 SERVICE_SUBNET=10.243.0.0/16 SYSTEM_RESERVED_MEMORY=4096Gi
   on "$node" sh -c 'nohup sh -c "exec -a port-holder sleep 600" >/dev/null 2>&1 & python3 -c "import socket,time; s=socket.socket(); s.bind((\"0.0.0.0\",2379)); s.listen(); time.sleep(60)" >/dev/null 2>&1 &' ; sleep 1

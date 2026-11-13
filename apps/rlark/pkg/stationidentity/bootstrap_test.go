@@ -85,6 +85,25 @@ func TestBootstrapRedeemsACodeOnceForOneKey(t *testing.T) {
 		t.Fatalf("join token secret: %+v %v", secrets.Items, err)
 	}
 
+	// A node that joins again got a new code for its admission: "Joined" from
+	// before is no answer until station-controller has seen this redemption.
+	stored, _ = resource.Get(ctx, "s1u-01-x86", metav1.GetOptions{})
+	stored.SetGeneration(5)
+	stored.Object["status"] = map[string]interface{}{"phase": "Joined", "address": "10.254.240.3", "observedGeneration": int64(4)}
+	if _, err := resource.Update(ctx, stored, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if answer, status, err := b.Redeem(ctx, code, key); err != nil || status != http.StatusAccepted || answer.State != "pending" {
+		t.Fatalf("a status older than the redemption: %+v %d %v", answer, status, err)
+	}
+	_ = unstructured.SetNestedField(stored.Object, int64(5), "status", "observedGeneration")
+	if _, err := resource.Update(ctx, stored, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if answer, status, err := b.Redeem(ctx, code, key); err != nil || status != http.StatusGone {
+		t.Fatalf("joined: %+v %d %v", answer, status, err)
+	}
+
 	// After the time is up an unredeemed code is dead.
 	stored, _ = resource.Get(ctx, "s1u-01-x86", metav1.GetOptions{})
 	unstructured.RemoveNestedField(stored.Object, "spec", "publicKey")

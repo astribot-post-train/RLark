@@ -87,6 +87,14 @@ type NodeAdmissionStatus struct {
 	Config     string `json:"config,omitempty"`
 	ConfigHash string `json:"configHash,omitempty"`
 	PublicKey  string `json:"publicKey,omitempty"`
+	// RedeemedAt is the redemption (spec.redeemedAt) this status answers.
+	RedeemedAt *metav1.Time `json:"redeemedAt,omitempty"`
+	// RejoinsNodeUID is set while a machine that already is this node, with
+	// the same key, joins again: its cluster got a new control plane. It is
+	// the Node UID the machine had when it redeemed the code; the admission
+	// is Joined once the node has enrolled under another.
+	// +kubebuilder:validation:MaxLength=128
+	RejoinsNodeUID string `json:"rejoinsNodeUID,omitempty"`
 }
 
 // +kubebuilder:object:root=true
