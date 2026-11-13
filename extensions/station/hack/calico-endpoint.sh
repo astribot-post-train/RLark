@@ -13,7 +13,8 @@
 # calico-node and its CNI installer). It is one object for the cluster; the
 # endpoint is the one kubeadm records (controlPlaneEndpoint), or the address
 # the API server advertises where the cluster has none. calico-node's Pods are
-# made anew, node by node, only when the setting changes.
+# made anew, node by node, only when the setting changes; calico-kube-controllers
+# is a Pod of the Pod network and is left where it runs.
 set -euo pipefail
 K=$1
 k() { kubectl --kubeconfig "$K" "$@"; }
@@ -28,6 +29,4 @@ fi
 k -n kube-system create configmap kubernetes-services-endpoint --from-literal=KUBERNETES_SERVICE_HOST="$host" --from-literal=KUBERNETES_SERVICE_PORT="$port" --dry-run=client -o yaml | k apply -f - >/dev/null
 k -n kube-system rollout restart daemonset/calico-node >/dev/null
 k -n kube-system rollout status daemonset/calico-node --timeout=600s
-k -n kube-system rollout restart deployment/calico-kube-controllers >/dev/null
-k -n kube-system rollout status deployment/calico-kube-controllers --timeout=300s
 echo "$(date +%T) Calico reaches the API at $host:$port"
