@@ -9,7 +9,8 @@
 #          kubeadm, kubelet, kubectl and every image the version's control
 #          plane and nodes run, so that no node needs the internet.
 # Order, as kubeadm prescribes: each control-plane node, then every other node,
-# one at a time: etcd snapshot (control plane) -> kubeadm upgrade -> drain ->
+# one at a time, after the certificates of each control-plane node have been
+# completed for the node's present addresses: etcd snapshot (control plane) -> kubeadm upgrade -> drain ->
 # kubelet -> confirm -> back to its previous scheduling state. The kubelet
 # phase leaves a watchdog on the node that puts the old kubelet back after
 # WATCHDOG_SECONDS (600) unless this script, having seen the node Ready at
@@ -44,15 +45,6 @@ nodes=${NODES:-$nodes}
 if [[ -z ${ROLLBACK:-} ]]; then
   for item in $nodes; do
     [[ $(k get "$item" -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}') == True ]] || { echo "${item#node/} is not Ready: a node must be Ready before its upgrade" >&2; exit 1; }
-  done
-  # kubeadm reaches etcd at the address etcd advertises and verifies etcd's
-  # certificate for it. On a control-plane node whose address has changed
-  # since the cluster was made it fails there, with etcd already replaced.
-  for item in $(k get nodes -l node-role.kubernetes.io/control-plane -o name); do
-    url=$(k -n kube-system get pod "etcd-${item#node/}" -o jsonpath='{.metadata.annotations.kubeadm\.kubernetes\.io/etcd\.advertise-client-urls}')
-    k -n kube-system exec "etcd-${item#node/}" -- etcdctl --endpoints "$url" --cacert /etc/kubernetes/pki/etcd/ca.crt \
-      --cert /etc/kubernetes/pki/etcd/server.crt --key /etc/kubernetes/pki/etcd/server.key endpoint health >/dev/null 2>&1 ||
-      { echo "etcd on ${item#node/} does not answer at $url, the address it advertises, with a certificate valid for it: kubeadm would fail after replacing etcd. Its certificates must be issued for the node's present address first" >&2; exit 1; }
   done
 fi
 stamp "cluster at $current -> $VERSION; order:$(echo $nodes | sed 's#node/# #g')"
@@ -120,6 +112,21 @@ if [[ -n ${ROLLBACK:-} ]]; then
   k get nodes -o wide
   exit 0
 fi
+
+# kubeadm reaches etcd at the address etcd advertises and verifies etcd's
+# certificate for it. On a control-plane node whose address has changed since
+# the cluster was made it fails there, with etcd already replaced: each
+# control-plane node first issues the certificates that lack an address of
+# the node (upgrade.sh, PHASE=certs; nothing is done where none does), and
+# nothing else starts unless etcd then answers where it advertises.
+for item in $(k get nodes -l node-role.kubernetes.io/control-plane -o name); do
+  job "${item#node/}" certs
+  until k get --raw /readyz >/dev/null 2>&1; do sleep 1; done
+  url=$(k -n kube-system get pod "etcd-${item#node/}" -o jsonpath='{.metadata.annotations.kubeadm\.kubernetes\.io/etcd\.advertise-client-urls}')
+  k -n kube-system exec "etcd-${item#node/}" -- etcdctl --endpoints "$url" --cacert /etc/kubernetes/pki/etcd/ca.crt \
+    --cert /etc/kubernetes/pki/etcd/server.crt --key /etc/kubernetes/pki/etcd/server.key endpoint health >/dev/null 2>&1 ||
+    { echo "etcd on ${item#node/} does not answer at $url, the address it advertises, with a certificate valid for it: kubeadm would fail after replacing etcd" >&2; exit 1; }
+done
 
 # The control plane's upgrade replaces kube-proxy on every node and may move
 # CoreDNS to any: each node that runs pods gets the images first.

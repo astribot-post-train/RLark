@@ -1,6 +1,17 @@
 #!/bin/sh
 # Upgrades this node's Kubernetes by one minor version; station-bootstrap runs
 # it as a host process from a Job that upgrade-cluster.sh pins to the node.
+#   PHASE=certs     on a control-plane node, before anything else: the API
+#                   server's certificate and etcd's two must name every
+#                   address the node is reached at now. kubeadm reaches etcd
+#                   at the address etcd advertises and verifies etcd's
+#                   certificate for it, so on a node whose address has changed
+#                   since the cluster was made "kubeadm upgrade apply" fails
+#                   with etcd already replaced. Certificates that lack a name
+#                   are issued anew by kubeadm from the cluster's CA, and etcd
+#                   and the API server started again (about a quarter of a minute
+#                   without the API; nothing else on any node restarts).
+#                   Nothing is done on a node whose certificates are complete.
 #   PHASE=images    import the version's images: on every node before the
 #                   first is upgraded, because the control plane's upgrade
 #                   rolls kube-proxy and CoreDNS out to all of them at once
@@ -24,8 +35,8 @@
 # which containerd it uses. What it replaces is kept under /var/backups.
 set -eu
 B=/var/lib/rlark/bootstrap
-stamp() { echo "$(date +%T) $*"; }
-fail() { echo "$(date +%T) FAILED: $*" >&2; exit 1; }
+stamp() { printf '%s\n' "$(date +%T) $*"; }
+fail() { printf '%s\n' "$(date +%T) FAILED: $*" >&2; exit 1; }
 BIN=$(dirname "$(systemctl show kubelet -p ExecStart --value | sed -n 's/.*path=\([^ ;]*kubelet\) .*/\1/p')")
 [ -x "$BIN/kubelet" ] || fail "cannot find the kubelet binary of kubelet.service"
 SOCKET=$(sed -n 's/.*--container-runtime-endpoint=unix:\/\/\([^ "]*\).*/\1/p' /var/lib/kubelet/kubeadm-flags.env)
@@ -54,7 +65,93 @@ if [ "$PHASE" != rollback ] && [ "$(wc -l < /proc/swaps)" -gt 1 ] &&
   fail "swap is on ($(sed -n 2p /proc/swaps | cut -d' ' -f1)) and this node's kubelet is not configured for it (failSwapOn: false): a restarted kubelet would exit at once. Turn the swap off or declare failSwapOn: false for the node, then upgrade it"
 fi
 
+# The node's name: upgrade-cluster.sh names it; run by hand, the kubelet's
+# flags or the hostname do.
+node=${NODE_NAME:-$(cat /var/lib/kubelet/kubeadm-flags.env /etc/default/kubelet /etc/sysconfig/kubelet 2>/dev/null | sed -n 's/.*--hostname-override=\([^ "]*\).*/\1/p' | head -1)}
+[ -n "$node" ] || node=$(hostname | tr '[:upper:]' '[:lower:]')
+
 case $PHASE in
+certs)
+  M=/etc/kubernetes/manifests P=/etc/kubernetes/pki
+  [ -e $M/kube-apiserver.yaml ] || { stamp "not a control-plane node: no certificates to look at"; exit 0; }
+  admin() { kubectl --kubeconfig /etc/kubernetes/admin.conf -n kube-system "$@"; }
+  etcdctl() { admin exec "etcd-$node" -- etcdctl --endpoints https://127.0.0.1:2379 --cacert $P/etcd/ca.crt --cert $P/etcd/server.crt --key $P/etcd/server.key "$@"; }
+  # What the node is reached at: where its API server and its etcd say they
+  # are (the manifests are what an address change is made in), and its
+  # address in the station's tunnel, which no kubeadm configuration names.
+  endpoint=$(sed -n 's/^ *kubeadm.kubernetes.io\/kube-apiserver.advertise-address.endpoint: *//p' $M/kube-apiserver.yaml)
+  client=$(sed -n 's/^ *kubeadm.kubernetes.io\/etcd.advertise-client-urls: *//p' $M/etcd.yaml)
+  peer=$(sed -n 's/^ *- --initial-advertise-peer-urls=//p' $M/etcd.yaml)
+  tunnel=$(ip -4 -o addr show dev st-wg0 2>/dev/null | awk '{print $4}' | cut -d/ -f1)
+  install -d "$WATCH"
+  admin get configmap kubeadm-config -o jsonpath='{.data.ClusterConfiguration}' > "$WATCH/ClusterConfiguration.before.yaml"
+  lacking=$("$B/station-bootstrap" cert-sans "$WATCH/ClusterConfiguration.before.yaml" $P "${endpoint%:*}" $(echo "$client,$peer" | tr , '\n' | sed 's#^https://##; s#:[0-9]*$##') $tunnel 2>&1 > "$WATCH/ClusterConfiguration") || fail "$lacking"
+  if [ -n "$lacking" ]; then
+    echo "$lacking" | while read -r line; do stamp "$line"; done
+    dir=/var/backups/rlark-kube-upgrade/certs-$(date +%Y%m%d%H%M%S)
+    install -d -m 700 "$dir" "$dir/replaced"
+    (umask 077 && tar -cpf "$dir/etc-kubernetes.tar" -C / etc/kubernetes)
+    etcdctl snapshot save /var/lib/etcd/rlark-snapshot-before-certs.db > "$dir/etcd-snapshot.log" 2>&1 || { tail -5 "$dir/etcd-snapshot.log" >&2; fail "etcd snapshot"; }
+    mv /var/lib/etcd/rlark-snapshot-before-certs.db "$dir/etcd-snapshot.db"
+    cp "$WATCH/ClusterConfiguration.before.yaml" "$dir/"
+    # kubeadm would take the node's name and address from the hostname and the
+    # default route; they are the ones the node has in the cluster.
+    { printf 'apiVersion: %s\nkind: InitConfiguration\nlocalAPIEndpoint: {advertiseAddress: "%s", bindPort: %s}\nnodeRegistration: {name: %s, criSocket: "unix://%s"}\n---\n' \
+        "$(sed -n 's/^apiVersion: //p' "$WATCH/ClusterConfiguration")" "${endpoint%:*}" "${endpoint##*:}" "$node" "$SOCKET"; cat "$WATCH/ClusterConfiguration"; } > "$dir/kubeadm.yaml"
+    # Only the certificates are taken out of the archive on the way back: the
+    # kubelet makes every static pod anew whose manifest is written again.
+    pid() { ss -Hltnp "sport = :$1" | sed -n 's/.*pid=\([0-9]*\).*/\1/p' | head -1; }
+    undo="tar -xpf $dir/etc-kubernetes.tar -C / etc/kubernetes/pki && kill \$(ss -Hltnp 'sport = :${client##*:}' | sed -n 's/.*pid=\\([0-9]*\\).*/\\1/p' | head -1) \$(ss -Hltnp 'sport = :${endpoint##*:}' | sed -n 's/.*pid=\\([0-9]*\\).*/\\1/p' | head -1)"
+    stamp "kept in $dir: /etc/kubernetes (etc-kubernetes.tar), etcd (etcd-snapshot.db), the cluster's kubeadm configuration (ClusterConfiguration.before.yaml)"
+    stamp "to put the old certificates back, as root on this node (the kubelet starts etcd and the API server again, the API is away for about a minute; the names stay in the kubeadm configuration): $undo"
+    for crt in $(echo "$lacking" | cut -d' ' -f1); do
+      # kubeadm keeps a certificate it finds. etcd reads its certificate from
+      # the file for every connection: no failure may leave the node without it.
+      mv "$P/$crt" "$P/${crt%.crt}.key" "$dir/replaced/"
+      kubeadm init phase certs "$(echo "${crt%.crt}" | tr / -)" --config "$dir/kubeadm.yaml" > "$dir/kubeadm-$(basename "$crt").log" 2>&1 ||
+        { tar -xpf "$dir/etc-kubernetes.tar" -C / etc/kubernetes/pki; tail -15 "$dir/kubeadm-$(basename "$crt").log" >&2; fail "kubeadm init phase certs for $crt; the old certificates are back"; }
+    done
+    stamp "issued anew by kubeadm $(kubeadm version -o short): $(echo "$lacking" | cut -d' ' -f1 | tr '\n' ' ')"
+    # The names go into the cluster's kubeadm configuration: kubeadm issues a
+    # certificate from it whenever it makes one anew.
+    admin create configmap kubeadm-config --from-file="ClusterConfiguration=$WATCH/ClusterConfiguration" --dry-run=client -o yaml | admin replace -f - >/dev/null
+    # A static pod's container is started again by the kubelet when its
+    # process ends; etcd first, the API server does not come up without it.
+    t0=$(date +%s)
+    old=$(pid "${client##*:}"); kill "$old"
+    while kill -0 "$old" 2>/dev/null; do sleep 1; done
+    tries=0
+    until curl -fsS -m 2 --cacert $P/etcd/ca.crt --cert $P/etcd/healthcheck-client.crt --key $P/etcd/healthcheck-client.key "$client/health" >/dev/null 2>&1; do
+      tries=$((tries + 1))
+      [ $tries -lt 150 ] || fail "etcd does not answer at $client 150 s after its start with the new certificates. Back: $undo"
+      sleep 1
+    done
+    stamp "etcd answers at $client, the address it advertises, $(( $(date +%s) - t0 )) s after it was stopped"
+    t0=$(date +%s)
+    # The API server closes its port at once and then waits a minute for
+    # its watchers to leave: it is not waited for.
+    old=$(pid "${endpoint##*:}"); kill "$old"
+    sleep 3
+    kill -9 "$old" 2>/dev/null || true
+    tries=0
+    until curl -fsS -m 2 --cacert $P/ca.crt "https://$endpoint/readyz" >/dev/null 2>&1; do
+      tries=$((tries + 1))
+      [ $tries -lt 150 ] || fail "the API server is not ready at $endpoint 150 s after its start with the new certificate. Back: $undo"
+      sleep 1
+    done
+    stamp "the API server is ready at $endpoint $(( $(date +%s) - t0 )) s after it was stopped"
+  fi
+  # A member that etcd knows at another peer address than the one it is
+  # started with (the address of the day the cluster was made) is one that a
+  # member joining later could not reach.
+  member=$(etcdctl member list | grep ", $(sed -n 's/^ *- --name=//p' $M/etcd.yaml), ")
+  registered=$(echo "$member" | cut -d, -f4 | tr -d ' ')
+  if [ "$registered" != "$peer" ]; then
+    etcdctl member update "${member%%,*}" --peer-urls="$peer" >/dev/null
+    stamp "etcd member ${member%%,*}: peer address $registered -> $peer"
+  fi
+  [ -n "$lacking" ] || [ "$registered" != "$peer" ] || stamp "the certificates name every address of this node: nothing to do"
+  ;;
 images|control)
   for archive in "$B"/images/*.tar; do
     "$CTR" -a "$SOCKET" -n k8s.io images import "$archive" >/dev/null || fail "import $archive"
@@ -92,9 +189,6 @@ images|control)
   else
     # kubeadm reads the node's runtime socket from an annotation of the Node,
     # which a node that was not joined by kubeadm join alone may lack.
-    # upgrade-cluster.sh names the node; run by hand, the kubelet's flags or the hostname do.
-    node=${NODE_NAME:-$(cat /var/lib/kubelet/kubeadm-flags.env /etc/default/kubelet /etc/sysconfig/kubelet 2>/dev/null | sed -n 's/.*--hostname-override=\([^ "]*\).*/\1/p' | head -1)}
-    [ -n "$node" ] || node=$(hostname | tr '[:upper:]' '[:lower:]')
     [ -n "$(kubectl --kubeconfig /etc/kubernetes/kubelet.conf get node "$node" -o jsonpath='{.metadata.annotations.kubeadm\.alpha\.kubernetes\.io/cri-socket}')" ] ||
       kubectl --kubeconfig /etc/kubernetes/kubelet.conf annotate node "$node" "kubeadm.alpha.kubernetes.io/cri-socket=unix://$SOCKET" >/dev/null
     kubeadm upgrade node $patches > "$keep/upgrade-node.log" 2>&1 || { tail -25 "$keep/upgrade-node.log" >&2; fail "kubeadm upgrade node"; }
@@ -202,5 +296,5 @@ rollback)
   done
   stamp "node back at $("$BIN/kubelet" --version | awk '{print $2}')"
   ;;
-*) fail "PHASE must be images, control, kubelet, confirm or rollback" ;;
+*) fail "PHASE must be certs, images, control, kubelet, confirm or rollback" ;;
 esac
