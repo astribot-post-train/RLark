@@ -390,6 +390,15 @@ JOB
 # here an interface with that address, the default route with it as source,
 # and the translation on the way out. Set again on every boot, as a machine's
 # network configuration is.
+# reinstall NODE [CONTROL_PLANE [API]]: the old cluster's control plane, once
+# its other nodes have moved. A control plane does not move into another
+# cluster: its cluster is ended on it by hand, and the machine joins as any
+# machine that was never a node does.
+reinstall() {
+  local node=$1
+  on "$node" sh -c 'systemctl stop kubelet; PATH=/opt/robot-kubernetes/bin:$PATH kubeadm reset --force >/dev/null 2>&1; rm -rf /etc/kubernetes /var/lib/kubelet /var/lib/etcd /etc/cni/net.d/* /etc/systemd/system/kubelet.service /etc/systemd/system/kubelet.service.d; systemctl daemon-reload'
+  LABELS=rlark.io/node-category=robot,rlark.io/robot-id=$node TAINTS=rlark.io/node-category=robot:NoSchedule worker "$node" "${2:-ws}" "${3:-$ROBOT:6443}"
+}
 # robot_real NODE: a worker of the old cluster as the site's second robot is
 # one (11-13): containerd and ctr outside the PATH, a kubelet set up by hand
 # with no kubeadm beside it and no --config-dir, and the robots' node profile:
