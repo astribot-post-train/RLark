@@ -9,6 +9,11 @@ metadata:
   labels:
     app: registry-trust{{ if eq $robot "true" }}-robot{{ end }}
 spec:
+  # Each node's Pod only installs and then idles, so a node that cannot run it
+  # (out of disk, say) must not hold back the others.
+  updateStrategy:
+    rollingUpdate:
+      maxUnavailable: 100%
   selector:
     matchLabels:
       app: registry-trust{{ if eq $robot "true" }}-robot{{ end }}
