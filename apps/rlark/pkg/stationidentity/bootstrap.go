@@ -55,6 +55,7 @@ type redeemRequest struct {
 
 type BootstrapJoin struct {
 	APIServer  string `json:"api_server"`
+	Address    string `json:"api_server_address,omitempty"`
 	Token      string `json:"token"`
 	CACertHash string `json:"ca_cert_hash"`
 }
@@ -224,7 +225,7 @@ func (b *Bootstrap) Redeem(ctx context.Context, code, publicKey string) (Bootstr
 	if err != nil {
 		return BootstrapAnswer{}, 0, err
 	}
-	join.APIServer = text("spec", "apiServer")
+	join.APIServer, join.Address = text("spec", "apiServer"), text("spec", "apiServerAddress")
 	labels, _, _ := unstructured.NestedStringMap(admission.Object, "spec", "labels")
 	pairs := make([]string, 0, len(labels))
 	for key, value := range labels {

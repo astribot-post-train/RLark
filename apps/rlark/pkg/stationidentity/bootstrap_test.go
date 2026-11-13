@@ -37,7 +37,7 @@ func TestBootstrapRedeemsACodeOnceForOneKey(t *testing.T) {
 		"apiVersion": "station.rlark.io/v1alpha1", "kind": "NodeAdmission",
 		"metadata": map[string]interface{}{"name": "s1u-01-x86", "namespace": "rlark-local-dev-gpu"},
 		"spec": map[string]interface{}{
-			"clusterID": "rlark-local-dev-gpu", "codeHash": hex.EncodeToString(digest[:]), "apiServer": "10.11.14.128:16443",
+			"clusterID": "rlark-local-dev-gpu", "codeHash": hex.EncodeToString(digest[:]), "apiServer": "cp.rlark-local-dev-gpu.rlark.internal:6443", "apiServerAddress": "10.254.240.5",
 			"expiresAt": now.Add(time.Hour).UTC().Format(time.RFC3339),
 			"labels":    map[string]interface{}{"rlark.io/robot-id": "s1u-01", "rlark.io/node-category": "robot"},
 			"taints":    []interface{}{"rlark.io/node-category=robot:NoSchedule"},
@@ -75,7 +75,7 @@ func TestBootstrapRedeemsACodeOnceForOneKey(t *testing.T) {
 	}
 	answer, status, err := b.Redeem(ctx, code, key)
 	if err != nil || status != http.StatusOK || answer.State != "ready" || answer.NodeName != "s1u-01-x86" || answer.TunnelAddress != "10.254.240.3" ||
-		answer.Join.APIServer != "10.11.14.128:16443" || len(answer.Join.Token) != 23 || !strings.HasPrefix(answer.Join.CACertHash, "sha256:") ||
+		answer.Join.APIServer != "cp.rlark-local-dev-gpu.rlark.internal:6443" || answer.Join.Address != "10.254.240.5" || len(answer.Join.Token) != 23 || !strings.HasPrefix(answer.Join.CACertHash, "sha256:") ||
 		answer.Labels != "rlark.io/node-category=robot,rlark.io/robot-id=s1u-01" || answer.Taints != "rlark.io/node-category=robot:NoSchedule" {
 		t.Fatalf("ready answer: %+v %d %v", answer, status, err)
 	}

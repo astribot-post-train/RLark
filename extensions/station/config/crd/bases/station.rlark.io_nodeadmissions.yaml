@@ -68,6 +68,15 @@ spec:
                 maxLength: 253
                 minLength: 3
                 type: string
+              apiServerAddress:
+                description: |-
+                  APIServerAddress is the address the host of APIServer resolves to when
+                  that host is a name (cp.<cluster-id>.rlark.internal): the installer
+                  writes it into the machine's /etc/hosts, in a line of its own. The
+                  name is what lets a control plane move to another machine without the
+                  nodes' certificates and kubeconfigs changing.
+                maxLength: 45
+                type: string
               clusterID:
                 maxLength: 128
                 minLength: 1

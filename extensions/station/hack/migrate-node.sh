@@ -9,6 +9,8 @@
 #   migrate-node.sh OLD_KUBECONFIG NEW_KUBECONFIG NEW_CLUSTER_ID NODE API_SERVER STATION_API IMAGE [label=value ...]
 #
 # Environment: KCP (management kubeconfig), CA (Station API's CA file), TAINTS,
+# API_ADDRESS (the address of API_SERVER's host where that is the control
+# plane's name; the node resolves the name by a marked line in its /etc/hosts),
 # PULL_SECRET and JOB_NAMESPACE (where it is and the Job runs; kube-system),
 # TIMEOUT (seconds to Ready in the new cluster; 600), CONTROL_PLANE=yes to
 # move the old cluster's control-plane node (its cluster ends there, so it is
@@ -47,7 +49,7 @@ old get nodes -l node-role.kubernetes.io/control-plane -o name | grep -qx "node/
 [[ $mode == node || ${CONTROL_PLANE:-} == yes ]] || { echo "$NODE is the control plane of $old_cluster: move the other nodes first, then this one with CONTROL_PLANE=yes" >&2; exit 1; }
 stamp "$NODE: $old_cluster -> $CLUSTER, keeps $address port $port${uplink:+ uplink $uplink}"
 
-command=$(KCP=$KCP ADDRESS=$address LISTEN_PORT=$port UPLINK=$uplink TAINTS=${TAINTS:-} "$HERE/admit-node.sh" "$CLUSTER" "$NODE" "$API_SERVER" "$STATION_API" "$@")
+command=$(KCP=$KCP API_ADDRESS=${API_ADDRESS:-} ADDRESS=$address LISTEN_PORT=$port UPLINK=$uplink TAINTS=${TAINTS:-} "$HERE/admit-node.sh" "$CLUSTER" "$NODE" "$API_SERVER" "$STATION_API" "$@")
 code=$(echo "$command" | sed -n 's#.*/b/\([a-z0-9]*\) .*#\1#p')
 name=$(echo "node-migrate-$NODE" | cut -c1-63)
 if [[ $mode == control-plane ]]; then
@@ -100,8 +102,15 @@ namespace=$(mgmt get clusters.rlinf.io "$CLUSTER" -o jsonpath='{.spec.agentNames
 until [[ $(mgmt -n "$namespace" get nodeadmissions.station.rlark.io "$NODE" -o jsonpath='{.status.phase}') == Joined ]]; do sleep 2; done
 stamp "$NODE: enrolled in $CLUSTER under its own identity after $(( $(date +%s) - started )) s"
 
-# What it left behind.
+# What it left behind. Where the old and the new cluster are one registered
+# cluster (its control plane was built anew on another machine and the nodes
+# move over), the node's enrollment and Station are the ones it goes on with.
 [[ $mode == control-plane ]] || old delete node "$NODE" --ignore-not-found >/dev/null
+if [[ $old_cluster == "$CLUSTER" ]]; then
+  stamp "$NODE: same cluster $CLUSTER under its new control plane; its enrollment and Station stay"
+  new get node "$NODE" -o wide
+  exit 0
+fi
 mgmt -n "$old_namespace" delete networkenrollments.station.rlark.io,stationobservations.station.rlark.io "$NODE" --ignore-not-found >/dev/null
 for station in $(mgmt -n "$old_namespace" get stations.station.rlark.io -o json | python3 -c '
 import json, sys

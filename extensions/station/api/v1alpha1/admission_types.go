@@ -39,6 +39,13 @@ type NodeAdmissionSpec struct {
 	// +kubebuilder:validation:MinLength=3
 	// +kubebuilder:validation:MaxLength=253
 	APIServer string `json:"apiServer"`
+	// APIServerAddress is the address the host of APIServer resolves to when
+	// that host is a name (cp.<cluster-id>.rlark.internal): the installer
+	// writes it into the machine's /etc/hosts, in a line of its own. The
+	// name is what lets a control plane move to another machine without the
+	// nodes' certificates and kubeconfigs changing.
+	// +kubebuilder:validation:MaxLength=45
+	APIServerAddress string `json:"apiServerAddress,omitempty"`
 	// Labels and Taints (key=value:effect) are what the node registers with.
 	// +kubebuilder:validation:MaxProperties=32
 	Labels map[string]string `json:"labels,omitempty"`

@@ -8,6 +8,13 @@
 // It copies its bundle to the host, creates the machine's WireGuard key,
 // redeems the code at Station API for the tunnel configuration and a join
 // token, and hands over to install.sh, which runs as a host process.
+//
+// With the argument "control-plane" it makes the machine the control plane of
+// a cluster instead (control-plane.sh); that asks Station API for nothing and
+// carries no credential:
+//
+//	docker run --rm --privileged --net=host --pid=host \
+//	  -e CONTROL_PLANE_NAME=cp.<cluster-id>.rlark.internal rlark/node-bootstrap control-plane
 package main
 
 import (
@@ -47,6 +54,7 @@ type answer struct {
 	Config        json.RawMessage `json:"config"`
 	Join          struct {
 		APIServer  string `json:"api_server"`
+		Address    string `json:"api_server_address"`
 		Token      string `json:"token"`
 		CACertHash string `json:"ca_cert_hash"`
 	} `json:"join"`
@@ -64,8 +72,15 @@ func main() {
 		certSANs(os.Args[2], os.Args[3], os.Args[4:])
 		return
 	}
+	if os.Geteuid() != 0 {
+		log.Fatal("this must run as root: start the command with sudo, and give the container no other user")
+	}
 	if os.Getenv("PHASE") != "" {
-		upgrade()
+		onHost("upgrade.sh")
+		return
+	}
+	if len(os.Args) > 1 && os.Args[1] == "control-plane" {
+		onHost("control-plane.sh", os.Args[2:]...)
 		return
 	}
 	server, code := os.Getenv("RLARK_SERVER"), os.Getenv("RLARK_CODE")
@@ -156,7 +171,7 @@ func main() {
 	settings := append(os.Environ(),
 		"PATH=/opt/rlark/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
 		"NODE_NAME="+granted.NodeName, "TUNNEL_ADDRESS="+granted.TunnelAddress, "TUNNEL_INTERFACE="+tunnel.Interface,
-		"JOIN_API_SERVER="+granted.Join.APIServer, "JOIN_TOKEN="+granted.Join.Token, "JOIN_CA_HASH="+granted.Join.CACertHash,
+		"JOIN_API_SERVER="+granted.Join.APIServer, "JOIN_API_ADDRESS="+granted.Join.Address, "JOIN_TOKEN="+granted.Join.Token, "JOIN_CA_HASH="+granted.Join.CACertHash,
 		"NODE_LABELS="+granted.Labels, "NODE_TAINTS="+granted.Taints)
 	if os.Getenv("RLARK_MIGRATE") != "" {
 		migrate(settings)
@@ -233,13 +248,15 @@ func copyTree(from, to string) error {
 	})
 }
 
-// upgrade is the other use of the image: a Job pinned to a node runs it to
-// take that node's Kubernetes one minor version up (upgrade.sh).
-func upgrade() {
+// onHost is the other use of the image: a script of the bundle that needs
+// nothing from Station API runs as a host process. upgrade.sh, from a Job
+// pinned to a node, takes that node's Kubernetes one minor version up;
+// control-plane.sh makes the machine a cluster's control plane.
+func onHost(script string, arguments ...string) {
 	if err := copyTree("/bundle", hostRoot+stage); err != nil {
 		log.Fatalf("copy the bundle: %v", err)
 	}
-	// upgrade.sh calls this program again on the host for kubelet-overrides.
+	// The scripts call this program again on the host (kubelet-overrides, cert-sans).
 	self, err := os.ReadFile("/station-bootstrap")
 	if err != nil {
 		log.Fatal(err)
@@ -248,16 +265,16 @@ func upgrade() {
 		log.Fatal(err)
 	}
 	if err := syscall.Chroot(hostRoot); err != nil {
-		log.Fatalf("enter the host filesystem (the container must be privileged, with hostPID): %v", err)
+		log.Fatalf("enter the host filesystem (the container must be privileged, with --pid=host): %v", err)
 	}
 	if err := os.Chdir(stage); err != nil {
 		log.Fatal(err)
 	}
-	run := hostCommand(stage + "/upgrade.sh")
+	run := hostCommand(stage+"/"+script, arguments...)
 	run.Stdout, run.Stderr = os.Stdout, os.Stderr
 	run.Env = append(os.Environ(), "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin")
 	if err := run.Run(); err != nil {
-		log.Fatalf("upgrade: %v", err)
+		log.Fatalf("%s: %v", strings.TrimSuffix(script, ".sh"), err)
 	}
 }
 
@@ -380,12 +397,12 @@ func certSANs(configFile, pki string, addresses []string) {
 // chroot this program sees the host's files but is still in its container's
 // namespaces; kubeadm reads the mount table to find the cgroup hierarchy, so
 // the script is started through the host's nsenter in the namespaces of PID 1.
-func hostCommand(script string) *exec.Cmd {
+func hostCommand(script string, arguments ...string) *exec.Cmd {
 	for _, nsenter := range []string{"/usr/bin/nsenter", "/bin/nsenter", "/usr/sbin/nsenter", "/sbin/nsenter"} {
 		if _, err := os.Stat(nsenter); err == nil {
-			return exec.Command(nsenter, "-t", "1", "-m", "-u", "-i", "-n", "-p", "--", "/bin/sh", script)
+			return exec.Command(nsenter, append([]string{"-t", "1", "-m", "-u", "-i", "-n", "-p", "--", "/bin/sh", script}, arguments...)...)
 		}
 	}
 	log.Print("the host has no nsenter; running in the container's namespaces")
-	return exec.Command("/bin/sh", script)
+	return exec.Command("/bin/sh", append([]string{script}, arguments...)...)
 }
