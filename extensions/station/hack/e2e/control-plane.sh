@@ -145,7 +145,8 @@ tunnels() {
 }
 # first_tunnel NODE: what an administrator gives a machine that is to become a
 # control plane and is in no cluster: its key is made and declared, and the
-# machine gets a document of its own (admit-member.sh bootstrap does this on a site).
+# machine gets a document of its own (a site has no tool for this: there, a
+# machine gets its tunnel by joining a cluster as a node, admit-node.sh).
 first_tunnel() {
   local node=$1
   on "$node" sh -c 'mkdir -p /opt/rlark/bin /etc/rlark/station && cat > /opt/rlark/bin/station-gateway && chmod 755 /opt/rlark/bin/station-gateway' < "$D/bin/station-gateway"
