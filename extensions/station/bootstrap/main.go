@@ -128,6 +128,11 @@ func main() {
 		log.Fatal(err)
 	}
 
+	// Before the code is spent: it is also what the device before this
+	// machine fetches its uplink setup with.
+	if err := uplinkCheck(server, os.Getenv("RLARK_MIGRATE") != ""); err != nil {
+		log.Fatal(err)
+	}
 	key, err := exec.Command(stage+"/bin/station-gateway", "--public-key").Output()
 	if err != nil {
 		log.Fatalf("create the WireGuard key: %v", err)

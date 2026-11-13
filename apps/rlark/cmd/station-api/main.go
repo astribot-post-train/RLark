@@ -49,6 +49,7 @@ func main() {
 	cmd.Flags().StringVar(&bootstrapCAFile, "bootstrap-ca-file", "", "CA certificate machines verify this API with; enables node admission by one-time code")
 	cmd.Flags().StringVar(&bootstrap.ImageFile, "bootstrap-image-file", "", "Installer image served to admitted machines, as a docker archive")
 	cmd.Flags().StringVar(&bootstrap.ImageRef, "bootstrap-image-ref", "", "Name of the installer image inside the archive")
+	cmd.Flags().StringVar(&bootstrap.AddonsDir, "bootstrap-addons-dir", "/var/lib/rlark/addons", "Directory of what the addons publish; a site's leafUplink.setup names a file in it")
 	if err := cmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, "station-api failed")
 		os.Exit(1)

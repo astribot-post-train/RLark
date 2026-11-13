@@ -96,6 +96,9 @@ spec:
         - name: bootstrap
           mountPath: /var/run/station-bootstrap
           readOnly: true
+        - name: addons
+          mountPath: /var/lib/rlark/addons
+          readOnly: true
       volumes:
       - name: management-kubeconfig
         secret:
@@ -120,4 +123,11 @@ spec:
       - name: bootstrap
         hostPath:
           path: /var/lib/rlark/station-bootstrap
+          type: Directory
+      # What the addons publish, as the Gateway reads it too. A site's
+      # leafUplink.setup names a file here, served to the device a new leaf
+      # stands behind (/b/<code>/uplink); readable by uid 65532.
+      - name: addons
+        hostPath:
+          path: /var/lib/rlark/addons
           type: Directory

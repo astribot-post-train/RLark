@@ -13,6 +13,9 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -30,6 +33,7 @@ import (
 )
 
 var nodeAdmissionGVR = schema.GroupVersionResource{Group: stationObservationGroup, Version: stationObservationVersion, Resource: "nodeadmissions"}
+var siteNetworkGVR = schema.GroupVersionResource{Group: stationObservationGroup, Version: stationObservationVersion, Resource: "sitenetworks"}
 var rlarkNodeGVR = schema.GroupVersionResource{Group: "rlinf.io", Version: "v1alpha1", Resource: "nodes"}
 
 // Bootstrap serves a machine that is not a node yet. Its only credential is
@@ -44,7 +48,10 @@ type Bootstrap struct {
 	CA []byte
 	// ImageFile is the installer image as a docker archive; ImageRef its name.
 	ImageFile, ImageRef string
-	Now                 func() time.Time
+	// AddonsDir holds what the addons publish, one directory each. A site's
+	// leafUplink.setup names a file in it.
+	AddonsDir string
+	Now       func() time.Time
 
 	mu       sync.Mutex
 	failures []time.Time
@@ -82,6 +89,8 @@ func (b *Bootstrap) now() time.Time {
 
 func (b *Bootstrap) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch {
+	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/b/") && strings.HasSuffix(r.URL.Path, "/uplink"):
+		b.uplink(w, r, strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/b/"), "/uplink"))
 	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/b/"):
 		b.script(w, r, strings.TrimPrefix(r.URL.Path, "/b/"))
 	case r.Method == http.MethodGet && r.URL.Path == "/v1/bootstrap/image":
@@ -117,6 +126,97 @@ curl -fsS --cacert "$ca" https://%s/v1/bootstrap/image | docker load
 exec docker run --rm --privileged --net=host --pid=host --name rlark-node-bootstrap \
   -v "$ca":/ca.crt:ro -e RLARK_SERVER=https://%s -e RLARK_CODE=%s %s
 `, b.CA, r.Host, r.Host, code, b.ImageRef)
+}
+
+// uplink serves the device a new leaf stands behind (a robot's router): until
+// that device lets the leaf out, the leaf reaches nothing, this API included,
+// so the device fetches what makes it do so, with the leaf's code. The file
+// is the one the site declares (leafUplink.setup), published by an addon;
+// this API does not know what is in it. The operator's command holds its
+// digest and runs it only if it is that file.
+func (b *Bootstrap) uplink(w http.ResponseWriter, r *http.Request, code string) {
+	if b.throttled(false) {
+		w.Header().Set("Retry-After", "60")
+		writeError(w, http.StatusTooManyRequests, "too many wrong codes")
+		return
+	}
+	setup, known, err := b.UplinkSetup(r.Context(), code)
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "bootstrap storage unavailable")
+		return
+	}
+	if setup == nil {
+		if !known {
+			b.throttled(true)
+		}
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	}
+	w.Header().Set("Content-Type", "text/x-shellscript")
+	_, _ = w.Write(setup)
+}
+
+// UplinkSetup returns the uplink setup of the site of the machine the code
+// admits, while the code can still be redeemed: once the machine has joined
+// with it, the code opens nothing. known says whether the code is one.
+func (b *Bootstrap) UplinkSetup(ctx context.Context, code string) (setup []byte, known bool, err error) {
+	if !validCode(code) {
+		return nil, false, nil
+	}
+	admission, err := b.admission(ctx, code)
+	if err != nil || admission == nil {
+		return nil, false, err
+	}
+	expires, _, _ := unstructured.NestedString(admission.Object, "spec", "expiresAt")
+	redeemedBy, _, _ := unstructured.NestedString(admission.Object, "spec", "publicKey")
+	if at, err := time.Parse(time.RFC3339, expires); err != nil || !b.now().Before(at) || redeemedBy != "" {
+		return nil, true, nil
+	}
+	clusterID, _, _ := unstructured.NestedString(admission.Object, "spec", "clusterID")
+	network, err := b.Management.Resource(siteNetworkGVR).Namespace("station-system").Get(ctx, "default", metav1.GetOptions{})
+	if err != nil {
+		return nil, true, fmt.Errorf("read the SiteNetwork: %w", err)
+	}
+	sites, _, _ := unstructured.NestedSlice(network.Object, "spec", "sites")
+	for _, site := range sites {
+		site, _ := site.(map[string]interface{})
+		clusters, _, _ := unstructured.NestedStringSlice(site, "clusters")
+		addon, _, _ := unstructured.NestedString(site, "leafUplink", "setup", "addon")
+		path, _, _ := unstructured.NestedString(site, "leafUplink", "setup", "path")
+		if !slices.Contains(clusters, clusterID) || addon == "" || path == "" {
+			continue
+		}
+		// Within the directory, whatever the declaration says.
+		root, err := os.OpenRoot(b.AddonsDir)
+		if err != nil {
+			return nil, true, fmt.Errorf("open the addons directory: %w", err)
+		}
+		defer root.Close()
+		setup, err := root.ReadFile(filepath.Join(addon, path))
+		if err != nil {
+			return nil, true, fmt.Errorf("read the uplink setup %s of addon %s: %w", path, addon, err)
+		}
+		return setup, true, nil
+	}
+	return nil, true, nil
+}
+
+// admission returns the NodeAdmission the code belongs to, nil if none.
+func (b *Bootstrap) admission(ctx context.Context, code string) (*unstructured.Unstructured, error) {
+	digest := sha256.Sum256([]byte(code))
+	hash := hex.EncodeToString(digest[:])
+	list, err := b.Management.Resource(nodeAdmissionGVR).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("list NodeAdmissions: %w", err)
+	}
+	var admission *unstructured.Unstructured
+	for i := range list.Items {
+		stored, _, _ := unstructured.NestedString(list.Items[i].Object, "spec", "codeHash")
+		if subtle.ConstantTimeCompare([]byte(stored), []byte(hash)) == 1 {
+			admission = &list.Items[i]
+		}
+	}
+	return admission, nil
 }
 
 func validCode(code string) bool {
@@ -173,18 +273,9 @@ func (b *Bootstrap) redeem(w http.ResponseWriter, r *http.Request) {
 // Redeem binds the code to the machine's key, and once station-controller has
 // computed the machine's tunnel returns it with a fresh join token.
 func (b *Bootstrap) Redeem(ctx context.Context, code, publicKey string) (BootstrapAnswer, int, error) {
-	digest := sha256.Sum256([]byte(code))
-	hash := hex.EncodeToString(digest[:])
-	list, err := b.Management.Resource(nodeAdmissionGVR).List(ctx, metav1.ListOptions{})
+	admission, err := b.admission(ctx, code)
 	if err != nil {
-		return BootstrapAnswer{}, 0, fmt.Errorf("list NodeAdmissions: %w", err)
-	}
-	var admission *unstructured.Unstructured
-	for i := range list.Items {
-		stored, _, _ := unstructured.NestedString(list.Items[i].Object, "spec", "codeHash")
-		if subtle.ConstantTimeCompare([]byte(stored), []byte(hash)) == 1 {
-			admission = &list.Items[i]
-		}
+		return BootstrapAnswer{}, 0, err
 	}
 	if admission == nil {
 		return BootstrapAnswer{State: "rejected", Reason: "unknown code"}, http.StatusNotFound, nil
