@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -66,6 +67,10 @@ func writeResolv(path string, servers []string, machine []string) error {
 	}
 	if current, err := os.ReadFile(path); err == nil && string(current) == wanted {
 		return nil
+	}
+	// A node the installer did not make has no directory for it yet.
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return err
 	}
 	return replaceFile(path, []byte(wanted), 0644)
 }

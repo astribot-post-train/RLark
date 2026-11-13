@@ -105,7 +105,41 @@ until ready_since; do
 done
 stamp "$NODE: Ready in $CLUSTER after $(( $(date +%s) - started )) s"
 namespace=$(mgmt get clusters.rlinf.io "$CLUSTER" -o jsonpath='{.spec.agentNamespace}')
-until [[ $(mgmt -n "$namespace" get nodeadmissions.station.rlark.io "$NODE" -o jsonpath='{.status.phase}') == Joined ]]; do sleep 2; done
+if [[ $old_cluster == "$CLUSTER" ]]; then
+  # The node is the one it was, registered anew by the new control plane: its
+  # Station is bound to the Node object it has there. Nobody else knows the
+  # moment; without this the node waits for a person, and a hundred do.
+  uid=$(new get node "$NODE" -o jsonpath='{.metadata.uid}')
+  read -r station station_uid version bound < <(mgmt -n "$old_namespace" get stations.station.rlark.io -o json | python3 -c '
+import json, sys
+s = next(s for s in json.load(sys.stdin)["items"] if s["spec"]["binding"]["nodeName"] == sys.argv[1] and not s["spec"].get("retired"))
+print(s["metadata"]["name"], s["metadata"]["uid"], s["spec"]["binding"]["version"], s["spec"]["binding"]["nodeUID"])' "$NODE")
+  if [[ $bound != "$uid" ]]; then
+    request=rejoin-$NODE-$(date +%Y%m%d%H%M%S)
+    mgmt apply -f - >/dev/null <<REBIND
+apiVersion: station.rlark.io/v1alpha1
+kind: StationRebind
+metadata: {name: $request, namespace: $old_namespace}
+spec:
+  requestID: $request
+  stationRef: {name: $station, uid: $station_uid}
+  expectedBindingVersion: $version
+  targetNodeName: $NODE
+  targetNodeUID: $uid
+  reason: "the node joined the new control plane of $CLUSTER"
+  requestedBy: ${SUDO_USER:-root}@$(hostname)
+REBIND
+    until phase=$(mgmt -n "$old_namespace" get stationrebinds.station.rlark.io "$request" -o jsonpath='{.status.phase}') && [[ $phase == Applied || $phase == Rejected ]]; do sleep 1; done
+    stamp "$NODE: its Station $station is bound to its Node in the new control plane ($request: $phase)"
+    [[ $phase == Applied ]] || { echo "the rebind of $station was rejected: mgmt -n $old_namespace get stationrebinds.station.rlark.io $request -o yaml. The node is Ready in the new control plane; its admission keeps it among its peers meanwhile" >&2; exit 1; }
+  fi
+fi
+tries=0
+until [[ $(mgmt -n "$namespace" get nodeadmissions.station.rlark.io "$NODE" -o jsonpath='{.status.phase}') == Joined ]]; do
+  tries=$((tries + 1))
+  (( tries < 150 )) || { echo "$NODE is Ready in $CLUSTER, and its admission is not Joined after 5 min: it has not enrolled from there (its station-agent, its Station's binding). Its admission keeps it among its peers meanwhile" >&2; exit 1; }
+  sleep 2
+done
 stamp "$NODE: enrolled in $CLUSTER under its own identity after $(( $(date +%s) - started )) s"
 
 # What it left behind. Where the old and the new cluster are one registered
