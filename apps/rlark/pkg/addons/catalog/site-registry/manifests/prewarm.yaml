@@ -9,6 +9,8 @@ metadata:
   namespace: rlark-system
   labels:
     app: {{ .AddonName }}-prewarm
+  annotations:
+    rlark.io/not-ready-message: 站点缓存预热中
 spec:
   replicas: 1
   strategy:
