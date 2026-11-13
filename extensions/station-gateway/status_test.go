@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"net"
 	"strings"
 	"testing"
 	"time"
@@ -43,5 +44,30 @@ func TestStatusOmitsSecretsAndShowsHandshake(t *testing.T) {
 	}
 	if err := writeStatus(&out, nil); err == nil {
 		t.Fatal("nil device accepted")
+	}
+}
+
+func TestObservedPeersCarryKeyHandshakeAndCountersOnly(t *testing.T) {
+	private, err := wgtypes.GeneratePrivateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	preshared, err := wgtypes.GenerateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 11, 14, 1, 2, 3, 0, time.UTC)
+	device := &wgtypes.Device{PrivateKey: private, Peers: []wgtypes.Peer{
+		{PublicKey: private.PublicKey(), PresharedKey: preshared, Endpoint: &net.UDPAddr{IP: net.IPv4(203, 0, 113, 7), Port: 40000},
+			AllowedIPs: []net.IPNet{{IP: net.IPv4(10, 254, 240, 9), Mask: net.CIDRMask(32, 32)}}, LastHandshakeTime: now, ReceiveBytes: 148, TransmitBytes: 92},
+		{PublicKey: preshared.PublicKey()},
+	}}
+	data, err := json.Marshal(observedPeers(device))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `[{"publicKey":"` + private.PublicKey().String() + `","latestHandshake":"2026-11-14T01:02:03Z","receivedBytes":148,"sentBytes":92},{"publicKey":"` + preshared.PublicKey().String() + `"}]`
+	if string(data) != want {
+		t.Fatalf("peers = %s, want %s", data, want)
 	}
 }

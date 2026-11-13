@@ -39,7 +39,9 @@ func TestGetSiteNodeJoinsIdentityNetworkAndRobot(t *testing.T) {
 		"apiVersion": "station.rlark.io/v1alpha1", "kind": "NetworkEnrollment",
 		"metadata": map[string]interface{}{"name": "s1u-01-x86", "namespace": "agent-a"},
 		"spec":     map[string]interface{}{"bindingVersion": int64(2)},
-		"status":   map[string]interface{}{"phase": "Enrolled", "site": "lab", "role": "Leaf", "address": "10.254.240.3", "tunnelAddress": "10.254.240.3", "config": "{}"},
+		"status": map[string]interface{}{"phase": "Enrolled", "site": "lab", "role": "Leaf", "address": "10.254.240.3", "tunnelAddress": "10.254.240.3", "config": "{}",
+			"linkSummary": "nothing arrives from this node at any hub it dials since 2026-11-12T07:50:00Z", "links": []interface{}{map[string]interface{}{
+				"hub": "dev/cailiang", "state": "Silent", "since": "2026-11-12T07:50:00Z", "latestHandshake": "2026-11-12T07:46:00Z", "receivedBytes": int64(2444), "observedAt": "2026-11-12T07:50:00Z"}}},
 	}}
 	node := &unstructured.Unstructured{Object: map[string]interface{}{
 		"apiVersion": "rlinf.io/v1alpha1", "kind": "Node",
@@ -53,7 +55,9 @@ func TestGetSiteNodeJoinsIdentityNetworkAndRobot(t *testing.T) {
 	code, got := siteNodeRequest(t, gateway, "s1u-01-x86", "?cluster_id=cluster-a")
 	want := siteNode{ClusterID: "cluster-a", NodeName: "s1u-01-x86", SiteNodeID: "stn-7f3a", Sequence: 3, BindingVersion: 2, Phase: "Bound", Online: true,
 		LastSeenTime: "2026-11-12T08:00:00Z", RobotID: "s1u-01", Tunnel: "failed", RLarkNode: "unknown", BootTime: "2026-11-12T03:58:58Z", Reboots: 1}
-	if code != 200 || got.Network == nil || *got.Network != (siteNodeNetwork{State: "Enrolled", Site: "lab", Role: "Leaf", Address: "10.254.240.3", TunnelAddress: "10.254.240.3"}) {
+	if code != 200 || !reflect.DeepEqual(got.Network, &siteNodeNetwork{State: "Enrolled", Site: "lab", Role: "Leaf", Address: "10.254.240.3", TunnelAddress: "10.254.240.3",
+		LinkSummary: "nothing arrives from this node at any hub it dials since 2026-11-12T07:50:00Z",
+		Links:       []siteNodeLink{{Hub: "dev/cailiang", State: "Silent", Since: "2026-11-12T07:50:00Z", LatestHandshake: "2026-11-12T07:46:00Z"}}}) {
 		t.Fatalf("status %d, network %+v", code, got.Network)
 	}
 	if got.Labels["rlark.io/robot-id"] != "s1u-01" {

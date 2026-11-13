@@ -152,8 +152,8 @@ func TestKernelStatus(t *testing.T) {
 	if observation.Interface != "wg-status" || len(observation.Addresses) == 0 || observation.Addresses[0] != "10.253.5.1/32" {
 		t.Fatalf("unexpected snapshot: %s", data)
 	}
-	if bytes.Contains(data, []byte(private.String())) || bytes.Contains(data, []byte(peerKey.PublicKey().String())) {
-		t.Fatal("snapshot contains a key")
+	if bytes.Contains(data, []byte(private.String())) || !bytes.Contains(data, []byte(`"peers":[{"publicKey":"`+peerKey.PublicKey().String()+`"}]`)) {
+		t.Fatalf("snapshot leaks the private key or misses the peer: %s", data)
 	}
 	client, err := wgctrl.New()
 	if err != nil {

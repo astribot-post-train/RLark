@@ -162,6 +162,10 @@ func (a *Agent) Run(ctx context.Context) error {
 			}
 		default:
 		}
+		// A refused report is tried again sooner, and does not keep the node
+		// from asking for its network: its tunnel document must not hang on
+		// what station-api makes of an observation.
+		wait := a.config.Interval
 		if err := a.Report(ctx); err != nil {
 			if ctx.Err() != nil {
 				return nil
@@ -170,22 +174,15 @@ func (a *Agent) Run(ctx context.Context) error {
 				reported = err.Error()
 				fmt.Fprintln(os.Stderr, "observation:", reported)
 			}
-			timer := time.NewTimer(backoff)
-			select {
-			case <-ctx.Done():
-				timer.Stop()
-				return nil
-			case <-timer.C:
-			}
+			wait = backoff
 			backoff = min(backoff*2, maxBackoff)
-			continue
+		} else {
+			backoff = time.Second
+			if reported != "" {
+				reported = ""
+				fmt.Fprintln(os.Stderr, "observation: accepted")
+			}
 		}
-		backoff = time.Second
-		if reported != "" {
-			reported = ""
-			fmt.Fprintln(os.Stderr, "observation: accepted")
-		}
-		wait := a.config.Interval
 		if a.config.NetworkConfigFile != "" {
 			state, err := a.Enroll(ctx)
 			if err != nil {
@@ -254,14 +251,13 @@ func readWireguardSnapshot(path string, now time.Time) json.RawMessage {
 		return nil
 	}
 	defer f.Close()
-	data, err := io.ReadAll(io.LimitReader(f, 16*1024+1))
-	if err != nil || len(data) > 16*1024 {
+	data, err := io.ReadAll(io.LimitReader(f, wireguardObservationBytes+1))
+	if err != nil || len(data) > wireguardObservationBytes {
 		return nil
 	}
 	var snapshot struct {
 		ObservedAt time.Time `json:"observedAt"`
-		Interface  string    `json:"interface"`
-		Addresses  []string  `json:"addresses"`
+		wireguardObservation
 	}
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.DisallowUnknownFields()
@@ -272,8 +268,8 @@ func readWireguardSnapshot(path string, now time.Time) json.RawMessage {
 	if dec.Decode(&extra) != io.EOF || snapshot.ObservedAt.IsZero() || snapshot.ObservedAt.After(now.Add(5*time.Second)) || now.Sub(snapshot.ObservedAt) > 30*time.Second {
 		return nil
 	}
-	raw, err := json.Marshal(wireguardObservation{Interface: snapshot.Interface, Addresses: snapshot.Addresses})
-	if err != nil || validateWireguardObservation(raw) != nil {
+	raw, err := json.Marshal(snapshot.wireguardObservation)
+	if err != nil || validateWireguardObservation(raw, now) != nil {
 		return nil
 	}
 	return raw

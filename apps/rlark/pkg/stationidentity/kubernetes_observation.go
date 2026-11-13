@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"sync"
 	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -94,6 +95,11 @@ type KubernetesObservationSink struct {
 	Client     dynamic.Interface
 	Namespaces ObservationNamespaceResolver
 	Now        func() time.Time
+
+	// members is the member enrolled with each public key, as last listed.
+	mu      sync.Mutex
+	members map[string]string
+	listed  time.Time
 }
 
 func (s *KubernetesObservationSink) Store(ctx context.Context, evidence Evidence, observation Observation) error {
@@ -110,7 +116,45 @@ func (s *KubernetesObservationSink) Store(ctx context.Context, evidence Evidence
 	if namespace == "" || evidence.NodeName == "" || evidence.NodeUID == "" {
 		return errors.New("verified observation has incomplete namespace or identity")
 	}
-	status, err := observationStatus(evidence, observation, s.now())
+	// A node tells its peers by public key. What is stored is the member each
+	// key is enrolled as; a key no member is enrolled with is not stored.
+	// Every node reports its peers every 30 s, so the enrollments are listed
+	// once for all of them: again after 30 s, or after 5 s when a report has
+	// a key the list does not, which is how a node that has just enrolled
+	// looks to its peers.
+	var wireguard wireguardObservation
+	if len(observation.Wireguard) > 0 {
+		if err := json.Unmarshal(observation.Wireguard, &wireguard); err != nil {
+			return errors.New("wireguard observation must be a JSON object")
+		}
+	}
+	s.mu.Lock()
+	age := s.now().Sub(s.listed)
+	for _, peer := range wireguard.Peers {
+		if _, known := s.members[peer.PublicKey]; !known && age > 5*time.Second {
+			age = time.Minute
+		}
+	}
+	if len(wireguard.Peers) > 0 && age > 30*time.Second {
+		enrollments, err := s.Client.Resource(networkEnrollmentGVR).List(ctx, metav1.ListOptions{})
+		if err != nil {
+			s.mu.Unlock()
+			return fmt.Errorf("list NetworkEnrollments: %w", err)
+		}
+		s.members, s.listed = map[string]string{}, s.now()
+		for i := range enrollments.Items {
+			enrollment := &enrollments.Items[i]
+			if phase, _, _ := unstructured.NestedString(enrollment.Object, "status", "phase"); phase != "Enrolled" {
+				continue
+			}
+			key, _, _ := unstructured.NestedString(enrollment.Object, "status", "publicKey")
+			cluster, _, _ := unstructured.NestedString(enrollment.Object, "spec", "clusterID")
+			s.members[key] = cluster + "/" + enrollment.GetName()
+		}
+	}
+	members := s.members
+	s.mu.Unlock()
+	status, err := observationStatus(evidence, observation, members, s.now())
 	if err != nil {
 		return fmt.Errorf("encode Station observation status: %w", err)
 	}
@@ -226,7 +270,7 @@ func (s *KubernetesObservationSink) now() time.Time {
 	return time.Now().UTC()
 }
 
-func observationStatus(evidence Evidence, observation Observation, receivedAt time.Time) (map[string]interface{}, error) {
+func observationStatus(evidence Evidence, observation Observation, members map[string]string, receivedAt time.Time) (map[string]interface{}, error) {
 	status := map[string]interface{}{
 		"reportedAt": receivedAt.UTC().Format(time.RFC3339Nano),
 		"nodeUID":    evidence.NodeUID,
@@ -258,6 +302,18 @@ func observationStatus(evidence Evidence, observation Observation, receivedAt ti
 		if err := json.Unmarshal(observation.Wireguard, &wireguard); err != nil || wireguard == nil {
 			return nil, errors.New("wireguard observation must be a JSON object")
 		}
+		// The list is always written: a merge patch keeps what it does not name.
+		reported, _ := wireguard["peers"].([]interface{})
+		peers := make([]interface{}, 0, len(reported))
+		for _, entry := range reported {
+			peer := entry.(map[string]interface{})
+			if name := members[peer["publicKey"].(string)]; name != "" {
+				delete(peer, "publicKey")
+				peer["name"] = name
+				peers = append(peers, peer)
+			}
+		}
+		wireguard["peers"] = peers
 		status["wireguard"] = wireguard
 	}
 	return status, nil

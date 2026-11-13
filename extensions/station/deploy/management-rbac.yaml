@@ -42,9 +42,11 @@ rules:
 - apiGroups: ["station.rlark.io"]
   resources: ["stationobservations/status"]
   verbs: ["get", "patch"]
+# list: a node reports its peers by public key, and station-api stores each
+# under the member enrolled with that key.
 - apiGroups: ["station.rlark.io"]
   resources: ["networkenrollments"]
-  verbs: ["get", "create", "update"]
+  verbs: ["get", "list", "create", "update"]
 - apiGroups: ["station.rlark.io"]
   resources: ["nodeadmissions"]
   verbs: ["list", "update"]
