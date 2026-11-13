@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"sync"
 	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -94,6 +95,11 @@ type KubernetesObservationSink struct {
 	Client     dynamic.Interface
 	Namespaces ObservationNamespaceResolver
 	Now        func() time.Time
+
+	// members is the member enrolled with each public key, as last listed.
+	mu      sync.Mutex
+	members map[string]string
+	listed  time.Time
 }
 
 func (s *KubernetesObservationSink) Store(ctx context.Context, evidence Evidence, observation Observation) error {
@@ -112,12 +118,30 @@ func (s *KubernetesObservationSink) Store(ctx context.Context, evidence Evidence
 	}
 	// A node tells its peers by public key. What is stored is the member each
 	// key is enrolled as; a key no member is enrolled with is not stored.
-	members := map[string]string{}
+	// Every node reports its peers every 30 s, so the enrollments are listed
+	// once for all of them: again after 30 s, or after 5 s when a report has
+	// a key the list does not, which is how a node that has just enrolled
+	// looks to its peers.
+	var wireguard wireguardObservation
 	if len(observation.Wireguard) > 0 {
+		if err := json.Unmarshal(observation.Wireguard, &wireguard); err != nil {
+			return errors.New("wireguard observation must be a JSON object")
+		}
+	}
+	s.mu.Lock()
+	age := s.now().Sub(s.listed)
+	for _, peer := range wireguard.Peers {
+		if _, known := s.members[peer.PublicKey]; !known && age > 5*time.Second {
+			age = time.Minute
+		}
+	}
+	if len(wireguard.Peers) > 0 && age > 30*time.Second {
 		enrollments, err := s.Client.Resource(networkEnrollmentGVR).List(ctx, metav1.ListOptions{})
 		if err != nil {
+			s.mu.Unlock()
 			return fmt.Errorf("list NetworkEnrollments: %w", err)
 		}
+		s.members, s.listed = map[string]string{}, s.now()
 		for i := range enrollments.Items {
 			enrollment := &enrollments.Items[i]
 			if phase, _, _ := unstructured.NestedString(enrollment.Object, "status", "phase"); phase != "Enrolled" {
@@ -125,9 +149,11 @@ func (s *KubernetesObservationSink) Store(ctx context.Context, evidence Evidence
 			}
 			key, _, _ := unstructured.NestedString(enrollment.Object, "status", "publicKey")
 			cluster, _, _ := unstructured.NestedString(enrollment.Object, "spec", "clusterID")
-			members[key] = cluster + "/" + enrollment.GetName()
+			s.members[key] = cluster + "/" + enrollment.GetName()
 		}
 	}
+	members := s.members
+	s.mu.Unlock()
 	status, err := observationStatus(evidence, observation, members, s.now())
 	if err != nil {
 		return fmt.Errorf("encode Station observation status: %w", err)

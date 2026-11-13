@@ -162,6 +162,10 @@ func (a *Agent) Run(ctx context.Context) error {
 			}
 		default:
 		}
+		// A refused report is tried again sooner, and does not keep the node
+		// from asking for its network: its tunnel document must not hang on
+		// what station-api makes of an observation.
+		wait := a.config.Interval
 		if err := a.Report(ctx); err != nil {
 			if ctx.Err() != nil {
 				return nil
@@ -170,22 +174,15 @@ func (a *Agent) Run(ctx context.Context) error {
 				reported = err.Error()
 				fmt.Fprintln(os.Stderr, "observation:", reported)
 			}
-			timer := time.NewTimer(backoff)
-			select {
-			case <-ctx.Done():
-				timer.Stop()
-				return nil
-			case <-timer.C:
-			}
+			wait = backoff
 			backoff = min(backoff*2, maxBackoff)
-			continue
+		} else {
+			backoff = time.Second
+			if reported != "" {
+				reported = ""
+				fmt.Fprintln(os.Stderr, "observation: accepted")
+			}
 		}
-		backoff = time.Second
-		if reported != "" {
-			reported = ""
-			fmt.Fprintln(os.Stderr, "observation: accepted")
-		}
-		wait := a.config.Interval
 		if a.config.NetworkConfigFile != "" {
 			state, err := a.Enroll(ctx)
 			if err != nil {
