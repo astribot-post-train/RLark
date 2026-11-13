@@ -65,6 +65,8 @@ Verify the storage chain:
 - Existing `persistentVolumeClaim`: RLark does not create, adopt, mutate, or delete the referenced PVC. Its lifecycle and data retention are external to the Task.
 - Pod-scoped `ephemeral.volumeClaimTemplate`: deleting a Worker Pod deletes its ephemeral PVC; a new Pod receives a new PVC.
 - HostPath: lifecycle actions do not delete node data.
+- Storage-class volumes (object storage, SMB): the PersistentVolume is removed together with its claim (`reclaimPolicy: Delete`). The remote is not touched: the driver's volume deletion does nothing to the bucket or share. A volume provisioned before a class used `Delete` keeps `Retain` and stays `Released` until an administrator deletes the PersistentVolume object.
+- Storage classes after a Gateway upgrade: at startup the Gateway renders every storage again from its stored fields and rewrites those whose StorageClass or remote configuration would differ. The cluster agent replaces a StorageClass whose immutable fields changed; volumes that are already bound are unaffected, because a class is only read when a volume is provisioned.
 - Other Kubernetes-native volumes: the Job editor cannot create or modify them. Editing or cloning a Job writes the original volume definition back unchanged, so the volume type keeps its own lifecycle.
 
 An existing PVC reference must include `claimName`, and the claim must already exist in the workload namespace. Kubernetes reports mount or binding failures through the workload and Pod status. Deleting a referenced PVC is an external administrative action; confirm that no workload uses it and account for the bound PV's reclaim policy.

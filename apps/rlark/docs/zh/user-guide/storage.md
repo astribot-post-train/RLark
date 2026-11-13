@@ -65,6 +65,8 @@ Job 编辑器可创建两种存储：主机目录和 PVC 存储挂载。通过 A
 - 已有 `persistentVolumeClaim`：RLark 不创建、收养、修改或删除引用的 PVC；其生命周期和数据保留不属于 Task 管理范围
 - Pod 级 `ephemeral.volumeClaimTemplate`：删除 Worker Pod 时删除对应临时 PVC，新 Pod 获得新 PVC
 - hostPath：生命周期操作不删除节点数据
+- 存储类的卷（对象存储、SMB）：PersistentVolume 随它的 PVC 一起删除（`reclaimPolicy: Delete`）。远端不受影响：驱动的删卷操作不改动桶或共享里的内容。存储类改为 `Delete` 之前建的卷仍是 `Retain`，会停在 `Released`，需要管理员删除 PersistentVolume 对象
+- Gateway 升级后的存储类：Gateway 启动时按已存字段把每个存储重新渲染一遍，StorageClass 或远端配置有变化的会被重写。不可变字段变化时集群 agent 会替换 StorageClass；已绑定的卷不受影响，因为存储类只在创建卷时读取
 - 其他 Kubernetes 原生卷：Job 编辑器无法创建或修改；编辑或复制任务时会原样写回其原始定义，因此生命周期仍由该卷类型本身决定
 
 已有 PVC 引用必须填写 `claimName`，且该 claim 必须已存在于 workload namespace。挂载或绑定失败由 Kubernetes 通过 workload 和 Pod 状态报告。删除被引用的 PVC 属于外部管理操作；删除前应确认没有 workload 使用它，并考虑绑定 PV 的 reclaim policy。

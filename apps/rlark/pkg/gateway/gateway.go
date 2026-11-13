@@ -91,6 +91,7 @@ func (g *Gateway) Run(ctx context.Context) error {
 	if err := g.init(ctx); err != nil {
 		return err
 	}
+	g.rerenderStorageClasses(ctx)
 
 	var eg errgroup.Group
 
