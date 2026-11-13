@@ -166,6 +166,19 @@ spec:
               reason:
                 maxLength: 512
                 type: string
+              redeemedAt:
+                description: RedeemedAt is the redemption (spec.redeemedAt) this status
+                  answers.
+                format: date-time
+                type: string
+              rejoinsNodeUID:
+                description: |-
+                  RejoinsNodeUID is set while a machine that already is this node, with
+                  the same key, joins again: its cluster got a new control plane. It is
+                  the Node UID the machine had when it redeemed the code; the admission
+                  is Joined once the node has enrolled under another.
+                maxLength: 128
+                type: string
             type: object
         required:
         - spec

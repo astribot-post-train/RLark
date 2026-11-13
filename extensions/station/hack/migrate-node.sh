@@ -86,11 +86,19 @@ spec:
 $(sed 's/^/            /' "$CA")
 JOB
 stamp "$NODE: the move is running on the node"
-until [[ $(new get node "$NODE" -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null) == True ]]; do
+# Ready in the new cluster, said by its kubelet after the move began: a
+# control plane made from a snapshot holds the node's last word from before.
+ready_since() {
+  local at; at=$(new get node "$NODE" -o jsonpath='{.status.conditions[?(@.type=="Ready")].status} {.status.conditions[?(@.type=="Ready")].lastHeartbeatTime}' 2>/dev/null) || return 1
+  [[ $at == True\ * ]] && (( $(date -d "${at#True }" +%s) >= started ))
+}
+until ready_since; do
   if (( $(date +%s) - started > ${TIMEOUT:-600} )); then
-    mgmt -n "$(mgmt get clusters.rlinf.io "$CLUSTER" -o jsonpath='{.spec.agentNamespace}')" delete nodeadmissions.station.rlark.io "$NODE" --ignore-not-found >/dev/null
+    # A move within one registered cluster leaves the admission: it is the
+    # node's declaration there, and the node goes on under it where it is.
+    [[ $old_cluster == "$CLUSTER" ]] || mgmt -n "$(mgmt get clusters.rlinf.io "$CLUSTER" -o jsonpath='{.spec.agentNamespace}')" delete nodeadmissions.station.rlark.io "$NODE" --ignore-not-found >/dev/null
     new delete node "$NODE" --ignore-not-found >/dev/null
-    echo "$NODE is not Ready in $CLUSTER after ${TIMEOUT:-600} s; its admission is withdrawn. The node returns to $old_cluster by itself when its join fails: old get node $NODE" >&2
+    echo "$NODE is not Ready in $CLUSTER after ${TIMEOUT:-600} s. The node returns to its old control plane by itself when its join fails: old get node $NODE" >&2
     exit 1
   fi
   sleep 2

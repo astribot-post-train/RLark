@@ -31,5 +31,15 @@ ADMISSION
   [[ -z ${UPLINK:-} ]] || { IFS=, read -r gateway source interface <<<"$UPLINK"; echo "  uplink: {gateway: $gateway, source: $source, interface: $interface}"; }
   [[ -z ${TAINTS:-} ]] || echo "  taints: [\"${TAINTS//,/\", \"}\"]"
   [[ $# == 0 ]] || { echo "  labels:"; for label in "$@"; do echo "    ${label%%=*}: \"${label#*=}\""; done; }
-} | kubectl --kubeconfig "$KCP" apply -f - >&2
+  # A node that has an admission keeps it: for a node that joined by a code
+  # it is what declares its tunnel address. The new code opens it again.
+  echo "  publicKey: null"
+  echo "  redeemedAt: null"
+} > "${admission:=$(mktemp)}"
+if kubectl --kubeconfig "$KCP" -n "$namespace" get nodeadmissions.station.rlark.io "$NODE" >/dev/null 2>&1; then
+  kubectl --kubeconfig "$KCP" -n "$namespace" patch nodeadmissions.station.rlark.io "$NODE" --type=merge --patch-file "$admission" >&2
+else
+  grep -v ': null$' "$admission" | kubectl --kubeconfig "$KCP" create -f - >&2
+fi
+rm -f "$admission"
 echo "curl -sk https://$STATION_API/b/$code | sudo sh"
