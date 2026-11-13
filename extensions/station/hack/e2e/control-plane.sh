@@ -34,24 +34,31 @@
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 REPO=$(cd "$HERE/../../../.." && pwd)
+P=${CPR_PREFIX:-cpr}
 D=${CPR_DIR:-$REPO/../cp-rehearsal/run}
 VERSION=${VERSION:-v1.33.13}
 KUBE_DIR=${KUBE_DIR:-$REPO/../kube}
 CALICO=${CALICO:-$REPO/../calico/v3.30.7/calico.yaml}
 CALICO_VERSION=v3.30.7
 NODE_IMAGE=${NODE_IMAGE:-kindest/node:v1.31.0}
-INSTALLER=rlark/node-bootstrap:${TAG:-cpr-$VERSION}
-GATEWAY_IMAGE=${GATEWAY_IMAGE:-station-v2/station-wireguard:e2e-move}
+INSTALLER=rlark/node-bootstrap:${TAG:-$P-$VERSION}
+GATEWAY_IMAGE=station-v2/station-wireguard:$P
 ROBOT=cp.cpr-robot.rlark.internal OFFICE=cp.cpr-office.rlark.internal
-declare -A IP=([office]=172.18.0.201 [ws]=172.18.0.205 [robot1]=172.18.0.203 [robot2]=172.18.0.204 [server]=172.18.0.209)
+# The machines' addresses in the network they stand in: 172.18.0.<BASE + n>.
+# ws-moved is the workstation's after it was carried to another network.
+B=${CPR_BASE:-200}
+declare -A IP=([office]=172.18.0.$((B+1)) [ws]=172.18.0.$((B+5)) [robot1]=172.18.0.$((B+3)) [robot2]=172.18.0.$((B+4)) [server]=172.18.0.$((B+9)) [ws-moved]=172.18.0.$((B+15)))
+# A robot's own network: every robot's computer has this address in it.
+ROBOT_INNER=192.168.0.10
+[[ ! -e $D/ip-ws ]] || IP[ws]=$(cat "$D/ip-ws")
 declare -A TUN=([office]=10.254.240.1 [ws]=10.254.240.5 [robot1]=10.254.240.3 [robot2]=10.254.240.4 [server]=10.254.240.9)
 now() { date +%s.%N; }
 since() { printf '%.1f s' "$(echo "$(now) - $1" | bc)"; }
 stamp() { echo "$(date +%T) $*"; }
-on() { local node=$1; shift; docker exec -i "cpr-$node" "$@"; }
+on() { local node=$1; shift; docker exec -i "$P-$node" "$@"; }
 # k NODE ...: kubectl as the administrator of the cluster whose control plane NODE is.
 k() { local node=$1; shift; on "$node" env PATH=/opt/rlark/bin:/opt/robot-kubernetes/bin:/usr/bin:/bin kubectl --kubeconfig /etc/kubernetes/admin.conf "$@"; }
-exists() { docker inspect "cpr-$1" >/dev/null 2>&1; }
+exists() { docker inspect "$P-$1" >/dev/null 2>&1; }
 
 bundle() {
   local images=$D/images refs
@@ -65,24 +72,26 @@ bundle() {
   # What a site adds to every cluster it makes goes in after the CNI; here a mark that it did.
   printf 'apiVersion: v1\nkind: ConfigMap\nmetadata: {name: site-manifest-applied, namespace: kube-system}\ndata: {by: "the bundle"}\n' > "$D/manifests/site.yaml"
   KUBE_BIN=$KUBE_DIR/$VERSION CNI_BIN=${CNI_BIN:-/opt/cni/bin} IMAGES=$images MANIFESTS=$D/manifests "$REPO/extensions/station/bootstrap/build.sh" "$INSTALLER" "$D/installer.tar"
+  (cd "$REPO/extensions/station-gateway" && w=$(mktemp -d) && GOWORK=off CGO_ENABLED=0 go build -trimpath -o "$w/station-gateway" . &&
+    printf 'FROM scratch\nCOPY station-gateway /station-gateway\nENTRYPOINT ["/station-gateway"]\n' > "$w/Dockerfile" && docker build -q -t "$GATEWAY_IMAGE" "$w" >/dev/null && rm -rf "$w")
   # station-gateway as the bundle has it: the administrator's first tunnel on a machine without one.
-  docker rm -f cpr-extract >/dev/null 2>&1 || true
-  docker create --name cpr-extract "$INSTALLER" >/dev/null && docker cp cpr-extract:/bundle/bin/station-gateway "$D/bin/" && docker rm cpr-extract >/dev/null
+  docker rm -f $P-extract >/dev/null 2>&1 || true
+  docker create --name $P-extract "$INSTALLER" >/dev/null && docker cp $P-extract:/bundle/bin/station-gateway "$D/bin/" && docker rm $P-extract >/dev/null
 }
 
 stub() {
   mkdir -p "$D/pki" "$D/stub/redeem" "$D/stub/answers" "$D/keys" "$D/storage"
   (cd "$D/pki"
    openssl req -x509 -newkey rsa:2048 -nodes -days 30 -subj "/CN=cpr-ca" -keyout ca.key -out ca.crt 2>/dev/null
-   openssl req -newkey rsa:2048 -nodes -subj "/CN=cpr-station-api" -keyout api.key -out api.csr 2>/dev/null
-   openssl x509 -req -in api.csr -CA ca.crt -CAkey ca.key -CAcreateserial -days 30 -out api.crt -extfile <(echo "subjectAltName=DNS:cpr-station-api") 2>/dev/null
+   openssl req -newkey rsa:2048 -nodes -subj "/CN=$P-station-api" -keyout api.key -out api.csr 2>/dev/null
+   openssl x509 -req -in api.csr -CA ca.crt -CAkey ca.key -CAcreateserial -days 30 -out api.crt -extfile <(echo "subjectAltName=DNS:$P-station-api") 2>/dev/null
    chmod 644 ./*.key)
   local w; w=$(mktemp -d)
   (cd "$REPO/extensions/station" && GOWORK=off CGO_ENABLED=0 go build -trimpath -o "$w/stationstub" ./hack/e2e/stationstub)
   printf 'FROM scratch\nCOPY stationstub /stationstub\nENTRYPOINT ["/stationstub"]\n' > "$w/Dockerfile"
-  docker build -q -t cpr/stationstub "$w" >/dev/null; rm -rf "$w"
-  docker rm -f cpr-station-api >/dev/null 2>&1 || true
-  docker run -d --name cpr-station-api --network kind --user "$(id -u)" -v "$D/pki:/pki:ro" -v "$D/stub:/data" cpr/stationstub \
+  docker build -q -t $P/stationstub "$w" >/dev/null; rm -rf "$w"
+  docker rm -f $P-station-api >/dev/null 2>&1 || true
+  docker run -d --name $P-station-api --network kind --user "$(id -u)" -v "$D/pki:/pki:ro" -v "$D/stub:/data" $P/stationstub \
     --tls-cert-file=/pki/api.crt --tls-key-file=/pki/api.key --dir=/data >/dev/null
 }
 
@@ -91,9 +100,9 @@ stub() {
 # writes a container's anew at every start.
 machine() {
   local name=$1
-  docker rm -f -v "cpr-$name" >/dev/null 2>&1 || true
+  docker rm -f -v "$P-$name" >/dev/null 2>&1 || true
   printf '127.0.0.1 localhost\n%s %s\n' "${IP[$name]}" "$name" > "$D/hosts-$name"
-  docker run -d --name "cpr-$name" --hostname "$name" --network kind --ip "${IP[$name]}" --privileged --cgroupns=private \
+  docker run -d --name "$P-$name" --hostname "$name" --network kind --ip "${IP[$name]}" --privileged --cgroupns=private \
     --tmpfs /run --tmpfs /tmp -v /var -v /lib/modules:/lib/modules:ro -v /boot:/boot:ro \
     -v "$D/hosts-$name:/etc/hosts" -v "$D/storage:/mnt/site" "$NODE_IMAGE" >/dev/null
   until on "$name" systemctl is-active containerd >/dev/null 2>&1; do sleep 0.5; done
@@ -108,7 +117,10 @@ document() {
     [[ $peer != "$node" && -e $D/keys/$peer ]] || continue
     peers+="${peers:+,}{\"publicKey\":\"$(cat "$D/keys/$peer")\",\"endpoint\":\"${IP[$peer]}:51820\",\"allowedIPs\":[\"${TUN[$peer]}/32\"],\"keepaliveSeconds\":25}"
   done
-  echo "{\"interface\":\"st-wg0\",\"address\":\"${TUN[$node]}/32\",\"listenPort\":51820,\"mtu\":1380,\"peers\":[$peers],\"routes\":[\"10.254.240.0/24\"]}"
+  # The names the site network declares (SiteNetwork, names): every machine's
+  # document carries them and its tunnel service keeps them in /etc/hosts.
+  local names="{\"name\":\"$ROBOT\",\"address\":\"${TUN[$(cat "$D/robot-cp" 2>/dev/null || echo ws)]}\"},{\"name\":\"$OFFICE\",\"address\":\"${TUN[office]}\"}"
+  echo "{\"interface\":\"st-wg0\",\"address\":\"${TUN[$node]}/32\",\"listenPort\":51820,\"mtu\":1380,\"peers\":[$peers],\"routes\":[\"10.254.240.0/24\"],\"names\":[$names]}"
 }
 # tunnels: every machine gets its document the way its agent would store it:
 # beside a host service, or for the pod that runs the tunnel of an office node.
@@ -140,16 +152,16 @@ run_cp() {
   local node=$1 action= env=(); shift
   [[ ${1:-} != undo ]] || { action=undo; shift; }
   for pair in "$@"; do env+=(-e "$pair"); done
-  docker run --rm --name "cpr-run-$node" --privileged --net="container:cpr-$node" --pid="container:cpr-$node" ${DOCKER_ARGS:-} "${env[@]}" "$INSTALLER" control-plane $action
+  docker run --rm --name "$P-run-$node" --privileged --net="container:$P-$node" --pid="container:$P-$node" ${DOCKER_ARGS:-} "${env[@]}" "$INSTALLER" control-plane $action
 }
 robot_cp() { run_cp "$1" "${@:2}" CONTROL_PLANE_NAME=$ROBOT POD_SUBNET=10.242.0.0/16 SERVICE_SUBNET=10.243.0.0/16 ETCD_SNAPSHOT_DIR=/mnt/site/etcd-robot; }
 
-# admit NODE CONTROL_PLANE API_SERVER [API_ADDRESS]: what admit-node.sh, the
+# admit NODE CONTROL_PLANE API_SERVER: what admit-node.sh, the
 # controller and Station API do for a machine: a code, and once the machine
 # has shown its key, the tunnel for it and for its peers and a join token.
 # Prints the code; the answer is written in the background.
 admit() {
-  local node=$1 cp=$2 api=$3 address=${4:-} code
+  local node=$1 cp=$2 api=$3 code
   code=$(head -c 512 /dev/urandom | tr -dc 'a-z0-9' | cut -c1-8)
   (
     until [[ -s $D/stub/redeem/$code.key ]]; do sleep 0.5; done
@@ -159,18 +171,18 @@ admit() {
     hash=sha256:$(on "$cp" cat /etc/kubernetes/pki/ca.crt | openssl x509 -pubkey -noout | openssl pkey -pubin -outform der | sha256sum | cut -d' ' -f1)
     cat > "$D/stub/answers/$code.json.part" <<ANSWER
 {"state":"ready","cluster_id":"cpr","node_name":"$node","tunnel_address":"${TUN[$node]}","config":$(cat "$D/tunnel-$node.json"),
- "join":{"api_server":"$api","api_server_address":"$address","token":"$token","ca_cert_hash":"$hash"},
+ "join":{"api_server":"$api","token":"$token","ca_cert_hash":"$hash"},
  "labels":"${LABELS:-}","taints":"${TAINTS:-}"}
 ANSWER
     mv "$D/stub/answers/$code.json.part" "$D/stub/answers/$code.json"
   ) >>"$D/admit.log" 2>&1 &
   echo "$code"
 }
-# worker NODE CONTROL_PLANE API_SERVER [API_ADDRESS]: the installer's worker mode on a machine.
+# worker NODE CONTROL_PLANE API_SERVER: the installer's worker mode on a machine.
 worker() {
   local code; code=$(admit "$@")
-  docker run --rm --name "cpr-run-$1" --privileged --net="container:cpr-$1" --pid="container:cpr-$1" -v "$D/pki/ca.crt:/ca.crt:ro" \
-    -e RLARK_SERVER=https://cpr-station-api:18443 -e RLARK_CODE="$code" "$INSTALLER"
+  docker run --rm --name "$P-run-$1" --privileged --net="container:$P-$1" --pid="container:$P-$1" -v "$D/pki/ca.crt:/ca.crt:ro" \
+    -e RLARK_SERVER=https://$P-station-api:18443 -e RLARK_CODE="$code" "$INSTALLER"
 }
 
 # up: the office cluster. Its control plane is made by the mode on a machine
@@ -182,7 +194,7 @@ up() {
   machine office; first_tunnel office
   run_cp office CONTROL_PLANE_NAME=$OFFICE POD_SUBNET=10.244.0.0/16 SERVICE_SUBNET=10.96.0.0/16 ETCD_SNAPSHOT_DIR=/mnt/site/etcd-office
   machine ws
-  worker ws office $OFFICE:6443 "${TUN[office]}"
+  worker ws office $OFFICE:6443
   on ws sh -c "ctr -n k8s.io -a /run/containerd-fleet/containerd.sock images import -" < <(docker save "$GATEWAY_IMAGE")
   k office create namespace station-system
   tunnels
@@ -207,11 +219,14 @@ spec:
         - {name: STATION_GATEWAY_CONFIG, value: /config/none.json}
         - {name: STATION_GATEWAY_COMPUTED_CONFIG, value: "/documents/\$(NODE_NAME).json"}
         - {name: STATION_GATEWAY_PRUNE_ROUTES, value: "true"}
+        - {name: STATION_GATEWAY_HOSTS_FILE, value: /host/etc/hosts}
         securityContext: {runAsUser: 0, capabilities: {drop: [ALL], add: [NET_ADMIN]}}
         volumeMounts:
         - {name: key, mountPath: /var/lib/station/wg}
         - {name: documents, mountPath: /documents}
+        - {name: hosts, mountPath: /host/etc/hosts}
       volumes:
+      - {name: hosts, hostPath: {path: /etc/hosts, type: File}}
       - {name: key, hostPath: {path: /var/lib/station/wg, type: DirectoryOrCreate}}
       - {name: documents, configMap: {name: tunnel-documents}}
 DS
@@ -264,7 +279,7 @@ calico() { # pod subnet
       -e "s#^\( *\)- name: CALICO_IPV4POOL_IPIP#\1- name: IP_AUTODETECTION_METHOD\n\1  value: \"interface=st-wg0\"\n\1- name: CALICO_IPV4POOL_CIDR\n\1  value: \"$1\"\n\1- name: FELIX_IGNORELOOSERPF\n\1  value: \"true\"\n&#" "$CALICO"
 }
 static_pod() {
-  on "$1" sh -c 'cat > /etc/kubernetes/manifests/witness.yaml' <<POD
+  on "$1" sh -c 'mkdir -p /etc/kubernetes/manifests && cat > /etc/kubernetes/manifests/witness.yaml' <<POD
 apiVersion: v1
 kind: Pod
 metadata: {name: witness, namespace: default}
@@ -274,10 +289,10 @@ spec:
 POD
 }
 old() {
-  machine robot1; first_tunnel robot1
+  machine robot1; robot_shape robot1; first_tunnel robot1
   on robot1 mkdir -p /opt/robot-kubernetes/bin /opt/cni/bin
   for binary in kubeadm kubelet kubectl; do on robot1 sh -c "cat > /opt/robot-kubernetes/bin/$binary && chmod 755 /opt/robot-kubernetes/bin/$binary" < "$KUBE_DIR/$VERSION/$binary"; done
-  docker cp "${CNI_BIN:-/opt/cni/bin}/." cpr-robot1:/opt/cni/bin/
+  docker cp "${CNI_BIN:-/opt/cni/bin}/." $P-robot1:/opt/cni/bin/
   for archive in node.tar control-plane/control-plane.tar calico.tar; do on robot1 ctr -n k8s.io images import - < "$D/images/$archive" >/dev/null; done
   on robot1 sh -ec '
     cat > /etc/systemd/system/robot-tunnel.service <<UNIT
@@ -306,7 +321,7 @@ UNIT
     sed -i "s/\"\$/ --node-ip='"${TUN[robot1]}"'\"/" /var/lib/kubelet/kubeadm-flags.env; systemctl restart kubelet'
   calico 10.242.0.0/16 | k robot1 apply -f - >/dev/null
   static_pod robot1
-  machine robot2
+  machine robot2; robot_shape robot2
   LABELS=rlark.io/node-category=robot,rlark.io/robot-id=robot2 TAINTS=rlark.io/node-category=robot:NoSchedule worker robot2 robot1 "${TUN[robot1]}:6443"
   static_pod robot2
   k robot1 wait --for=condition=Ready node --all --timeout=180s
@@ -318,15 +333,16 @@ UNIT
 # is ws: the Job of migrate-node.sh, in the old cluster, runs the installer on
 # the node. BREAK=yes gives it a join token that is none: the join fails and
 # the node must be back in the old cluster by itself.
-move() {
-  local node=$1 code t0 runtime
+move() { # NODE [FROM [TO [API]]]; MIGRATE=control-plane for the old cluster's last node
+  local node=$1 from=${2:-robot1} to=${3:-ws} api=${4:-$ROBOT:6443} code t0 runtime
   runtime=$(on "$node" sed -n 's/.*--container-runtime-endpoint=unix:\/\/\([^ "]*\).*/\1/p' /var/lib/kubelet/kubeadm-flags.env)
   on "$node" ctr -a "$runtime" -n k8s.io images import - < "$D/installer.tar" >/dev/null
   code=$(LABELS=rlark.io/node-category=robot,rlark.io/robot-id=$node TAINTS=rlark.io/node-category=robot:NoSchedule \
-    BAD_TOKEN=${BREAK:+abcdef.0123456789abcdef} admit "$node" ws $ROBOT:6443 "${TUN[ws]}")
-  k robot1 -n kube-system delete job "node-migrate-$node" --ignore-not-found >/dev/null
+    BAD_TOKEN=${BREAK:+abcdef.0123456789abcdef} admit "$node" "$to" "$api")
+  k "$from" -n kube-system delete job "node-migrate-$node" --ignore-not-found >/dev/null
+  on "$node" sh -c 'rm -f /var/lib/rlark/bootstrap/install.log'
   t0=$(now)
-  k robot1 apply -f - >/dev/null <<JOB
+  k "$from" apply -f - >/dev/null <<JOB
 apiVersion: batch/v1
 kind: Job
 metadata: {name: node-migrate-$node, namespace: kube-system}
@@ -345,9 +361,9 @@ spec:
         imagePullPolicy: IfNotPresent
         securityContext: {privileged: true}
         env:
-        - {name: RLARK_SERVER, value: "https://cpr-station-api:18443"}
+        - {name: RLARK_SERVER, value: "https://$P-station-api:18443"}
         - {name: RLARK_CODE, value: "$code"}
-        - {name: RLARK_MIGRATE, value: "node"}
+        - {name: RLARK_MIGRATE, value: "${MIGRATE:-node}"}
         - name: RLARK_CA
           value: |
 $(sed 's/^/            /' "$D/pki/ca.crt")
@@ -358,9 +374,163 @@ JOB
   stamp "$node: the installer ended $(since "$t0") after the Job was made"
 }
 
+# robot_shape NODE: what makes a machine a robot's computer on the network.
+# Its address is the same on every robot (the robot's own network), and what
+# it sends leaves through the robot's other computer, which translates it:
+# here an interface with that address, the default route with it as source,
+# and the translation on the way out. Set again on every boot, as a machine's
+# network configuration is.
+robot_shape() {
+  on "$1" sh -c 'cat > /usr/local/sbin/robot-network && chmod 755 /usr/local/sbin/robot-network' <<SHAPE
+#!/bin/sh
+ip link add robot0 type dummy 2>/dev/null
+ip addr replace $ROBOT_INNER/24 dev robot0 && ip link set robot0 up
+until ip -4 route show default | grep -q via; do sleep 0.2; done
+ip route replace default via \$(ip -4 route show default | awk '{print \$3; exit}') dev eth0 src $ROBOT_INNER
+iptables -t nat -C POSTROUTING -o eth0 -s $ROBOT_INNER -j MASQUERADE 2>/dev/null || iptables -t nat -A POSTROUTING -o eth0 -s $ROBOT_INNER -j MASQUERADE
+SHAPE
+  on "$1" sh -c 'printf "[Unit]\nBefore=rlark-station-gateway.service robot-tunnel.service kubelet.service\n[Service]\nType=oneshot\nRemainAfterExit=yes\nExecStart=/usr/local/sbin/robot-network\n[Install]\nWantedBy=multi-user.target\n" > /etc/systemd/system/robot-network.service
+    systemctl daemon-reload; systemctl enable --now robot-network >/dev/null 2>&1; ip -4 route show default'
+}
+
+# workstation_shape: ws as the site's workstation is a node: the kubelet of a
+# package in /usr/bin with the package's unit and drop-in, which read no
+# drop-in directory; swap on and allowed in the node's own kubelet
+# configuration; registered by its hostname at the address of its network.
+workstation_shape() {
+  on ws sh -ec '
+    systemctl stop kubelet
+    mv /opt/rlark/bin/kubelet /opt/rlark/bin/kubeadm /opt/rlark/bin/kubectl /usr/bin/
+    rm -f /etc/systemd/system/kubelet.service /etc/systemd/system/kubelet.service.d/zz-rlark.conf /etc/kubernetes/kubelet.conf.d/*
+    mkdir -p /usr/lib/systemd/system/kubelet.service.d
+    printf "[Unit]\nDescription=kubelet: The Kubernetes Node Agent\nWants=network-online.target\nAfter=network-online.target\n[Service]\nExecStart=/usr/bin/kubelet\nRestart=always\nStartLimitInterval=0\nRestartSec=10\n[Install]\nWantedBy=multi-user.target\n" > /usr/lib/systemd/system/kubelet.service
+    cat > /usr/lib/systemd/system/kubelet.service.d/10-kubeadm.conf <<UNIT
+[Service]
+Environment="KUBELET_KUBECONFIG_ARGS=--bootstrap-kubeconfig=/etc/kubernetes/bootstrap-kubelet.conf --kubeconfig=/etc/kubernetes/kubelet.conf"
+Environment="KUBELET_CONFIG_ARGS=--config=/var/lib/kubelet/config.yaml"
+EnvironmentFile=-/var/lib/kubelet/kubeadm-flags.env
+EnvironmentFile=-/etc/default/kubelet
+ExecStart=
+ExecStart=/usr/bin/kubelet \$KUBELET_KUBECONFIG_ARGS \$KUBELET_CONFIG_ARGS \$KUBELET_KUBEADM_ARGS \$KUBELET_EXTRA_ARGS
+UNIT
+    sed -i -e "/^failSwapOn:/d" -e "/^memorySwap:/,/^  swapBehavior:/d" /var/lib/kubelet/config.yaml
+    printf "failSwapOn: false\nmemorySwap:\n  swapBehavior: NoSwap\n" >> /var/lib/kubelet/config.yaml
+    sed -i -e "s/ --node-ip=[^ \"]*//" -e "s/ --node-labels=[^ \"]*//" /var/lib/kubelet/kubeadm-flags.env
+    systemctl daemon-reload; systemctl enable kubelet >/dev/null 2>&1; systemctl start kubelet'
+  until [[ $(k office get node ws -o jsonpath='{.status.addresses[?(@.type=="InternalIP")].address}') == "${IP[ws]}" ]]; do sleep 1; done
+  k office wait --for=condition=Ready node ws --timeout=120s >/dev/null
+  on ws sh -c 'systemctl show kubelet -p ExecStart --value | sed -n "s/.*argv\[\]=\([^;]*\);.*/kubelet: \1/p"; grep -c . /proc/swaps | sed "s/^/swap lines: /"'
+}
+
+# refusals NODE: what the mode says no to before it changes anything; the
+# machine's files are the same before and after.
+refusals() {
+  local node=$1 before
+  before=$(on "$node" sh -c 'cat /etc/hosts /etc/kubernetes/kubelet.conf 2>/dev/null | sha256sum; ls /var/lib/rlark/control-plane 2>&1 | sha256sum; systemctl show kubelet -p ActiveEnterTimestamp --value')
+  refusal() { # what, then the parameters
+    local what=$1 out; shift
+    if out=$(run_cp "$node" "$@" 2>&1); then echo "NOT REFUSED ($what): $out"; return 1; fi
+    echo "refused ($what): $(echo "$out" | grep FAILED | cut -c1-260)"
+  }
+  refusal "the name is an address" CONTROL_PLANE_NAME=${TUN[$node]} POD_SUBNET=10.242.0.0/16 SERVICE_SUBNET=10.243.0.0/16
+  refusal "no name" POD_SUBNET=10.242.0.0/16 SERVICE_SUBNET=10.243.0.0/16
+  refusal "a name the site network does not give this machine" CONTROL_PLANE_NAME=cp.other.rlark.internal POD_SUBNET=10.242.0.0/16 SERVICE_SUBNET=10.243.0.0/16
+  refusal "a pod network in use on the machine's networks" CONTROL_PLANE_NAME=$ROBOT POD_SUBNET=172.18.0.0/16 SERVICE_SUBNET=10.243.0.0/16
+  refusal "more reserved than the machine has" CONTROL_PLANE_NAME=$ROBOT POD_SUBNET=10.242.0.0/16 SERVICE_SUBNET=10.243.0.0/16 SYSTEM_RESERVED_MEMORY=4096Gi
+  on "$node" sh -c 'nohup sh -c "exec -a port-holder sleep 600" >/dev/null 2>&1 & python3 -c "import socket,time; s=socket.socket(); s.bind((\"0.0.0.0\",2379)); s.listen(); time.sleep(60)" >/dev/null 2>&1 &' ; sleep 1
+  refusal "etcd's port in use" CONTROL_PLANE_NAME=$ROBOT POD_SUBNET=10.242.0.0/16 SERVICE_SUBNET=10.243.0.0/16
+  on "$node" pkill -f "s.bind" || true
+  [[ $before == "$(on "$node" sh -c 'cat /etc/hosts /etc/kubernetes/kubelet.conf 2>/dev/null | sha256sum; ls /var/lib/rlark/control-plane 2>&1 | sha256sum; systemctl show kubelet -p ActiveEnterTimestamp --value')" ]] && echo "nothing was changed by the refused runs"
+}
+
+# addresses NODE: where an address of the machine's own network is written
+# in what makes it a control plane; nothing may be printed. The certificates'
+# fingerprints are printed for a comparison across a move.
+addresses() {
+  local node=$1
+  on "$node" sh -c '
+    for address in $(ip -4 -o addr show | awk "\$2 != \"lo\" && \$2 != \"st-wg0\" && \$2 != \"tunl0\" && \$2 !~ /^cali/ {print \$4}" | cut -d/ -f1); do
+      grep -r -l -w -F "$address" /etc/kubernetes /var/lib/kubelet/kubeadm-flags.env /var/lib/kubelet/config.yaml 2>/dev/null | sed "s/^/HOLDS $address: /"
+      for c in /etc/kubernetes/pki/*.crt /etc/kubernetes/pki/etcd/*.crt; do openssl x509 -in $c -noout -ext subjectAltName 2>/dev/null | grep -q -w -F "$address" && echo "HOLDS $address: $c"; done
+    done
+    for c in apiserver etcd/server etcd/peer; do echo "$c: $(openssl x509 -in /etc/kubernetes/pki/$c.crt -noout -ext subjectAltName | tail -1 | tr -s " ")"; done
+    for c in /etc/kubernetes/pki/*.crt /etc/kubernetes/pki/etcd/*.crt; do echo "$(openssl x509 -in $c -noout -fingerprint -sha256 | cut -d= -f2 | cut -c1-23) $c"; done
+    grep -h "server:" /etc/kubernetes/*.conf | sort | uniq -c
+    grep -h -E "advertise|listen-(client|peer)|initial-cluster=" /etc/kubernetes/manifests/etcd.yaml /etc/kubernetes/manifests/kube-apiserver.yaml'
+  k "$node" -n kube-system exec "etcd-$node" -- etcdctl --endpoints https://127.0.0.1:2379 --cacert /etc/kubernetes/pki/etcd/ca.crt --cert /etc/kubernetes/pki/etcd/server.crt --key /etc/kubernetes/pki/etcd/server.key member list
+  k "$node" get endpoints kubernetes -o jsonpath='{"kubernetes endpoints: "}{.subsets[*].addresses[*].ip}{"\n"}'
+  k "$node" -n kube-system get configmap kubernetes-services-endpoint -o jsonpath='{"calico reaches the API at: "}{.data.KUBERNETES_SERVICE_HOST}:{.data.KUBERNETES_SERVICE_PORT}{"\n"}'
+  k "$node" get nodes -o wide
+}
+
+# relocate: the workstation is carried to another network: it gets another
+# address there and boots; the site network learns its new endpoint
+# (SiteNetwork, endpoints), which is all that anyone is told. Its tunnel
+# address is the one it had.
+relocate() {
+  local t0; t0=$(now)
+  docker stop "$P-ws" >/dev/null
+  docker network disconnect kind "$P-ws"
+  docker network connect --ip "${IP[ws-moved]}" kind "$P-ws"
+  sed -i "s/^${IP[ws]} /${IP[ws-moved]} /" "$D/hosts-ws"
+  IP[ws]=${IP[ws-moved]}; echo "${IP[ws]}" > "$D/ip-ws"
+  docker start "$P-ws" >/dev/null
+  until on ws systemctl is-active rlark-station-gateway >/dev/null 2>&1; do sleep 0.5; done
+  tunnels
+  until k ws get --raw /readyz >/dev/null 2>&1; do sleep 1; done
+  stamp "ws is at ${IP[ws]} now; its API answered $(since "$t0") after the machine was switched off"
+  k ws wait --for=condition=Ready node --all --timeout=300s
+  stamp "every node Ready $(since "$t0") after the machine was switched off"
+}
+
+# reboot NODE: the whole machine restarts; printed is when its calico-node
+# and the node were Ready again, by themselves.
+reboot() {
+  local node=$1 t0 started; t0=$(now)
+  docker restart "$P-$node" >/dev/null
+  until on "$node" systemctl is-active kubelet >/dev/null 2>&1; do sleep 0.5; done
+  # The agent stores the node's document again; until then the tunnel runs on the last one applied.
+  tunnels
+  calico() { k ws -n kube-system get pods -l k8s-app=calico-node --field-selector "spec.nodeName=$node" -o jsonpath="{.items[0].status.containerStatuses[0].$1}" 2>/dev/null; }
+  until started=$(calico state.running.startedAt) && [[ -n $started && $(date -d "$started" +%s) -ge ${t0%.*} && $(calico ready) == true ]]; do sleep 2; done
+  stamp "$node: calico-node Ready again $(since "$t0") after the restart; nobody touched the machine"
+  k ws wait --for=condition=Ready "node/$node" --timeout=180s
+}
+
+# vip NODE...: from a robot's host network, the Service address of the API.
+# A robot's own address is the same on every robot; an answer that came back
+# is one that found its robot. First as a process of the host, then as a
+# host-network pod.
+vip() {
+  local node
+  for node in "$@"; do
+    echo "$node: robot0 $(on "$node" sh -c "ip -4 -o addr show dev robot0 | awk '{print \$4}'"), default route: $(on "$node" ip -4 route show default)"
+    echo "$node host -> https://10.243.0.1:443/version: $(on "$node" curl -sk -m 5 -o /dev/null -w '%{http_code} in %{time_total}s' https://10.243.0.1:443/version || echo FAILED)"
+    on "$node" sh -c 'ctr -a $(sed -n "s/.*--container-runtime-endpoint=unix:\/\/\([^ \"]*\).*/\1/p" /var/lib/kubelet/kubeadm-flags.env) -n k8s.io images import - >/dev/null' < <(docker save --platform linux/amd64 busybox:1.36)
+    k ws delete pod "vip-$node" --ignore-not-found --wait >/dev/null
+    k ws apply -f - >/dev/null <<POD
+apiVersion: v1
+kind: Pod
+metadata: {name: vip-$node}
+spec:
+  nodeName: $node
+  hostNetwork: true
+  restartPolicy: Never
+  tolerations: [{operator: Exists}]
+  containers:
+  - name: ask
+    image: docker.io/library/busybox:1.36
+    imagePullPolicy: Never
+    command: [sh, -c, "nc -w 5 \$KUBERNETES_SERVICE_HOST \$KUBERNETES_SERVICE_PORT </dev/null && echo connected to \$KUBERNETES_SERVICE_HOST:\$KUBERNETES_SERVICE_PORT"]
+POD
+    k ws wait --for=jsonpath='{.status.phase}'=Succeeded "pod/vip-$node" --timeout=90s >/dev/null || k ws describe pod "vip-$node" | tail -5
+    echo "$node host-network pod: $(k ws logs "vip-$node" | tr -s ' \n' ' ')"
+  done
+}
+
 down() {
   local name
-  for name in $(docker ps -a --format '{{.Names}}' | grep '^cpr-'); do docker rm -f -v "$name" >/dev/null; done
+  for name in $(docker ps -a --format '{{.Names}}' | grep "^$P-"); do docker rm -f -v "$name" >/dev/null; done
   # The machines wrote into the shared directory as root.
   [[ ! -d $D/storage ]] || docker run --rm -v "$D:/d" busybox:1.36 rm -rf /d/storage /d/stub
   rm -rf "$D/keys" "$D/pki" "$D"/hosts-* "$D"/tunnel-*.json "$D/admit.log"

@@ -483,5 +483,5 @@ if [ -z "$changed" ]; then
   echo "Nothing to do: this machine is the control plane at https://$name:6443 (Kubernetes $VERSION, node $NODE_NAME, installed from $spec). Nothing was changed."
 else
   echo "Done: this machine is the control plane at https://$name:6443 (node $NODE_NAME, installed from $spec)."
-  echo "A node joins at $name:6443 and resolves the name to $ADDRESS (NodeAdmission: apiServer and apiServerAddress)."
+  echo "A node joins at $name:6443 (NodeAdmission, apiServer) and resolves the name to $ADDRESS by its site's names (SiteNetwork, names)."
 fi

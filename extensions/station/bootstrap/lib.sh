@@ -40,7 +40,9 @@ restore_old_cluster() {
   [ ! -d "$OLD/units/kubelet.service.d" ] || { rm -rf /etc/systemd/system/kubelet.service.d && cp -a "$OLD/units/kubelet.service.d" /etc/systemd/system/; }
   rm -rf /etc/kubernetes && cp -a "$OLD/etc-kubernetes" /etc/kubernetes
   install -d /var/lib/kubelet && cp -a "$OLD/kubelet/." /var/lib/kubelet/
-  [ ! -d "$OLD/cni-net.d" ] || { rm -rf /etc/cni/net.d && cp -a "$OLD/cni-net.d" /etc/cni/net.d; }
+  # The directory itself stays: the container runtime watches it, and would
+  # never see what is written into a new one in its place.
+  [ ! -d "$OLD/cni-net.d" ] || { install -d /etc/cni/net.d && rm -rf /etc/cni/net.d/* && cp -a "$OLD/cni-net.d/." /etc/cni/net.d/; }
   # The old cluster's own gateway pod takes the tunnel again.
   [ -e "$OLD/had-host-gateway" ] || systemctl disable --now rlark-station-gateway >/dev/null 2>&1 || true
   systemctl daemon-reload

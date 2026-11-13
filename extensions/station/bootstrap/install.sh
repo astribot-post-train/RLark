@@ -83,7 +83,7 @@ stamp "container runtime ready, $(ls "$B"/images/*.tar | wc -l) image archives i
 #    control plane can move to another machine or network without any node's
 #    certificates or kubeconfig changing.
 kubelet_unit
-getent hosts "${JOIN_API_SERVER%:*}" >/dev/null ||
+case ${JOIN_API_SERVER%:*} in *[a-z]*) getent hosts "${JOIN_API_SERVER%:*}" >/dev/null ;; esac ||
   fail "this machine cannot resolve ${JOIN_API_SERVER%:*}, the name of its cluster's control plane: it is not among the names its site network gave it (SiteNetwork, names)"
 
 # 4. Join. The node registers with its tunnel address, its labels and taints.
