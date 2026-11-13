@@ -36,6 +36,8 @@ func newMachine(t *testing.T, own, theirs string) *machine {
 		}
 	}
 	os.WriteFile(filepath.Join(dir, "proc/sys/kernel/random/boot_id"), []byte("boot-1\n"), 0644)
+	os.MkdirAll(filepath.Join(dir, "proc/1/ns"), 0755)
+	os.Symlink("pid:[4026531836]", filepath.Join(dir, "proc/1/ns/pid"))
 	m.k = &keeper{self: filepath.Join(dir, "self"), target: filepath.Join(dir, "station-gateway"), name: "/opt/rlark/bin/station-gateway",
 		hold: filepath.Join(dir, "hold"), observation: filepath.Join(dir, "observation"), dropIn: filepath.Join(dir, "unit.d"), proc: filepath.Join(dir, "proc"),
 		wait: 2 * time.Minute, stay: 30 * time.Second, now: func() time.Time { return m.clock }}
@@ -80,6 +82,8 @@ func (m *machine) start() {
 	os.Mkdir(dir, 0755)
 	os.WriteFile(filepath.Join(dir, "cmdline"), []byte(m.k.name+"\x00--config\x00x"), 0644)
 	os.Link(m.k.target, filepath.Join(dir, "exe"))
+	os.Mkdir(filepath.Join(dir, "ns"), 0755)
+	os.Symlink("pid:[4026531836]", filepath.Join(dir, "ns/pid"))
 }
 
 func exists(path string) bool {
@@ -218,5 +222,30 @@ func TestGuardTakesATrialBackAfterARestartOfTheMachine(t *testing.T) {
 	run()
 	if rejected, _ := os.ReadFile(m.k.target + ".rejected"); m.program() != "old" || exists(m.k.target+".trial") || string(rejected) != "digest-of-new\n" {
 		t.Fatalf("program %q rejected %q after the second interrupted trial", m.program(), rejected)
+	}
+}
+
+// A program of the same path in a container on the machine (the pod sees
+// every process of the machine) is not the machine's service.
+func TestKeeperLeavesAContainersProgramOfTheSamePathAlone(t *testing.T) {
+	m := newMachine(t, "new", "old")
+	inside := filepath.Join(m.k.proc, "777")
+	os.MkdirAll(filepath.Join(inside, "ns"), 0755)
+	os.WriteFile(filepath.Join(inside, "cmdline"), []byte(m.k.name+"\x00--config\x00x"), 0644)
+	os.WriteFile(filepath.Join(m.k.proc, "its-file"), []byte("another build"), 0755)
+	os.Link(filepath.Join(m.k.proc, "its-file"), filepath.Join(inside, "exe"))
+	os.Symlink("pid:[4026532999]", filepath.Join(inside, "ns/pid"))
+	signal := m.k.signal
+	m.k.signal = func(pid int) error {
+		if pid == 777 {
+			t.Fatal("a container's process was told to end")
+		}
+		return signal(pid)
+	}
+	if state, err := m.k.pass(); state != "replaced" || err != nil {
+		t.Fatalf("state %q err %v", state, err)
+	}
+	if state, err := m.k.pass(); state != "kept" || err != nil {
+		t.Fatalf("state %q err %v", state, err)
 	}
 }

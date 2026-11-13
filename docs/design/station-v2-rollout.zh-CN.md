@@ -329,6 +329,8 @@ kubectl --kubeconfig $K label node $NODE station.rlark.io/network=enabled
 
 ### 6.3 上线演练
 
+> v2 已于 2026-11-12 上线。这一节用到的 `hack/e2e/migrate.sh`、`hack/e2e/station-agent.live-20261112.yaml` 和 `deploy/compare-config.py` 是那次从手写配置迁到 v2 的一次性工具，上线后已从仓库删除（见 git 历史）；下面是当时的记录。
+
 `migrate.sh start` 造出上线前的状态：5 台节点跑**线上现在的两个镜像**（`station-agent@sha256:c5b1…`、`station-wireguard@sha256:b256…`，从仓库按线上 DaemonSet 的摘要核对过）和基准提交里的 DaemonSet 清单，读手写的 ConfigMap（形状和线上相同：算出来的配置去掉 6.2 表里那几项"多出来的"）；管理面没有 `SiteNetwork`。然后照本文的步骤逐条执行，同时 5 条路径各自每 0.2 s ping 一次（机器人 → 两台云节点的 VPC 地址、机器人 → 办公室枢纽、云 → 机器人、3090 → 机器人），每步前后各留 30 s。
 
 | 步骤 | 重建的 pod | 每条路径发出的 ping | 丢失 | 最长中断 |
@@ -370,7 +372,6 @@ IMAGES_TAG=<标签> ./e2e.sh up            # 约 6 分钟；镜像名 station-v2
 for c in e2e-office e2e-lab e2e-ksyun; do ./e2e.sh enable $c; done
 ./e2e.sh mgmt get stn,netenroll -A       # 管理面
 ./e2e.sh ping e2e-lab-control-plane -c 3 198.19.2.57
-./migrate.sh start                       # 上线演练的起点；之后 measure / step2 / compare / step3 / step4 / back
 ./e2e.sh down
 ```
 

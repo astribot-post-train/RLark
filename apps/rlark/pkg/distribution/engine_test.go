@@ -604,3 +604,24 @@ func TestEngineReplacesStorageClassWhoseImmutableFieldsChanged(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "Delete", replaced.Object["reclaimPolicy"])
 }
+
+// The cluster was rebuilt under the same id (robot cluster, 11-13): the inventory still lists the object as it
+// was in the old cluster's namespace, and the object now under that name was delivered into the new namespace.
+func TestEnginePruneSkipsItemsOfAReplacedNamespace(t *testing.T) {
+	declaration := testDeclaration(ReplicationSecretType, ReplicationMode)
+	engine, targetClient, store, _ := newTestEngine(t, ReplicationMode, declaration, staticNamespaces{items: []NamespaceIdentity{{Name: "tenant-a", UID: "ns-a", Phase: corev1.NamespaceActive}}})
+	namespace := &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "v1", "kind": "Namespace",
+		"metadata": map[string]any{"name": "tenant-a", "uid": "ns-a"},
+	}}
+	require.NoError(t, targetClient.Tracker().Create(schema.GroupVersionResource{Version: "v1", Resource: "namespaces"}, namespace, ""))
+	store.inventory = Inventory{Phase: "Applied", Items: []InventoryItem{{Version: "v1", Resource: "configmaps", Namespace: "tenant-a", NamespaceUID: "ns-old", Name: "runtime-config", UID: "old-uid"}}}
+
+	_, err := engine.Reconcile(context.Background(), declaration)
+	require.NoError(t, err)
+	assert.Equal(t, "Applied", store.inventory.Phase)
+	require.Len(t, store.inventory.Items, 1)
+	assert.Equal(t, types.UID("ns-a"), store.inventory.Items[0].NamespaceUID)
+	_, err = targetClient.Resource(schema.GroupVersionResource{Version: "v1", Resource: "configmaps"}).Namespace("tenant-a").Get(context.Background(), "runtime-config", metav1.GetOptions{})
+	require.NoError(t, err)
+}
