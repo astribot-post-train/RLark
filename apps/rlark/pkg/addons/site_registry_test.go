@@ -56,3 +56,30 @@ func TestSiteRegistryRendersBothRoles(t *testing.T) {
 		t.Fatalf("mirror workload:\n%s", m[1].Raw)
 	}
 }
+
+func TestRegistryTrustRendersOneDaemonSetPerNodeClass(t *testing.T) {
+	a, _ := Registry.Get("registry-trust")
+	m, err := a.Render(map[string]string{"hosts": "registry.rlark.internal:5443", "caCert": "x", "image": "busybox", "kubectlImage": "kubectl"}, "ns", "registry-trust", "u")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var daemonSets []appsv1.DaemonSet
+	for _, manifest := range m {
+		for _, doc := range strings.Split(string(manifest.Raw), "\n---\n") {
+			var ds appsv1.DaemonSet
+			if err := yaml.Unmarshal([]byte(doc), &ds); err == nil && ds.Kind == "DaemonSet" {
+				daemonSets = append(daemonSets, ds)
+			}
+		}
+	}
+	if len(daemonSets) != 2 {
+		t.Fatalf("got %d DaemonSets, want 2", len(daemonSets))
+	}
+	for i, want := range []struct{ name, operator, robot string }{{"registry-trust", "NotIn", "false"}, {"registry-trust-robot", "In", "true"}} {
+		ds := daemonSets[i]
+		term := ds.Spec.Template.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms[0].MatchExpressions[0]
+		if ds.Name != want.name || string(term.Operator) != want.operator || ds.Spec.Selector.MatchLabels["app"] != want.name || ds.Spec.Template.Spec.InitContainers[0].Env[0].Value != want.robot {
+			t.Fatalf("DaemonSet %d: %s %s %v %s", i, ds.Name, term.Operator, ds.Spec.Selector.MatchLabels, ds.Spec.Template.Spec.InitContainers[0].Env[0].Value)
+		}
+	}
+}

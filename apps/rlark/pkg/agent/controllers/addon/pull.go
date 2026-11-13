@@ -442,7 +442,13 @@ func (r *pullReconciler) checkReady(ctx context.Context, mgmtAddon *rlarkv1alpha
 	logger.Info("checkReady: daemonsets found", "count", len(dsList.Items), "labels", labels)
 	for _, ds := range dsList.Items {
 		foundWorkloads = true
-		if ds.Status.DesiredNumberScheduled == 0 {
+		if ds.Status.ObservedGeneration < ds.Generation {
+			return false, fmt.Sprintf("DaemonSet %s: not yet observed", ds.Name), nil
+		}
+		// A DaemonSet meant for one class of nodes (a robot's, say) is fine on a
+		// cluster without such nodes; one meant for every node is not.
+		pod := ds.Spec.Template.Spec
+		if ds.Status.DesiredNumberScheduled == 0 && len(pod.NodeSelector) == 0 && (pod.Affinity == nil || pod.Affinity.NodeAffinity == nil) {
 			return false, fmt.Sprintf("DaemonSet %s: no nodes scheduled", ds.Name), nil
 		}
 		if ds.Status.NumberReady < ds.Status.DesiredNumberScheduled {

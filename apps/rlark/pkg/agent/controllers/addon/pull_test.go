@@ -448,3 +448,34 @@ spec:
 		t.Fatalf("imagePullSecrets = %v, want [ir-site]", secrets)
 	}
 }
+
+func TestCheckReadyDaemonSetForAClassOfNodesMayHaveNone(t *testing.T) {
+	ctx := context.Background()
+	addon := &rlarkv1alpha1.Addon{ObjectMeta: metav1.ObjectMeta{Name: "a", UID: "u"}}
+	daemonSet := func(name string, affinity *corev1.Affinity, observed int64) *appsv1.DaemonSet {
+		return &appsv1.DaemonSet{
+			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "rlark-system", Generation: 1, Labels: map[string]string{"rlark.io/addon-name": "a"}},
+			Spec:       appsv1.DaemonSetSpec{Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{Affinity: affinity}}},
+			Status:     appsv1.DaemonSetStatus{ObservedGeneration: observed},
+		}
+	}
+	robots := &corev1.Affinity{NodeAffinity: &corev1.NodeAffinity{}}
+	for _, tt := range []struct {
+		name  string
+		ds    *appsv1.DaemonSet
+		ready bool
+	}{
+		{"every node, none scheduled", daemonSet("all", nil, 1), false},
+		{"robot nodes, none in cluster", daemonSet("robot", robots, 1), true},
+		{"robot nodes, not yet observed", daemonSet("robot", robots, 0), false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			cl := fake.NewClientBuilder().WithScheme(clientgoscheme.Scheme).WithObjects(tt.ds).WithStatusSubresource(tt.ds).Build()
+			r := &pullReconciler{c: &Controller{Controller: base.Controller{LocalKubeClient: cl}}}
+			ready, msg, err := r.checkReady(ctx, addon)
+			if err != nil || ready != tt.ready {
+				t.Fatalf("checkReady = %v %q %v, want %v", ready, msg, err, tt.ready)
+			}
+		})
+	}
+}

@@ -5,7 +5,7 @@ version: v0.2.1
 description: |
   让集群每个节点的 containerd 能拉私有镜像仓库：在节点 kubelet 所用运行时（containerd、containerd-robot、containerd-fleet 等）的 certs.d 下为每个仓库名写入 hosts.toml 和 ca.crt；给了“解析到”时，再在节点 /etc/hosts 里为仓库名的主机部分写一行带标记的受管条目，这样仓库名不必是 IP，也不依赖节点的 DNS。
   运行时目录按节点 kubelet 的配置找（/var/lib/kubelet/kubeadm-flags.env，其次 config.yaml），不用按集群配置。containerd 每次拉取时读取 certs.d，不需要重启。拉取凭据仍由「镜像仓库」凭据分发到集群。
-  containerd 2.x 默认经 transfer 服务拉取，它把 registry 的 config_path 当作一个目录；配置里是列表（2.x 默认的 '/etc/containerd/certs.d:/etc/docker/certs.d'）时 certs.d 不生效。遇到这种配置，本 Addon 把这一行改成列表的第一个目录（原文件留作 config.toml.registry-trust.orig），并重启一次该运行时（已在运行的容器不受影响）；其余配置不动、不重启。
+  containerd 2.x 默认经 transfer 服务拉取，它把 registry 的 config_path 当作一个目录；配置里是列表（2.x 默认的 '/etc/containerd/certs.d:/etc/docker/certs.d'）时 certs.d 不生效。遇到这种配置，本 Addon 把这一行改成列表的第一个目录（原文件带时间备份在旁边），并重启一次该运行时（已在运行的容器不受影响），节点注解 rlark.io/registry-trust-containerd 记下改了什么；其余配置不动、不重启。机器人节点（rlark.io/node-category=robot）上只记注解、不改不重启，等“没有 Station 接着设备层”的判断实现后再做。
   这里列出的仓库名由本 Addon 管理，其 hosts.toml 会被覆盖；/etc/hosts 里只增改带 “# rlark registry-trust” 标记的行，每次启动都按当前参数重写这些行。卸载：先把“解析到”清空并等 Addon 就绪（受管行被去掉），再卸载；certs.d 里写过的文件保留。
 icon: package
 
@@ -35,6 +35,13 @@ parameters:
     displayName: CA 证书
     description: 签发这些仓库证书的 CA（PEM，可含多张证书）
     type: text
+    default: ""
+    required: true
+
+  - name: kubectlImage
+    displayName: kubectl 镜像
+    description: 给节点写注解用，按 digest 引用，同样须不依赖这些仓库就能拉到，例如 registry.k8s.io/kubectl:v1.33.13@sha256:a179e6c6f0b87263426fe2a793412c422999d55ffb06d7bc069635468aba3324
+    type: string
     default: ""
     required: true
 
