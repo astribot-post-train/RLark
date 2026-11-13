@@ -6,10 +6,9 @@ ARG BASE_IMAGE=nginx:1.29.1
 FROM ${NODE_IMAGE} AS build
 ARG NPM_REGISTRY=https://registry.npmjs.org/
 WORKDIR /src/apps/rlark-ui
-COPY apps/rlark-ui/package.json apps/rlark-ui/package-lock.json ./
-RUN npm ci --no-audit --no-fund --registry=${NPM_REGISTRY}
 COPY apps/rlark-ui/ ./
-RUN npm run build
+# A context may carry a host's node_modules or dist (the legacy builder ignores Dockerfile.dockerignore).
+RUN rm -rf node_modules dist && npm ci --no-audit --no-fund --registry=${NPM_REGISTRY} && npm run build
 
 # -- Runtime stage ---------------------------------------------------------
 FROM ${BASE_IMAGE}
