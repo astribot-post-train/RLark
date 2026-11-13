@@ -5,6 +5,13 @@ metadata:
   namespace: rlark-system
   labels:
     app: {{ .AddonName }}
+{{- if eq .Values.role "cache" }}
+  annotations:
+    rlark.io/not-ready-message: 站点缓存不可用
+{{- else if eq .Values.role "registry" }}
+  annotations:
+    rlark.io/not-ready-message: 站点仓库不可用
+{{- end }}
 spec:
 {{- if ne .Values.role "mirror" }}
   replicas: 1

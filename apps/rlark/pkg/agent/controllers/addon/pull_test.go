@@ -353,7 +353,7 @@ func TestReadyAddonSchedulesDriftReconciliation(t *testing.T) {
 	}
 	mgmt := fake.NewClientBuilder().WithScheme(scheme).WithObjects(a).WithStatusSubresource(&rlarkv1alpha1.Addon{}).Build()
 	replicas := int32(1)
-	local := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(&appsv1.Deployment{}, &appsv1.DaemonSet{}).WithObjects(&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "ready", Namespace: "rlark-system", Labels: map[string]string{"rlark.io/addon-name": "csi"}}, Spec: appsv1.DeploymentSpec{Replicas: &replicas}, Status: appsv1.DeploymentStatus{Replicas: 1, UpdatedReplicas: 1, ReadyReplicas: 1}}).Build()
+	local := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(&appsv1.Deployment{}, &appsv1.DaemonSet{}).WithObjects(&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "ready", Namespace: "rlark-system", Labels: map[string]string{"rlark.io/addon-name": "csi"}}, Spec: appsv1.DeploymentSpec{Replicas: &replicas, Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": "ready"}}}, Status: appsv1.DeploymentStatus{Replicas: 1, UpdatedReplicas: 1, ReadyReplicas: 1}}).Build()
 	r := &pullReconciler{c: &Controller{Controller: base.Controller{ManagementClient: mgmt, LocalKubeClient: local, AgentType: string(rlarkv1alpha1.AgentTypeKubernetes)}}}
 	req := reconcile.Request{NamespacedName: types.NamespacedName{Name: "csi", Namespace: "test"}}
 	if _, err := r.Reconcile(ctx, req); err != nil {
@@ -488,7 +488,7 @@ func TestCheckReadyDeploymentStuckRolloutIsNotReady(t *testing.T) {
 	// The old ReplicaSet's Pod is ready, the new one cannot pull its image.
 	d := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{Name: "c", Namespace: "rlark-system", Generation: 2, Labels: map[string]string{"rlark.io/addon-name": "a"}},
-		Spec:       appsv1.DeploymentSpec{Replicas: &one},
+		Spec:       appsv1.DeploymentSpec{Replicas: &one, Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": "c"}}},
 		Status:     appsv1.DeploymentStatus{ObservedGeneration: 2, Replicas: 2, UpdatedReplicas: 1, ReadyReplicas: 1},
 	}
 	cl := fake.NewClientBuilder().WithScheme(clientgoscheme.Scheme).WithObjects(d).WithStatusSubresource(d).Build()
@@ -562,5 +562,35 @@ func TestReplacePodsOnUnselectedNodesFollowsTheLabel(t *testing.T) {
 		if (err == nil) != want {
 			t.Errorf("%s: present=%v, want %v", name, err == nil, want)
 		}
+	}
+}
+
+// An Addon whose cache is down says so in the operator's words, with the Pod's own reason: no one has to
+// guess from an x509 or a connection refused on a node.
+func TestCheckReadySaysWhyInTheWorkloadsWords(t *testing.T) {
+	ctx := context.Background()
+	scheme := runtime.NewScheme()
+	if err := clientgoscheme.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	replicas := int32(1)
+	deployment := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{Name: "site-registry", Namespace: "rlark-system", Generation: 1,
+			Labels:      map[string]string{"rlark.io/addon-name": "site-registry"},
+			Annotations: map[string]string{NotReadyMessageAnnotation: "站点缓存不可用"}},
+		Spec:   appsv1.DeploymentSpec{Replicas: &replicas, Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": "site-registry"}}},
+		Status: appsv1.DeploymentStatus{ObservedGeneration: 1, Replicas: 1, UpdatedReplicas: 1},
+	}
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "site-registry-x", Namespace: "rlark-system", Labels: map[string]string{"app": "site-registry"}},
+		Status: corev1.PodStatus{ContainerStatuses: []corev1.ContainerStatus{{Name: "registry",
+			State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "CrashLoopBackOff", Message: "back-off 40s"}}}}},
+	}
+	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(deployment, pod).Build()
+	r := &pullReconciler{c: &Controller{Controller: base.Controller{LocalKubeClient: cl}}}
+	ready, msg, err := r.checkReady(ctx, &rlarkv1alpha1.Addon{ObjectMeta: metav1.ObjectMeta{Name: "site-registry"}})
+	want := "站点缓存不可用: Deployment site-registry: 1/1 updated, 0 ready; container registry CrashLoopBackOff: back-off 40s"
+	if err != nil || ready || msg != want {
+		t.Fatalf("checkReady = %v, %q, %v; want %q", ready, msg, err, want)
 	}
 }
