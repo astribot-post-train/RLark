@@ -189,13 +189,23 @@ func (b *Bootstrap) UplinkSetup(ctx context.Context, code string) (setup []byte,
 	if err != nil {
 		return nil, true, fmt.Errorf("read the SiteNetwork: %w", err)
 	}
+	// The machine's site: the one the SiteNetwork's entry for the node
+	// names, or its admission, or else its cluster's.
+	in, _, _ := unstructured.NestedString(admission.Object, "spec", "site")
+	nodes, _, _ := unstructured.NestedSlice(network.Object, "spec", "nodes")
+	for _, node := range nodes {
+		node, _ := node.(map[string]interface{})
+		if node["clusterID"] == clusterID && node["nodeName"] == admission.GetName() && node["site"] != nil {
+			in, _ = node["site"].(string)
+		}
+	}
 	sites, _, _ := unstructured.NestedSlice(network.Object, "spec", "sites")
 	for _, site := range sites {
 		site, _ := site.(map[string]interface{})
 		clusters, _, _ := unstructured.NestedStringSlice(site, "clusters")
 		addon, _, _ := unstructured.NestedString(site, "leafUplink", "setup", "addon")
 		path, _, _ := unstructured.NestedString(site, "leafUplink", "setup", "path")
-		if !slices.Contains(clusters, clusterID) || addon == "" || path == "" {
+		if in != "" && site["name"] != in || in == "" && !slices.Contains(clusters, clusterID) || addon == "" || path == "" {
 			continue
 		}
 		// Within the directory, whatever the declaration says.

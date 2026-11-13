@@ -77,7 +77,8 @@ type SiteNetworkSite struct {
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=63
 	Name string `json:"name"`
-	// Clusters are the registered RLark Cluster IDs whose nodes are in this site.
+	// Clusters are the registered RLark Cluster IDs whose nodes are in this
+	// site, except the nodes that name a site of their own.
 	// +kubebuilder:validation:MaxItems=256
 	// +listType=set
 	Clusters []string `json:"clusters,omitempty"`
@@ -128,6 +129,11 @@ type SiteNetworkNode struct {
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=253
 	NodeName string `json:"nodeName"`
+	// Site is the site the node is in when it is not its cluster's: a
+	// cluster's nodes may stand in several sites, as robots of one cluster
+	// do whose control plane is somewhere else.
+	// +kubebuilder:validation:MaxLength=63
+	Site string `json:"site,omitempty"`
 	// +kubebuilder:default=Leaf
 	// +kubebuilder:validation:Enum=Leaf;Hub
 	Role string `json:"role,omitempty"`

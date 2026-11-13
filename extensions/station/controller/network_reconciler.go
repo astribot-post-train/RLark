@@ -135,7 +135,7 @@ func (r *NetworkReconciler) reconcile(ctx context.Context) (reconcile.Result, er
 	if err := r.keepMemberCredentials(ctx, spec); err != nil {
 		return reconcile.Result{}, err
 	}
-	siteOfCluster := map[string]string{}
+	siteOfCluster, siteDeclared := map[string]string{}, map[string]bool{}
 	topology := network.Topology{Pool: spec.Pool, MTU: int(spec.MTU), Interface: spec.Interface, ListenPort: int(spec.ListenPort), KeepaliveSeconds: int(spec.KeepaliveSeconds), Names: hostNames(spec.Names)}
 	for _, site := range spec.Sites {
 		names := hostNames(site.Names)
@@ -143,6 +143,7 @@ func (r *NetworkReconciler) reconcile(ctx context.Context) (reconcile.Result, er
 		if site.LeafUplink != nil {
 			topology.Sites[len(topology.Sites)-1].LeafUplink = &network.Uplink{Gateway: site.LeafUplink.Gateway}
 		}
+		siteDeclared[site.Name] = true
 		for _, cluster := range site.Clusters {
 			siteOfCluster[cluster] = site.Name
 		}
@@ -224,8 +225,20 @@ func (r *NetworkReconciler) reconcile(ctx context.Context) (reconcile.Result, er
 		}
 		declared[id] = stationv1alpha1.SiteNetworkNode{
 			ClusterID: admission.Spec.ClusterID, NodeName: admission.Name, Role: string(network.RoleLeaf),
-			Address: address, Uplink: admission.Spec.Uplink,
+			Address: address, Uplink: admission.Spec.Uplink, Site: admission.Spec.Site,
 		}
+	}
+	// A node is in the site it names (the SiteNetwork's entry before its
+	// admission), or else in its cluster's.
+	siteOf := func(clusterID, nodeName string) string {
+		id := clusterID + "/" + nodeName
+		if site := declared[id].Site; site != "" {
+			return site
+		}
+		if admission := admissions[id]; admission != nil && admission.Spec.Site != "" {
+			return admission.Spec.Site
+		}
+		return siteOfCluster[clusterID]
 	}
 
 	admitted := map[string]stationv1alpha1.NodeAdmissionStatus{}
@@ -250,9 +263,14 @@ func (r *NetworkReconciler) reconcile(ctx context.Context) (reconcile.Result, er
 			answer.Reason = "the enrollment does not match a current, unretired Station binding"
 			continue
 		}
-		answer.Site = siteOfCluster[enrollment.Spec.ClusterID]
+		answer.Site = siteOf(enrollment.Spec.ClusterID, enrollment.Name)
 		if answer.Site == "" {
 			answer.Reason = "cluster " + enrollment.Spec.ClusterID + " is not in any site of the SiteNetwork"
+			continue
+		}
+		if !siteDeclared[answer.Site] {
+			answer.Reason = "the node names the site " + answer.Site + ", which the SiteNetwork does not have"
+			answer.Site = ""
 			continue
 		}
 		// A machine that redeemed an admission elsewhere has moved: the
@@ -337,7 +355,7 @@ func (r *NetworkReconciler) reconcile(ctx context.Context) (reconcile.Result, er
 		}
 		declaredOnly[id] = true
 		member := network.Member{
-			ID: id, Site: siteOfCluster[node.ClusterID], Role: network.Role(node.Role), Relay: node.Relay, PublicKey: node.PublicKey,
+			ID: id, Site: siteOf(node.ClusterID, node.NodeName), Role: network.Role(node.Role), Relay: node.Relay, PublicKey: node.PublicKey,
 			Address: node.Address, NodeAddress: node.NodeAddress, Interface: node.Interface, ListenPort: int(node.ListenPort),
 		}
 		for _, endpoint := range node.Endpoints {
@@ -352,8 +370,8 @@ func (r *NetworkReconciler) reconcile(ctx context.Context) (reconcile.Result, er
 	// A redeemed admission takes part the same way until the node has enrolled
 	// under its own identity; the admission then only declares the node.
 	for id, admission := range admissions {
-		site := siteOfCluster[admission.Spec.ClusterID]
-		if admission.Spec.PublicKey == "" || enrolled[id] || declaredOnly[id] || site == "" {
+		site := siteOf(admission.Spec.ClusterID, admission.Name)
+		if admission.Spec.PublicKey == "" || enrolled[id] || declaredOnly[id] || !siteDeclared[site] {
 			continue
 		}
 		node := declared[id]

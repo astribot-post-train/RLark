@@ -199,6 +199,13 @@ spec:
                       - Leaf
                       - Hub
                       type: string
+                    site:
+                      description: |-
+                        Site is the site the node is in when it is not its cluster's: a
+                        cluster's nodes may stand in several sites, as robots of one cluster
+                        do whose control plane is somewhere else.
+                      maxLength: 63
+                      type: string
                     uplink:
                       description: |-
                         SiteNetworkUplink makes the node reach the endpoints it dials through a
@@ -232,8 +239,9 @@ spec:
                 items:
                   properties:
                     clusters:
-                      description: Clusters are the registered RLark Cluster IDs whose
-                        nodes are in this site.
+                      description: |-
+                        Clusters are the registered RLark Cluster IDs whose nodes are in this
+                        site, except the nodes that name a site of their own.
                       items:
                         type: string
                       maxItems: 256

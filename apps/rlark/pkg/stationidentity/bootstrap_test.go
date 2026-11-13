@@ -162,10 +162,17 @@ func TestBootstrapServesTheSitesUplinkSetupForAnUnredeemedCode(t *testing.T) {
 				"expiresAt": now.Add(time.Hour).UTC().Format(time.RFC3339)},
 		}}
 	}
+	elsewhere := func(name, cluster, site, code string) *unstructured.Unstructured {
+		admission := admission(name, cluster, code)
+		_ = unstructured.SetNestedField(admission.Object, site, "spec", "site")
+		return admission
+	}
 	network := &unstructured.Unstructured{Object: map[string]interface{}{
 		"apiVersion": "station.rlark.io/v1alpha1", "kind": "SiteNetwork",
 		"metadata": map[string]interface{}{"name": "default", "namespace": "station-system"},
-		"spec": map[string]interface{}{"sites": []interface{}{
+		"spec": map[string]interface{}{"nodes": []interface{}{
+			map[string]interface{}{"clusterID": "robot-s1u", "nodeName": "gpu-7", "site": "office"},
+		}, "sites": []interface{}{
 			map[string]interface{}{"name": "office", "clusters": []interface{}{"office-gpu"}},
 			map[string]interface{}{"name": "robots", "clusters": []interface{}{"robot-s1u"}, "leafUplink": map[string]interface{}{
 				"gateway": "192.168.0.11", "setup": map[string]interface{}{"addon": "fleet-robot-s1u", "path": "bootstrap/orin-uplink.sh", "login": "astribot"}}},
@@ -182,7 +189,8 @@ func TestBootstrapServesTheSitesUplinkSetupForAnUnredeemedCode(t *testing.T) {
 	_ = os.WriteFile(addons+"/secret", []byte("not an addon's"), 0644)
 	management := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(),
 		map[schema.GroupVersionResource]string{nodeAdmissionGVR: "NodeAdmissionList"},
-		admission("s1u-03-x86", "robot-s1u", "robotcode"), admission("gpu-9", "office-gpu", "officecode"), admission("out", "escape", "escapecode"), network)
+		admission("s1u-03-x86", "robot-s1u", "robotcode"), admission("gpu-9", "office-gpu", "officecode"), admission("out", "escape", "escapecode"),
+		elsewhere("s1u-04-x86", "office-gpu", "robots", "awaycode"), elsewhere("gpu-8", "robot-s1u", "office", "indoorcode"), admission("gpu-7", "robot-s1u", "entrycode"), network)
 	b := &Bootstrap{Management: management, AddonsDir: addons + "/addons", CA: []byte("the CA\n"), Now: func() time.Time { return now }}
 	get := func(path string) (int, string) {
 		recorder := httptest.NewRecorder()
@@ -195,6 +203,16 @@ func TestBootstrapServesTheSitesUplinkSetupForAnUnredeemedCode(t *testing.T) {
 	}
 	if status, body := get("/b/robotcode/uplink"); status != http.StatusOK || body != setup {
 		t.Fatalf("the setup of the robot's site: %d %q", status, body)
+	}
+	// A machine is in the site it names, whatever its cluster's is: by its
+	// admission, or by the SiteNetwork's entry for the node.
+	if status, body := get("/b/awaycode/uplink"); status != http.StatusOK || body != setup {
+		t.Fatalf("a machine of the office's cluster that stands with the robots: %d %q", status, body)
+	}
+	for _, code := range []string{"indoorcode", "entrycode"} {
+		if status, _ := get("/b/" + code + "/uplink"); status != http.StatusNotFound {
+			t.Fatalf("a machine of the robots' cluster that stands in the office (%s): %d", code, status)
+		}
 	}
 	// A site that declares none: the operator's command is the one line.
 	if status, body := get("/b/officecode/uplink"); status != http.StatusNotFound || strings.Contains(body, "uplink") {

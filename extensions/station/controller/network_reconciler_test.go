@@ -719,3 +719,37 @@ func TestNetworkSaysWhatTheHubsSeeOfALeaf(t *testing.T) {
 		t.Fatal("a connected leaf was written again")
 	}
 }
+
+func TestNetworkPutsANodeInTheSiteItNames(t *testing.T) {
+	siteNetwork := testSiteNetwork()
+	siteNetwork.Spec.Sites[0].DNS = []string{"10.11.0.2"}
+	siteNetwork.Spec.Sites[1].DNS = []string{"192.168.50.1"}
+	siteNetwork.Spec.Nodes = append(siteNetwork.Spec.Nodes,
+		stationv1alpha1.SiteNetworkNode{ClusterID: "robot-01", NodeName: "by-entry", Site: "office"},
+		stationv1alpha1.SiteNetworkNode{ClusterID: "robot-01", NodeName: "astray", Site: "nowhere"})
+	objects := []client.Object{siteNetwork,
+		// The entry's site comes before the admission's.
+		&stationv1alpha1.NodeAdmission{ObjectMeta: metav1.ObjectMeta{Namespace: "ns-robot-01", Name: "by-entry"},
+			Spec: stationv1alpha1.NodeAdmissionSpec{ClusterID: "robot-01", Site: "lab", ExpiresAt: metav1.NewTime(time.Unix(1_800_003_600, 0))}},
+		&stationv1alpha1.NodeAdmission{ObjectMeta: metav1.ObjectMeta{Namespace: "ns-robot-01", Name: "by-admission"},
+			Spec: stationv1alpha1.NodeAdmissionSpec{ClusterID: "robot-01", Site: "office", ExpiresAt: metav1.NewTime(time.Unix(1_800_003_600, 0))}},
+	}
+	objects = append(objects, testMember("dev", "cailiang", "key-dev", "10.11.14.128")...)
+	for _, node := range []string{"at-home", "by-entry", "by-admission", "astray"} {
+		objects = append(objects, testMember("robot-01", node, "key-"+node, "192.168.0.10")...)
+	}
+	r, c := newNetworkTest(t, objects...)
+	reconcileNetwork(t, r)
+
+	for node, site := range map[string]string{"at-home": "lab", "by-entry": "office", "by-admission": "office"} {
+		status := enrollmentStatus(t, c, "robot-01", node)
+		dns := map[string]string{"lab": "192.168.50.1", "office": "10.11.0.2"}[site]
+		if status.Phase != stationv1alpha1.NetworkEnrollmentEnrolled || status.Site != site || configOf(t, status).DNS[0] != dns {
+			t.Fatalf("%s is in %s with that site's name servers: %+v", node, site, status)
+		}
+	}
+	astray := enrollmentStatus(t, c, "robot-01", "astray")
+	if astray.Phase != stationv1alpha1.NetworkEnrollmentRejected || !strings.Contains(astray.Reason, "nowhere") {
+		t.Fatalf("a node of a site nothing declares: %+v", astray)
+	}
+}
