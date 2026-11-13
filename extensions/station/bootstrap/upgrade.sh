@@ -9,8 +9,11 @@
 #                   since the cluster was made "kubeadm upgrade apply" fails
 #                   with etcd already replaced. Certificates that lack a name
 #                   are issued anew by kubeadm from the cluster's CA, and etcd
-#                   and the API server started again (about a quarter of a minute
-#                   without the API; nothing else on any node restarts).
+#                   and the API server started again: the API is away for ten
+#                   seconds with etcd and then until the kubelet has started
+#                   the API server again, a minute where it holds a container
+#                   back that was started not long ago. No other container on
+#                   any node restarts.
 #                   Nothing is done on a node whose certificates are complete.
 #   PHASE=images    import the version's images: on every node before the
 #                   first is upgraded, because the control plane's upgrade
