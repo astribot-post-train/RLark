@@ -103,11 +103,12 @@ type NodeConfig struct {
 	Peers        []Peer        `json:"peers"`
 	Routes       []string      `json:"routes"`
 	UplinkRoutes []UplinkRoute `json:"uplinkRoutes,omitempty"`
-	// Names are the lines station-gateway keeps in the node's /etc/hosts. A
-	// document without them leaves the node's lines as they are.
+	// Names are the lines station-gateway keeps in the node's /etc/hosts: with
+	// none, it keeps none.
 	Names []HostName `json:"names,omitempty"`
 	// DNS are the name servers station-gateway keeps in the node's
-	// /etc/rlark/station/resolv.conf, which the kubelet gives to pods.
+	// /etc/rlark/station/resolv.conf, which the kubelet gives to pods; with
+	// none, it keeps the machine's own there.
 	DNS []string `json:"dns,omitempty"`
 }
 

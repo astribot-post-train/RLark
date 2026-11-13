@@ -234,6 +234,8 @@ spec:
           value: /host/etc/hosts
         - name: STATION_GATEWAY_RESOLV_FILE
           value: /host/etc/rlark/station/resolv.conf
+        - name: STATION_GATEWAY_MACHINE_RESOLV
+          value: /host/run/systemd/resolve/resolv.conf,/host/etc/resolv.conf
         securityContext:
           runAsUser: 0
           allowPrivilegeEscalation: false
@@ -253,10 +255,11 @@ spec:
         - name: wireguard-computed
           mountPath: /var/run/station-network
           readOnly: true
-        - name: hosts
-          mountPath: /host/etc/hosts
-        - name: station-etc
-          mountPath: /host/etc/rlark/station
+        - name: host-etc
+          mountPath: /host/etc
+        - name: host-resolve
+          mountPath: /host/run/systemd/resolve
+          readOnly: true
         readinessProbe:
           exec:
             command:
@@ -291,14 +294,17 @@ spec:
       - name: wireguard-computed
         emptyDir: {}
       # The site's names (SiteNetwork, names) are kept in the node's hosts file.
-      - name: hosts
+      # The directory and not the file: a hosts file that something on the
+      # node replaces by another of that name is still the one written to.
+      # The site's name servers go into /etc/rlark/station/resolv.conf, for
+      # the kubelet; without any, the machine's own, read from here.
+      - name: host-etc
         hostPath:
-          path: /etc/hosts
-          type: File
-      # and its name servers (SiteNetwork, sites, dns) in a resolv.conf for the kubelet.
-      - name: station-etc
+          path: /etc
+          type: Directory
+      - name: host-resolve
         hostPath:
-          path: /etc/rlark/station
+          path: /run/systemd/resolve
           type: DirectoryOrCreate
       affinity:
         nodeAffinity:

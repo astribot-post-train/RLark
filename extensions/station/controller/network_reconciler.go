@@ -159,12 +159,18 @@ func (r *NetworkReconciler) reconcile(ctx context.Context) (reconcile.Result, er
 	for i := range admissionList.Items {
 		admission := &admissionList.Items[i]
 		id := admission.Spec.ClusterID + "/" + admission.Name
-		if _, ok := declared[id]; ok || spec.Mode == stationv1alpha1.SiteNetworkModeRouted {
+		if spec.Mode == stationv1alpha1.SiteNetworkModeRouted {
 			continue
 		}
+		// A node the SiteNetwork declares stays as declared there: its
+		// admission only lets a machine in under that declaration.
+		node, inSpec := declared[id]
 		address := admission.Spec.Address
 		if address == "" {
 			address = admission.Status.Address
+		}
+		if inSpec && node.Address != "" {
+			address = node.Address
 		}
 		// A machine that replaces a node keeps the node's address.
 		for _, allocation := range allocated {
@@ -187,6 +193,9 @@ func (r *NetworkReconciler) reconcile(ctx context.Context) (reconcile.Result, er
 			}
 		}
 		admissions[id] = admission
+		if inSpec {
+			continue
+		}
 		declared[id] = stationv1alpha1.SiteNetworkNode{
 			ClusterID: admission.Spec.ClusterID, NodeName: admission.Name, Role: string(network.RoleLeaf),
 			Address: address, ListenPort: admission.Spec.ListenPort, Uplink: admission.Spec.Uplink,
@@ -201,13 +210,14 @@ func (r *NetworkReconciler) reconcile(ctx context.Context) (reconcile.Result, er
 		}
 	}
 	answers := make(map[string]*stationv1alpha1.NetworkEnrollmentStatus, len(enrollments.Items))
+	enrollmentOf := map[string]*stationv1alpha1.NetworkEnrollment{}
 	enrolled, declaredOnly := map[string]bool{}, map[string]bool{}
 	var members []network.Member
 	for i := range enrollments.Items {
 		enrollment := &enrollments.Items[i]
 		id := enrollment.Spec.ClusterID + "/" + enrollment.Name
 		answer := &stationv1alpha1.NetworkEnrollmentStatus{ObservedGeneration: enrollment.Generation, Phase: stationv1alpha1.NetworkEnrollmentRejected, PublicKey: enrollment.Spec.PublicKey}
-		answers[id] = answer
+		answers[id], enrollmentOf[id] = answer, enrollment
 		station := stationByUID[types.UID(enrollment.Spec.StationUID)]
 		if station == nil || station.Namespace != enrollment.Namespace || station.Spec.Retired || station.Status.Phase == stationv1alpha1.StationPhaseConflict ||
 			station.Spec.Binding.NodeUID != enrollment.Spec.NodeUID || station.Spec.Binding.Version != enrollment.Spec.BindingVersion {
@@ -317,12 +327,12 @@ func (r *NetworkReconciler) reconcile(ctx context.Context) (reconcile.Result, er
 	// under its own identity; the admission then only declares the node.
 	for id, admission := range admissions {
 		site := siteOfCluster[admission.Spec.ClusterID]
-		if admission.Spec.PublicKey == "" || enrolled[id] || site == "" {
+		if admission.Spec.PublicKey == "" || enrolled[id] || declaredOnly[id] || site == "" {
 			continue
 		}
 		node := declared[id]
 		declaredOnly[id] = true
-		member := network.Member{ID: id, Site: site, Role: network.RoleLeaf, PublicKey: admission.Spec.PublicKey, Address: node.Address, ListenPort: int(node.ListenPort)}
+		member := network.Member{ID: id, Site: site, Role: network.RoleLeaf, PublicKey: admission.Spec.PublicKey, Address: admission.Status.Address, ListenPort: int(node.ListenPort)}
 		if node.Uplink != nil {
 			member.Uplink = &network.Uplink{Gateway: node.Uplink.Gateway, Source: node.Uplink.Source, Interface: node.Uplink.Interface}
 		}
@@ -423,9 +433,35 @@ func (r *NetworkReconciler) reconcile(ctx context.Context) (reconcile.Result, er
 	for id, admission := range admissions {
 		answer := admitted[id]
 		answer.ObservedGeneration, answer.Address = admission.Generation, admission.Status.Address
+		key, previous := admission.Spec.PublicKey, admission.Status
+		// A machine that redeems a code as the node it already is, with the
+		// key it is enrolled with, joins again: its cluster has a new control
+		// plane. Its admission answers with the configuration it has until
+		// the node has enrolled from there, under a new Node UID; until then
+		// the admission also keeps the node among its peers while its Station
+		// is rebound. Whether it is that case is seen once, when the
+		// redemption is first answered.
+		enrollment := enrollmentOf[id]
+		sameKey := key != "" && enrollment != nil && enrollment.Spec.PublicKey == key
+		legacy := previous.Phase == stationv1alpha1.NodeAdmissionJoined && previous.RedeemedAt == nil
+		rejoins := previous.RejoinsNodeUID
+		if key != "" && !legacy && !admission.Spec.RedeemedAt.Equal(previous.RedeemedAt) {
+			rejoins = ""
+			if sameKey {
+				rejoins = enrollment.Spec.NodeUID
+			}
+		}
+		if key != "" {
+			answer.RedeemedAt = admission.Spec.RedeemedAt
+		}
 		switch {
-		case enrolled[id] && admission.Spec.PublicKey != "" || admission.Status.Phase == stationv1alpha1.NodeAdmissionJoined:
-			answer = stationv1alpha1.NodeAdmissionStatus{ObservedGeneration: admission.Generation, Address: admission.Status.Address, Phase: stationv1alpha1.NodeAdmissionJoined}
+		case key != "" && rejoins != "" && !(enrolled[id] && sameKey && enrollment.Spec.NodeUID != rejoins):
+			answer.Phase, answer.RejoinsNodeUID = stationv1alpha1.NodeAdmissionRedeemed, rejoins
+			if enrolled[id] {
+				answer.Config, answer.ConfigHash, answer.PublicKey = answers[id].Config, answers[id].ConfigHash, key
+			}
+		case key != "" && (enrolled[id] || previous.Phase == stationv1alpha1.NodeAdmissionJoined):
+			answer = stationv1alpha1.NodeAdmissionStatus{ObservedGeneration: admission.Generation, Address: admission.Status.Address, Phase: stationv1alpha1.NodeAdmissionJoined, RedeemedAt: answer.RedeemedAt}
 		case answer.Config != "":
 			answer.Phase = stationv1alpha1.NodeAdmissionRedeemed
 		case admission.Spec.PublicKey != "":

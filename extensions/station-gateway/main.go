@@ -414,7 +414,11 @@ func main() {
 	status := flag.Bool("status", false, "show non-secret WireGuard peer status as JSON")
 	snapshotPath := flag.String("observation-file", os.Getenv("STATION_GATEWAY_OBSERVATION_FILE"), "optional non-secret interface observation file")
 	hostsPath := flag.String("hosts-file", os.Getenv("STATION_GATEWAY_HOSTS_FILE"), "optional hosts file of the node, in which the configuration's names are kept")
-	resolvPath := flag.String("resolv-file", os.Getenv("STATION_GATEWAY_RESOLV_FILE"), "optional file in which the configuration's name servers are kept, for the kubelet to give to pods")
+	resolvPath := flag.String("resolv-file", os.Getenv("STATION_GATEWAY_RESOLV_FILE"), "optional file in which the configuration's name servers are kept, for the kubelet to give to pods; without any, the machine's own")
+	machineResolv := os.Getenv("STATION_GATEWAY_MACHINE_RESOLV")
+	if machineResolv == "" {
+		machineResolv = "/run/systemd/resolve/resolv.conf,/etc/resolv.conf"
+	}
 	publicKey := flag.Bool("public-key", false, "create the node's key if it has none, print the public key and exit")
 	flag.Parse()
 	if *publicKey {
@@ -499,11 +503,17 @@ func main() {
 			}
 			e = apply(d, key, *prune)
 		}
-		if e == nil && *hostsPath != "" && d.Names != nil {
-			e = writeNames(*hostsPath, d.Names)
+		// The tunnel does not depend on these two files: a failure to write
+		// one is said, and tried again with the next pass.
+		if e == nil && *hostsPath != "" {
+			if err := writeNames(*hostsPath, d.Names); err != nil {
+				log.Printf("keep the names in %s: %v", *hostsPath, err)
+			}
 		}
-		if e == nil && *resolvPath != "" && d.DNS != nil {
-			e = writeResolv(*resolvPath, d.DNS)
+		if e == nil && *resolvPath != "" {
+			if err := writeResolv(*resolvPath, d.DNS, strings.Split(machineResolv, ",")); err != nil {
+				log.Printf("keep the name servers in %s: %v", *resolvPath, err)
+			}
 		}
 		if e == nil && source == "computed" {
 			if saved, readErr := os.ReadFile(from.lastApplied); readErr != nil || string(saved) != string(data) {

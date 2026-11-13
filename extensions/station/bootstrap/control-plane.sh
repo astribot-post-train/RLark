@@ -23,9 +23,10 @@
 #               taken down in between
 #   kubelet     the bundle's kubelet; this machine's share for everything that
 #               is not Kubernetes as a drop-in (SYSTEM_RESERVED_*)
-#   name        CONTROL_PLANE_NAME resolves to the tunnel address: among the
-#               site's names, which the tunnel service keeps in /etc/hosts,
-#               or written here where the site network declares no names yet
+#   name        CONTROL_PLANE_NAME resolves to the tunnel address on this
+#               machine by a line of its own in /etc/hosts; every other node
+#               has it from the site's names (SiteNetwork, names), which
+#               must not give it another address
 #   init        kubeadm init at the bundle's version: the endpoint is the
 #               name; the certificates name it, the tunnel address and the
 #               node; etcd listens on the tunnel address; the four components
@@ -110,7 +111,7 @@ undo() {
   "$B/bin/kubeadm" reset --force --cri-socket "unix://$SOCKET" > "$keep/reset.log" 2>&1 || { tail -20 "$keep/reset.log" >&2; fail "kubeadm reset"; }
   rm -rf /etc/cni/net.d/*
   rm -f $K/kubelet.conf.d/20-rlark-control-plane.conf
-  [ ! -e "$S/name" ] || hosts_name "" "$(cat "$S/name")"
+  hosts_name "" ""
   stamp "the control plane is removed"
   if [ -d "$OLD" ]; then
     restore_old_cluster
@@ -161,14 +162,14 @@ modprobe wireguard || fail "the kernel has no wireguard module"
 systemctl is-enabled rlark-station-gateway >/dev/null 2>&1 || [ -e /var/lib/station/wg/last-applied.json ] || [ -e /etc/rlark/station/bootstrap.json ] ||
   fail "the tunnel on $TUNNEL_INTERFACE is run by a pod of the cluster this machine would leave, and its configuration is not kept on the machine (/var/lib/station/wg/last-applied.json): the tunnel would not come back after a reboot"
 # The names the site network gives this machine, from the document its tunnel
-# runs on (station-gateway's order). Where it gives any, the tunnel service
-# keeps /etc/hosts by them, and this control plane's must be among them.
+# runs on (station-gateway's order). The other nodes find the control plane by
+# them: this control plane's name may be missing there still, not be elsewhere.
 declared=
 for document in /run/station-network/config.json /var/lib/station/wg/last-applied.json /etc/rlark/station/bootstrap.json; do
   [ ! -s "$document" ] || { declared=$(tr -d ' \t\n' < "$document" | grep -o '"names":\[[^]]*\]' || true); break; }
 done
-[ -z "$declared" ] || echo "$declared" | grep -q -F "{\"name\":\"$name\",\"address\":\"$ADDRESS\"}" ||
-  fail "the site network gives this machine names, and $name at $ADDRESS is not among them ($declared): declare it in the SiteNetwork (names) first; the tunnel service keeps /etc/hosts by that list"
+elsewhere=$(echo "$declared" | grep -o "{\"name\":\"$name\",\"address\":\"[0-9.]*\"}" | grep -v -F "\"$ADDRESS\"" || true)
+[ -z "$elsewhere" ] || fail "the site network gives $name another address than this machine's $ADDRESS ($elsewhere): every other node would look for the control plane there. Change the SiteNetwork (names) first"
 # The addresses the machine has in the networks it stands in: nothing of the
 # control plane may hold one (the last step looks).
 machine_addresses() {
@@ -197,7 +198,7 @@ if ! initialized; then
   [ "$(df -k --output=avail /var/lib | tail -1)" -ge 10485760 ] || fail "/var/lib has less than 10 GiB free: etcd and the images need them"
   if [ ! -e "$S/init-started" ]; then
     for subnet in "$POD_SUBNET" "$SERVICE_SUBNET"; do
-      routes=$( { ip -4 route show root "$subnet"; ip -4 route show match "$subnet"; } | grep -v '^default ' | sort -u | tr '\n' ';')
+      routes=$( { ip -4 route show root "$subnet"; ip -4 route show match "$subnet"; } | grep -v -E '^default |proto bird' | sort -u | tr '\n' ';')
       [ -z "$routes" ] || fail "$subnet is in use on this machine's networks already ($routes): the cluster's pod and Service networks must be free"
     done
     for port in 6443 2379 2380 10257 10259; do
@@ -307,9 +308,9 @@ if ! cmp -s "$B/20-rlark-control-plane.conf" $K/kubelet.conf.d/20-rlark-control-
 fi
 # A kubelet that is running reads its unit and its drop-ins when it starts.
 case $changed in kubelet|reservation) ! initialized || systemctl restart kubelet ;; esac
-[ -n "$declared" ] || hosts_name "$ADDRESS" "$name"
+hosts_name "$ADDRESS" "$name"
 tries=0
-until [ "$(getent hosts "$name" | awk '{print $1}')" = "$ADDRESS" ]; do
+until [ "$(getent hosts "$name" | awk '{print $1}' | sort -u)" = "$ADDRESS" ]; do
   tries=$((tries + 1))
   [ $tries -lt 30 ] || fail "$name does not resolve to $ADDRESS on this machine ($(getent hosts "$name" || echo "not at all")): /etc/hosts, journalctl -u rlark-station-gateway"
   sleep 1
@@ -401,7 +402,9 @@ if [ -e "$S/from-snapshot" ]; then
     adm delete "$other" --wait=false >/dev/null
     stamp "${other#node/} was the control plane this one replaces: its Node object is removed"
   done
-  [ "$changed" != init ] || adm -n kube-system rollout restart daemonset kube-proxy >/dev/null
+  # the name got another address, and they were started with a copy of the
+  # node's /etc/hosts: started again, they read the file as it is now.
+  [ "$changed" != init ] || adm -n kube-system rollout restart daemonset kube-proxy calico-node >/dev/null
 fi
 
 # --- the cluster's own pieces: every manifest of the bundle, in name order.

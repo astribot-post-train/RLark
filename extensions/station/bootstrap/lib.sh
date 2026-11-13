@@ -6,14 +6,19 @@ stamp() { echo "$(date +%T) +$(( $(date +%s) - started ))s $*"; }
 fail() { echo "$(date +%T) FAILED: $*" >&2; exit 1; }
 
 # hosts_name ADDRESS NAME: /etc/hosts holds the one line
-# "ADDRESS NAME # rlark names"; without an address it holds none for NAME.
-# These are the lines station-gateway keeps from the site's names
-# (SiteNetwork, names; --hosts-file): this is for the first machine of a site
-# whose network declares none yet. The file is rewritten in place, as
-# host-network pods have this very file mounted.
+# "ADDRESS NAME # rlark control-plane"; without an address it holds none.
+# This is a control plane's own name on its own machine, which must resolve
+# there before any site network declares it and whatever one declares later.
+# The names a site declares are the tunnel service's lines ("# rlark names").
+# The file keeps its place and is never empty in between: it is written over
+# from its start, then cut to the new length.
 hosts_name() {
-  { grep -v " $2 # rlark names\$" /etc/hosts || true; [ -z "$1" ] || printf '%s %s # rlark names\n' "$1" "$2"; } > "$B/hosts"
-  cmp -s "$B/hosts" /etc/hosts || { cat "$B/hosts" > /etc/hosts; changed=hosts; }
+  # Where the line stands among the others is not this function's: the
+  # tunnel service puts its own lines last whenever it writes them.
+  [ "$(grep ' # rlark control-plane$' /etc/hosts)" != "${1:+$1 $2 # rlark control-plane}" ] || return 0
+  { grep -v ' # rlark control-plane$' /etc/hosts || true; [ -z "$1" ] || printf '%s %s # rlark control-plane\n' "$1" "$2"; } > "$B/hosts"
+  dd if="$B/hosts" of=/etc/hosts conv=notrunc 2>/dev/null && truncate -s "$(wc -c < "$B/hosts")" /etc/hosts
+  changed=hosts
 }
 
 # ctr_of SOCKET: the ctr beside the containerd that serves the socket. A
@@ -54,8 +59,8 @@ restore_old_cluster() {
 # the node has enrolled, the last one it applied when the machine boots or
 # when the pod that ran the tunnel is gone, and the administrator's document
 # until then; the names its document holds it keeps in /etc/hosts, the name
-# servers in /etc/rlark/station/resolv.conf. It counts as started when it has
-# applied its document once. A service that is running as written is left alone.
+# servers (the site's, else the machine's own) in
+# /etc/rlark/station/resolv.conf. A service that is running as written is left alone.
 tunnel_service() {
   install -d /etc/rlark/station
   cat > "$B/rlark-station-gateway.service" <<UNIT
@@ -68,7 +73,7 @@ Before=kubelet.service
 [Service]
 ExecStartPre=/bin/sh -c 'mkdir -p /run/station-network /run/station-observation && chown 65532 /run/station-network'
 ExecStart=/opt/rlark/bin/station-gateway --config /etc/rlark/station/bootstrap.json --computed-config /run/station-network/config.json --identity-file /run/station-observation/identity.json --observation-file /run/station-observation/wireguard.json --prune-routes --hosts-file /etc/hosts --resolv-file /etc/rlark/station/resolv.conf
-ExecStartPost=/bin/sh -c 'for i in \$(seq 100); do /opt/rlark/bin/station-gateway --config /etc/rlark/station/bootstrap.json --computed-config /run/station-network/config.json --check 2>/dev/null && exit 0; sleep 0.2; done; exit 1'
+ExecStartPost=/bin/sh -c 'for i in \$(seq 100); do ip -4 addr show dev $TUNNEL_INTERFACE 2>/dev/null | grep -q inet && exit 0; sleep 0.2; done; exit 1'
 Restart=always
 RestartSec=2
 
@@ -81,6 +86,8 @@ UNIT
   systemctl daemon-reload
   systemctl enable rlark-station-gateway >/dev/null 2>&1
   systemctl restart rlark-station-gateway || fail "the tunnel service did not start: journalctl -u rlark-station-gateway"
+  # Its first pass also writes the names and the name servers, which the next steps read.
+  for try in $(seq 100); do [ -e /etc/rlark/station/resolv.conf ] && break; sleep 0.2; done
   changed=tunnel
 }
 
@@ -150,17 +157,11 @@ failSwapOn: false
 memorySwap:
   swapBehavior: NoSwap
 CONF
-  # The site's name servers, where its network declares them (SiteNetwork,
-  # sites, dns): the tunnel service keeps the file. A machine like a robot's
-  # computer has no name server of its own to give to pods.
+  # Pods get the name servers the tunnel service keeps: the site's where
+  # its network declares them (SiteNetwork, sites, dns), else the machine's
+  # own. A robot's computer has none of its own to give.
   dns=/etc/kubernetes/kubelet.conf.d/15-rlark-dns.conf
-  if [ -s /etc/rlark/station/resolv.conf ] && [ ! -e $dns ]; then
-    printf 'apiVersion: kubelet.config.k8s.io/v1beta1\nkind: KubeletConfiguration\nresolvConf: /etc/rlark/station/resolv.conf\n' > $dns
-    changed=kubelet
-  elif [ ! -s /etc/rlark/station/resolv.conf ] && [ -e $dns ]; then
-    rm -f $dns
-    changed=kubelet
-  fi
+  [ -e $dns ] || { printf 'apiVersion: kubelet.config.k8s.io/v1beta1\nkind: KubeletConfiguration\nresolvConf: /etc/rlark/station/resolv.conf\n' > $dns; changed=kubelet; }
   cat > "$B/kubelet.service" <<UNIT
 [Unit]
 Description=RLark kubelet
