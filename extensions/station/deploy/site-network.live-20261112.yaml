@@ -30,6 +30,11 @@ spec:
   - name: lab
     clusters: [rlark-robot-s1u-01]
     reaches: [office]
+    # A robot's computer reaches the site through the robot's own router,
+    # which has this address on every robot, and dials from its own address
+    # in that network.
+    leafUplink:
+      gateway: 192.168.0.11
   - name: ksyun
     clusters: [rlark-ksyun-gpu]
   nodes:
@@ -58,10 +63,6 @@ spec:
     nodeName: s1u-01-x86
     role: Leaf
     address: 10.254.240.3
-    uplink:
-      gateway: 192.168.0.11
-      source: 192.168.31.250
-      interface: enp2s0
   - clusterID: rlark-ksyun-gpu
     nodeName: 10-0-2-196
     role: Hub

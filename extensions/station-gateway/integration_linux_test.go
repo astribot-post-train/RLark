@@ -277,3 +277,68 @@ func TestKernelTakesAnotherPort(t *testing.T) {
 		t.Fatalf("port %d after %d: a peer that stays away must cost a new port", second, first)
 	}
 }
+
+// The uplink follows the document: the interface and the source are the
+// node's own in the gateway's network unless the document names others, a
+// route this program installed is replaced when they change and removed when
+// the document drops it, and another origin's route is left alone.
+func TestKernelUplinkFollowsTheDocument(t *testing.T) {
+	if os.Getenv("STATION_NETNS_TEST") != "1" {
+		t.Skip("requires disposable privileged network namespace")
+	}
+	lan := &netlink.Dummy{LinkAttrs: netlink.LinkAttrs{Name: "robot-lan"}}
+	if err := netlink.LinkAdd(lan); err != nil {
+		t.Fatal(err)
+	}
+	for _, address := range []string{"192.168.0.10/24", "192.168.31.251/32"} {
+		addr, _ := netlink.ParseAddr(address)
+		if err := netlink.AddrAdd(lan, addr); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := netlink.LinkSetUp(lan); err != nil {
+		t.Fatal(err)
+	}
+	_, hub, _ := net.ParseCIDR("10.11.13.192/32")
+	_, other, _ := net.ParseCIDR("10.11.14.128/32")
+	routes := func(dst *net.IPNet) []netlink.Route {
+		found, err := netlink.RouteListFiltered(netlink.FAMILY_V4, &netlink.Route{Dst: dst, Table: 254}, netlink.RT_FILTER_DST|netlink.RT_FILTER_TABLE)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return found
+	}
+	// As a robot is today: the source is an address of another network, by declaration.
+	old := []uplinkRoute{{Destination: hub.String(), Gateway: "192.168.0.11", Source: "192.168.31.251", Interface: "robot-lan"}, {Destination: other.String(), Gateway: "192.168.0.11", Source: "192.168.31.251", Interface: "robot-lan"}}
+	if err := applyUplink(old, true); err != nil {
+		t.Fatal(err)
+	}
+	// Another origin's route at its own metric stays, and is the one in use while it is there.
+	foreign := netlink.Route{LinkIndex: lan.Attrs().Index, Dst: hub, Gw: net.ParseIP("192.168.0.11"), Src: net.ParseIP("192.168.31.251"), Protocol: 4, Priority: 100, Table: 254}
+	if err := netlink.RouteAdd(&foreign); err != nil {
+		t.Fatal(err)
+	}
+	// The site's declaration: the gateway alone.
+	if err := applyUplink([]uplinkRoute{{Destination: hub.String(), Gateway: "192.168.0.11"}}, true); err != nil {
+		t.Fatal(err)
+	}
+	found := routes(hub)
+	if len(found) != 2 {
+		t.Fatalf("routes to the hub: %+v", found)
+	}
+	for _, r := range found {
+		want := "192.168.31.251"
+		if r.Protocol == routeProtocol {
+			want = "192.168.0.10"
+		}
+		if !r.Src.Equal(net.ParseIP(want)) || r.LinkIndex != lan.Attrs().Index {
+			t.Fatalf("route %+v: source must be %s", r, want)
+		}
+	}
+	if left := routes(other); len(left) != 0 {
+		t.Fatalf("a route the document dropped stayed: %+v", left)
+	}
+	if err := applyUplink([]uplinkRoute{{Destination: hub.String(), Gateway: "192.168.1.1"}}, true); err == nil {
+		t.Fatal("accepted a gateway in no network of the node")
+	}
+}

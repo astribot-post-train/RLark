@@ -134,8 +134,9 @@ func parse(data []byte) (*desired, error) {
 	}
 	for _, route := range c.UplinkRoutes {
 		ip, dst, e := net.ParseCIDR(route.Destination)
-		if e != nil || ip.To4() == nil || dst.String() != ip.String()+"/32" || net.ParseIP(route.Gateway).To4() == nil || net.ParseIP(route.Source).To4() == nil || route.Interface == "" || strings.ContainsAny(route.Interface, "/ \t\n") {
-			return nil, errors.New("uplink route requires an IPv4 /32 destination, gateway, source and interface")
+		if e != nil || ip.To4() == nil || dst.String() != ip.String()+"/32" || net.ParseIP(route.Gateway).To4() == nil ||
+			route.Source != "" && net.ParseIP(route.Source).To4() == nil || strings.ContainsAny(route.Interface, "/ \t\n") {
+			return nil, errors.New("uplink route requires an IPv4 /32 destination and gateway; a source is an IPv4 address")
 		}
 	}
 	for _, name := range c.Names {
@@ -266,6 +267,119 @@ func (r *redial) due(d *desired, current *wgtypes.Device, now time.Time) bool {
 	return true
 }
 
+// uplinkVia finds the interface and the source address of a route through
+// gateway: the ones the document names, else the interface that has an
+// address in the gateway's network and that address. A node dials from an
+// address its own network gave it.
+func uplinkVia(r uplinkRoute, gateway net.IP) (netlink.Link, net.IP, error) {
+	links := []netlink.Link{}
+	if r.Interface != "" {
+		link, err := netlink.LinkByName(r.Interface)
+		if err != nil {
+			return nil, nil, fmt.Errorf("uplink interface: %w", err)
+		}
+		links = append(links, link)
+	} else {
+		all, err := netlink.LinkList()
+		if err != nil {
+			return nil, nil, fmt.Errorf("uplink interfaces: %w", err)
+		}
+		links = all
+	}
+	for _, link := range links {
+		addrs, err := netlink.AddrList(link, netlink.FAMILY_V4)
+		if err != nil {
+			return nil, nil, fmt.Errorf("uplink addresses: %w", err)
+		}
+		var beside net.IP
+		for _, a := range addrs {
+			if a.IPNet.Contains(gateway) && beside == nil {
+				beside = a.IP
+			}
+			if r.Source != "" && a.IP.Equal(net.ParseIP(r.Source)) {
+				// Said once: such an address is one nothing has given the
+				// node, and whatever is given it later takes the node's answers.
+				if said := r.Source + " " + r.Gateway; !a.IPNet.Contains(gateway) && said != foreignSource {
+					foreignSource = said
+					log.Printf("uplink source %s is not an address in the network of the gateway %s: the node holds it without that network knowing", r.Source, r.Gateway)
+				}
+				return link, a.IP.To4(), nil
+			}
+		}
+		if r.Source == "" && beside != nil {
+			return link, beside.To4(), nil
+		}
+	}
+	if r.Source != "" {
+		return nil, nil, fmt.Errorf("uplink source %s is not assigned to %s", r.Source, firstNonEmpty(r.Interface, "any interface"))
+	}
+	return nil, nil, fmt.Errorf("no address of this node is in the network of the uplink gateway %s", r.Gateway)
+}
+
+var foreignSource string
+
+func firstNonEmpty(values ...string) string {
+	for _, v := range values {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+// applyUplink keeps the routes to the endpoints the node dials. A route this
+// program installed (its protocol and metric, through a gateway) follows the
+// document: it is replaced in one step when the gateway, the interface or the
+// source changes, and removed, with prune, when the document drops it. A
+// route of another origin to the same destination at another metric is left
+// alone; while it has the lower metric it is the one the kernel uses.
+func applyUplink(routes []uplinkRoute, prune bool) error {
+	wanted := map[string]bool{}
+	for _, r := range routes {
+		_, dst, _ := net.ParseCIDR(r.Destination)
+		gw := net.ParseIP(r.Gateway).To4()
+		link, src, err := uplinkVia(r, gw)
+		if err != nil {
+			return err
+		}
+		wanted[dst.String()] = true
+		existing, err := netlink.RouteListFiltered(netlink.FAMILY_V4, &netlink.Route{Dst: dst, Table: 254}, netlink.RT_FILTER_DST|netlink.RT_FILTER_TABLE)
+		if err != nil {
+			return fmt.Errorf("inspect uplink route: %w", err)
+		}
+		current := false
+		for _, e := range existing {
+			if e.Priority == routePriority && e.Protocol != routeProtocol {
+				return fmt.Errorf("uplink route %s conflicts with a route of another origin at the same metric", dst)
+			}
+			current = current || e.Protocol == routeProtocol && e.Priority == routePriority && e.LinkIndex == link.Attrs().Index && e.Gw.Equal(gw) && e.Src.Equal(src)
+		}
+		if current {
+			continue
+		}
+		if err := netlink.RouteReplace(&netlink.Route{LinkIndex: link.Attrs().Index, Dst: dst, Gw: gw, Src: src, Protocol: routeProtocol, Priority: routePriority, Table: 254}); err != nil {
+			return fmt.Errorf("set uplink route %s: %w", dst, err)
+		}
+		log.Printf("uplink route %s via %s from %s", dst, gw, src)
+	}
+	if !prune {
+		return nil
+	}
+	mine, err := netlink.RouteListFiltered(netlink.FAMILY_V4, &netlink.Route{Protocol: routeProtocol, Table: 254}, netlink.RT_FILTER_PROTOCOL|netlink.RT_FILTER_TABLE)
+	if err != nil {
+		return fmt.Errorf("inspect uplink routes: %w", err)
+	}
+	for i := range mine {
+		if r := mine[i]; r.Priority == routePriority && r.Gw != nil && r.Dst != nil && !wanted[r.Dst.String()] {
+			if err := netlink.RouteDel(&mine[i]); err != nil {
+				return fmt.Errorf("remove uplink route %s: %w", r.Dst, err)
+			}
+			log.Printf("uplink route %s removed", r.Dst)
+		}
+	}
+	return nil
+}
+
 // apply reconciles the kernel with d. With prune it removes the routes it
 // installed on its own interface that d no longer lists; without it such a
 // route stops reconciliation until an administrator removes it.
@@ -308,39 +422,8 @@ func apply(d *desired, key wgtypes.Key, prune bool) error {
 			return fmt.Errorf("interface %s has a different IPv4 address; use a new interface for migration", d.Interface)
 		}
 	}
-	for _, r := range d.UplinkRoutes {
-		link, err := netlink.LinkByName(r.Interface)
-		if err != nil {
-			return fmt.Errorf("uplink interface: %w", err)
-		}
-		_, dst, _ := net.ParseCIDR(r.Destination)
-		gw, src := net.ParseIP(r.Gateway).To4(), net.ParseIP(r.Source).To4()
-		addrs, err := netlink.AddrList(link, netlink.FAMILY_V4)
-		if err != nil {
-			return fmt.Errorf("uplink addresses: %w", err)
-		}
-		foundSource := false
-		for _, a := range addrs {
-			if a.IP.Equal(src) {
-				foundSource = true
-			}
-		}
-		if !foundSource {
-			return fmt.Errorf("uplink source %s is not assigned to %s", r.Source, r.Interface)
-		}
-		existing, err := netlink.RouteListFiltered(netlink.FAMILY_V4, &netlink.Route{Dst: dst, Table: 254}, netlink.RT_FILTER_DST|netlink.RT_FILTER_TABLE)
-		if err != nil {
-			return fmt.Errorf("inspect uplink route: %w", err)
-		}
-		if len(existing) > 0 {
-			if len(existing) != 1 || existing[0].LinkIndex != link.Attrs().Index || existing[0].Protocol != routeProtocol || existing[0].Priority != routePriority || !existing[0].Gw.Equal(gw) || !existing[0].Src.Equal(src) {
-				return fmt.Errorf("uplink route %s conflicts with an existing route", dst)
-			}
-			continue
-		}
-		if err := netlink.RouteAdd(&netlink.Route{LinkIndex: link.Attrs().Index, Dst: dst, Gw: gw, Src: src, Protocol: routeProtocol, Priority: routePriority, Table: 254}); err != nil {
-			return fmt.Errorf("add uplink route %s: %w", dst, err)
-		}
+	if err = applyUplink(d.UplinkRoutes, prune); err != nil {
+		return err
 	}
 	// Preflight route removal before touching the device. Route protocol and
 	// metric are not proof of ownership on their own; together with the

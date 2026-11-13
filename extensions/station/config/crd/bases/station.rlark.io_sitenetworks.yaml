@@ -202,22 +202,28 @@ spec:
                     uplink:
                       description: |-
                         SiteNetworkUplink makes the node reach the endpoints it dials through a
-                        given gateway and source address instead of its default route.
+                        given gateway instead of its default route.
                       properties:
                         gateway:
-                          maxLength: 15
+                          format: ipv4
                           type: string
                         interface:
+                          description: |-
+                            Interface is the node's interface towards the gateway. Without it, it
+                            is the one that has an address in the gateway's network.
                           maxLength: 15
-                          minLength: 1
                           type: string
                         source:
+                          description: |-
+                            Source is the address the node dials from. Without it, and that is the
+                            rule, it is the node's own address in the gateway's network: a node
+                            that dials from an address of another network holds an address there
+                            that nothing has given it, and whatever is given that address later
+                            takes the node's answers.
                           maxLength: 15
                           type: string
                       required:
                       - gateway
-                      - interface
-                      - source
                       type: object
                   required:
                   - clusterID
@@ -256,6 +262,34 @@ spec:
                         type: string
                       maxItems: 3
                       type: array
+                    leafUplink:
+                      description: |-
+                        LeafUplink is the uplink of every leaf of this site that declares none
+                        of its own: machines of one build, each behind a device of its own
+                        that has the same address on every one of them (a robot's computer
+                        behind the robot's router), are declared once.
+                      properties:
+                        gateway:
+                          format: ipv4
+                          type: string
+                        interface:
+                          description: |-
+                            Interface is the node's interface towards the gateway. Without it, it
+                            is the one that has an address in the gateway's network.
+                          maxLength: 15
+                          type: string
+                        source:
+                          description: |-
+                            Source is the address the node dials from. Without it, and that is the
+                            rule, it is the node's own address in the gateway's network: a node
+                            that dials from an address of another network holds an address there
+                            that nothing has given it, and whatever is given that address later
+                            takes the node's answers.
+                          maxLength: 15
+                          type: string
+                      required:
+                      - gateway
+                      type: object
                     leavesViaRelay:
                       description: |-
                         LeavesViaRelay makes the leaves of this site peer with their relay only

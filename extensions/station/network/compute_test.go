@@ -6,6 +6,7 @@ import (
 	"os"
 	"reflect"
 	"sort"
+	"strings"
 	"testing"
 )
 
@@ -353,5 +354,41 @@ func TestNamesReachEveryMemberAndASitesOwnItsMembers(t *testing.T) {
 	both := append(append([]HostName{}, everywhere...), lab...)
 	if !reflect.DeepEqual(result.Configs["robots/robot"].Names, both) || !reflect.DeepEqual(result.Configs["robots/workstation"].Names, both) || !reflect.DeepEqual(result.Configs["cloud/gpu"].Names, everywhere) {
 		t.Fatalf("names: %+v", result.Configs)
+	}
+}
+
+// A site declares the uplink of its leaves once: every leaf that has none of
+// its own gets it, without a source (the leaf dials from its own address in
+// the gateway's network), and a hub of the site does not.
+func TestLeavesOfASiteShareItsUplink(t *testing.T) {
+	topology, members := liveTopology()
+	topology.Sites[1].LeafUplink = &Uplink{Gateway: "192.168.0.11"}
+	members[2].Uplink = nil
+	members = append(members,
+		Member{ID: "rlark-robot-s1u-01/s1u-02-x86", Site: "lab", Role: RoleLeaf, PublicKey: strings.Repeat("E", 43) + "=", Address: "10.254.240.7"},
+		Member{ID: "rlark-robot-s1u-01/own", Site: "lab", Role: RoleLeaf, PublicKey: strings.Repeat("F", 43) + "=", Address: "10.254.240.8",
+			Uplink: &Uplink{Gateway: "10.9.9.1", Source: "10.9.9.2", Interface: "eth7"}},
+		Member{ID: "rlark-robot-s1u-01/hub", Site: "lab", Role: RoleHub, PublicKey: strings.Repeat("G", 43) + "=", Address: "10.254.240.9",
+			Endpoints: []Endpoint{{Address: "10.11.13.200:51820", Scope: ScopeSite}}})
+	result, err := Compute(topology, members)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"rlark-robot-s1u-01/s1u-01-x86", "rlark-robot-s1u-01/s1u-02-x86"} {
+		routes := result.Configs[id].UplinkRoutes
+		if len(routes) == 0 || len(result.Problems[id]) != 0 {
+			t.Fatalf("%s: routes %+v problems %v", id, routes, result.Problems[id])
+		}
+		for _, r := range routes {
+			if r.Gateway != "192.168.0.11" || r.Source != "" || r.Interface != "" {
+				t.Fatalf("%s: %+v", id, r)
+			}
+		}
+	}
+	if own := result.Configs["rlark-robot-s1u-01/own"].UplinkRoutes; len(own) == 0 || own[0].Gateway != "10.9.9.1" || own[0].Source != "10.9.9.2" || own[0].Interface != "eth7" {
+		t.Fatalf("a leaf's own uplink: %+v, problems %v", own, result.Problems["rlark-robot-s1u-01/own"])
+	}
+	if hub := result.Configs["rlark-robot-s1u-01/hub"].UplinkRoutes; len(hub) != 0 {
+		t.Fatalf("a hub took the leaves' uplink: %+v", hub)
 	}
 }
