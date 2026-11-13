@@ -73,6 +73,7 @@ stamp "tunnel up: $TUNNEL_ADDRESS on $TUNNEL_INTERFACE"
 # 2. A containerd for the kubelet, with the images a node needs before it
 #    can pull anything.
 [ -n "${KEEP_RUNTIME:-}" ] || { kernel; own_runtime; }
+registry
 import_images "$B"/images
 stamp "container runtime ready, $(ls "$B"/images/*.tar | wc -l) image archives imported"
 

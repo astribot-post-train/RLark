@@ -35,6 +35,7 @@ import (
 
 var nodeAdmissionGVR = schema.GroupVersionResource{Group: stationObservationGroup, Version: stationObservationVersion, Resource: "nodeadmissions"}
 var siteNetworkGVR = schema.GroupVersionResource{Group: stationObservationGroup, Version: stationObservationVersion, Resource: "sitenetworks"}
+var addonGVR = schema.GroupVersionResource{Group: "rlinf.io", Version: "v1alpha1", Resource: "addons"}
 var rlarkNodeGVR = schema.GroupVersionResource{Group: "rlinf.io", Version: "v1alpha1", Resource: "nodes"}
 
 // Bootstrap serves a machine that is not a node yet. Its only credential is
@@ -331,6 +332,26 @@ func (b *Bootstrap) Redeem(ctx context.Context, code, publicKey string) (Bootstr
 	}
 
 	clusterID := text("spec", "clusterID")
+	// A node of a site whose registry cache is still being filled would pull
+	// through the uplink what the cache is there to spare it: it waits, and
+	// is told what the cache's addon says. A cluster with no cache waits for none.
+	addons, err := b.Management.Resource(addonGVR).Namespace(clusterID).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return BootstrapAnswer{}, 0, fmt.Errorf("list the Addons of %s: %w", clusterID, err)
+	}
+	for _, addon := range addons.Items {
+		kind, _, _ := unstructured.NestedString(addon.Object, "spec", "addonName")
+		role, _, _ := unstructured.NestedString(addon.Object, "spec", "values", "role")
+		phase, _, _ := unstructured.NestedString(addon.Object, "status", "phase")
+		seen, _, _ := unstructured.NestedInt64(addon.Object, "status", "observedGeneration")
+		if kind == "site-registry" && role == "cache" && (phase != "Ready" || seen != addon.GetGeneration()) {
+			message, _, _ := unstructured.NestedString(addon.Object, "status", "message")
+			if message == "" || phase == "Ready" {
+				message = "the site's registry cache " + addon.GetName() + " has not reported on its last change yet"
+			}
+			return BootstrapAnswer{State: "pending", Reason: message}, http.StatusAccepted, nil
+		}
+	}
 	member, err := b.Member(ctx, clusterID)
 	if err != nil {
 		return BootstrapAnswer{}, 0, fmt.Errorf("reach cluster %s: %w", clusterID, err)
