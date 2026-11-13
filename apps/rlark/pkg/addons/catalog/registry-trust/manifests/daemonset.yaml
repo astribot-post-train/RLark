@@ -9,6 +9,11 @@ metadata:
   labels:
     app: registry-trust{{ if eq $robot "true" }}-robot{{ end }}
 spec:
+  # Each node's Pod only installs and then idles, so a node that cannot run it
+  # (out of disk, say) must not hold back the others.
+  updateStrategy:
+    rollingUpdate:
+      maxUnavailable: 100%
   selector:
     matchLabels:
       app: registry-trust{{ if eq $robot "true" }}-robot{{ end }}
@@ -64,7 +69,10 @@ spec:
               # leaves certs.d unread. Such a config keeps its first directory and the
               # runtime restarts once; running containers are not affected. Any other
               # config is left alone. The node's annotation says what was done.
-              echo '{}' > /shared/node.json
+              # What this node is asked for (a digest of the parameters) and whether it holds.
+              spec=$(printf '%s\n%s\n%s' "$HOSTS" "$MIRRORS" "$CA_CERT" | sha256sum | cut -c1-16)
+              state="applied $spec"
+              fix=""
               old=$(sed -n "s/^ *config_path *= *[\"']\([^\"']*:[^\"']*\)[\"'].*/\1/p" "$config" 2>/dev/null | head -n 1)
               if [ -n "$old" ] && grep -q "^ *use_local_image_pull *= *false" "$config"; then
                 stamp=$(date -u +%Y%m%dT%H%M%SZ)
@@ -72,6 +80,7 @@ spec:
                   # A robot's runtime restarts only while no Station holds its device layer.
                   # That check does not exist yet, so the change waits here.
                   note="$stamp: registry config_path '$old' needs '$certs'; deferred on a robot node"
+                  state="deferred $spec: containerd config_path waits for a robot restart window"
                 else
                   cp -p "$config" "$config.registry-trust.$stamp"
                   sed -i "s#^\( *config_path *= *[\"']\)$old#\1$certs#" "$config"
@@ -80,26 +89,15 @@ spec:
                   note="$stamp: registry config_path '$old' -> '$certs', $runtime restarted; was ${config#/host}.registry-trust.$stamp"
                 fi
                 echo "$note"
-                printf '{"metadata":{"annotations":{"rlark.io/registry-trust-containerd":"%s"}}}\n' "$note" > /shared/node.json
+                fix=$(printf ',"rlark.io/registry-trust-containerd":"%s"' "$note")
               fi
-              # /etc/hosts: only the lines carrying the marker are ours; they are rewritten
-              # in place (same file, other lines untouched) to match the parameters.
-              marker='# rlark registry-trust'
-              grep -v " $marker\$" /host/etc/hosts > /tmp/hosts || true
-              if [ -n "$ADDRESS" ]; then
-                for name in $(echo "$HOSTS" | tr ',' '\n' | sed 's/:[0-9]*$//' | grep -v '^[0-9.]*$' | sort -u); do
-                  printf '%s %s %s\n' "$ADDRESS" "$name" "$marker" >> /tmp/hosts
-                done
-              fi
-              cmp -s /tmp/hosts /host/etc/hosts || cat /tmp/hosts > /host/etc/hosts
-              grep " $marker\$" /host/etc/hosts || echo "no managed /etc/hosts lines"
+              echo "$state"
+              printf '{"metadata":{"annotations":{"rlark.io/registry-trust.spec":"%s","rlark.io/registry-trust.state":"%s"%s}}}\n' "$spec" "$state" "$fix" > /shared/node.json
           env:
             - name: ROBOT
               value: "{{ $robot }}"
             - name: HOSTS
               value: "{{ $values.hosts }}"
-            - name: ADDRESS
-              value: "{{ $values.address }}"
             - name: MIRRORS
               value: "{{ $values.mirrors }}"
             - name: CA_CERT
