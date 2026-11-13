@@ -89,9 +89,16 @@ func exists(path string) bool {
 
 func TestKeeperReplacesTheMachinesProgramAndLeavesItAloneAfterwards(t *testing.T) {
 	m := newMachine(t, "new", "old")
-	if state, err := m.k.pass(); state != "replaced" || err != nil || m.program() != "new" || m.pid != 101 {
+	os.WriteFile(m.k.target+".interrupted", []byte("an earlier attempt\n"), 0644)
+	if state, err := m.k.pass(); state != "replaced" || err != nil || m.program() != "new" || m.pid != 101 || exists(m.k.target+".interrupted") {
 		t.Fatalf("state %q err %v program %q pid %d", state, err, m.program(), m.pid)
 	}
+	// A pass that failed is not settled until one succeeds.
+	os.WriteFile(m.k.target+".failure", []byte("stat /proc/1/exe: permission denied\n"), 0644)
+	if err := m.k.settledState(); err == nil || !strings.Contains(err.Error(), "permission denied") {
+		t.Fatalf("a failed pass counts as settled: %v", err)
+	}
+	os.Remove(m.k.target + ".failure")
 	if previous, _ := os.ReadFile(m.k.target + ".previous"); string(previous) != "old" || exists(m.k.target+".trial") || !exists(filepath.Join(m.k.dropIn, "10-trial.conf")) {
 		t.Fatalf("after the trial: previous %q, trial %v", previous, exists(m.k.target+".trial"))
 	}
@@ -199,10 +206,17 @@ func TestGuardTakesATrialBackAfterARestartOfTheMachine(t *testing.T) {
 	if m.program() != "new" || !exists(m.k.target+".trial") {
 		t.Fatalf("a trial of this boot was taken back: %q", m.program())
 	}
+	// The first trial a restart cuts short is tried again, the second is the version's last.
 	os.WriteFile(m.k.target+".trial", []byte("digest-of-new an-earlier-boot\n"), 0644)
 	run()
-	rejected, _ := os.ReadFile(m.k.target + ".rejected")
-	if info, _ := os.Stat(m.k.target); m.program() != "old" || exists(m.k.target+".trial") || string(rejected) != "digest-of-new\n" || info.Mode().Perm() != 0755 {
-		t.Fatalf("program %q trial %v rejected %q", m.program(), exists(m.k.target+".trial"), rejected)
+	interrupted, _ := os.ReadFile(m.k.target + ".interrupted")
+	if info, _ := os.Stat(m.k.target); m.program() != "old" || exists(m.k.target+".trial") || exists(m.k.target+".rejected") || string(interrupted) != "digest-of-new\n" || info.Mode().Perm() != 0755 {
+		t.Fatalf("program %q trial %v interrupted %q", m.program(), exists(m.k.target+".trial"), interrupted)
+	}
+	os.WriteFile(m.k.target, []byte("new"), 0755)
+	os.WriteFile(m.k.target+".trial", []byte("digest-of-new another-boot\n"), 0644)
+	run()
+	if rejected, _ := os.ReadFile(m.k.target + ".rejected"); m.program() != "old" || exists(m.k.target+".trial") || string(rejected) != "digest-of-new\n" {
+		t.Fatalf("program %q rejected %q after the second interrupted trial", m.program(), rejected)
 	}
 }
