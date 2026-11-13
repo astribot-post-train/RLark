@@ -12,6 +12,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -150,6 +151,8 @@ func (b *Bootstrap) uplink(w http.ResponseWriter, r *http.Request, code string) 
 	}
 	setup, known, err := b.UplinkSetup(r.Context(), code)
 	if err != nil {
+		// The reason stays here: the caller is a machine nobody knows yet.
+		log.Printf("bootstrap uplink: %v", err)
 		writeError(w, http.StatusServiceUnavailable, "bootstrap storage unavailable")
 		return
 	}
@@ -269,6 +272,7 @@ func (b *Bootstrap) redeem(w http.ResponseWriter, r *http.Request) {
 	}
 	answer, status, err := b.Redeem(r.Context(), req.Code, req.PublicKey)
 	if err != nil {
+		log.Printf("bootstrap redeem: %v", err)
 		writeError(w, http.StatusServiceUnavailable, "bootstrap storage unavailable")
 		return
 	}
