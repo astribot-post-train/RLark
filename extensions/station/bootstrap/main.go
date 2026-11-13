@@ -15,10 +15,12 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"io"
 	"io/fs"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -56,6 +58,10 @@ func main() {
 	log.SetFlags(log.Ltime)
 	if len(os.Args) == 4 && os.Args[1] == "kubelet-overrides" {
 		kubeletOverrides(os.Args[2], os.Args[3])
+		return
+	}
+	if len(os.Args) > 3 && os.Args[1] == "cert-sans" {
+		certSANs(os.Args[2], os.Args[3], os.Args[4:])
 		return
 	}
 	if os.Getenv("PHASE") != "" {
@@ -288,6 +294,86 @@ func kubeletOverrides(nodeFile, clusterFile string) {
 		log.Fatal(err)
 	}
 	os.Stdout.Write(patch)
+}
+
+// certSANs serves a control-plane node whose address is no longer the one its
+// cluster was made with. For the API server's certificate and etcd's two it
+// prints, on stderr, a line "<file> lacks <names>" when the certificate does
+// not name every entry of its list in the ClusterConfiguration or one of the
+// addresses the node is reached at now; on stdout the ClusterConfiguration
+// whose lists hold what they held, what the certificates name and those
+// addresses, for kubeadm to issue the certificates from.
+func certSANs(configFile, pki string, addresses []string) {
+	data, err := os.ReadFile(configFile)
+	if err != nil {
+		log.Fatal(err)
+	}
+	var config map[string]interface{}
+	if err := yaml.Unmarshal(data, &config); err != nil {
+		log.Fatalf("%s: %v", configFile, err)
+	}
+	// An address is compared in one spelling, as a certificate holds it.
+	spelling := func(name string) string {
+		if ip := net.ParseIP(name); ip != nil {
+			return ip.String()
+		}
+		return name
+	}
+	for _, list := range [][]string{{"apiserver.crt", "apiServer", "certSANs"}, {"etcd/server.crt", "etcd", "local", "serverCertSANs"}, {"etcd/peer.crt", "etcd", "local", "peerCertSANs"}} {
+		encoded, err := os.ReadFile(filepath.Join(pki, list[0]))
+		if err != nil {
+			log.Fatal(err)
+		}
+		block, _ := pem.Decode(encoded)
+		if block == nil {
+			log.Fatalf("%s holds no certificate", list[0])
+		}
+		certificate, err := x509.ParseCertificate(block.Bytes)
+		if err != nil {
+			log.Fatalf("%s: %v", list[0], err)
+		}
+		at := config
+		for _, key := range list[1 : len(list)-1] {
+			next, _ := at[key].(map[string]interface{})
+			if next == nil {
+				next = map[string]interface{}{}
+				at[key] = next
+			}
+			at = next
+		}
+		named, all, lacks := map[string]bool{}, []interface{}{}, []string{}
+		add := func(name string) {
+			if name = spelling(name); !named[name] {
+				named[name] = true
+				all = append(all, name)
+			}
+		}
+		for _, name := range certificate.DNSNames {
+			add(name)
+		}
+		for _, ip := range certificate.IPAddresses {
+			add(ip.String())
+		}
+		wanted, _ := at[list[len(list)-1]].([]interface{})
+		for _, address := range addresses {
+			wanted = append(wanted, address)
+		}
+		for _, name := range wanted {
+			if text := fmt.Sprint(name); !named[spelling(text)] {
+				lacks = append(lacks, spelling(text))
+				add(text)
+			}
+		}
+		if len(lacks) > 0 {
+			fmt.Fprintf(os.Stderr, "%s lacks %s\n", list[0], strings.Join(lacks, " "))
+		}
+		at[list[len(list)-1]] = all
+	}
+	out, err := yaml.Marshal(config)
+	if err != nil {
+		log.Fatal(err)
+	}
+	os.Stdout.Write(out)
 }
 
 // hostCommand runs a script of the bundle as a process of the host. After the

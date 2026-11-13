@@ -27,11 +27,47 @@ if [ -e /etc/kubernetes/kubelet.conf ]; then
   SOCKET=$(sed -n 's/.*--container-runtime-endpoint=unix:\/\/\([^ "]*\).*/\1/p' /var/lib/kubelet/kubeadm-flags.env)
   [ -S "$SOCKET" ] || fail "cannot find the node's container runtime socket"
   old=$(dirname "$(systemctl show kubelet -p ExecStart --value | sed -n 's/.*path=\([^ ;]*kubelet\) .*/\1/p')")
+  # What makes this machine a node of the old cluster is kept: if it does not
+  # become a node of the new one, it goes back by itself (back_to_old_cluster).
+  # A control-plane node's etcd is not among it: migrate-node.sh snapshots it.
+  OLD=$B/old-cluster
+  rm -rf "$OLD" && install -d "$OLD/kubelet" "$OLD/units"
+  cp -a /etc/kubernetes "$OLD/etc-kubernetes"
+  cp -a /var/lib/kubelet/config.yaml /var/lib/kubelet/kubeadm-flags.env /var/lib/kubelet/pki "$OLD/kubelet/"
+  [ ! -e /etc/systemd/system/kubelet.service ] || cp -a /etc/systemd/system/kubelet.service "$OLD/units/"
+  [ ! -d /etc/systemd/system/kubelet.service.d ] || cp -a /etc/systemd/system/kubelet.service.d "$OLD/units/"
+  [ ! -d /etc/cni/net.d ] || cp -a /etc/cni/net.d "$OLD/cni-net.d"
+  systemctl is-enabled rlark-station-gateway >/dev/null 2>&1 && touch "$OLD/had-host-gateway"
+  if [ -e /var/lib/etcd/rlark-snapshot-before-migrate.db ]; then
+    install -d /var/backups/rlark-node-migrate && mv /var/lib/etcd/rlark-snapshot-before-migrate.db /var/backups/rlark-node-migrate/etcd-snapshot.db
+    cp -a "$OLD/etc-kubernetes" /var/backups/rlark-node-migrate/
+  fi
   systemctl stop kubelet
   "$old/kubeadm" reset --force --cri-socket "unix://$SOCKET" > "$B"/reset.log 2>&1 || { tail -20 "$B"/reset.log >&2; fail "kubeadm reset"; }
   rm -rf /etc/cni/net.d/*
   KEEP_RUNTIME=1
   stamp "left the old cluster; runtime $SOCKET and its images are kept"
+  back_to_old_cluster() {
+    code=$?
+    [ $code != 0 ] || return 0
+    trap - EXIT
+    echo "$(date +%T) the move failed; back to the old cluster" >&2
+    systemctl stop kubelet 2>/dev/null || true
+    [ ! -x /opt/rlark/bin/kubeadm ] || /opt/rlark/bin/kubeadm reset --force --cri-socket "unix://$SOCKET" >/dev/null 2>&1 || true
+    rm -f /etc/systemd/system/kubelet.service /etc/systemd/system/kubelet.service.d/zz-rlark.conf
+    [ ! -e "$OLD/units/kubelet.service" ] || cp -a "$OLD/units/kubelet.service" /etc/systemd/system/
+    [ ! -d "$OLD/units/kubelet.service.d" ] || { rm -rf /etc/systemd/system/kubelet.service.d && cp -a "$OLD/units/kubelet.service.d" /etc/systemd/system/; }
+    rm -rf /etc/kubernetes && cp -a "$OLD/etc-kubernetes" /etc/kubernetes
+    install -d /var/lib/kubelet && cp -a "$OLD/kubelet/." /var/lib/kubelet/
+    [ ! -d "$OLD/cni-net.d" ] || { rm -rf /etc/cni/net.d && cp -a "$OLD/cni-net.d" /etc/cni/net.d; }
+    # The old cluster's own gateway pod takes the tunnel again.
+    [ -e "$OLD/had-host-gateway" ] || systemctl disable --now rlark-station-gateway >/dev/null 2>&1 || true
+    systemctl daemon-reload
+    systemctl start kubelet
+    echo "$(date +%T) the old kubelet is started with its old identity; what failed is in $B/install.log" >&2
+    exit $code
+  }
+  trap back_to_old_cluster EXIT
 fi
 
 install -d /opt/rlark/bin /opt/cni/bin /etc/rlark/station /etc/kubernetes/kubelet.conf.d /etc/containerd-fleet
@@ -149,6 +185,9 @@ ExecStart=/opt/rlark/bin/kubelet \$KUBELET_KUBECONFIG_ARGS \$KUBELET_CONFIG_ARGS
 UNIT
 systemctl daemon-reload
 systemctl enable kubelet >/dev/null 2>&1
+# A node class's own profile (a robot's CPU partition) derives its drop-in
+# from the kubelet's unit, which has just changed.
+[ ! -x /usr/local/sbin/fleet-node-profile ] || /usr/local/sbin/fleet-node-profile install >> "$B"/node-profile.log 2>&1 || fail "the node profile did not accept the new kubelet unit: $B/node-profile.log"
 
 # 4. Join. The node registers with its tunnel address, its labels and taints.
 {
