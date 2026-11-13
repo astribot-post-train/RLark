@@ -312,7 +312,7 @@ if ! initialized; then
   [ "$(df -k --output=avail /var/lib | tail -1)" -ge 10485760 ] || fail "/var/lib has less than 10 GiB free: etcd and the images need them"
   if [ ! -e "$S/init-started" ]; then
     # (A worker of the cluster it takes over has that cluster's pod routes.)
-    same_cluster || for subnet in "$POD_SUBNET" "$SERVICE_SUBNET"; do
+    same_cluster || [ -e "$S/took-over" ] || for subnet in "$POD_SUBNET" "$SERVICE_SUBNET"; do
       routes=$( { ip -4 route show root "$subnet"; ip -4 route show match "$subnet"; } | grep -v -E '^default |proto bird' | sort -u | tr '\n' ';')
       [ -z "$routes" ] || fail "$subnet is in use on this machine's networks already ($routes): the cluster's pod and Service networks must be free"
     done
@@ -446,7 +446,9 @@ fi
 case $changed in kubelet|reservation) ! initialized || systemctl restart kubelet ;; esac
 hosts_name "$ADDRESS" "$name"
 tries=0
-until [ "$(getent hosts "$name" | awk '{print $1}' | sort -u)" = "$ADDRESS" ]; do
+# (This machine's own line is the first; the site's line below it may still
+# say the machine the control plane was handed over from.)
+until [ "$(getent hosts "$name" | awk 'NR == 1 {print $1}')" = "$ADDRESS" ]; do
   tries=$((tries + 1))
   [ $tries -lt 30 ] || fail "$name does not resolve to $ADDRESS on this machine ($(getent hosts "$name" || echo "not at all")): /etc/hosts, journalctl -u rlark-station-gateway"
   sleep 1
