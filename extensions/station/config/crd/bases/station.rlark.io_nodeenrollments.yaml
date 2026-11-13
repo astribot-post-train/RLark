@@ -1,0 +1,146 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.18.0
+  name: nodeenrollments.station.rlark.io
+spec:
+  group: station.rlark.io
+  names:
+    kind: NodeEnrollment
+    listKind: NodeEnrollmentList
+    plural: nodeenrollments
+    shortNames:
+    - enroll
+    singular: nodeenrollment
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.nodeClass
+      name: Class
+      type: string
+    - jsonPath: .status.uses
+      name: Used
+      type: integer
+    - jsonPath: .spec.maxUses
+      name: Of
+      type: integer
+    - jsonPath: .spec.expiresAt
+      name: Expires
+      type: string
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          NodeEnrollment lets a number of machines join one cluster as nodes of one
+          class with a single code: an operator writes it once and runs the same
+          command on every machine. Each machine that redeems the code gets a
+          NodeAdmission of its own, named after the machine, and from there on joins
+          exactly as a machine admitted one by one.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            properties:
+              apiServer:
+                description: |-
+                  APIServer is the host:port of the cluster's API the machines join at;
+                  it must be reachable from them without the tunnel.
+                maxLength: 253
+                minLength: 3
+                type: string
+              clusterID:
+                maxLength: 128
+                minLength: 1
+                type: string
+              codeHash:
+                description: |-
+                  CodeHash is the SHA-256 of the code in hex. The code itself is shown
+                  once to the operator and stored nowhere.
+                maxLength: 64
+                minLength: 64
+                type: string
+              expiresAt:
+                description: ExpiresAt ends the time in which a new machine can redeem
+                  the code.
+                format: date-time
+                type: string
+              maxUses:
+                description: MaxUses is how many machines the code admits.
+                format: int32
+                maximum: 500
+                minimum: 1
+                type: integer
+              nodeClass:
+                description: NodeClass names the NodeClass every machine joins as.
+                maxLength: 63
+                minLength: 1
+                type: string
+              revoked:
+                description: Revoked ends the code for machines that have not redeemed
+                  it yet.
+                type: boolean
+            required:
+            - apiServer
+            - clusterID
+            - codeHash
+            - expiresAt
+            - maxUses
+            - nodeClass
+            type: object
+          status:
+            properties:
+              machines:
+                description: Machines are the machines the code admitted, written
+                  by Station API.
+                items:
+                  properties:
+                    nodeName:
+                      description: NodeName is the machine's host name and the name
+                        of its NodeAdmission.
+                      maxLength: 63
+                      type: string
+                    publicKey:
+                      description: |-
+                        PublicKey is the machine's WireGuard public key; the code stays valid
+                        for it, so a machine that runs the command again does not use it twice.
+                      maxLength: 44
+                      type: string
+                    redeemedAt:
+                      format: date-time
+                      type: string
+                  required:
+                  - nodeName
+                  - publicKey
+                  - redeemedAt
+                  type: object
+                maxItems: 500
+                type: array
+              uses:
+                description: Uses is the number of Machines.
+                format: int32
+                type: integer
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

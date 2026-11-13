@@ -24,17 +24,22 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 )
 
 var nodeAdmissionGVR = schema.GroupVersionResource{Group: stationObservationGroup, Version: stationObservationVersion, Resource: "nodeadmissions"}
+var nodeEnrollmentGVR = schema.GroupVersionResource{Group: stationObservationGroup, Version: stationObservationVersion, Resource: "nodeenrollments"}
+var nodeClassGVR = schema.GroupVersionResource{Group: stationObservationGroup, Version: stationObservationVersion, Resource: "nodeclasses"}
 var rlarkNodeGVR = schema.GroupVersionResource{Group: "rlinf.io", Version: "v1alpha1", Resource: "nodes"}
 
 // Bootstrap serves a machine that is not a node yet. Its only credential is
-// the one-time code of a NodeAdmission: the code buys the installer, the
-// machine's tunnel configuration and a short-lived token to join its cluster.
+// a code: the one-time code of a NodeAdmission written for this machine, or
+// the code of a NodeEnrollment that admits a number of machines of one class.
+// The code buys the installer, the machine's tunnel configuration and a
+// short-lived token to join its cluster.
 type Bootstrap struct {
 	Management dynamic.Interface
 	// Member returns a client of the registered cluster that may create a
@@ -53,6 +58,9 @@ type Bootstrap struct {
 type redeemRequest struct {
 	Code      string `json:"code"`
 	PublicKey string `json:"public_key"`
+	// NodeName is the machine's host name. A NodeEnrollment's code admits
+	// the machine under it; a NodeAdmission has the name already.
+	NodeName string `json:"node_name"`
 }
 
 type BootstrapJoin struct {
@@ -159,7 +167,7 @@ func (b *Bootstrap) redeem(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusTooManyRequests, "too many wrong codes")
 		return
 	}
-	answer, status, err := b.Redeem(r.Context(), req.Code, req.PublicKey)
+	answer, status, err := b.Redeem(r.Context(), req.Code, req.PublicKey, req.NodeName)
 	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, "bootstrap storage unavailable")
 		return
@@ -172,7 +180,7 @@ func (b *Bootstrap) redeem(w http.ResponseWriter, r *http.Request) {
 
 // Redeem binds the code to the machine's key, and once station-controller has
 // computed the machine's tunnel returns it with a fresh join token.
-func (b *Bootstrap) Redeem(ctx context.Context, code, publicKey string) (BootstrapAnswer, int, error) {
+func (b *Bootstrap) Redeem(ctx context.Context, code, publicKey, nodeName string) (BootstrapAnswer, int, error) {
 	digest := sha256.Sum256([]byte(code))
 	hash := hex.EncodeToString(digest[:])
 	list, err := b.Management.Resource(nodeAdmissionGVR).List(ctx, metav1.ListOptions{})
@@ -187,7 +195,11 @@ func (b *Bootstrap) Redeem(ctx context.Context, code, publicKey string) (Bootstr
 		}
 	}
 	if admission == nil {
-		return BootstrapAnswer{State: "rejected", Reason: "unknown code"}, http.StatusNotFound, nil
+		var answer BootstrapAnswer
+		var status int
+		if admission, answer, status, err = b.enroll(ctx, hash, publicKey, nodeName, list.Items); admission == nil {
+			return answer, status, err
+		}
 	}
 	text := func(fields ...string) string {
 		value, _, _ := unstructured.NestedString(admission.Object, fields...)
@@ -299,4 +311,108 @@ func newJoinToken(ctx context.Context, member kubernetes.Interface, nodeName str
 		return BootstrapJoin{}, fmt.Errorf("create the join token: %w", err)
 	}
 	return BootstrapJoin{Token: id + "." + secret, CACertHash: caHash}, nil
+}
+
+// enroll finds the NodeEnrollment the code belongs to and returns the
+// NodeAdmission of this machine under it, written on the machine's first
+// call. The machine is recorded in the enrollment before its admission is
+// written, so a code never admits more machines than it says.
+func (b *Bootstrap) enroll(ctx context.Context, hash, publicKey, nodeName string, admissions []unstructured.Unstructured) (*unstructured.Unstructured, BootstrapAnswer, int, error) {
+	rejected := func(status int, reason string) (*unstructured.Unstructured, BootstrapAnswer, int, error) {
+		return nil, BootstrapAnswer{State: "rejected", Reason: reason}, status, nil
+	}
+	list, err := b.Management.Resource(nodeEnrollmentGVR).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, BootstrapAnswer{}, 0, fmt.Errorf("list NodeEnrollments: %w", err)
+	}
+	var enrollment *unstructured.Unstructured
+	for i := range list.Items {
+		stored, _, _ := unstructured.NestedString(list.Items[i].Object, "spec", "codeHash")
+		if subtle.ConstantTimeCompare([]byte(stored), []byte(hash)) == 1 {
+			enrollment = &list.Items[i]
+		}
+	}
+	if enrollment == nil {
+		return rejected(http.StatusNotFound, "unknown code")
+	}
+	text := func(field string) string {
+		value, _, _ := unstructured.NestedString(enrollment.Object, "spec", field)
+		return value
+	}
+	class, err := b.Management.Resource(nodeClassGVR).Get(ctx, text("nodeClass"), metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		return rejected(http.StatusConflict, "NodeClass "+text("nodeClass")+" does not exist")
+	}
+	if err != nil {
+		return nil, BootstrapAnswer{}, 0, fmt.Errorf("read NodeClass %s: %w", text("nodeClass"), err)
+	}
+
+	machines, _, _ := unstructured.NestedSlice(enrollment.Object, "status", "machines")
+	known := false
+	for _, item := range machines {
+		if machine, _ := item.(map[string]interface{}); machine["publicKey"] == publicKey {
+			nodeName, known = machine["nodeName"].(string), true
+		}
+	}
+	if !known {
+		for _, item := range machines {
+			if machine, _ := item.(map[string]interface{}); machine["nodeName"] == nodeName {
+				return rejected(http.StatusConflict, "another machine joined as "+nodeName+" with this code")
+			}
+		}
+		revoked, _, _ := unstructured.NestedBool(enrollment.Object, "spec", "revoked")
+		expires, err := time.Parse(time.RFC3339, text("expiresAt"))
+		maxUses, _, _ := unstructured.NestedInt64(enrollment.Object, "spec", "maxUses")
+		switch {
+		case revoked:
+			return rejected(http.StatusGone, "the code was revoked")
+		case err != nil || !b.now().Before(expires):
+			return rejected(http.StatusGone, "the code has expired")
+		case int64(len(machines)) >= maxUses:
+			return rejected(http.StatusGone, fmt.Sprintf("the code has admitted all %d machines", maxUses))
+		case len(validation.IsDNS1123Subdomain(nodeName)) > 0 || len(nodeName) > 63:
+			return rejected(http.StatusBadRequest, "node_name must be the machine's host name in lower case")
+		}
+		for i := range admissions {
+			if admissions[i].GetNamespace() == enrollment.GetNamespace() && admissions[i].GetName() == nodeName {
+				return rejected(http.StatusConflict, "a node named "+nodeName+" is admitted already; remove it first or rename the machine")
+			}
+		}
+		machines = append(machines, map[string]interface{}{"publicKey": publicKey, "nodeName": nodeName, "redeemedAt": b.now().UTC().Format(time.RFC3339)})
+		_ = unstructured.SetNestedSlice(enrollment.Object, machines, "status", "machines")
+		_ = unstructured.SetNestedField(enrollment.Object, int64(len(machines)), "status", "uses")
+		if _, err := b.Management.Resource(nodeEnrollmentGVR).Namespace(enrollment.GetNamespace()).UpdateStatus(ctx, enrollment, metav1.UpdateOptions{}); apierrors.IsConflict(err) {
+			// Another machine redeemed at the same moment; this one calls again.
+			return nil, BootstrapAnswer{State: "pending", Reason: "waiting for a turn"}, http.StatusAccepted, nil
+		} else if err != nil {
+			return nil, BootstrapAnswer{}, 0, fmt.Errorf("record the machine in NodeEnrollment %s/%s: %w", enrollment.GetNamespace(), enrollment.GetName(), err)
+		}
+	}
+
+	resource := b.Management.Resource(nodeAdmissionGVR).Namespace(enrollment.GetNamespace())
+	admission, err := resource.Get(ctx, nodeName, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		// The admission's own code hash only has to be one no code hashes to.
+		own := sha256.Sum256([]byte(hash + "/" + publicKey))
+		spec := map[string]interface{}{
+			"clusterID": text("clusterID"), "codeHash": hex.EncodeToString(own[:]), "expiresAt": text("expiresAt"), "apiServer": text("apiServer"),
+			"publicKey": publicKey, "redeemedAt": b.now().UTC().Format(time.RFC3339),
+		}
+		if labels, found, _ := unstructured.NestedMap(class.Object, "spec", "labels"); found {
+			spec["labels"] = labels
+		}
+		if taints, found, _ := unstructured.NestedSlice(class.Object, "spec", "taints"); found {
+			spec["taints"] = taints
+		}
+		admission, err = resource.Create(ctx, &unstructured.Unstructured{Object: map[string]interface{}{
+			"apiVersion": stationObservationGroup + "/" + stationObservationVersion, "kind": "NodeAdmission",
+			"metadata": map[string]interface{}{"name": nodeName, "namespace": enrollment.GetNamespace(),
+				"labels": map[string]interface{}{"station.rlark.io/enrollment": enrollment.GetName(), "station.rlark.io/node-class": class.GetName()}},
+			"spec": spec,
+		}}, metav1.CreateOptions{})
+	}
+	if err != nil {
+		return nil, BootstrapAnswer{}, 0, fmt.Errorf("admit %s under NodeEnrollment %s/%s: %w", nodeName, enrollment.GetNamespace(), enrollment.GetName(), err)
+	}
+	return admission, BootstrapAnswer{}, 0, nil
 }

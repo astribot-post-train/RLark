@@ -132,7 +132,13 @@ func main() {
 	if err != nil {
 		log.Fatalf("create the WireGuard key: %v", err)
 	}
-	request, _ := json.Marshal(map[string]string{"code": code, "public_key": strings.TrimSpace(string(key))})
+	// The node is named after the machine; a code that admits a number of
+	// machines has no other name for this one.
+	hostname, err := os.ReadFile("/etc/hostname")
+	if err != nil {
+		log.Fatalf("read the machine's host name: %v", err)
+	}
+	request, _ := json.Marshal(map[string]string{"code": code, "public_key": strings.TrimSpace(string(key)), "node_name": strings.ToLower(strings.TrimSpace(string(hostname)))})
 	var granted answer
 	for deadline := time.Now().Add(2 * time.Minute); ; time.Sleep(2 * time.Second) {
 		response, err := client.Post(server+"/v1/bootstrap/redeem", "application/json", bytes.NewReader(request))

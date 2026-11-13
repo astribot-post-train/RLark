@@ -42,7 +42,16 @@ rules:
   verbs: ["get", "create", "update"]
 - apiGroups: ["station.rlark.io"]
   resources: ["nodeadmissions"]
-  verbs: ["list", "update"]
+  verbs: ["get", "list", "create", "update"]
+- apiGroups: ["station.rlark.io"]
+  resources: ["nodeenrollments"]
+  verbs: ["list"]
+- apiGroups: ["station.rlark.io"]
+  resources: ["nodeenrollments/status"]
+  verbs: ["update"]
+- apiGroups: ["station.rlark.io"]
+  resources: ["nodeclasses"]
+  verbs: ["get"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
