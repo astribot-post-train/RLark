@@ -82,7 +82,7 @@ func TestSiteRegistryRendersBothRoles(t *testing.T) {
 	}
 	if deployment.Kind != "Deployment" || spec.NodeSelector["rlark.io/site-registry"] != "true" || len(spec.Volumes) != 3 ||
 		spec.Volumes[1].HostPath == nil || spec.Volumes[1].HostPath.Path != "/var/lib/rlark/site-cache" ||
-		!env["REGISTRY_PROXY_USERNAME"] || !env["REGISTRY_PROXY_PASSWORD"] || !env["SSL_CERT_FILE"] || env["REGISTRY_STORAGE_S3_ACCESSKEY"] {
+		!env["REGISTRY_PROXY_USERNAME"] || !env["REGISTRY_PROXY_PASSWORD"] || !env["SSL_CERT_FILE"] || !env["GODEBUG"] || env["REGISTRY_STORAGE_S3_ACCESSKEY"] {
 		t.Fatalf("cache workload:\n%s", m[1].Raw)
 	}
 }

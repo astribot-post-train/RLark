@@ -529,3 +529,38 @@ func TestApplyObjectLeavesAnUnchangedObjectAloneAcrossStatusWrites(t *testing.T)
 		t.Fatalf("object written again after a status-only change: resourceVersion %s -> %s", before.GetResourceVersion(), after.GetResourceVersion())
 	}
 }
+
+// Moving a site's cache to another machine is moving the label its Deployment selects on: the Pod on the node
+// that lost the label is replaced, the one on a matching node and Pods of other workloads are left alone.
+func TestReplacePodsOnUnselectedNodesFollowsTheLabel(t *testing.T) {
+	ctx := context.Background()
+	scheme := runtime.NewScheme()
+	if err := clientgoscheme.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	replicas := int32(1)
+	deployment := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{Name: "site-registry", Namespace: "rlark-system", Labels: map[string]string{"rlark.io/addon-name": "site-registry"}},
+		Spec: appsv1.DeploymentSpec{Replicas: &replicas, Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": "site-registry"}},
+			Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{NodeSelector: map[string]string{"rlark.io/site-registry": "true"}}}},
+	}
+	node := func(name string, labels map[string]string) *corev1.Node {
+		return &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: name, Labels: labels}}
+	}
+	pod := func(name, app, nodeName string) *corev1.Pod {
+		return &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "rlark-system", UID: types.UID(name), Labels: map[string]string{"app": app}}, Spec: corev1.PodSpec{NodeName: nodeName}}
+	}
+	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(deployment,
+		node("old", nil), node("new", map[string]string{"rlark.io/site-registry": "true"}),
+		pod("cache-on-old", "site-registry", "old"), pod("cache-on-new", "site-registry", "new"), pod("other-on-old", "other", "old")).Build()
+	r := &pullReconciler{c: &Controller{Controller: base.Controller{LocalKubeClient: cl}}}
+	if err := r.replacePodsOnUnselectedNodes(ctx, &rlarkv1alpha1.Addon{ObjectMeta: metav1.ObjectMeta{Name: "site-registry"}}); err != nil {
+		t.Fatal(err)
+	}
+	for name, want := range map[string]bool{"cache-on-old": false, "cache-on-new": true, "other-on-old": true} {
+		err := cl.Get(ctx, types.NamespacedName{Name: name, Namespace: "rlark-system"}, &corev1.Pod{})
+		if (err == nil) != want {
+			t.Errorf("%s: present=%v, want %v", name, err == nil, want)
+		}
+	}
+}

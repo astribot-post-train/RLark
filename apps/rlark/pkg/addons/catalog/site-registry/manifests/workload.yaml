@@ -51,6 +51,10 @@ spec:
               valueFrom: {secretKeyRef: {name: {{ .Values.secret }}, key: proxy-password}}
             - name: SSL_CERT_FILE
               value: /etc/distribution/upstream-ca.crt
+            # One connection per upstream request: over HTTP/2 every request shares one TCP connection, and one
+            # stalled stream on it held up all fetches from the origin (rehearsal 11-14).
+            - name: GODEBUG
+              value: http2client=0
 {{- else }}
             - name: REGISTRY_STORAGE_S3_ACCESSKEY
               valueFrom: {secretKeyRef: {name: {{ .Values.secret }}, key: s3-accesskey}}

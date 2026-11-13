@@ -163,6 +163,11 @@ func (r *pullReconciler) Reconcile(ctx context.Context, req reconcile.Request) (
 		}
 	}
 
+	if err := r.replacePodsOnUnselectedNodes(ctx, &mgmtAddon); err != nil {
+		r.updateStatus(ctx, &mgmtAddon, rlarkv1alpha1.AddonPhaseFailed, fmt.Sprintf("placement: %v", err))
+		return reconcile.Result{RequeueAfter: AddonRequeueInterval}, nil
+	}
+
 	// Check readiness
 	ready, msg, err := r.checkReady(ctx, &mgmtAddon)
 	if err != nil {
@@ -413,6 +418,51 @@ func (r *pullReconciler) cleanupAddon(ctx context.Context, mgmtAddon *rlarkv1alp
 	}
 	if pending {
 		return errAddonCleanupPending
+	}
+	return nil
+}
+
+// replacePodsOnUnselectedNodes deletes a Pod of an Addon Deployment that runs on a node its node selector no
+// longer matches, so the Deployment starts it again on a node that does. The scheduler reads the selector only
+// when it places a Pod; without this, moving a label (the node a site's image cache runs on, say) would leave
+// the Pod where it was. A DaemonSet's controller does this by itself.
+func (r *pullReconciler) replacePodsOnUnselectedNodes(ctx context.Context, mgmtAddon *rlarkv1alpha1.Addon) error {
+	deployments := &appsv1.DeploymentList{}
+	if err := r.c.LocalKubeClient.List(ctx, deployments, client.MatchingLabels{addons.LabelAddonName: mgmtAddon.Name}); err != nil {
+		return err
+	}
+	for _, d := range deployments.Items {
+		selector := d.Spec.Template.Spec.NodeSelector
+		if len(selector) == 0 {
+			continue
+		}
+		pods := &corev1.PodList{}
+		if err := r.c.LocalKubeClient.List(ctx, pods, client.InNamespace(d.Namespace), client.MatchingLabels(d.Spec.Selector.MatchLabels)); err != nil {
+			return err
+		}
+		for i := range pods.Items {
+			pod := &pods.Items[i]
+			if pod.Spec.NodeName == "" || pod.DeletionTimestamp != nil {
+				continue
+			}
+			node := &corev1.Node{}
+			if err := r.c.LocalKubeClient.Get(ctx, types.NamespacedName{Name: pod.Spec.NodeName}, node); client.IgnoreNotFound(err) != nil {
+				return err
+			}
+			matches := true
+			for k, v := range selector {
+				if node.Labels[k] != v {
+					matches = false
+				}
+			}
+			if matches {
+				continue
+			}
+			log.FromContext(ctx).Info("replacing a Pod on a node its selector no longer matches", "pod", pod.Name, "node", pod.Spec.NodeName)
+			if err := r.c.LocalKubeClient.Delete(ctx, pod, client.Preconditions{UID: &pod.UID}); client.IgnoreNotFound(err) != nil {
+				return err
+			}
+		}
 	}
 	return nil
 }
