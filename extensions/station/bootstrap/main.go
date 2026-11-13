@@ -130,7 +130,7 @@ func main() {
 
 	// Before the code is spent: it is also what the device before this
 	// machine fetches its uplink setup with.
-	if err := uplinkCheck(server, os.Getenv("RLARK_MIGRATE") != ""); err != nil {
+	if err := uplinkCheck(server); err != nil {
 		log.Fatal(err)
 	}
 	key, err := exec.Command(stage+"/bin/station-gateway", "--public-key").Output()

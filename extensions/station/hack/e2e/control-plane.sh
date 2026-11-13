@@ -343,7 +343,7 @@ UNIT
 # is ws: the Job of migrate-node.sh, in the old cluster, runs the installer on
 # the node. BREAK=yes gives it a join token that is none: the join fails and
 # the node must be back in the old cluster by itself.
-move() { # NODE [FROM [TO [API]]]; MIGRATE=control-plane for the old cluster's last node
+move() { # NODE [FROM [TO [API]]]
   local node=$1 from=${2:-robot1} to=${3:-ws} api=${4:-$ROBOT:6443} code t0 runtime
   runtime=$(on "$node" sed -n 's/.*--container-runtime-endpoint=unix:\/\/\([^ "]*\).*/\1/p' /var/lib/kubelet/kubeadm-flags.env)
   on "$node" sh -c "\$(command -v ctr || echo /opt/rlark-containerd/bin/ctr) -a $runtime -n k8s.io images import -" < "$D/installer.tar" >/dev/null
@@ -373,7 +373,7 @@ spec:
         env:
         - {name: RLARK_SERVER, value: "https://$P-station-api:18443"}
         - {name: RLARK_CODE, value: "$code"}
-        - {name: RLARK_MIGRATE, value: "${MIGRATE:-node}"}
+        - {name: RLARK_MIGRATE, value: "node"}
         - name: RLARK_CA
           value: |
 $(sed 's/^/            /' "$D/pki/ca.crt")

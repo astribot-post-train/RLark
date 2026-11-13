@@ -29,30 +29,18 @@ func TestKernelUplinkCheck(t *testing.T) {
 	ip("route add default via 192.168.0.11")
 	const server = "https://10.11.14.128:18443"
 
-	if err := uplinkCheck(server, false); err != nil {
+	if err := uplinkCheck(server); err != nil {
 		t.Fatalf("a machine that dials from its own address behind the router: %v", err)
 	}
-	if err := uplinkCheck("https://192.168.0.11:18443", false); err != nil {
+	if err := uplinkCheck("https://192.168.0.11:18443"); err != nil {
 		t.Fatalf("a server in the machine's own network: %v", err)
 	}
 
 	// The address of the venue's network that nothing gave the machine.
 	ip("addr add 192.168.31.251/32 dev inner")
 	ip("route add 10.11.0.0/16 via 192.168.0.11 src 192.168.31.251")
-	err := uplinkCheck(server, false)
+	err := uplinkCheck(server)
 	if err == nil || !strings.Contains(err.Error(), "dials out from 192.168.31.251") || !strings.Contains(err.Error(), "gateway 192.168.0.11 (there it has 192.168.0.10)") {
-		t.Fatalf("a new machine with a foreign source address: %v", err)
+		t.Fatalf("a machine with a foreign source address: %v", err)
 	}
-	if err := uplinkCheck(server, true); err != nil {
-		t.Fatalf("a node that moves and alone holds its address: %v", err)
-	}
-	// The router is given the address by the venue (the night of 11-13).
-	ip("-n router link add eth1 type dummy")
-	ip("-n router addr add 192.168.31.251/24 dev eth1")
-	ip("-n router link set eth1 up")
-	err = uplinkCheck(server, true)
-	if err == nil || !strings.Contains(err.Error(), "answers for that address too") {
-		t.Fatalf("a node that moves while the router holds its address: %v", err)
-	}
-	t.Log(err)
 }
