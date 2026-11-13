@@ -47,8 +47,8 @@ old get nodes -l node-role.kubernetes.io/control-plane -o name | grep -qx "node/
 [[ $mode == node || ${CONTROL_PLANE:-} == yes ]] || { echo "$NODE is the control plane of $old_cluster: move the other nodes first, then this one with CONTROL_PLANE=yes" >&2; exit 1; }
 stamp "$NODE: $old_cluster -> $CLUSTER, keeps $address${uplink:+ uplink $uplink}"
 
-command=$(KCP=$KCP ADDRESS=$address UPLINK=$uplink TAINTS=${TAINTS:-} "$HERE/admit-node.sh" "$CLUSTER" "$NODE" "$API_SERVER" "$STATION_API" "$@")
-code=$(echo "$command" | sed -n 's#.*/b/\([a-z0-9]*\) .*#\1#p')
+command=$(KCP=$KCP CA=$CA ADDRESS=$address UPLINK=$uplink TAINTS=${TAINTS:-} "$HERE/admit-node.sh" "$CLUSTER" "$NODE" "$API_SERVER" "$STATION_API" "$@")
+code=$(echo "$command" | tail -1 | sed -n 's#.*/b/\([a-z0-9]*\) .*#\1#p')
 name=$(echo "node-migrate-$NODE" | cut -c1-63)
 if [[ $mode == control-plane ]]; then
   old -n kube-system exec "etcd-$NODE" -- etcdctl --endpoints https://127.0.0.1:2379 --cacert /etc/kubernetes/pki/etcd/ca.crt \
