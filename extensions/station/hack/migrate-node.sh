@@ -36,7 +36,8 @@ import json, sys
 for e in json.load(sys.stdin)["items"]:
     if e["metadata"]["name"] == sys.argv[1] and e["status"].get("phase") == "Enrolled":
         config = json.loads(e["status"]["config"])
-        print(e["metadata"]["namespace"], e["status"]["tunnelAddress"], config["listenPort"])' "$NODE")
+        print(e["metadata"]["namespace"], e["status"]["tunnelAddress"], config["listenPort"])' "$NODE") || true
+[[ -n ${old_namespace:-} ]] || { echo "$NODE has no Enrolled NetworkEnrollment in the management plane: it is not a node of the site network under that name (kubectl get networkenrollments.station.rlark.io -A)" >&2; exit 1; }
 old_cluster=$(mgmt -n "$old_namespace" get networkenrollments.station.rlark.io "$NODE" -o jsonpath='{.spec.clusterID}')
 uplink=$(mgmt -n station-system get sitenetwork default -o json | python3 -c '
 import json, sys
