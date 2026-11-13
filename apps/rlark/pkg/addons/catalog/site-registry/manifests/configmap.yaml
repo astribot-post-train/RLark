@@ -15,6 +15,11 @@ data:
     proxy:
       remoteurl: {{ .Values.upstream }}
       ttl: {{ .Values.ttl }}
+      # The login comes from a credential helper rather than username/password: with the latter the cache
+      # asks the origin for its login method when it starts and exits if the origin is unreachable, so a
+      # site cut off from the origin could not serve even what it holds.
+      exec:
+        command: /etc/distribution/credential-helper
 {{- else }}
       s3:
         bucket: {{ .Values.s3Bucket }}
@@ -53,4 +58,54 @@ data:
 {{- if eq .Values.role "cache" }}
   upstream-ca.crt: |
 {{ indent 4 .Values.caCert }}
+  credential-helper: |
+    #!/bin/sh
+    # docker credential helper protocol: "get", the server URL on stdin; answers the cache's login to its origin
+    [ "$1" = get ] || exit 1
+    cat > /dev/null
+    printf '{"Username":"%s","Secret":"%s"}' "$(cat /run/site-registry/proxy-username)" "$(cat /run/site-registry/proxy-password)"
+  prewarm.sh: |
+    # Pulls every layer of each image in PREWARM through this site's cache, so the cache holds it before the
+    # site's nodes ask for it: the cache stores a layer only for the first of several simultaneous requests.
+    # A read that stalls for STALL seconds is dropped and the layer asked for again (up to 5 times). An image
+    # counts as warm once a pass returns every layer at local speed (over LOCAL_MBPS); a layer whose first
+    # fetch stalled reaches the cache only after that fetch ends, so the pass is repeated until then.
+    set -eu
+    auth="Authorization: Basic $(printf '%s:%s' "$(cat /run/site-registry/proxy-username)" "$(cat /run/site-registry/proxy-password)" | base64 | tr -d '\n')"
+    accept="Accept: application/vnd.oci.image.index.v1+json,application/vnd.docker.distribution.manifest.list.v2+json,application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.v2+json"
+    get() { # url file
+      for attempt in 1 2 3 4 5; do
+        wget -q -T "$STALL" --header "$auth" --header "$accept" -O "$2" "$1" && return 0
+        echo "  retry $attempt: $1"; sleep $((attempt * 5))
+      done
+      echo "FAILED: $1"; return 1
+    }
+    slow=0
+    fetch() { # repo digest: the manifest, and every blob below it; counts in $slow the blobs that came slower than local
+      m=/tmp/manifest.$$.$2; get "$URL/v2/$1/manifests/$2" "$m"
+      if grep -q '"manifests"' "$m"; then
+        for d in $(grep -o 'sha256:[0-9a-f]\{64\}' "$m"); do fetch "$1" "$d"; done
+      else
+        # each blob entry holds one "digest" and one "size", in either order: take them two at a time
+        grep -o '"digest": *"sha256:[0-9a-f]\{64\}"\|"size": *[0-9]*' "$m" | sed 's/"digest": *"\(.*\)"/D \1/; s/"size": *\([0-9]*\)/S \1/' | paste -d' ' - - |
+          while read -r k1 v1 k2 v2; do
+            if [ "$k1" = D ]; then d=$v1 s=$v2; else d=$v2 s=$v1; fi
+            start=$(date +%s); get "$URL/v2/$1/blobs/$d" /dev/null
+            [ $(( $(date +%s) - start )) -le $(( s / (LOCAL_MBPS * 1048576) + 1 )) ] || echo slow
+        done > /tmp/slow.$$
+        slow=$((slow + $(wc -l < /tmp/slow.$$)))
+      fi
+      rm -f "$m" /tmp/slow.$$
+    }
+    for ref in $(echo "$PREWARM" | tr ',' ' '); do
+      path=${ref#*/}; digest=${path##*@}; repo=${path%@*}; repo=${repo%:*}
+      for pass in 1 2 3 4 5 6 7 8 9 10; do
+        slow=0; start=$(date +%s); fetch "$repo" "$digest"
+        echo "pass $pass: $ref, $(( $(date +%s) - start ))s, $slow layers slower than local"
+        [ "$slow" = 0 ] && break
+        [ "$pass" = 10 ] && { echo "NOT WARM: $ref"; exit 1; }
+        sleep 30
+      done
+    done
+    echo "prewarm done"
 {{- end }}

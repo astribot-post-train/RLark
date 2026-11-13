@@ -19,7 +19,7 @@ spec:
       labels:
         app: {{ .AddonName }}
       annotations:
-        rlark.io/config: {{ printf "%s|%s|%s|%s|%s|%s|%s|%s" .Values.listen .Values.s3Bucket .Values.s3Region .Values.s3Endpoint .Values.s3RootDirectory .Values.upstream .Values.ttl .Values.caCert | printf "%q" }}
+        rlark.io/config: {{ printf "%s|%s|%s|%s|%s|%s|%s|%s|%s|%s" .Values.listen .Values.s3Bucket .Values.s3Region .Values.s3Endpoint .Values.s3RootDirectory .Values.upstream .Values.ttl .Values.caCert .Values.relayImage .Values.relayIdle | printf "%q" }}
     spec:
       hostNetwork: true
       dnsPolicy: ClusterFirstWithHostNet
@@ -44,11 +44,13 @@ spec:
           env:
             - name: OTEL_TRACES_EXPORTER
               value: none
+{{- if ne .Values.role "mirror" }}
+            # Every fetch from the origin (cache) or from the object store (registry) goes through the relay,
+            # which ends a connection that stays open but silent: the client reads a body without a deadline.
+            - name: HTTPS_PROXY
+              value: http://127.0.0.1:{{ .Values.relayPort }}
+{{- end }}
 {{- if eq .Values.role "cache" }}
-            - name: REGISTRY_PROXY_USERNAME
-              valueFrom: {secretKeyRef: {name: {{ .Values.secret }}, key: proxy-username}}
-            - name: REGISTRY_PROXY_PASSWORD
-              valueFrom: {secretKeyRef: {name: {{ .Values.secret }}, key: proxy-password}}
             - name: SSL_CERT_FILE
               value: /etc/distribution/upstream-ca.crt
             # One connection per upstream request: over HTTP/2 every request shares one TCP connection, and one
@@ -83,11 +85,20 @@ spec:
             - name: credentials
               mountPath: /run/site-registry
               readOnly: true
+        - name: relay
+          image: {{ .Values.relayImage }}
+          imagePullPolicy: IfNotPresent
+          command: [rlark-tools, idle-relay, --listen, "127.0.0.1:{{ .Values.relayPort }}", --idle, "{{ .Values.relayIdle }}"]
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
 {{- end }}
       volumes:
         - name: config
           configMap:
             name: {{ .AddonName }}
+            defaultMode: 0755
 {{- if eq .Values.role "cache" }}
         - name: cache
           hostPath:
@@ -102,4 +113,8 @@ spec:
               - {key: htpasswd, path: htpasswd}
               - {key: tls.crt, path: tls.crt}
               - {key: tls.key, path: tls.key}
+{{- if eq .Values.role "cache" }}
+              - {key: proxy-username, path: proxy-username}
+              - {key: proxy-password, path: proxy-password}
+{{- end }}
 {{- end }}
