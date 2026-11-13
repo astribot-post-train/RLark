@@ -23,6 +23,7 @@
     "src/utils/nodeBatchMetadata.ts",
     "src/utils/nodeNetwork.ts",
     "src/components/NodeNetworkAddresses.tsx",
+    "src/components/NodeLinks.tsx",
     "src/utils/nodeResources.ts",
     "src/utils/nodeVisibility.ts",
     "src/utils/registryCommands.ts",

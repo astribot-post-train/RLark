@@ -3,6 +3,8 @@ import { Copy } from "lucide-react";
 import type { CRDNode } from "../types";
 import { copyText } from "../utils/clipboard.js";
 import {
+  nodeLinkHealth,
+  nodeLinkLine,
   nodeNetworkModel,
   type NodeNetworkDisplay,
 } from "../utils/nodeNetwork.js";
@@ -96,6 +98,15 @@ export function NodeNetworkAddresses({
               ? ` · ${formatChinaDateTime(model.reportedAt)}`
               : ""}
           </span>
+        </span>
+      )}
+      {network?.site && (
+        <span
+          className={`node-network-line node-link ${nodeLinkHealth(network.site)}`}
+          title={network.site.summary || undefined}
+        >
+          <span className="node-network-label">{zh ? "链路" : "Link"}</span>
+          <span>{nodeLinkLine(network.site, zh)}</span>
         </span>
       )}
       <span className="node-network-feedback" role="status">

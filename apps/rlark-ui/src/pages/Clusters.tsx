@@ -57,6 +57,9 @@ import {
   type SortDirection,
 } from "../components/shared";
 import { NodeResourceBrowser } from "../components/NodeResourceBrowser";
+import { NodeLinks } from "../components/NodeLinks";
+import { useNodeNetworks } from "../hooks/useNodeNetworks";
+import { nodeNetworkKey } from "../utils/nodeNetwork";
 import { formatChinaDateTime } from "../utils/time";
 
 type NodeWorker = {
@@ -587,6 +590,7 @@ export function NodeDetailReal({
 }) {
   const zh = c.nav.overview === "总览";
   const [nodeWorkers, setNodeWorkers] = useState<NodeWorker[]>([]);
+  const networks = useNodeNetworks(useMemo(() => [node], [node]), true);
   useAutoRefresh(
     async () => {
       const [taskItems, podItems] = await Promise.all([
@@ -1075,6 +1079,7 @@ export function NodeDetailReal({
           </div>
 
           <aside className="node-insight-side">
+            <NodeLinks network={networks[nodeNetworkKey(node)]} zh={zh} />
             <section className="node-insight-section">
               <div className="node-insight-section-head">
                 <div>

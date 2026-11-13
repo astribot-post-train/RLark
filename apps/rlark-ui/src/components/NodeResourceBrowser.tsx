@@ -22,6 +22,7 @@ import { ColumnFilterPopover } from "./ColumnFilterPopover";
 import { NodeNetworkAddresses } from "./NodeNetworkAddresses";
 import { useNodeNetworks } from "../hooks/useNodeNetworks";
 import {
+  nodeLinkHealth,
   nodeNetworkKey,
   nodeNetworkSearchText,
   type NodeNetworkDisplay,
@@ -381,9 +382,10 @@ export function NodeResourceBrowser({
               const resource = getNodeResourceSummary(node, zh);
               const key = nodeKey(node);
               const checked = selectedNodeKeys?.has(key) ?? false;
+              const site = nodeNetworks?.[nodeNetworkKey(node)]?.site;
               return (
                 <div
-                  className={`node-resource-row${onToggleScheduling ? " has-admin-actions" : ""}${selectable ? " has-selection" : ""}${checked ? " selected" : ""}`}
+                  className={`node-resource-row${onToggleScheduling ? " has-admin-actions" : ""}${selectable ? " has-selection" : ""}${checked ? " selected" : ""}${site && nodeLinkHealth(site) === "down" ? " link-down" : ""}`}
                   key={key}
                 >
                   {selectable && (

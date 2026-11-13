@@ -2,7 +2,18 @@ import { useEffect, useMemo, useState } from "react";
 import { requestJson, withQuery } from "../api";
 import { clustersApi } from "../backend";
 import type { ClusterSummary, CRDNode } from "../types";
-import type { NodeNetworkDisplay } from "../utils/nodeNetwork";
+import type { NodeNetworkDisplay, SiteNodeLinks } from "../utils/nodeNetwork";
+
+type SiteNode = {
+  node_name: string;
+  online: boolean;
+  tunnel: SiteNodeLinks["tunnel"];
+  network?: {
+    role?: string;
+    links?: SiteNodeLinks["links"];
+    link_summary?: string;
+  };
+};
 
 type Summary = {
   state: "current" | "stale" | "unreported";
@@ -63,8 +74,9 @@ export function useNodeNetworks(nodes: CRDNode[], enabled: boolean) {
                 }),
                 { signal: controller.signal },
               );
-              if (summary.state !== "unreported")
-                next[key] = {
+              // Every node gets an entry once read, so a page tells "read,
+              // nothing reported" from "not read yet".
+              next[key] = summary.state === "unreported" ? {} : {
                   wireguard: {
                     state: summary.state,
                     interfaces: summary.interface
@@ -85,9 +97,37 @@ export function useNodeNetworks(nodes: CRDNode[], enabled: boolean) {
             }
           }
         };
-        await Promise.all(
-          Array.from({ length: Math.min(6, targets.length) }, worker),
-        );
+        // One call per cluster gives every node's links; a cluster whose
+        // Station API does not answer just shows no link state.
+        const sites = async (namespace: string, clusterID: string) => {
+          try {
+            const { items } = await requestJson<{ items: SiteNode[] }>(
+              withQuery("/api/v1/site-nodes", { cluster_id: clusterID }),
+              { signal: controller.signal },
+            );
+            return items.map((item) => [`${namespace}/${item.node_name}`, item] as const);
+          } catch {
+            return [];
+          }
+        };
+        const namespaces = new Set(targets.map(([namespace]) => namespace));
+        const [siteEntries] = await Promise.all([
+          Promise.all(
+            [...mapping].filter(([namespace]) => namespaces.has(namespace) && !ambiguous.has(namespace)).map(([namespace, id]) => sites(namespace, id)),
+          ),
+          Promise.all(Array.from({ length: Math.min(6, targets.length) }, worker)),
+        ]);
+        for (const [key, item] of siteEntries.flat())
+          next[key] = {
+            ...next[key],
+            site: {
+              online: item.online,
+              tunnel: item.tunnel,
+              role: item.network?.role,
+              links: item.network?.links ?? [],
+              summary: item.network?.link_summary ?? "",
+            },
+          };
       } catch {
         for (const [namespace, name] of targets)
           next[`${namespace}/${name}`] = {
