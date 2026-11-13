@@ -93,7 +93,8 @@ certs)
     echo "$lacking" | while read -r line; do stamp "$line"; done
     dir=/var/backups/rlark-kube-upgrade/certs-$(date +%Y%m%d%H%M%S)
     install -d -m 700 "$dir" "$dir/replaced"
-    (umask 077 && tar -cpf "$dir/etc-kubernetes.tar" -C / etc/kubernetes)
+    # Without kubeadm's own copies of etcd from earlier upgrades.
+    (umask 077 && tar -cpf "$dir/etc-kubernetes.tar" -C / --exclude=etc/kubernetes/tmp etc/kubernetes)
     etcdctl snapshot save /var/lib/etcd/rlark-snapshot-before-certs.db > "$dir/etcd-snapshot.log" 2>&1 || { tail -5 "$dir/etcd-snapshot.log" >&2; fail "etcd snapshot"; }
     mv /var/lib/etcd/rlark-snapshot-before-certs.db "$dir/etcd-snapshot.db"
     cp "$WATCH/ClusterConfiguration.before.yaml" "$dir/"
