@@ -188,12 +188,11 @@ print(" ".join("%s %s/%s" % (r, s["allocatable"].get(r), c) for r, c in s["capac
   if [[ $cordoned != true ]]; then
     # Under an RLark agent a node's scheduling state is its management Node's:
     # the agent takes a cordon up to it and puts an uncordon made here back.
-    if [[ -n ${MANAGEMENT_KUBECONFIG:-} ]]; then
+    # Both are set: the agent itself may be a pod the drain took off this
+    # node, which cannot return to carry the management Node's state down.
+    [[ -z ${MANAGEMENT_KUBECONFIG:-} ]] ||
       kubectl --kubeconfig "$MANAGEMENT_KUBECONFIG" -n "$MANAGEMENT_NAMESPACE" patch nodes.rlinf.io "$node" --type=merge -p '{"spec":{"unschedulable":false}}' >/dev/null
-      until [[ $(k get node "$node" -o jsonpath='{.spec.unschedulable}') != true ]]; do sleep 1; done
-    else
-      k uncordon "$node" >/dev/null
-    fi
+    k uncordon "$node" >/dev/null
   fi
   k annotate node "$node" rlark.io/unschedulable-before-upgrade- >/dev/null
   stamp "$node: kubelet $VERSION and Ready in $(( $(date +%s) - t0 )) s"
