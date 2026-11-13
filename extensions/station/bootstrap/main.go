@@ -194,7 +194,10 @@ func main() {
 func migrate(settings []string) {
 	arguments := []string{"--unit", "rlark-node-migrate", "--collect", "--quiet"}
 	for _, setting := range settings {
-		if name := strings.SplitN(setting, "=", 2)[0]; strings.HasPrefix(name, "RLARK_") || strings.HasPrefix(name, "NODE_") || strings.HasPrefix(name, "TUNNEL_") || strings.HasPrefix(name, "JOIN_") || name == "PATH" {
+		// What install.sh reads, and no more: RLARK_CA is several lines, and
+		// the systemd of Ubuntu 20.04 refuses a unit whose environment holds
+		// a line break ("Invalid environment block").
+		if name := strings.SplitN(setting, "=", 2)[0]; name == "RLARK_MIGRATE" || strings.HasPrefix(name, "NODE_") || strings.HasPrefix(name, "TUNNEL_") || strings.HasPrefix(name, "JOIN_") || name == "PATH" {
 			arguments = append(arguments, "--setenv="+setting)
 		}
 	}
