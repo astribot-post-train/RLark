@@ -4,11 +4,9 @@
 #
 #   admit-node.sh CLUSTER_ID NODE_NAME API_SERVER STATION_API [label=value ...]
 #
-#   API_SERVER   host:port of the cluster's API as the machine reaches it without the tunnel;
-#                where the host is the control plane's name, API_ADDRESS is the address
-#                the machine resolves it to (one marked line in its /etc/hosts)
+#   API_SERVER   host:port of the cluster's API as the machine reaches it without the tunnel
 #   STATION_API  host:port of Station API as the machine reaches it
-# Environment: KCP (management kubeconfig), API_ADDRESS, TAINTS ("k=v:Effect,..."), ADDRESS
+# Environment: KCP (management kubeconfig), TAINTS ("k=v:Effect,..."), ADDRESS
 # (pin the tunnel address), LISTEN_PORT, UPLINK ("gateway,source,interface" for
 # a machine whose default route does not lead out), TTL (default "2 hours").
 # The Gateway's "add node" page does the same and shows the same command.
@@ -28,7 +26,6 @@ spec:
   expiresAt: "$(date -u -d "+${TTL:-2 hours}" +%Y-%m-%dT%H:%M:%SZ)"
   apiServer: $API_SERVER
 ADMISSION
-  [[ -z ${API_ADDRESS:-} ]] || echo "  apiServerAddress: $API_ADDRESS"
   [[ -z ${ADDRESS:-} ]] || echo "  address: $ADDRESS"
   [[ -z ${LISTEN_PORT:-} ]] || echo "  listenPort: $LISTEN_PORT"
   [[ -z ${UPLINK:-} ]] || { IFS=, read -r gateway source interface <<<"$UPLINK"; echo "  uplink: {gateway: $gateway, source: $source, interface: $interface}"; }

@@ -8,14 +8,15 @@
 #   rlark-station-gateway.service       the tunnel, started before the kubelet on every boot
 #   containerd-fleet.service            a containerd of its own for the kubelet (the machine's docker is not touched)
 #   kubelet.service                     reads drop-ins from /etc/kubernetes/kubelet.conf.d
-#   /etc/hosts                          one marked line for the control plane's name, when the node joins at a name
+#   /etc/hosts                          the site's names, kept by the tunnel service (lines ending in "# rlark names")
+#   /etc/rlark/station/resolv.conf      the site's name servers, likewise, for the kubelet to give to pods
 # and on its Node the annotations rlark.io/node-install-spec and -state (lib.sh).
 set -eu
 . /var/lib/rlark/bootstrap/lib.sh
 SOCKET=/run/containerd-fleet/containerd.sock
 # The site settings this node is installed from; what is this node's alone
 # (name, tunnel address, labels) is not among them.
-SETTINGS="worker api=$JOIN_API_SERVER address=${JOIN_API_ADDRESS:-} interface=$TUNNEL_INTERFACE"
+SETTINGS="worker api=$JOIN_API_SERVER interface=$TUNNEL_INTERFACE"
 command -v containerd >/dev/null || fail "containerd is required; it is installed together with docker"
 modprobe wireguard || fail "the kernel has no wireguard module"
 
@@ -74,17 +75,17 @@ stamp "tunnel up: $TUNNEL_ADDRESS on $TUNNEL_INTERFACE"
 
 # 2. A containerd for the kubelet, with the images a node needs before it
 #    can pull anything.
-if [ -z "${KEEP_RUNTIME:-}" ]; then own_runtime; else modprobe overlay; modprobe br_netfilter; fi
+if [ -z "${KEEP_RUNTIME:-}" ]; then own_runtime; else kernel; fi
 import_images "$B"/images
 stamp "container runtime ready, $(ls "$B"/images/*.tar | wc -l) image archives imported"
 
-# 3. The kubelet (lib.sh), and the control plane's name: a node that joins at
-#    a name resolves it by its own marked line in /etc/hosts, so that the
-#    control plane can move to another machine without any node's
-#    certificates or kubeconfig changing. A node that joins at an address
-#    has no such line.
+# 3. The kubelet (lib.sh). A node joins at the control plane's name, which
+#    the tunnel service has written into /etc/hosts from the site's names: the
+#    control plane can move to another machine or network without any node's
+#    certificates or kubeconfig changing.
 kubelet_unit
-hosts_line control-plane "${JOIN_API_ADDRESS:-}" "${JOIN_API_SERVER%:*}"
+case ${JOIN_API_SERVER%:*} in *[a-z]*) getent hosts "${JOIN_API_SERVER%:*}" >/dev/null ;; esac ||
+  fail "this machine cannot resolve ${JOIN_API_SERVER%:*}, the name of its cluster's control plane: it is not among the names its site network gave it (SiteNetwork, names)"
 
 # 4. Join. The node registers with its tunnel address, its labels and taints.
 {

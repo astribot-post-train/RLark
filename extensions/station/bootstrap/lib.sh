@@ -5,13 +5,14 @@ started=$(date +%s)
 stamp() { echo "$(date +%T) +$(( $(date +%s) - started ))s $*"; }
 fail() { echo "$(date +%T) FAILED: $*" >&2; exit 1; }
 
-# hosts_line OWNER ADDRESS NAME: /etc/hosts holds the one line
-# "ADDRESS NAME # rlark OWNER"; without an address it holds none. Only lines
-# carrying the marker are touched, and the file is rewritten in place: the
-# convention of the registry-trust addon ("# rlark registry-trust"), so that
-# whatever maintains marked lines on running nodes finds this one too.
-hosts_line() {
-  { grep -v " # rlark $1\$" /etc/hosts || true; [ -z "$2" ] || printf '%s %s # rlark %s\n' "$2" "$3" "$1"; } > "$B/hosts"
+# hosts_name ADDRESS NAME: /etc/hosts holds the one line
+# "ADDRESS NAME # rlark names"; without an address it holds none for NAME.
+# These are the lines station-gateway keeps from the site's names
+# (SiteNetwork, names; --hosts-file): this is for the first machine of a site
+# whose network declares none yet. The file is rewritten in place, as
+# host-network pods have this very file mounted.
+hosts_name() {
+  { grep -v " $2 # rlark names\$" /etc/hosts || true; [ -z "$1" ] || printf '%s %s # rlark names\n' "$1" "$2"; } > "$B/hosts"
   cmp -s "$B/hosts" /etc/hosts || { cat "$B/hosts" > /etc/hosts; changed=hosts; }
 }
 
@@ -31,7 +32,6 @@ keep_old_cluster() {
   [ ! -e /etc/systemd/system/kubelet.service ] || cp -a /etc/systemd/system/kubelet.service "$OLD/units/"
   [ ! -d /etc/systemd/system/kubelet.service.d ] || cp -a /etc/systemd/system/kubelet.service.d "$OLD/units/"
   [ ! -d /etc/cni/net.d ] || cp -a /etc/cni/net.d "$OLD/cni-net.d"
-  grep ' # rlark control-plane$' /etc/hosts > "$OLD/hosts-line" || true
   ! systemctl is-enabled rlark-station-gateway >/dev/null 2>&1 || touch "$OLD/had-host-gateway"
 }
 restore_old_cluster() {
@@ -40,9 +40,9 @@ restore_old_cluster() {
   [ ! -d "$OLD/units/kubelet.service.d" ] || { rm -rf /etc/systemd/system/kubelet.service.d && cp -a "$OLD/units/kubelet.service.d" /etc/systemd/system/; }
   rm -rf /etc/kubernetes && cp -a "$OLD/etc-kubernetes" /etc/kubernetes
   install -d /var/lib/kubelet && cp -a "$OLD/kubelet/." /var/lib/kubelet/
-  [ ! -d "$OLD/cni-net.d" ] || { rm -rf /etc/cni/net.d && cp -a "$OLD/cni-net.d" /etc/cni/net.d; }
-  { grep -v ' # rlark control-plane$' /etc/hosts || true; cat "$OLD/hosts-line"; } > "$B/hosts"
-  cmp -s "$B/hosts" /etc/hosts || cat "$B/hosts" > /etc/hosts
+  # The directory itself stays: the container runtime watches it, and would
+  # never see what is written into a new one in its place.
+  [ ! -d "$OLD/cni-net.d" ] || { install -d /etc/cni/net.d && rm -rf /etc/cni/net.d/* && cp -a "$OLD/cni-net.d/." /etc/cni/net.d/; }
   # The old cluster's own gateway pod takes the tunnel again.
   [ -e "$OLD/had-host-gateway" ] || systemctl disable --now rlark-station-gateway >/dev/null 2>&1 || true
   systemctl daemon-reload
@@ -53,7 +53,9 @@ restore_old_cluster() {
 # kubelet on every boot. It applies the configuration the agent stores once
 # the node has enrolled, the last one it applied when the machine boots or
 # when the pod that ran the tunnel is gone, and the administrator's document
-# until then. A service that is running as written is left alone.
+# until then; the names its document holds it keeps in /etc/hosts, the name
+# servers in /etc/rlark/station/resolv.conf. It counts as started when it has
+# applied its document once. A service that is running as written is left alone.
 tunnel_service() {
   install -d /etc/rlark/station
   cat > "$B/rlark-station-gateway.service" <<UNIT
@@ -65,8 +67,8 @@ Before=kubelet.service
 
 [Service]
 ExecStartPre=/bin/sh -c 'mkdir -p /run/station-network /run/station-observation && chown 65532 /run/station-network'
-ExecStart=/opt/rlark/bin/station-gateway --config /etc/rlark/station/bootstrap.json --computed-config /run/station-network/config.json --identity-file /run/station-observation/identity.json --observation-file /run/station-observation/wireguard.json --prune-routes
-ExecStartPost=/bin/sh -c 'for i in \$(seq 100); do ip -4 addr show dev $TUNNEL_INTERFACE 2>/dev/null | grep -q inet && exit 0; sleep 0.2; done; exit 1'
+ExecStart=/opt/rlark/bin/station-gateway --config /etc/rlark/station/bootstrap.json --computed-config /run/station-network/config.json --identity-file /run/station-observation/identity.json --observation-file /run/station-observation/wireguard.json --prune-routes --hosts-file /etc/hosts --resolv-file /etc/rlark/station/resolv.conf
+ExecStartPost=/bin/sh -c 'for i in \$(seq 100); do /opt/rlark/bin/station-gateway --config /etc/rlark/station/bootstrap.json --computed-config /run/station-network/config.json --check 2>/dev/null && exit 0; sleep 0.2; done; exit 1'
 Restart=always
 RestartSec=2
 
@@ -82,12 +84,21 @@ UNIT
   changed=tunnel
 }
 
+# kernel: the modules and settings a node's pod network needs, now and at
+# every boot, whatever container runtime the node has.
+kernel() {
+  modprobe overlay
+  modprobe br_netfilter
+  printf '%s\n' overlay br_netfilter wireguard > /etc/modules-load.d/rlark.conf
+  printf '%s\n' 'net.ipv4.ip_forward = 1' 'net.bridge.bridge-nf-call-iptables = 1' > /etc/sysctl.d/90-rlark.conf
+  sysctl -q -p /etc/sysctl.d/90-rlark.conf
+}
+
 # own_runtime: a containerd of its own for the kubelet; the machine's docker
 # and its containerd are not touched, nor restarted.
 own_runtime() {
   SOCKET=/run/containerd-fleet/containerd.sock
-  modprobe overlay
-  modprobe br_netfilter
+  kernel
   [ ! -S $SOCKET ] || ! systemctl is-enabled containerd-fleet >/dev/null 2>&1 || return 0
   install -d /etc/containerd-fleet
   containerd config default | sed -e 's#/var/lib/containerd#/var/lib/containerd-fleet#g' -e 's#/run/containerd#/run/containerd-fleet#g' \
@@ -113,9 +124,6 @@ TasksMax=infinity
 [Install]
 WantedBy=multi-user.target
 UNIT
-  printf '%s\n' overlay br_netfilter wireguard > /etc/modules-load.d/rlark.conf
-  printf '%s\n' 'net.ipv4.ip_forward = 1' 'net.bridge.bridge-nf-call-iptables = 1' > /etc/sysctl.d/90-rlark.conf
-  sysctl -q -p /etc/sysctl.d/90-rlark.conf
   systemctl daemon-reload
   systemctl enable --now containerd-fleet >/dev/null 2>&1 || fail "containerd-fleet did not start: journalctl -u containerd-fleet"
   changed=runtime
@@ -142,6 +150,17 @@ failSwapOn: false
 memorySwap:
   swapBehavior: NoSwap
 CONF
+  # The site's name servers, where its network declares them (SiteNetwork,
+  # sites, dns): the tunnel service keeps the file. A machine like a robot's
+  # computer has no name server of its own to give to pods.
+  dns=/etc/kubernetes/kubelet.conf.d/15-rlark-dns.conf
+  if [ -s /etc/rlark/station/resolv.conf ] && [ ! -e $dns ]; then
+    printf 'apiVersion: kubelet.config.k8s.io/v1beta1\nkind: KubeletConfiguration\nresolvConf: /etc/rlark/station/resolv.conf\n' > $dns
+    changed=kubelet
+  elif [ ! -s /etc/rlark/station/resolv.conf ] && [ -e $dns ]; then
+    rm -f $dns
+    changed=kubelet
+  fi
   cat > "$B/kubelet.service" <<UNIT
 [Unit]
 Description=RLark kubelet

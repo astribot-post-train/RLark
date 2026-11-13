@@ -7,8 +7,9 @@
 #
 # It asks Station API for nothing and carries no credential. Run again, it
 # goes on where an earlier run stopped, and changes nothing on a machine that
-# is finished. "IMAGE control-plane undo" takes the control plane away again
-# and puts the machine back into the cluster it had left.
+# is finished. "IMAGE control-plane check" runs the pre-flight alone and
+# changes nothing. "IMAGE control-plane undo" takes the control plane away
+# again and puts the machine back into the cluster it had left.
 #
 # In order:
 #   pre-flight  every refusal, before anything is changed
@@ -22,22 +23,33 @@
 #               taken down in between
 #   kubelet     the bundle's kubelet; this machine's share for everything that
 #               is not Kubernetes as a drop-in (SYSTEM_RESERVED_*)
-#   name        CONTROL_PLANE_NAME in /etc/hosts, at the tunnel address
+#   name        CONTROL_PLANE_NAME resolves to the tunnel address: among the
+#               site's names, which the tunnel service keeps in /etc/hosts,
+#               or written here where the site network declares no names yet
 #   init        kubeadm init at the bundle's version: the endpoint is the
-#               name; the certificates name it, the tunnel address, the LAN
-#               address and the node; the four components get requests and
-#               limits; with FROM_SNAPSHOT, etcd holds a snapshot of the
-#               control plane this one replaces, and the cluster's CAs are its
-#   manifests   the bundle's: Calico over the tunnel interface, then the site's
+#               name; the certificates name it, the tunnel address and the
+#               node; etcd listens on the tunnel address; the four components
+#               get requests and limits; with FROM_SNAPSHOT, etcd holds a
+#               snapshot of the control plane this one replaces, and the
+#               cluster's CAs are its
+#   manifests   the bundle's: Calico over the tunnel interface, reaching the
+#               API at the name and not through its Service; then the site's
 #   snapshots   a daily etcd snapshot into ETCD_SNAPSHOT_DIR, the first one now
+#   addresses   a refusal to call it done while a certificate, a kubeconfig,
+#               etcd or an object of the cluster holds an address of this
+#               machine other than the tunnel's
 #   annotations rlark.io/node-install-spec and -state (lib.sh)
+#
+# Nothing of the control plane knows the machine by an address of its own
+# network: the machine can be carried to another network, and comes back as
+# the same control plane when its tunnel does. The machine's swap, its docker,
+# its GPU and what runs outside Kubernetes are not touched or restarted.
 #
 # Parameters (environment):
 #   CONTROL_PLANE_NAME      required: the name every node reaches the API at
 #   POD_SUBNET, SERVICE_SUBNET   required
 #   NODE_NAME               this node's name (the one it has, else the hostname)
 #   TUNNEL_INTERFACE        st-wg0
-#   LAN_ADDRESS             a second address for the certificates (the default route's)
 #   POD_MTU                 1360
 #   SYSTEM_RESERVED_MEMORY  what Kubernetes may never take (Gi or Mi; all but 8 Gi)
 #   SYSTEM_RESERVED_CPU     likewise, in CPUs (all but 4)
@@ -78,12 +90,14 @@ undo() {
   [ -e "$S/left" ] || [ -e "$S/init-started" ] || { stamp "no control plane was made on this machine by this installer: nothing to undo"; exit 0; }
   SOCKET=$(cat "$S/socket")
   keep=/var/backups/rlark-control-plane/removed-$(date +%Y%m%d%H%M%S)
-  install -d -m 700 "$keep"
   if initialized; then
     NODE_NAME=$(sed -n 's/.* node=//p' "$S/cluster")
     adm get --raw /readyz >/dev/null 2>&1 || fail "the API of this control plane does not answer, so it cannot be seen whether other nodes are in its cluster: start it first (systemctl start kubelet)"
     others=$(adm get nodes -o name | grep -v "^node/$NODE_NAME\$" | tr '\n' ' ')
     [ -z "$others" ] || fail "other nodes are in this cluster ($others): they would be left without a control plane. Move them to another cluster first"
+  fi
+  install -d -m 700 "$keep"
+  if initialized; then
     adm -n kube-system exec "etcd-$NODE_NAME" -- etcdctl --endpoints https://127.0.0.1:2379 --cacert $K/pki/etcd/ca.crt --cert $K/pki/etcd/server.crt --key $K/pki/etcd/server.key \
       snapshot save /var/lib/etcd/rlark-snapshot-removed.db >/dev/null 2>&1 || fail "etcd snapshot"
     mv /var/lib/etcd/rlark-snapshot-removed.db "$keep/etcd-snapshot.db"
@@ -96,7 +110,7 @@ undo() {
   "$B/bin/kubeadm" reset --force --cri-socket "unix://$SOCKET" > "$keep/reset.log" 2>&1 || { tail -20 "$keep/reset.log" >&2; fail "kubeadm reset"; }
   rm -rf /etc/cni/net.d/*
   rm -f $K/kubelet.conf.d/20-rlark-control-plane.conf
-  hosts_line control-plane "" ""
+  [ ! -e "$S/name" ] || hosts_name "" "$(cat "$S/name")"
   stamp "the control plane is removed"
   if [ -d "$OLD" ]; then
     restore_old_cluster
@@ -116,9 +130,9 @@ undo() {
   echo "Done."
 }
 case ${1:-} in
-"") ;;
+""|check) ;;
 undo) undo; exit 0 ;;
-*) fail "the only argument is undo" ;;
+*) fail "the arguments are check and undo" ;;
 esac
 
 # --- Pre-flight: every refusal comes before anything is changed.
@@ -136,7 +150,9 @@ fi
 tunnel_address() {
   ip -4 -o addr show dev "$TUNNEL_INTERFACE" 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | grep . && return 0
   for document in /var/lib/station/wg/last-applied.json /etc/rlark/station/bootstrap.json; do
-    sed -n 's/.*"address": *"\([0-9.]*\).*/\1/p' "$document" 2>/dev/null | grep . && return 0
+    # The machine's own is the one with a prefix length; the names' have none.
+    [ -s "$document" ] || continue
+    tr -d ' \t\n' < "$document" | grep -o '"address":"[0-9.]*/' | head -1 | cut -d'"' -f4 | cut -d/ -f1 | grep . && return 0
   done
 }
 ADDRESS=$(tunnel_address | head -1) || true
@@ -144,7 +160,20 @@ ADDRESS=$(tunnel_address | head -1) || true
 modprobe wireguard || fail "the kernel has no wireguard module"
 systemctl is-enabled rlark-station-gateway >/dev/null 2>&1 || [ -e /var/lib/station/wg/last-applied.json ] || [ -e /etc/rlark/station/bootstrap.json ] ||
   fail "the tunnel on $TUNNEL_INTERFACE is run by a pod of the cluster this machine would leave, and its configuration is not kept on the machine (/var/lib/station/wg/last-applied.json): the tunnel would not come back after a reboot"
-LAN=${LAN_ADDRESS:-$(ip -4 route get 192.0.2.1 2>/dev/null | sed -n 's/.* src \([0-9.]*\).*/\1/p')}
+# The names the site network gives this machine, from the document its tunnel
+# runs on (station-gateway's order). Where it gives any, the tunnel service
+# keeps /etc/hosts by them, and this control plane's must be among them.
+declared=
+for document in /run/station-network/config.json /var/lib/station/wg/last-applied.json /etc/rlark/station/bootstrap.json; do
+  [ ! -s "$document" ] || { declared=$(tr -d ' \t\n' < "$document" | grep -o '"names":\[[^]]*\]' || true); break; }
+done
+[ -z "$declared" ] || echo "$declared" | grep -q -F "{\"name\":\"$name\",\"address\":\"$ADDRESS\"}" ||
+  fail "the site network gives this machine names, and $name at $ADDRESS is not among them ($declared): declare it in the SiteNetwork (names) first; the tunnel service keeps /etc/hosts by that list"
+# The addresses the machine has in the networks it stands in: nothing of the
+# control plane may hold one (the last step looks).
+machine_addresses() {
+  ip -4 -o addr show | awk -v tunnel="$TUNNEL_INTERFACE" '$2 != "lo" && $2 != tunnel && $2 != "tunl0" && $2 != "vxlan.calico" && $2 !~ /^cali/ {print $4}' | cut -d/ -f1
+}
 
 # Memory. The control plane's share is bounded twice: each component by its
 # limit, and all pods together by what is not reserved for the system (the
@@ -167,6 +196,10 @@ initialized || [ "$available" -ge $need ] ||
 if ! initialized; then
   [ "$(df -k --output=avail /var/lib | tail -1)" -ge 10485760 ] || fail "/var/lib has less than 10 GiB free: etcd and the images need them"
   if [ ! -e "$S/init-started" ]; then
+    for subnet in "$POD_SUBNET" "$SERVICE_SUBNET"; do
+      routes=$( { ip -4 route show root "$subnet"; ip -4 route show match "$subnet"; } | grep -v '^default ' | sort -u | tr '\n' ';')
+      [ -z "$routes" ] || fail "$subnet is in use on this machine's networks already ($routes): the cluster's pod and Service networks must be free"
+    done
     for port in 6443 2379 2380 10257 10259; do
       [ -z "$(ss -Hltn "sport = :$port")" ] ||
         fail "port $port is in use on this machine ($(ss -Hltnp "sport = :$port" | sed -n 's/.*users:(("\([^"]*\)".*/\1/p' | head -1)); the control plane needs it"
@@ -181,8 +214,9 @@ else
   [ "$(cat "$S/cluster")" = "name=$name pods=$POD_SUBNET services=$SERVICE_SUBNET address=$ADDRESS node=$NODE_NAME" ] ||
     fail "this machine is a control plane already, made with: $(cat "$S/cluster"). Its name, networks, address and node name are not changed by running this again"
 fi
-( : > "$ETCD_SNAPSHOT_DIR/.rlark-write-test" ) 2>/dev/null && rm -f "$ETCD_SNAPSHOT_DIR/.rlark-write-test" ||
-  { install -d "$ETCD_SNAPSHOT_DIR" 2>/dev/null && [ -w "$ETCD_SNAPSHOT_DIR" ]; } || fail "ETCD_SNAPSHOT_DIR=$ETCD_SNAPSHOT_DIR cannot be written"
+at=$ETCD_SNAPSHOT_DIR
+until [ -e "$at" ]; do at=$(dirname "$at"); done
+[ -d "$at" ] && [ -w "$at" ] || fail "ETCD_SNAPSHOT_DIR=$ETCD_SNAPSHOT_DIR cannot be written"
 
 # The runtime: the one the machine's kubelet has, or one of its own. After a
 # reboot the control plane comes back only if the runtime does.
@@ -198,8 +232,16 @@ elif [ -e $K/kubelet.conf ]; then
 else
   command -v containerd >/dev/null || fail "containerd is required; it is installed together with docker"
 fi
-install -d "$S"
-stamp "pre-flight passed: $NODE_NAME becomes the control plane at $name ($ADDRESS, Kubernetes $VERSION); the system keeps $SYSTEM_RESERVED_MEMORY and $SYSTEM_RESERVED_CPU CPUs"
+stamp "pre-flight passed: $NODE_NAME becomes the control plane at $name ($ADDRESS, Kubernetes $VERSION); the system keeps $SYSTEM_RESERVED_MEMORY and $SYSTEM_RESERVED_CPU CPUs; swap ($(awk 'NR > 1 {sum += $3} END {print int(sum / 1048576)}' /proc/swaps) Gi) stays as it is and pods get none"
+if [ "${1:-}" = check ]; then
+  if initialized; then echo "Checked only: nothing was changed. This machine is the control plane at $name."
+  elif [ -e $K/kubelet.conf ]; then echo "Checked only: nothing was changed. This machine would leave the cluster it is a node of ($(sed -n 's/^ *server: //p' $K/kubelet.conf)) and become the control plane at $name."
+  else echo "Checked only: nothing was changed. This machine can become the control plane at $name."
+  fi
+  exit 0
+fi
+install -d "$S" "$ETCD_SNAPSHOT_DIR"
+echo "$name" > "$S/name"
 
 # --- leave
 if { [ -e $K/kubelet.conf ] && [ ! -e "$S/init-started" ]; } || [ -e "$S/leaving" ]; then
@@ -243,7 +285,7 @@ done
 [ ! -d "$B/cni" ] || cp -n "$B"/cni/* /opt/cni/bin/
 tunnel_service
 [ "$(ip -4 -o addr show dev "$TUNNEL_INTERFACE" | awk '{print $4}' | cut -d/ -f1)" = "$ADDRESS" ] || fail "the tunnel service is running, but $TUNNEL_INTERFACE does not hold $ADDRESS: journalctl -u rlark-station-gateway"
-if [ -e "$S/socket" ]; then modprobe overlay; modprobe br_netfilter; else own_runtime; echo "$SOCKET" > "$S/socket"; fi
+if [ -e "$S/socket" ]; then kernel; else own_runtime; echo "$SOCKET" > "$S/socket"; fi
 if [ "$(cat "$S/images" 2>/dev/null)" != "$(cat "$B/tag")" ]; then
   import_images "$B/images"
   import_images "$B/images/control-plane"
@@ -265,7 +307,13 @@ if ! cmp -s "$B/20-rlark-control-plane.conf" $K/kubelet.conf.d/20-rlark-control-
 fi
 # A kubelet that is running reads its unit and its drop-ins when it starts.
 case $changed in kubelet|reservation) ! initialized || systemctl restart kubelet ;; esac
-hosts_line control-plane "$ADDRESS" "$name"
+[ -n "$declared" ] || hosts_name "$ADDRESS" "$name"
+tries=0
+until [ "$(getent hosts "$name" | awk '{print $1}')" = "$ADDRESS" ]; do
+  tries=$((tries + 1))
+  [ $tries -lt 30 ] || fail "$name does not resolve to $ADDRESS on this machine ($(getent hosts "$name" || echo "not at all")): /etc/hosts, journalctl -u rlark-station-gateway"
+  sleep 1
+done
 
 # --- init
 if ! initialized; then
@@ -281,9 +329,12 @@ if ! initialized; then
       "$component" "$cpu" "$memory" "$cpus_limit" "$memory_limit" > "$S/patches/$component+strategic.yaml"
   done
   [ ! -s "$S/kubelet-overrides.yaml" ] || cp "$S/kubelet-overrides.yaml" "$S/patches/kubeletconfiguration+merge.yaml"
-  # The certificates name what the node is reached at, etcd's too: kubeadm
-  # verifies etcd's certificate for the address etcd advertises, on every
-  # upgrade (upgrade.sh, PHASE=certs, is what a cluster made without them needs).
+  # The node is reached at the name and at its tunnel address, and at
+  # nothing else: the API server advertises the tunnel address, etcd listens
+  # on it, advertises it and is a member at it, and the certificates name
+  # these two and the node. kubeadm verifies etcd's certificate for the
+  # address etcd advertises on every upgrade; an address of the machine's own
+  # network in any of this would tie the control plane to that network.
   cat > "$S/kubeadm.yaml" <<KUBEADM
 apiVersion: kubeadm.k8s.io/v1beta4
 kind: InitConfiguration
@@ -303,11 +354,11 @@ kubernetesVersion: $VERSION
 controlPlaneEndpoint: "$name:6443"
 networking: {podSubnet: "$POD_SUBNET", serviceSubnet: "$SERVICE_SUBNET"}
 apiServer:
-  certSANs: ["$name", "$ADDRESS", "$NODE_NAME"${LAN:+, "$LAN"}]
+  certSANs: ["$name", "$ADDRESS", "$NODE_NAME"]
 etcd:
   local:
-    serverCertSANs: ["$name", "$ADDRESS"${LAN:+, "$LAN"}]
-    peerCertSANs: ["$name", "$ADDRESS"${LAN:+, "$LAN"}]
+    serverCertSANs: ["$name", "$ADDRESS"]
+    peerCertSANs: ["$name", "$ADDRESS"]
 KUBEADM
   touch "$S/init-started"
   if [ -n "${FROM_SNAPSHOT:-}" ]; then
@@ -357,9 +408,16 @@ fi
 # Calico is the project's manifest, set here to this cluster: the nodes find
 # each other at their tunnel addresses, and a pod's MTU fits into the tunnel.
 install -d "$S/manifests"
+# calico-node and the CNI plugin reach the API at the name, as the kubelet
+# and kube-proxy do. Through the Service address, a node's packets would leave
+# with the source address of its default route, and robots all have the same.
+printf 'apiVersion: v1\nkind: ConfigMap\nmetadata: {name: kubernetes-services-endpoint, namespace: kube-system}\ndata: {KUBERNETES_SERVICE_HOST: "%s", KUBERNETES_SERVICE_PORT: "6443"}\n' "$name" > "$S/manifests/00-api-endpoint.yaml"
+adm apply -f "$S/manifests/00-api-endpoint.yaml" > "$S/apply.log" 2>&1 || { tail -20 "$S/apply.log" >&2; fail "apply the API endpoint of the CNI"; }
+# A manifest is applied when it is not the one this machine applied last.
 for manifest in "$B"/manifests/*.yaml; do
   [ -e "$manifest" ] || continue
-  rendered=$S/manifests/$(basename "$manifest")
+  applied=$S/manifests/$(basename "$manifest")
+  rendered=$applied.new
   if [ "$(basename "$manifest")" = calico.yaml ]; then
     sed -e "s#veth_mtu: \"0\"#veth_mtu: \"$POD_MTU\"#" \
       -e "s#^\( *\)- name: CALICO_IPV4POOL_IPIP#\1- name: IP_AUTODETECTION_METHOD\n\1  value: \"interface=$TUNNEL_INTERFACE\"\n\1- name: CALICO_IPV4POOL_CIDR\n\1  value: \"$POD_SUBNET\"\n\1- name: FELIX_IGNORELOOSERPF\n\1  value: \"true\"\n&#" \
@@ -367,8 +425,13 @@ for manifest in "$B"/manifests/*.yaml; do
   else
     cp "$manifest" "$rendered"
   fi
-  adm apply -f "$rendered" > "$S/apply.log" 2>&1 || { tail -20 "$S/apply.log" >&2; fail "apply $(basename "$manifest")"; }
-  ! grep -q -v ' unchanged$' "$S/apply.log" || { changed=manifests; stamp "applied $(basename "$manifest")"; }
+  if ! cmp -s "$rendered" "$applied"; then
+    adm apply -f "$rendered" > "$S/apply.log" 2>&1 || { tail -20 "$S/apply.log" >&2; fail "apply $(basename "$manifest")"; }
+    mv "$rendered" "$applied"
+    changed=manifests
+    stamp "applied $(basename "$manifest")"
+  fi
+  rm -f "$rendered"
 done
 tries=0
 until [ "$(adm get node "$NODE_NAME" -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null)" = True ]; do
@@ -412,6 +475,22 @@ if ! cmp -s "$B/rlark-etcd-snapshot" /opt/rlark/bin/rlark-etcd-snapshot || ! cmp
   stamp "etcd snapshot every day at 04:00 into $ETCD_SNAPSHOT_DIR; the first: $(ls -1t "$ETCD_SNAPSHOT_DIR"/etcd-*.db | head -1)"
 fi
 
+# --- addresses: what would tie this control plane to the network the machine
+# stands in now.
+held=$("$B/station-bootstrap" cert-addresses $K/pki $(machine_addresses))
+objects=$( { cat $K/*.conf $K/manifests/*.yaml /var/lib/kubelet/kubeadm-flags.env
+  adm -n kube-system get configmap kubeadm-config kube-proxy kubernetes-services-endpoint -o yaml
+  adm -n kube-public get configmap cluster-info -o yaml
+  adm get endpoints kubernetes -o yaml
+  adm get node "$NODE_NAME" -o jsonpath='{.status.addresses}'
+  adm -n kube-system exec "etcd-$NODE_NAME" -- etcdctl --endpoints https://127.0.0.1:2379 --cacert $K/pki/etcd/ca.crt --cert $K/pki/etcd/server.crt --key $K/pki/etcd/server.key member list; } 2>&1)
+for address in $(machine_addresses); do
+  ! echo "$objects" | grep -q -w -F "$address" || held="$held
+a kubeconfig, a static pod, etcd's members or an object of the cluster holds $address"
+done
+[ -z "$held" ] || fail "this control plane holds an address of the network the machine stands in, and would not survive the machine's move to another:
+$held"
+
 # --- annotations
 SETTINGS="control-plane name=$name pods=$POD_SUBNET services=$SERVICE_SUBNET interface=$TUNNEL_INTERFACE mtu=$POD_MTU reserved=$SYSTEM_RESERVED_CPU/$SYSTEM_RESERVED_MEMORY snapshots=$ETCD_SNAPSHOT_DIR/$ETCD_SNAPSHOT_KEEP"
 spec=$(cat "$B/tag").$(printf '%s' "$SETTINGS" | sha256sum | cut -c1-12)
@@ -424,5 +503,5 @@ if [ -z "$changed" ]; then
   echo "Nothing to do: this machine is the control plane at https://$name:6443 (Kubernetes $VERSION, node $NODE_NAME, installed from $spec). Nothing was changed."
 else
   echo "Done: this machine is the control plane at https://$name:6443 (node $NODE_NAME, installed from $spec)."
-  echo "A node joins at $name:6443 and resolves the name to $ADDRESS (NodeAdmission: apiServer and apiServerAddress)."
+  echo "A node joins at $name:6443 (NodeAdmission, apiServer) and resolves the name to $ADDRESS by its site's names (SiteNetwork, names)."
 fi

@@ -54,7 +54,6 @@ type answer struct {
 	Config        json.RawMessage `json:"config"`
 	Join          struct {
 		APIServer  string `json:"api_server"`
-		Address    string `json:"api_server_address"`
 		Token      string `json:"token"`
 		CACertHash string `json:"ca_cert_hash"`
 	} `json:"join"`
@@ -70,6 +69,10 @@ func main() {
 	}
 	if len(os.Args) > 3 && os.Args[1] == "cert-sans" {
 		certSANs(os.Args[2], os.Args[3], os.Args[4:])
+		return
+	}
+	if len(os.Args) > 2 && os.Args[1] == "cert-addresses" {
+		certAddresses(os.Args[2], os.Args[3:])
 		return
 	}
 	if os.Geteuid() != 0 {
@@ -171,7 +174,7 @@ func main() {
 	settings := append(os.Environ(),
 		"PATH=/opt/rlark/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
 		"NODE_NAME="+granted.NodeName, "TUNNEL_ADDRESS="+granted.TunnelAddress, "TUNNEL_INTERFACE="+tunnel.Interface,
-		"JOIN_API_SERVER="+granted.Join.APIServer, "JOIN_API_ADDRESS="+granted.Join.Address, "JOIN_TOKEN="+granted.Join.Token, "JOIN_CA_HASH="+granted.Join.CACertHash,
+		"JOIN_API_SERVER="+granted.Join.APIServer, "JOIN_TOKEN="+granted.Join.Token, "JOIN_CA_HASH="+granted.Join.CACertHash,
 		"NODE_LABELS="+granted.Labels, "NODE_TAINTS="+granted.Taints)
 	if os.Getenv("RLARK_MIGRATE") != "" {
 		migrate(settings)
@@ -391,6 +394,32 @@ func certSANs(configFile, pki string, addresses []string) {
 		log.Fatal(err)
 	}
 	os.Stdout.Write(out)
+}
+
+// certAddresses prints a line for every certificate under pki that names one
+// of the addresses: a control plane that is to move with its machine holds
+// none of the machine's own (control-plane.sh).
+func certAddresses(pki string, addresses []string) {
+	files, _ := filepath.Glob(filepath.Join(pki, "*.crt"))
+	etcd, _ := filepath.Glob(filepath.Join(pki, "etcd", "*.crt"))
+	for _, file := range append(files, etcd...) {
+		encoded, err := os.ReadFile(file)
+		if err != nil {
+			log.Fatal(err)
+		}
+		block, _ := pem.Decode(encoded)
+		certificate, err := x509.ParseCertificate(block.Bytes)
+		if err != nil {
+			log.Fatalf("%s: %v", file, err)
+		}
+		for _, ip := range certificate.IPAddresses {
+			for _, address := range addresses {
+				if ip.Equal(net.ParseIP(address)) {
+					fmt.Printf("the certificate %s names %s\n", file, address)
+				}
+			}
+		}
+	}
 }
 
 // hostCommand runs a script of the bundle as a process of the host. After the

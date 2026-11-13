@@ -9,8 +9,6 @@
 #   migrate-node.sh OLD_KUBECONFIG NEW_KUBECONFIG NEW_CLUSTER_ID NODE API_SERVER STATION_API IMAGE [label=value ...]
 #
 # Environment: KCP (management kubeconfig), CA (Station API's CA file), TAINTS,
-# API_ADDRESS (the address of API_SERVER's host where that is the control
-# plane's name; the node resolves the name by a marked line in its /etc/hosts),
 # PULL_SECRET and JOB_NAMESPACE (where it is and the Job runs; kube-system),
 # TIMEOUT (seconds to Ready in the new cluster; 600), CONTROL_PLANE=yes to
 # move the old cluster's control-plane node (its cluster ends there, so it is
@@ -49,7 +47,7 @@ old get nodes -l node-role.kubernetes.io/control-plane -o name | grep -qx "node/
 [[ $mode == node || ${CONTROL_PLANE:-} == yes ]] || { echo "$NODE is the control plane of $old_cluster: move the other nodes first, then this one with CONTROL_PLANE=yes" >&2; exit 1; }
 stamp "$NODE: $old_cluster -> $CLUSTER, keeps $address port $port${uplink:+ uplink $uplink}"
 
-command=$(KCP=$KCP API_ADDRESS=${API_ADDRESS:-} ADDRESS=$address LISTEN_PORT=$port UPLINK=$uplink TAINTS=${TAINTS:-} "$HERE/admit-node.sh" "$CLUSTER" "$NODE" "$API_SERVER" "$STATION_API" "$@")
+command=$(KCP=$KCP ADDRESS=$address LISTEN_PORT=$port UPLINK=$uplink TAINTS=${TAINTS:-} "$HERE/admit-node.sh" "$CLUSTER" "$NODE" "$API_SERVER" "$STATION_API" "$@")
 code=$(echo "$command" | sed -n 's#.*/b/\([a-z0-9]*\) .*#\1#p')
 name=$(echo "node-migrate-$NODE" | cut -c1-63)
 if [[ $mode == control-plane ]]; then
