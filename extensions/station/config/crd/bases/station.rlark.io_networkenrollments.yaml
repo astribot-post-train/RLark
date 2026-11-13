@@ -117,6 +117,63 @@ spec:
               configHash:
                 description: ConfigHash is the SHA-256 of Config in hex.
                 type: string
+              linkSummary:
+                description: |-
+                  LinkSummary is Links in one line a page shows as it is. It is empty
+                  while every link is Connected.
+                maxLength: 1024
+                type: string
+              links:
+                description: |-
+                  Links says, for a Leaf, what each Hub it dials sees of it. A Leaf that
+                  has dropped off cannot report anything, so this is the Hubs' account.
+                items:
+                  properties:
+                    hub:
+                      description: Hub is the member the Leaf dials, "<clusterID>/<nodeName>".
+                      maxLength: 256
+                      minLength: 1
+                      type: string
+                    latestHandshake:
+                      description: |-
+                        LatestHandshake is the last handshake the Hub completed with the Leaf,
+                        kept while the link is Unanswered or Silent. A Connected link has a new
+                        one every two minutes, in the Hub's StationObservation.
+                      format: date-time
+                      type: string
+                    observedAt:
+                      format: date-time
+                      type: string
+                    receivedBytes:
+                      description: |-
+                        ReceivedBytes is what the Hub had received from the Leaf at ObservedAt,
+                        the Hub's report the next one is compared with: a counter that grows
+                        without a handshake is Unanswered. Both are kept only while the
+                        handshake is stale, and here so that they outlive the controller.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    since:
+                      description: Since is when State last changed.
+                      format: date-time
+                      type: string
+                    state:
+                      enum:
+                      - Connected
+                      - Unanswered
+                      - Silent
+                      - Unknown
+                      type: string
+                  required:
+                  - hub
+                  - since
+                  - state
+                  type: object
+                maxItems: 64
+                type: array
+                x-kubernetes-list-map-keys:
+                - hub
+                x-kubernetes-list-type: map
               observedGeneration:
                 format: int64
                 type: integer

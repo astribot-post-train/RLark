@@ -134,7 +134,7 @@ func TestAgentProbesEveryConfiguredPeerThroughTheTunnel(t *testing.T) {
 		probes[1].Target != "10.254.240.2" || probes[1].OK || probes[1].RTTMillis != nil {
 		t.Fatalf("probes %+v", probes)
 	}
-	if err := validateObservation(Observation{Probes: probes}); err != nil {
+	if err := validateObservation(Observation{Probes: probes}, time.Now()); err != nil {
 		t.Fatal(err)
 	}
 }

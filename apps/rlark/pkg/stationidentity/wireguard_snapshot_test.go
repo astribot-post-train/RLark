@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -23,15 +24,21 @@ func TestWireguardSnapshotFreshnessAndValidation(t *testing.T) {
 		{"future", fmt.Sprintf(`{"observedAt":%q,"interface":"st-wg0","addresses":[]}`, now.Add(6*time.Second).Format(time.RFC3339)), false},
 		{"invalid address", fmt.Sprintf(`{"observedAt":%q,"interface":"st-wg0","addresses":["bad"]}`, now.Format(time.RFC3339)), false},
 		{"unknown field", fmt.Sprintf(`{"observedAt":%q,"interface":"st-wg0","addresses":[],"privateKey":"secret"}`, now.Format(time.RFC3339)), false},
-		{"oversized", string(make([]byte, 16*1024+1)), false},
+		{"peers", fmt.Sprintf(`{"observedAt":%q,"interface":"st-wg0","addresses":[],"peers":[{"publicKey":"bGVhZi1rZXktbGVhZi1rZXktbGVhZi1rZXktbGVhZi0=","latestHandshake":%q,"receivedBytes":148,"sentBytes":92}]}`, now.Format(time.RFC3339), now.Add(-time.Minute).Format(time.RFC3339)), true},
+		{"peer endpoint", fmt.Sprintf(`{"observedAt":%q,"interface":"st-wg0","addresses":[],"peers":[{"publicKey":"bGVhZi1rZXktbGVhZi1rZXktbGVhZi1rZXktbGVhZi0=","endpoint":"203.0.113.7:40000"}]}`, now.Format(time.RFC3339)), false},
+		{"oversized", string(make([]byte, wireguardObservationBytes+1)), false},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			if err := os.WriteFile(path, []byte(tc.body), 0600); err != nil {
 				t.Fatal(err)
 			}
-			if got := readWireguardSnapshot(path, now); (got != nil) != tc.valid {
+			got := readWireguardSnapshot(path, now)
+			if (got != nil) != tc.valid {
 				t.Fatalf("accepted = %v, want %v", got != nil, tc.valid)
+			}
+			if tc.name == "peers" && !strings.Contains(string(got), `"peers":[{"publicKey":"bGVhZi1rZXktbGVhZi1rZXktbGVhZi1rZXktbGVhZi0=","latestHandshake":"2026-11-11T11:59:00Z","receivedBytes":148,"sentBytes":92}]`) {
+				t.Fatalf("peers were not carried: %s", got)
 			}
 		})
 	}

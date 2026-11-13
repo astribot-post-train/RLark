@@ -254,14 +254,13 @@ func readWireguardSnapshot(path string, now time.Time) json.RawMessage {
 		return nil
 	}
 	defer f.Close()
-	data, err := io.ReadAll(io.LimitReader(f, 16*1024+1))
-	if err != nil || len(data) > 16*1024 {
+	data, err := io.ReadAll(io.LimitReader(f, wireguardObservationBytes+1))
+	if err != nil || len(data) > wireguardObservationBytes {
 		return nil
 	}
 	var snapshot struct {
 		ObservedAt time.Time `json:"observedAt"`
-		Interface  string    `json:"interface"`
-		Addresses  []string  `json:"addresses"`
+		wireguardObservation
 	}
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.DisallowUnknownFields()
@@ -272,8 +271,8 @@ func readWireguardSnapshot(path string, now time.Time) json.RawMessage {
 	if dec.Decode(&extra) != io.EOF || snapshot.ObservedAt.IsZero() || snapshot.ObservedAt.After(now.Add(5*time.Second)) || now.Sub(snapshot.ObservedAt) > 30*time.Second {
 		return nil
 	}
-	raw, err := json.Marshal(wireguardObservation{Interface: snapshot.Interface, Addresses: snapshot.Addresses})
-	if err != nil || validateWireguardObservation(raw) != nil {
+	raw, err := json.Marshal(snapshot.wireguardObservation)
+	if err != nil || validateWireguardObservation(raw, now) != nil {
 		return nil
 	}
 	return raw

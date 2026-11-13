@@ -306,6 +306,54 @@ type NetworkEnrollmentStatus struct {
 	PublicKey string `json:"publicKey,omitempty"`
 	// +kubebuilder:validation:MaxItems=16
 	Problems []string `json:"problems,omitempty"`
+	// Links says, for a Leaf, what each Hub it dials sees of it. A Leaf that
+	// has dropped off cannot report anything, so this is the Hubs' account.
+	// +kubebuilder:validation:MaxItems=64
+	// +listType=map
+	// +listMapKey=hub
+	Links []NetworkEnrollmentLink `json:"links,omitempty"`
+	// LinkSummary is Links in one line a page shows as it is. It is empty
+	// while every link is Connected.
+	// +kubebuilder:validation:MaxLength=1024
+	LinkSummary string `json:"linkSummary,omitempty"`
+}
+
+// +kubebuilder:validation:Enum=Connected;Unanswered;Silent;Unknown
+type NetworkLinkState string
+
+const (
+	// NetworkLinkConnected: the Hub completed a handshake with the Leaf in
+	// the last three minutes.
+	NetworkLinkConnected NetworkLinkState = "Connected"
+	// NetworkLinkUnanswered: the Leaf's requests arrive at the Hub and no
+	// session forms: the Hub's answers do not get back to it.
+	NetworkLinkUnanswered NetworkLinkState = "Unanswered"
+	// NetworkLinkSilent: nothing arrives from the Leaf at the Hub.
+	NetworkLinkSilent NetworkLinkState = "Silent"
+	// NetworkLinkUnknown: the Hub has no current report of the Leaf, so
+	// nothing is claimed about it.
+	NetworkLinkUnknown NetworkLinkState = "Unknown"
+)
+
+type NetworkEnrollmentLink struct {
+	// Hub is the member the Leaf dials, "<clusterID>/<nodeName>".
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=256
+	Hub   string           `json:"hub"`
+	State NetworkLinkState `json:"state"`
+	// Since is when State last changed.
+	Since metav1.Time `json:"since"`
+	// LatestHandshake is the last handshake the Hub completed with the Leaf,
+	// kept while the link is Unanswered or Silent. A Connected link has a new
+	// one every two minutes, in the Hub's StationObservation.
+	LatestHandshake *metav1.Time `json:"latestHandshake,omitempty"`
+	// ReceivedBytes is what the Hub had received from the Leaf at ObservedAt,
+	// the Hub's report the next one is compared with: a counter that grows
+	// without a handshake is Unanswered. Both are kept only while the
+	// handshake is stale, and here so that they outlive the controller.
+	// +kubebuilder:validation:Minimum=0
+	ReceivedBytes int64        `json:"receivedBytes,omitempty"`
+	ObservedAt    *metav1.Time `json:"observedAt,omitempty"`
 }
 
 // +kubebuilder:object:root=true

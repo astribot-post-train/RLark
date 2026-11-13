@@ -110,7 +110,25 @@ func (s *KubernetesObservationSink) Store(ctx context.Context, evidence Evidence
 	if namespace == "" || evidence.NodeName == "" || evidence.NodeUID == "" {
 		return errors.New("verified observation has incomplete namespace or identity")
 	}
-	status, err := observationStatus(evidence, observation, s.now())
+	// A node tells its peers by public key. What is stored is the member each
+	// key is enrolled as; a key no member is enrolled with is not stored.
+	members := map[string]string{}
+	if len(observation.Wireguard) > 0 {
+		enrollments, err := s.Client.Resource(networkEnrollmentGVR).List(ctx, metav1.ListOptions{})
+		if err != nil {
+			return fmt.Errorf("list NetworkEnrollments: %w", err)
+		}
+		for i := range enrollments.Items {
+			enrollment := &enrollments.Items[i]
+			if phase, _, _ := unstructured.NestedString(enrollment.Object, "status", "phase"); phase != "Enrolled" {
+				continue
+			}
+			key, _, _ := unstructured.NestedString(enrollment.Object, "status", "publicKey")
+			cluster, _, _ := unstructured.NestedString(enrollment.Object, "spec", "clusterID")
+			members[key] = cluster + "/" + enrollment.GetName()
+		}
+	}
+	status, err := observationStatus(evidence, observation, members, s.now())
 	if err != nil {
 		return fmt.Errorf("encode Station observation status: %w", err)
 	}
@@ -226,7 +244,7 @@ func (s *KubernetesObservationSink) now() time.Time {
 	return time.Now().UTC()
 }
 
-func observationStatus(evidence Evidence, observation Observation, receivedAt time.Time) (map[string]interface{}, error) {
+func observationStatus(evidence Evidence, observation Observation, members map[string]string, receivedAt time.Time) (map[string]interface{}, error) {
 	status := map[string]interface{}{
 		"reportedAt": receivedAt.UTC().Format(time.RFC3339Nano),
 		"nodeUID":    evidence.NodeUID,
@@ -258,6 +276,18 @@ func observationStatus(evidence Evidence, observation Observation, receivedAt ti
 		if err := json.Unmarshal(observation.Wireguard, &wireguard); err != nil || wireguard == nil {
 			return nil, errors.New("wireguard observation must be a JSON object")
 		}
+		// The list is always written: a merge patch keeps what it does not name.
+		reported, _ := wireguard["peers"].([]interface{})
+		peers := make([]interface{}, 0, len(reported))
+		for _, entry := range reported {
+			peer := entry.(map[string]interface{})
+			if name := members[peer["publicKey"].(string)]; name != "" {
+				delete(peer, "publicKey")
+				peer["name"] = name
+				peers = append(peers, peer)
+			}
+		}
+		wireguard["peers"] = peers
 		status["wireguard"] = wireguard
 	}
 	return status, nil

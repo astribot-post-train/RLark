@@ -123,14 +123,20 @@ spec:
                     minLength: 1
                     type: string
                   peers:
+                    description: |-
+                      Peers are the node's WireGuard peers that are enrolled members, as the
+                      node's kernel counts them. A Hub's entry for a Leaf is the only account
+                      of a Leaf that has dropped off.
                     items:
                       properties:
                         latestHandshake:
                           format: date-time
                           type: string
                         name:
-                          description: Name is a stable, non-secret peer label assigned
-                            by the server.
+                          description: |-
+                            Name is the peer's member id, "<clusterID>/<nodeName>". station-api
+                            assigns it from the public key the node reported: it is that of the
+                            Enrolled NetworkEnrollment with this key.
                           maxLength: 128
                           minLength: 1
                           type: string
@@ -145,8 +151,11 @@ spec:
                       required:
                       - name
                       type: object
-                    maxItems: 64
+                    maxItems: 1024
                     type: array
+                    x-kubernetes-list-map-keys:
+                    - name
+                    x-kubernetes-list-type: map
                 required:
                 - interface
                 type: object

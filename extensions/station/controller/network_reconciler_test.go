@@ -589,3 +589,129 @@ func TestNetworkLetsANodeJoinItsClustersNewControlPlane(t *testing.T) {
 		}
 	}
 }
+
+// A leaf that drops off cannot say why; its hubs' reports tell requests that
+// arrive unanswered from silence, and the leaf's status is written only when
+// that account changes.
+func TestNetworkSaysWhatTheHubsSeeOfALeaf(t *testing.T) {
+	objects := []client.Object{testSiteNetwork()}
+	objects = append(objects, testMember("dev", "cailiang", "key-dev", "10.11.14.128")...)
+	objects = append(objects, testMember("dev", "alexfu", "key-3090", "10.11.13.192")...)
+	objects = append(objects, testMember("robot-01", "s1u-01-x86", "key-robot-1", "192.168.0.10")...)
+	for _, hub := range []string{"cailiang", "alexfu"} {
+		objects = append(objects, &stationv1alpha1.StationObservation{ObjectMeta: metav1.ObjectMeta{
+			Namespace: "ns-dev", Name: hub, Annotations: map[string]string{"station.rlark.io/cluster-id": "dev"}}})
+	}
+	r, c := newNetworkTest(t, objects...)
+	clock := time.Unix(1_800_000_000, 0)
+	r.now = func() time.Time { return clock }
+	// Thirty seconds pass, the named hubs report, and the network is reconciled.
+	step := func(handshake time.Time, received int64, hubs ...string) (stationv1alpha1.NetworkEnrollmentStatus, bool) {
+		t.Helper()
+		clock = clock.Add(30 * time.Second)
+		for _, hub := range hubs {
+			var observation stationv1alpha1.StationObservation
+			if err := c.Get(context.Background(), types.NamespacedName{Namespace: "ns-dev", Name: hub}, &observation); err != nil {
+				t.Fatal(err)
+			}
+			seen := metav1.NewTime(handshake)
+			observation.Status = stationv1alpha1.StationObservationStatus{ReportedAt: metav1.NewTime(clock.Add(-time.Second)), NodeUID: "node-" + hub,
+				Wireguard: &stationv1alpha1.WireguardObservation{Interface: "st-wg0", Peers: []stationv1alpha1.WireguardPeerObservation{
+					{Name: "robot-01/s1u-01-x86", LatestHandshake: &seen, ReceivedBytes: received}}}}
+			if err := c.Update(context.Background(), &observation); err != nil {
+				t.Fatal(err)
+			}
+		}
+		var before, after stationv1alpha1.NetworkEnrollment
+		key := types.NamespacedName{Namespace: "ns-robot-01", Name: "s1u-01-x86"}
+		if err := c.Get(context.Background(), key, &before); err != nil {
+			t.Fatal(err)
+		}
+		result, err := r.Reconcile(context.Background(), reconcile.Request{NamespacedName: testNetworkKey})
+		if err != nil || result.RequeueAfter != 30*time.Second {
+			t.Fatalf("reconcile = %+v, %v", result, err)
+		}
+		if err := c.Get(context.Background(), key, &after); err != nil {
+			t.Fatal(err)
+		}
+		return after.Status, before.ResourceVersion != after.ResourceVersion
+	}
+	states := func(status stationv1alpha1.NetworkEnrollmentStatus) string {
+		text := ""
+		for _, link := range status.Links {
+			text += link.Hub + "=" + string(link.State) + " "
+		}
+		return text
+	}
+	both := []string{"cailiang", "alexfu"}
+
+	status, _ := step(clock, 1000, both...)
+	connectedSince := clock
+	if states(status) != "dev/cailiang=Connected dev/alexfu=Connected " || status.LinkSummary != "" || !status.Links[0].Since.Time.Equal(connectedSince) {
+		t.Fatalf("connected: %+v %q", status.Links, status.LinkSummary)
+	}
+	if hub := enrollmentStatus(t, c, "dev", "cailiang"); hub.Links != nil || hub.LinkSummary != "" {
+		t.Fatalf("a hub has links: %+v", hub.Links)
+	}
+	handshake := clock
+	if status, written := step(handshake, 2000, both...); written || status.Links[0].ObservedAt != nil {
+		t.Fatalf("a connected leaf was written again: %+v", status.Links)
+	}
+
+	// The handshake grows old while the leaf's requests keep arriving. The
+	// first such report only leaves the counter to compare the next with.
+	clock = handshake.Add(3 * time.Minute)
+	status, written := step(handshake, 2148, both...)
+	if !written || states(status) != "dev/cailiang=Connected dev/alexfu=Connected " || status.Links[0].ReceivedBytes != 2148 || status.Links[0].ObservedAt == nil {
+		t.Fatalf("first stale report: %+v", status.Links)
+	}
+	status, _ = step(handshake, 2296, both...)
+	unansweredSince := clock
+	if states(status) != "dev/cailiang=Unanswered dev/alexfu=Unanswered " || !status.Links[0].Since.Time.Equal(unansweredSince) || !status.Links[0].LatestHandshake.Time.Equal(handshake) ||
+		status.LinkSummary != "this node's requests arrive at dev/cailiang, dev/alexfu and no session forms: the answers do not get back to it" {
+		t.Fatalf("unanswered: %+v %q", status.Links, status.LinkSummary)
+	}
+	if status, _ = step(handshake, 2444, both...); states(status) != "dev/cailiang=Unanswered dev/alexfu=Unanswered " || !status.Links[0].Since.Time.Equal(unansweredSince) || status.Links[0].ReceivedBytes != 2444 {
+		t.Fatalf("still unanswered: %+v", status.Links)
+	}
+	// No hub has reported since: there is nothing new to say.
+	if _, written := step(handshake, 0); written {
+		t.Fatal("the same reports were written again")
+	}
+
+	// One hub stops hearing the leaf, then both.
+	status, _ = step(handshake, 2444, "cailiang")
+	if states(status) != "dev/cailiang=Silent dev/alexfu=Unanswered " || !status.Links[1].Since.Time.Equal(unansweredSince) ||
+		status.LinkSummary != "this node's requests arrive at dev/alexfu and no session forms: the answers do not get back to it; nothing arrives from this node at dev/cailiang" {
+		t.Fatalf("one hub silent: %+v %q", status.Links, status.LinkSummary)
+	}
+	status, _ = step(handshake, 2444, both...)
+	silentSince := clock
+	if states(status) != "dev/cailiang=Silent dev/alexfu=Silent " || !status.Links[1].Since.Time.Equal(silentSince) || status.Links[0].Since.Time.Equal(silentSince) ||
+		status.LinkSummary != "nothing arrives from this node at any hub it dials since "+silentSince.UTC().Format(time.RFC3339) {
+		t.Fatalf("silent: %+v %q", status.Links, status.LinkSummary)
+	}
+	for range 3 {
+		if _, written := step(handshake, 2444, both...); written {
+			t.Fatal("a silent leaf was written again")
+		}
+	}
+
+	// A hub that stops reporting says nothing about the leaf.
+	for range 4 {
+		status, _ = step(handshake, 2444, "cailiang")
+	}
+	if states(status) != "dev/cailiang=Silent dev/alexfu=Unknown " || status.Links[1].ObservedAt != nil ||
+		status.LinkSummary != "nothing arrives from this node at dev/cailiang; no current report of this node from dev/alexfu" {
+		t.Fatalf("hub without a report: %+v %q", status.Links, status.LinkSummary)
+	}
+
+	status, _ = step(clock, 5000, both...)
+	if states(status) != "dev/cailiang=Connected dev/alexfu=Connected " || status.LinkSummary != "" || !status.Links[0].Since.Time.Equal(clock) ||
+		status.Links[0].LatestHandshake != nil || status.Links[0].ObservedAt != nil || status.Links[0].ReceivedBytes != 0 {
+		t.Fatalf("connected again: %+v %q", status.Links, status.LinkSummary)
+	}
+	if _, written := step(clock, 6000, both...); written {
+		t.Fatal("a connected leaf was written again")
+	}
+}

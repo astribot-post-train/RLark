@@ -32,6 +32,7 @@ func testDynamicClient(objects ...runtime.Object) *fake.FakeDynamicClient {
 		stationObservationGVR: "StationObservationList",
 		stationGVR:            "StationList",
 		rlarkClusterGVR:       "ClusterList",
+		networkEnrollmentGVR:  "NetworkEnrollmentList",
 	}, objects...)
 }
 
@@ -330,4 +331,64 @@ func TestReinstalledNodeReplacesThePreviousNodesSnapshot(t *testing.T) {
 	if err := other.Store(context.Background(), foreign, Observation{}); !errors.Is(err, ErrObservationOwnershipConflict) {
 		t.Fatalf("foreign cluster error = %v", err)
 	}
+}
+
+func TestObservationPeersAreStoredUnderTheMemberEnrolledWithTheirKey(t *testing.T) {
+	enrollment := func(namespace, cluster, name, phase, key string) *unstructured.Unstructured {
+		return &unstructured.Unstructured{Object: map[string]interface{}{
+			"apiVersion": "station.rlark.io/v1alpha1", "kind": "NetworkEnrollment",
+			"metadata": map[string]interface{}{"namespace": namespace, "name": name},
+			"spec":     map[string]interface{}{"clusterID": cluster},
+			"status":   map[string]interface{}{"phase": phase, "publicKey": key},
+		}}
+	}
+	leaf, moved, stranger := "bGVhZi1rZXktbGVhZi1rZXktbGVhZi1rZXktbGVhZi0=", "bW92ZWQta2V5LW1vdmVkLWtleS1tb3ZlZC1rZXktbW8=", "c3RyYW5nZXItc3RyYW5nZXItc3RyYW5nZXItc3RyYW4="
+	client := testDynamicClient(
+		enrollment("agent-robot", "robot-01", "s1u-01-x86", "Enrolled", leaf),
+		// A machine that moved leaves a rejected enrollment with its key behind.
+		enrollment("agent-old", "old", "desk", "Rejected", moved),
+		enrollment("agent-new", "new", "desk", "Enrolled", moved),
+	)
+	sink := &KubernetesObservationSink{Client: client, Namespaces: observationNamespaceMap{"cluster-a": "agent-a"}}
+	e := validEvidence()
+	e.ClusterID, e.RegisteredClusterID = "cluster-a", "cluster-a"
+	e.NodeName, e.PodNodeName = "hub", "hub"
+	store := func(wireguard string) []interface{} {
+		t.Helper()
+		// The first write of a node only creates its object.
+		for range 2 {
+			if err := sink.Store(context.Background(), e, Observation{Wireguard: json.RawMessage(wireguard)}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		stored, err := client.Resource(stationObservationGVR).Namespace("agent-a").Get(context.Background(), "hub", metav1.GetOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		peers, _, _ := unstructured.NestedSlice(stored.Object, "status", "wireguard", "peers")
+		return peers
+	}
+	peers := store(`{"interface":"st-wg0","peers":[
+		{"publicKey":"` + stranger + `","receivedBytes":7},
+		{"publicKey":"` + leaf + `","latestHandshake":"2026-11-14T01:02:03Z","receivedBytes":148,"sentBytes":92},
+		{"publicKey":"` + moved + `"}]}`)
+	want := []interface{}{
+		map[string]interface{}{"name": "robot-01/s1u-01-x86", "latestHandshake": "2026-11-14T01:02:03Z", "receivedBytes": int64(148), "sentBytes": int64(92)},
+		map[string]interface{}{"name": "new/desk"},
+	}
+	if got, _ := json.Marshal(peers); len(peers) != 2 || string(got) != string(mustJSON(t, want)) {
+		t.Fatalf("peers = %s", got)
+	}
+	if peers := store(`{"interface":"st-wg0"}`); len(peers) != 0 {
+		t.Fatalf("a report without peers kept %v", peers)
+	}
+}
+
+func mustJSON(t *testing.T, value any) []byte {
+	t.Helper()
+	data, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return data
 }
