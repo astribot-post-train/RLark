@@ -2,11 +2,14 @@ package main
 
 import (
 	"errors"
+	"net"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	rlarklog "github.com/rlinf/rlark/apps/rlark/pkg/log"
+	"github.com/rlinf/rlark/apps/rlark/pkg/rlarktools/idlerelay"
 	"github.com/rlinf/rlark/apps/rlark/pkg/rlarktools/raylauncher"
 	"github.com/rlinf/rlark/apps/rlark/pkg/rlarktools/sshd"
 	"github.com/rlinf/rlark/apps/rlark/pkg/rlarktools/supervisor"
@@ -24,6 +27,7 @@ func main() {
 	cmd.AddCommand(newSupervisorCommand())
 	cmd.AddCommand(newRayLauncherCommand())
 	cmd.AddCommand(newIdleCommand())
+	cmd.AddCommand(newIdleRelayCommand())
 
 	if err := cmd.Execute(); err != nil {
 		var exitErr *raylauncher.ExitError
@@ -50,6 +54,28 @@ func newIdleCommand() *cobra.Command {
 			return nil
 		},
 	}
+}
+
+func newIdleRelayCommand() *cobra.Command {
+	var listen string
+	var idle time.Duration
+	cmd := &cobra.Command{
+		Use:   "idle-relay",
+		Short: "HTTP CONNECT proxy that closes a tunnel silent for longer than --idle",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			ln, err := net.Listen("tcp", listen)
+			if err != nil {
+				return err
+			}
+			ctx, cancel := signal.NotifyContext(cmd.Context(), syscall.SIGINT, syscall.SIGTERM)
+			defer cancel()
+			return idlerelay.Serve(ctx, ln, idle)
+		},
+	}
+	cmd.Flags().StringVar(&listen, "listen", "127.0.0.1:3128", "Address to accept CONNECT requests on")
+	cmd.Flags().DurationVar(&idle, "idle", time.Minute, "Close a tunnel when nothing has moved in either direction for this long")
+	return cmd
 }
 
 func newSupervisorCommand() *cobra.Command {
