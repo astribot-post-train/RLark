@@ -145,7 +145,8 @@ tunnels() {
 }
 # first_tunnel NODE: what an administrator gives a machine that is to become a
 # control plane and is in no cluster: its key is made and declared, and the
-# machine gets a document of its own (admit-member.sh bootstrap does this on a site).
+# machine gets a document of its own (a site has no tool for this: there, a
+# machine gets its tunnel by joining a cluster as a node, admit-node.sh).
 first_tunnel() {
   local node=$1
   on "$node" sh -c 'mkdir -p /opt/rlark/bin /etc/rlark/station && cat > /opt/rlark/bin/station-gateway && chmod 755 /opt/rlark/bin/station-gateway' < "$D/bin/station-gateway"
@@ -342,7 +343,7 @@ UNIT
 # is ws: the Job of migrate-node.sh, in the old cluster, runs the installer on
 # the node. BREAK=yes gives it a join token that is none: the join fails and
 # the node must be back in the old cluster by itself.
-move() { # NODE [FROM [TO [API]]]; MIGRATE=control-plane for the old cluster's last node
+move() { # NODE [FROM [TO [API]]]
   local node=$1 from=${2:-robot1} to=${3:-ws} api=${4:-$ROBOT:6443} code t0 runtime
   runtime=$(on "$node" sed -n 's/.*--container-runtime-endpoint=unix:\/\/\([^ "]*\).*/\1/p' /var/lib/kubelet/kubeadm-flags.env)
   on "$node" sh -c "\$(command -v ctr || echo /opt/rlark-containerd/bin/ctr) -a $runtime -n k8s.io images import -" < "$D/installer.tar" >/dev/null
@@ -372,7 +373,7 @@ spec:
         env:
         - {name: RLARK_SERVER, value: "https://$P-station-api:18443"}
         - {name: RLARK_CODE, value: "$code"}
-        - {name: RLARK_MIGRATE, value: "${MIGRATE:-node}"}
+        - {name: RLARK_MIGRATE, value: "node"}
         - name: RLARK_CA
           value: |
 $(sed 's/^/            /' "$D/pki/ca.crt")
@@ -389,6 +390,15 @@ JOB
 # here an interface with that address, the default route with it as source,
 # and the translation on the way out. Set again on every boot, as a machine's
 # network configuration is.
+# reinstall NODE [CONTROL_PLANE [API]]: the old cluster's control plane, once
+# its other nodes have moved. A control plane does not move into another
+# cluster: its cluster is ended on it by hand, and the machine joins as any
+# machine that was never a node does.
+reinstall() {
+  local node=$1
+  on "$node" sh -c 'systemctl stop kubelet; PATH=/opt/robot-kubernetes/bin:$PATH kubeadm reset --force >/dev/null 2>&1; rm -rf /etc/kubernetes /var/lib/kubelet /var/lib/etcd /etc/cni/net.d/* /etc/systemd/system/kubelet.service /etc/systemd/system/kubelet.service.d; systemctl daemon-reload'
+  LABELS=rlark.io/node-category=robot,rlark.io/robot-id=$node TAINTS=rlark.io/node-category=robot:NoSchedule worker "$node" "${2:-ws}" "${3:-$ROBOT:6443}"
+}
 # robot_real NODE: a worker of the old cluster as the site's second robot is
 # one (11-13): containerd and ctr outside the PATH, a kubelet set up by hand
 # with no kubeadm beside it and no --config-dir, and the robots' node profile:

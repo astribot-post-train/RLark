@@ -10,9 +10,8 @@
 #
 # Environment: KCP (management kubeconfig), CA (Station API's CA file), TAINTS,
 # PULL_SECRET and JOB_NAMESPACE (where it is and the Job runs; kube-system),
-# TIMEOUT (seconds to Ready in the new cluster; 600), CONTROL_PLANE=yes to
-# move the old cluster's control-plane node (its cluster ends there, so it is
-# moved last; its etcd is snapshot to /var/backups/rlark-node-migrate first).
+# TIMEOUT (seconds to Ready in the new cluster; 600). A cluster's control-plane
+# node does not move: its cluster would end with it.
 # A node that does not become Ready in the new cluster goes back to the old
 # one by itself (install.sh); this script then withdraws its admission, so
 # that its enrollment in the old cluster stands again.
@@ -43,19 +42,12 @@ import json, sys
 for n in json.load(sys.stdin)["spec"]["nodes"]:
     if (n["clusterID"], n["nodeName"]) == tuple(sys.argv[1:3]) and n.get("uplink"):
         print(",".join(n["uplink"][k] for k in ("gateway", "source", "interface")))' "$old_cluster" "$NODE")
-old get nodes -l node-role.kubernetes.io/control-plane -o name | grep -qx "node/$NODE" && mode=control-plane || mode=node
-[[ $mode == node || ${CONTROL_PLANE:-} == yes ]] || { echo "$NODE is the control plane of $old_cluster: move the other nodes first, then this one with CONTROL_PLANE=yes" >&2; exit 1; }
+! old get nodes -l node-role.kubernetes.io/control-plane -o name | grep -qx "node/$NODE" || { echo "$NODE is the control plane of $old_cluster: that cluster would end with it. A control plane moves to another machine with its cluster (the installer's control-plane mode, FROM_SNAPSHOT)" >&2; exit 1; }
 stamp "$NODE: $old_cluster -> $CLUSTER, keeps $address${uplink:+ uplink $uplink}"
 
 command=$(KCP=$KCP CA=$CA ADDRESS=$address UPLINK=$uplink TAINTS=${TAINTS:-} "$HERE/admit-node.sh" "$CLUSTER" "$NODE" "$API_SERVER" "$STATION_API" "$@")
 code=$(echo "$command" | tail -1 | sed -n 's#.*/b/\([a-z0-9]*\) .*#\1#p')
 name=$(echo "node-migrate-$NODE" | cut -c1-63)
-if [[ $mode == control-plane ]]; then
-  old -n kube-system exec "etcd-$NODE" -- etcdctl --endpoints https://127.0.0.1:2379 --cacert /etc/kubernetes/pki/etcd/ca.crt \
-    --cert /etc/kubernetes/pki/etcd/server.crt --key /etc/kubernetes/pki/etcd/server.key \
-    snapshot save /var/lib/etcd/rlark-snapshot-before-migrate.db >/dev/null
-  stamp "$NODE: etcd snapshot saved (the installer moves it to /var/backups/rlark-node-migrate)"
-fi
 old -n "$NS" delete job "$name" --ignore-not-found >/dev/null
 old apply -f - >/dev/null <<JOB
 apiVersion: batch/v1
@@ -80,7 +72,7 @@ spec:
         env:
         - {name: RLARK_SERVER, value: "https://$STATION_API"}
         - {name: RLARK_CODE, value: "$code"}
-        - {name: RLARK_MIGRATE, value: "$mode"}
+        - {name: RLARK_MIGRATE, value: "node"}
         - name: RLARK_CA
           value: |
 $(sed 's/^/            /' "$CA")
@@ -153,7 +145,7 @@ stamp "$NODE: enrolled in $CLUSTER under its own identity after $(( $(date +%s) 
 # What it left behind. Where the old and the new cluster are one registered
 # cluster (its control plane was built anew on another machine and the nodes
 # move over), the node's enrollment and Station are the ones it goes on with.
-[[ $mode == control-plane ]] || old delete node "$NODE" --ignore-not-found >/dev/null
+old delete node "$NODE" --ignore-not-found >/dev/null
 if [[ $old_cluster == "$CLUSTER" ]]; then
   stamp "$NODE: same cluster $CLUSTER under its new control plane; its enrollment and Station stay"
   new get node "$NODE" -o wide
