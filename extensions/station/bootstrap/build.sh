@@ -33,7 +33,7 @@ cp "$IMAGES"/*.tar "$W/bundle/images/"
 # The tag is what a node says it was installed from (rlark.io/node-install-spec).
 echo "${REF##*:}" > "$W/bundle/tag"
 [[ -z ${CERTS_D:-} ]] || cp -r "$CERTS_D" "$W/bundle/certs.d"
-for script in lib.sh install.sh upgrade.sh control-plane.sh; do install -m 755 "$HERE/$script" "$W/bundle/$script"; done
+for script in lib.sh install.sh upgrade.sh control-plane.sh keep.sh; do install -m 755 "$HERE/$script" "$W/bundle/$script"; done
 cat > "$W/Dockerfile" <<'DOCKERFILE'
 FROM scratch
 COPY bundle /bundle

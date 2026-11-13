@@ -40,6 +40,8 @@
 #               etcd or an object of the cluster holds an address of this
 #               machine other than the tunnel's
 #   annotations rlark.io/node-install-spec and -state (lib.sh)
+#   keep        a timer of the machine looks after the tunnel service, the
+#               runtime, the kubelet and the kernel settings from now on (keep.sh)
 #
 # Nothing of the control plane knows the machine by an address of its own
 # network: the machine can be carried to another network, and comes back as
@@ -105,7 +107,8 @@ undo() {
     (umask 077 && tar -cpf "$keep/etc-kubernetes.tar" -C / etc/kubernetes)
     stamp "kept in $keep: /etc/kubernetes and a last snapshot of etcd"
   fi
-  systemctl disable --now rlark-etcd-snapshot.timer >/dev/null 2>&1 || true
+  systemctl disable --now rlark-etcd-snapshot.timer rlark-node-keep.timer >/dev/null 2>&1 || true
+  rm -f /etc/systemd/system/rlark-node-keep.service /etc/systemd/system/rlark-node-keep.timer /etc/rlark/node-keep.env
   rm -f /etc/systemd/system/rlark-etcd-snapshot.timer /etc/systemd/system/rlark-etcd-snapshot.service /opt/rlark/bin/rlark-etcd-snapshot
   systemctl stop kubelet 2>/dev/null || true
   "$B/bin/kubeadm" reset --force --cri-socket "unix://$SOCKET" > "$keep/reset.log" 2>&1 || { tail -20 "$keep/reset.log" >&2; fail "kubeadm reset"; }
@@ -501,6 +504,7 @@ if [ "$(kubectl --kubeconfig $K/kubelet.conf get node "$NODE_NAME" -o jsonpath='
   node_install "$SETTINGS" ok
   changed=annotations
 fi
+keep_service "$(unit_of "$SOCKET")"
 rm -rf "$B/images"
 if [ -z "$changed" ]; then
   echo "Nothing to do: this machine is the control plane at https://$name:6443 (Kubernetes $VERSION, node $NODE_NAME, installed from $spec). Nothing was changed."

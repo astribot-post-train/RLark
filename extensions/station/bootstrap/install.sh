@@ -10,6 +10,7 @@
 #   kubelet.service                     reads drop-ins from /etc/kubernetes/kubelet.conf.d
 #   /etc/hosts                          the site's names, kept by the tunnel service (lines ending in "# rlark names")
 #   /etc/rlark/station/resolv.conf      the site's name servers, likewise, for the kubelet to give to pods
+#   rlark-node-keep.timer               after every boot and every ten minutes, what is listed here is as written here (keep.sh)
 # and on its Node the annotations rlark.io/node-install-spec and -state (lib.sh).
 set -eu
 . /var/lib/rlark/bootstrap/lib.sh
@@ -122,5 +123,6 @@ until kubectl --kubeconfig /etc/kubernetes/kubelet.conf get node "$NODE_NAME" -o
 done
 stamp "node Ready"
 node_install "$SETTINGS" ok
+keep_service "$(unit_of "$SOCKET")"
 rm -rf "$B"/images "$B"/join.yaml
 echo "Done. Nothing else is needed on this machine."

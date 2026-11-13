@@ -567,6 +567,40 @@ server() {
   k server get pods -A -o wide
 }
 
+# keep NODE: what the installer made of a node is broken by hand in four
+# places; the node's own timer service puts it back and says so on the Node.
+# Then the same across a reboot with the module's boot file taken away.
+keep() {
+  local node=$1 cp=${2:-server}
+  state() { k "$cp" get node "$node" -o jsonpath='{"state: "}{.metadata.annotations.rlark\.io/node-install-state}{"\nrestored: "}{.metadata.annotations.rlark\.io/node-install-restored}{"\nspec: "}{.metadata.annotations.rlark\.io/node-install-spec}{"\n"}'; }
+  on "$node" systemctl list-timers rlark-node-keep.timer --no-pager | sed -n 2p
+  on "$node" systemctl start rlark-node-keep.service; state
+  stamp "$node: breaking it"
+  on "$node" sh -c 'sysctl -q -w net.ipv4.ip_forward=0; rm -f /etc/modules-load.d/rlark.conf
+    systemctl disable --now rlark-station-gateway >/dev/null 2>&1
+    sed -i "s/^Restart=always/Restart=no/" /etc/systemd/system/kubelet.service; rm -f /etc/kubernetes/kubelet.conf.d/15-rlark-dns.conf; systemctl daemon-reload
+    systemctl stop kubelet'
+  on "$node" systemctl start rlark-node-keep.service
+  on "$node" journalctl -u rlark-node-keep --no-pager -n 3 | cut -c1-220
+  on "$node" sh -c 'echo "ip_forward $(cat /proc/sys/net/ipv4/ip_forward); modules file $(ls /etc/modules-load.d/rlark.conf); tunnel $(systemctl is-enabled rlark-station-gateway)/$(systemctl is-active rlark-station-gateway); kubelet $(systemctl is-active kubelet) $(grep -c Restart=always /etc/systemd/system/kubelet.service); dns drop-in $(ls /etc/kubernetes/kubelet.conf.d/15-rlark-dns.conf)"'
+  k "$cp" wait --for=condition=Ready "node/$node" --timeout=120s; state
+  on "$node" systemctl start rlark-node-keep.service; state
+  stamp "$node: something that cannot be put back"
+  on "$node" sh -c 'mv /opt/rlark/bin/station-gateway /opt/rlark/bin/station-gateway.away; systemctl stop rlark-station-gateway'
+  on "$node" systemctl start rlark-node-keep.service || true; state
+  on "$node" sh -c 'mv /opt/rlark/bin/station-gateway.away /opt/rlark/bin/station-gateway'
+  on "$node" systemctl start rlark-node-keep.service; state
+  stamp "$node: a reboot without the modules file and with the kubelet disabled"
+  on "$node" sh -c 'rm -f /etc/modules-load.d/rlark.conf; systemctl disable kubelet >/dev/null 2>&1'
+  docker restart "$P-$node" >/dev/null
+  until on "$node" systemctl is-system-running >/dev/null 2>&1 || on "$node" systemctl is-active multi-user.target >/dev/null 2>&1; do sleep 1; done
+  tunnels
+  # The timer's first run is two minutes after the boot; nobody starts it here.
+  until [[ $(on "$node" systemctl show rlark-node-keep.service -p ExecMainExitTimestampMonotonic --value) != 0 ]]; do sleep 5; done
+  on "$node" sh -c 'echo "after the reboot: modules file $(ls /etc/modules-load.d/rlark.conf); kubelet $(systemctl is-enabled kubelet)/$(systemctl is-active kubelet); uptime $(cut -d. -f1 /proc/uptime) s"'
+  k "$cp" wait --for=condition=Ready "node/$node" --timeout=180s; sleep 3; on "$node" systemctl start rlark-node-keep.service; state
+}
+
 down() {
   local name
   for name in $(docker ps -a --format '{{.Names}}' | grep "^$P-"); do docker rm -f -v "$name" >/dev/null; done

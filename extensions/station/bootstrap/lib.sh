@@ -38,6 +38,8 @@ keep_old_cluster() {
   [ ! -d /etc/systemd/system/kubelet.service.d ] || cp -a /etc/systemd/system/kubelet.service.d "$OLD/units/"
   [ ! -d /etc/cni/net.d ] || cp -a /etc/cni/net.d "$OLD/cni-net.d"
   ! systemctl is-enabled rlark-station-gateway >/dev/null 2>&1 || touch "$OLD/had-host-gateway"
+  # What kept the node as it was must not put that back while it moves.
+  ! systemctl is-enabled rlark-node-keep.timer >/dev/null 2>&1 || { cp -a /etc/rlark/node-keep.env "$OLD/"; systemctl stop rlark-node-keep.timer; }
 }
 restore_old_cluster() {
   rm -f /etc/systemd/system/kubelet.service /etc/systemd/system/kubelet.service.d/zz-rlark.conf
@@ -50,6 +52,12 @@ restore_old_cluster() {
   [ ! -d "$OLD/cni-net.d" ] || { install -d /etc/cni/net.d && rm -rf /etc/cni/net.d/* && cp -a "$OLD/cni-net.d/." /etc/cni/net.d/; }
   # The old cluster's own gateway pod takes the tunnel again.
   [ -e "$OLD/had-host-gateway" ] || systemctl disable --now rlark-station-gateway >/dev/null 2>&1 || true
+  if [ -e "$OLD/node-keep.env" ]; then
+    cp -a "$OLD/node-keep.env" /etc/rlark/ && systemctl start rlark-node-keep.timer
+  else
+    systemctl disable --now rlark-node-keep.timer >/dev/null 2>&1 || true
+    rm -f /etc/systemd/system/rlark-node-keep.service /etc/systemd/system/rlark-node-keep.timer /etc/rlark/node-keep.env
+  fi
   systemctl daemon-reload
   systemctl start kubelet
 }
@@ -196,8 +204,25 @@ UNIT
   fi
   systemctl enable kubelet >/dev/null 2>&1
   # A node class's own profile (a robot's CPU partition) derives its drop-in
-  # from the kubelet's unit, which has just changed.
-  [ ! -x /usr/local/sbin/fleet-node-profile ] || /usr/local/sbin/fleet-node-profile install >> "$B"/node-profile.log 2>&1 || fail "the node profile did not accept the new kubelet unit: $B/node-profile.log"
+  # from the kubelet's unit, when that has changed.
+  [ "${changed:-}" != kubelet ] || [ ! -x /usr/local/sbin/fleet-node-profile ] || /usr/local/sbin/fleet-node-profile install >> "$B"/node-profile.log 2>&1 || fail "the node profile did not accept the new kubelet unit: $B/node-profile.log"
+}
+
+# keep_service RUNTIME_UNIT: from now on the node looks after what the
+# installer made of it (keep.sh), after every boot and every ten minutes.
+keep_service() {
+  install -d /etc/rlark /opt/rlark/bin
+  printf 'NODE_NAME=%s\nTUNNEL_INTERFACE=%s\nRUNTIME_UNIT=%s\n' "$NODE_NAME" "$TUNNEL_INTERFACE" "$1" > /etc/rlark/node-keep.env
+  install -m 755 "$B/keep.sh" /opt/rlark/bin/rlark-node-keep
+  printf '[Unit]\nDescription=Keeps this node as the RLark installer made it\nAfter=network-online.target\n[Service]\nType=oneshot\nExecStart=/opt/rlark/bin/rlark-node-keep\n' > /etc/systemd/system/rlark-node-keep.service
+  printf '[Unit]\nDescription=Keeps this node as the RLark installer made it\n[Timer]\nOnBootSec=2min\nOnUnitActiveSec=10min\n[Install]\nWantedBy=timers.target\n' > /etc/systemd/system/rlark-node-keep.timer
+  systemctl daemon-reload
+  systemctl enable --now rlark-node-keep.timer >/dev/null 2>&1
+}
+
+# unit_of SOCKET: the service whose process serves a container runtime's socket.
+unit_of() {
+  sed -n 's#.*/\([^/]*\.service\)$#\1#p' "/proc/$(ss -Hxlp | awk -v s="$(readlink -f "$1")" '$5 == s' | sed -n 's/.*pid=\([0-9]*\).*/\1/p')/cgroup" | head -1
 }
 
 # node_install SETTINGS STATE: the node's pair of annotations. The spec is
