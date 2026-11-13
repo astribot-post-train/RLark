@@ -93,6 +93,14 @@ ready_since() {
   [[ $at == True\ * ]] && (( $(date -d "${at#True }" +%s) >= started ))
 }
 until ready_since; do
+  # The Job has failed and the node is Ready where it was: it did not leave,
+  # or it is back. (A node that has left takes its Job's pod along; that pod
+  # is called failed in the old cluster some minutes later.)
+  if [[ $(old -n "$NS" get job "$name" -o jsonpath='{.status.failed}' 2>/dev/null) -ge 1 && $(old get node "$NODE" -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null) == True ]]; then
+    echo "$NODE did not move: the installer on it failed and the node is Ready under its old control plane. The end of its log:" >&2
+    old -n "$NS" logs "job/$name" --tail=8 >&2 || true
+    exit 1
+  fi
   if (( $(date +%s) - started > ${TIMEOUT:-600} )); then
     # A move within one registered cluster leaves the admission: it is the
     # node's declaration there, and the node goes on under it where it is.
