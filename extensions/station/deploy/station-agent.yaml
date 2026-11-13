@@ -471,8 +471,10 @@ spec:
         volumeMounts:
         - name: host-programs
           mountPath: /host/opt/rlark/bin
+        # The directory above in-use: whoever keeps files there may make and
+        # remove in-use itself, and a mount of it would go on showing the old one.
         - name: host-in-use
-          mountPath: /host/run/rlark/in-use
+          mountPath: /host/run/rlark
           readOnly: true
         - name: host-unit-drop-ins
           mountPath: /host/etc/systemd/system/rlark-station-gateway.service.d
@@ -486,7 +488,7 @@ spec:
           type: Directory
       - name: host-in-use
         hostPath:
-          path: /run/rlark/in-use
+          path: /run/rlark
           type: DirectoryOrCreate
       - name: host-unit-drop-ins
         hostPath:
