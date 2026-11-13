@@ -14,6 +14,7 @@ spec:
       labels:
         app: registry-trust
     spec:
+      hostPID: true
       tolerations:
         - operator: Exists
       terminationGracePeriodSeconds: 1
@@ -45,6 +46,18 @@ spec:
                 } > "/host$certs/$host/hosts.toml"
                 echo "trusted $host in $certs"
               done
+              # containerd 2.x pulls through its transfer service, which takes the registry
+              # config_path as one directory: a list there ('a:b', the 2.x default config)
+              # leaves certs.d unread. Keep the first directory, then restart that runtime
+              # once; running containers are not affected.
+              config=/host/etc/$runtime/config.toml
+              if grep -q "^ *use_local_image_pull *= *false" "$config" 2>/dev/null && grep -q "^ *config_path *= *[\"'][^\"']*:" "$config"; then
+                [ -e "$config.registry-trust.orig" ] || cp -p "$config" "$config.registry-trust.orig"
+                sed -i "s#^\( *config_path *= *[\"']\)\([^\"':]*\):[^\"']*#\1\2#" "$config"
+                nsenter -t 1 -m -u -i -n -p -- systemctl restart "$runtime" ||
+                  { cp -p "$config.registry-trust.orig" "$config"; echo "cannot restart $runtime; its config is restored"; exit 1; }
+                echo "registry config_path of $runtime set to $certs; restarted $runtime"
+              fi
               # /etc/hosts: only the lines carrying the marker are ours; they are rewritten
               # in place (same file, other lines untouched) to match the parameters.
               marker='# rlark registry-trust'
@@ -67,6 +80,8 @@ spec:
             - name: CA_CERT
               value: |
 {{ indent 16 .Values.caCert }}
+          securityContext:
+            privileged: true
           resources:
             requests:
               cpu: 1m
