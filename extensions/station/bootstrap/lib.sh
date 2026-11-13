@@ -54,8 +54,8 @@ restore_old_cluster() {
 # the node has enrolled, the last one it applied when the machine boots or
 # when the pod that ran the tunnel is gone, and the administrator's document
 # until then; the names its document holds it keeps in /etc/hosts, the name
-# servers in /etc/rlark/station/resolv.conf. A service that is running as
-# written is left alone.
+# servers in /etc/rlark/station/resolv.conf. It counts as started when it has
+# applied its document once. A service that is running as written is left alone.
 tunnel_service() {
   install -d /etc/rlark/station
   cat > "$B/rlark-station-gateway.service" <<UNIT
@@ -68,7 +68,7 @@ Before=kubelet.service
 [Service]
 ExecStartPre=/bin/sh -c 'mkdir -p /run/station-network /run/station-observation && chown 65532 /run/station-network'
 ExecStart=/opt/rlark/bin/station-gateway --config /etc/rlark/station/bootstrap.json --computed-config /run/station-network/config.json --identity-file /run/station-observation/identity.json --observation-file /run/station-observation/wireguard.json --prune-routes --hosts-file /etc/hosts --resolv-file /etc/rlark/station/resolv.conf
-ExecStartPost=/bin/sh -c 'for i in \$(seq 100); do ip -4 addr show dev $TUNNEL_INTERFACE 2>/dev/null | grep -q inet && exit 0; sleep 0.2; done; exit 1'
+ExecStartPost=/bin/sh -c 'for i in \$(seq 100); do /opt/rlark/bin/station-gateway --config /etc/rlark/station/bootstrap.json --computed-config /run/station-network/config.json --check 2>/dev/null && exit 0; sleep 0.2; done; exit 1'
 Restart=always
 RestartSec=2
 

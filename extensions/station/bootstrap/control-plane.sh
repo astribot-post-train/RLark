@@ -149,7 +149,9 @@ fi
 tunnel_address() {
   ip -4 -o addr show dev "$TUNNEL_INTERFACE" 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | grep . && return 0
   for document in /var/lib/station/wg/last-applied.json /etc/rlark/station/bootstrap.json; do
-    sed -n 's/.*"address": *"\([0-9.]*\).*/\1/p' "$document" 2>/dev/null | grep . && return 0
+    # The machine's own is the one with a prefix length; the names' have none.
+    [ -s "$document" ] || continue
+    tr -d ' \t\n' < "$document" | grep -o '"address":"[0-9.]*/' | head -1 | cut -d'"' -f4 | cut -d/ -f1 | grep . && return 0
   done
 }
 ADDRESS=$(tunnel_address | head -1) || true
@@ -402,9 +404,11 @@ install -d "$S/manifests"
 # with the source address of its default route, and robots all have the same.
 printf 'apiVersion: v1\nkind: ConfigMap\nmetadata: {name: kubernetes-services-endpoint, namespace: kube-system}\ndata: {KUBERNETES_SERVICE_HOST: "%s", KUBERNETES_SERVICE_PORT: "6443"}\n' "$name" > "$S/manifests/00-api-endpoint.yaml"
 adm apply -f "$S/manifests/00-api-endpoint.yaml" > "$S/apply.log" 2>&1 || { tail -20 "$S/apply.log" >&2; fail "apply the API endpoint of the CNI"; }
+# A manifest is applied when it is not the one this machine applied last.
 for manifest in "$B"/manifests/*.yaml; do
   [ -e "$manifest" ] || continue
-  rendered=$S/manifests/$(basename "$manifest")
+  applied=$S/manifests/$(basename "$manifest")
+  rendered=$applied.new
   if [ "$(basename "$manifest")" = calico.yaml ]; then
     sed -e "s#veth_mtu: \"0\"#veth_mtu: \"$POD_MTU\"#" \
       -e "s#^\( *\)- name: CALICO_IPV4POOL_IPIP#\1- name: IP_AUTODETECTION_METHOD\n\1  value: \"interface=$TUNNEL_INTERFACE\"\n\1- name: CALICO_IPV4POOL_CIDR\n\1  value: \"$POD_SUBNET\"\n\1- name: FELIX_IGNORELOOSERPF\n\1  value: \"true\"\n&#" \
@@ -412,8 +416,13 @@ for manifest in "$B"/manifests/*.yaml; do
   else
     cp "$manifest" "$rendered"
   fi
-  adm apply -f "$rendered" > "$S/apply.log" 2>&1 || { tail -20 "$S/apply.log" >&2; fail "apply $(basename "$manifest")"; }
-  ! grep -q -v ' unchanged$' "$S/apply.log" || { changed=manifests; stamp "applied $(basename "$manifest")"; }
+  if ! cmp -s "$rendered" "$applied"; then
+    adm apply -f "$rendered" > "$S/apply.log" 2>&1 || { tail -20 "$S/apply.log" >&2; fail "apply $(basename "$manifest")"; }
+    mv "$rendered" "$applied"
+    changed=manifests
+    stamp "applied $(basename "$manifest")"
+  fi
+  rm -f "$rendered"
 done
 tries=0
 until [ "$(adm get node "$NODE_NAME" -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null)" = True ]; do

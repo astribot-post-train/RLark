@@ -29,6 +29,12 @@
 #   control-plane.sh move NODE          a robot from the old cluster to the one of ws (BREAK=yes: a join that fails)
 #   control-plane.sh reinstall robot1   out of the old cluster, wiped, installed as a worker
 #   control-plane.sh server             the control plane from ws to a new machine, from a snapshot
+#   control-plane.sh workstation_shape  ws as the site's workstation is a node (package kubelet, swap on)
+#   control-plane.sh refusals NODE      what the mode refuses before it changes anything
+#   control-plane.sh addresses NODE     where an address of the machine's own network is held: nowhere
+#   control-plane.sh relocate           ws is carried to another network and boots there
+#   control-plane.sh reboot NODE        a machine restarts; its calico-node comes back by itself
+#   control-plane.sh vip NODE...        the API's Service address from a robot's host network
 #   control-plane.sh down
 # Functions are run by name; cp-rehearsal/NOTES.md has the order they were run in.
 set -euo pipefail
@@ -120,7 +126,7 @@ document() {
   # The names the site network declares (SiteNetwork, names): every machine's
   # document carries them and its tunnel service keeps them in /etc/hosts.
   local names="{\"name\":\"$ROBOT\",\"address\":\"${TUN[$(cat "$D/robot-cp" 2>/dev/null || echo ws)]}\"},{\"name\":\"$OFFICE\",\"address\":\"${TUN[office]}\"}"
-  echo "{\"interface\":\"st-wg0\",\"address\":\"${TUN[$node]}/32\",\"listenPort\":51820,\"mtu\":1380,\"peers\":[$peers],\"routes\":[\"10.254.240.0/24\"],\"names\":[$names]}"
+  echo "{\"interface\":\"st-wg0\",\"address\":\"${TUN[$node]}/32\",\"listenPort\":51820,\"mtu\":1380,\"peers\":[$peers],\"routes\":[\"10.254.240.0/24\"],\"names\":[$names],\"dns\":[\"${SITE_DNS:-172.18.0.1}\"]}"
 }
 # tunnels: every machine gets its document the way its agent would store it:
 # beside a host service, or for the pod that runs the tunnel of an office node.
@@ -469,6 +475,10 @@ addresses() {
 # address is the one it had.
 relocate() {
   local t0; t0=$(now)
+  # The node image's own start-up script rewrites Kubernetes' files and deletes
+  # the API server's certificate when the container's address has changed; a
+  # machine has no such script, so it is told that nothing changed.
+  on ws sh -c "printf %s '${IP[ws-moved]}' > /kind/old-ipv4; printf %s '::ffff:${IP[ws-moved]}' > /kind/old-ipv6"
   docker stop "$P-ws" >/dev/null
   docker network disconnect kind "$P-ws"
   docker network connect --ip "${IP[ws-moved]}" kind "$P-ws"
@@ -526,6 +536,32 @@ POD
     k ws wait --for=jsonpath='{.status.phase}'=Succeeded "pod/vip-$node" --timeout=90s >/dev/null || k ws describe pod "vip-$node" | tail -5
     echo "$node host-network pod: $(k ws logs "vip-$node" | tr -s ' \n' ' ')"
   done
+}
+
+# server: the control plane moves from the workstation to another machine,
+# from the workstation's last snapshot. The workstation is switched off; the
+# site network gives the name the server's tunnel address (SiteNetwork,
+# names), which is all the robots are told: their kubeconfigs and
+# certificates stay as they are.
+server() {
+  local t0
+  on ws systemctl start rlark-etcd-snapshot
+  k ws get nodes -o wide
+  on robot1 sh -c 'sha256sum /etc/kubernetes/kubelet.conf /var/lib/kubelet/pki/kubelet-client-current.pem' > "$D/robot1-before"
+  t0=$(now)
+  docker rm -f -v "$P-ws" >/dev/null
+  stamp "ws is switched off and gone"
+  machine server
+  echo server > "$D/robot-cp"
+  first_tunnel server
+  run_cp server CONTROL_PLANE_NAME=$ROBOT POD_SUBNET=10.242.0.0/16 SERVICE_SUBNET=10.243.0.0/16 FROM_SNAPSHOT=/mnt/site/etcd-robot ETCD_SNAPSHOT_DIR=/mnt/site/etcd-robot-server
+  stamp "the control plane is on server $(since "$t0") after ws was switched off"
+  k server wait --for=condition=Ready node/server node/robot1 node/robot2 --timeout=300s
+  stamp "the robots are Ready under it $(since "$t0") after ws was switched off"
+  on robot1 sh -c 'sha256sum /etc/kubernetes/kubelet.conf /var/lib/kubelet/pki/kubelet-client-current.pem' | diff - "$D/robot1-before" && echo "robot1: its kubeconfig and its certificate are the ones it had"
+  on robot1 getent hosts $ROBOT
+  k server get nodes -o wide
+  k server get pods -A -o wide
 }
 
 down() {
