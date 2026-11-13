@@ -29,6 +29,8 @@
 #   control-plane.sh move NODE          a robot from the old cluster to the one of ws (BREAK=yes: a join that fails)
 #   control-plane.sh reinstall robot1   out of the old cluster, wiped, installed as a worker
 #   control-plane.sh server             the control plane from ws to a new machine, from a snapshot
+#   control-plane.sh takeover [A [B]]   the control plane moves with its cluster from A to B, a worker of it, while
+#                                       both run (handover, FROM_SNAPSHOT, undo); "takeover_back" stops halfway and goes back
 #   control-plane.sh workstation_shape  ws as the site's workstation is a node (package kubelet, swap on)
 #   control-plane.sh refusals NODE      what the mode refuses before it changes anything
 #   control-plane.sh addresses NODE     where an address of the machine's own network is held: nowhere
@@ -160,7 +162,7 @@ first_tunnel() {
 # container name, the machine being a container without a docker of its own.
 run_cp() {
   local node=$1 action= env=(); shift
-  [[ ${1:-} != undo && ${1:-} != check ]] || { action=$1; shift; }
+  [[ ! ${1:-} =~ ^(undo|check|handover|resume)$ ]] || { action=$1; shift; }
   for pair in "$@"; do env+=(-e "$pair"); done
   docker run --rm --name "$P-run-$node" --privileged --net="container:$P-$node" --pid="container:$P-$node" ${DOCKER_ARGS:-} "${env[@]}" "$INSTALLER" control-plane $action
 }
@@ -639,6 +641,65 @@ server() {
   k server get pods -A -o wide
 }
 
+# The cluster as the nodes and its objects show it: who they are, not how they do.
+cluster_state() {
+  k "$1" get namespaces,nodes,deployments,daemonsets,secrets,configmaps,serviceaccounts -A -o jsonpath='{range .items[*]}{.kind} {.metadata.namespace}/{.metadata.name} {.metadata.uid}{"\n"}{end}' | sort
+}
+# api_watch NODE: the API as a node's host sees it at the name, twice a second, until $D/api-watch.stop.
+api_watch() {
+  rm -f "$D/api-watch.stop"
+  while [[ ! -e $D/api-watch.stop ]]; do
+    echo "$(now) $(on "$1" curl -sk -m 1 -o /dev/null -w '%{http_code}' "https://$ROBOT:6443/readyz" 2>/dev/null || true)"
+    sleep 0.4
+  done > "$D/api-watch.log"
+}
+api_outage() {
+  touch "$D/api-watch.stop"; wait
+  awk '$2 != 200 && $2 != 401 && $2 != 403 {if (!first) first = $1; last = $1; lost++} END {printf "the API at the name, seen from a robot: %d probes without an answer, from the first to the last of them %.1f s\n", lost, last - first}' "$D/api-watch.log"
+}
+# takeover_to A B: A hands its control plane over; B, a worker of the cluster,
+# takes it from A's last snapshot; the site network gives the name to B. The
+# snapshot directory is on storage both have (a person carries it, on a site).
+takeover_to() {
+  local from=$1 to=$2 t0
+  exists "$to" || { machine "$to"; worker "$to" "$from" "$ROBOT:6443"; k "$from" wait --for=condition=Ready "node/$to" --timeout=180s; }
+  cluster_state "$from" > "$D/state-before"
+  for robot in robot1 robot2; do on $robot sh -c 'sha256sum /etc/kubernetes/kubelet.conf /var/lib/kubelet/pki/kubelet-client-current.pem; crictl ps -q 2>/dev/null | sort | sha256sum' > "$D/$robot-before"; done
+  api_watch robot2 &
+  t0=$(now)
+  run_cp "$from" handover
+  stamp "handed over $(since "$t0") after the command"
+  echo "$to" > "$D/robot-cp"; tunnels
+  run_cp "$to" CONTROL_PLANE_NAME=$ROBOT POD_SUBNET=10.242.0.0/16 SERVICE_SUBNET=10.243.0.0/16 FROM_SNAPSHOT=/mnt/site/etcd-robot ETCD_SNAPSHOT_DIR=/mnt/site/etcd-robot-$to
+  k "$to" wait --for=condition=Ready "node/$to" node/robot1 node/robot2 --timeout=300s
+  stamp "the robots are Ready under $to $(since "$t0") after the handover began"
+  cluster_state "$to" > "$D/state-after"
+  echo "objects that are not the ones they were (none but the two control planes' own are expected):"; diff "$D/state-before" "$D/state-after" | grep '^[<>]' || echo "  none"
+  for robot in robot1 robot2; do on $robot sh -c 'sha256sum /etc/kubernetes/kubelet.conf /var/lib/kubelet/pki/kubelet-client-current.pem; crictl ps -q 2>/dev/null | sort | sha256sum' | diff - "$D/$robot-before" >/dev/null && echo "$robot: its kubeconfig, its certificate and its containers are the ones it had"; done
+}
+takeover() {
+  local from=${1:-ws} to=${2:-server}
+  takeover_to "$from" "$to"
+  sleep 60; api_outage
+  run_cp "$from" undo
+  k "$to" get nodes -o wide
+}
+# takeover_back: the same, and then back: the name is given back, A takes up
+# where it stopped, B gives the control plane up and is the worker it was.
+takeover_back() {
+  local from=${1:-ws} to=${2:-server} t0
+  takeover_to "$from" "$to"
+  t0=$(now)
+  echo "$from" > "$D/robot-cp"; tunnels
+  run_cp "$from" resume
+  run_cp "$to" undo
+  k "$from" wait --for=condition=Ready "node/$from" "node/$to" node/robot1 node/robot2 --timeout=300s
+  stamp "back under $from, $to a worker again, $(since "$t0") after the name was given back"
+  sleep 30; api_outage
+  cluster_state "$from" > "$D/state-back"
+  echo "objects that are not the ones they were before the handover:"; diff "$D/state-before" "$D/state-back" | grep '^[<>]' || echo "  none"
+  k "$from" get nodes -o wide
+}
 down() {
   local name
   for name in $(docker ps -a --format '{{.Names}}' | grep "^$P-"); do docker rm -f -v "$name" >/dev/null; done
