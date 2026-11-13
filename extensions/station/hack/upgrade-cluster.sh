@@ -22,7 +22,9 @@
 # image of the failed upgrade takes the worker nodes back, after the control
 # plane has been taken back on its node (upgrade.sh, PHASE=rollback).
 # Environment: PULL_SECRET (name of an image pull secret) and JOB_NAMESPACE
-# (where it is and the Jobs run; kube-system), NODES, WATCHDOG_SECONDS.
+# (where it is and the Jobs run; kube-system), NODES, WATCHDOG_SECONDS;
+# MANAGEMENT_KUBECONFIG and MANAGEMENT_NAMESPACE for a cluster under an RLark
+# agent (the management plane and the cluster's namespace in it).
 set -euo pipefail
 K=$1 VERSION=$2 IMAGE=$3
 k() { kubectl --kubeconfig "$K" "$@"; }
@@ -183,7 +185,16 @@ print(" ".join("%s %s/%s" % (r, s["allocatable"].get(r), c) for r, c in s["capac
     (( $(date +%s) - t1 < 180 )) || { echo "$node: 180 s after its device plugins were made anew they are not all Ready or the node offers fewer devices than it has: ${less:-}" >&2; exit 1; }
     sleep 3
   done
-  [[ $cordoned == true ]] || k uncordon "$node" >/dev/null
+  if [[ $cordoned != true ]]; then
+    # Under an RLark agent a node's scheduling state is its management Node's:
+    # the agent takes a cordon up to it and puts an uncordon made here back.
+    if [[ -n ${MANAGEMENT_KUBECONFIG:-} ]]; then
+      kubectl --kubeconfig "$MANAGEMENT_KUBECONFIG" -n "$MANAGEMENT_NAMESPACE" patch nodes.rlinf.io "$node" --type=merge -p '{"spec":{"unschedulable":false}}' >/dev/null
+      until [[ $(k get node "$node" -o jsonpath='{.spec.unschedulable}') != true ]]; do sleep 1; done
+    else
+      k uncordon "$node" >/dev/null
+    fi
+  fi
   k annotate node "$node" rlark.io/unschedulable-before-upgrade- >/dev/null
   stamp "$node: kubelet $VERSION and Ready in $(( $(date +%s) - t0 )) s"
 done

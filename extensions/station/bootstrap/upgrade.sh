@@ -51,7 +51,9 @@ CTR=$(dirname "$(readlink "/proc/$(ss -Hxlp | awk -v s="$(readlink -f "$SOCKET")
 from=$("$BIN/kubelet" --version | awk '{print $2}')
 keep=/var/backups/rlark-kube-upgrade/$from
 [ "$PHASE" = rollback ] || install -d "$keep"
-export PATH="$BIN:$PATH"
+# kubectl and kubeadm are the node's own where it has them; a node joined by
+# the installer has the kubelet alone, and uses the bundle's.
+export PATH="$BIN:$PATH:$B/bin"
 WATCHDOG=rlark-kube-upgrade-watchdog
 WATCH=/var/lib/rlark/kube-upgrade
 disarm() {
