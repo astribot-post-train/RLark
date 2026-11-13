@@ -15,7 +15,8 @@
 #   MANIFESTS  optional directory of manifests a new control plane applies, in
 #              name order (control-plane.sh): calico.yaml as its project
 #              publishes it, then whatever the site adds to every cluster
-#   CERTS_D    optional containerd certs.d directory: how the node reaches the site's registries
+#   REGISTRY_CA  optional file with the CA of the site's registry (a public certificate): the first trust a
+#              machine has in registry.rlark.internal:5443, before the site's registry-trust addon writes the same
 set -euo pipefail
 REF=$1 OUT=$2
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -32,7 +33,14 @@ cp "$IMAGES"/*.tar "$W/bundle/images/"
 [[ -z ${MANIFESTS:-} ]] || cp -r "$MANIFESTS" "$W/bundle/manifests"
 # The tag is what a node says it was installed from (rlark.io/node-install-spec).
 echo "${REF##*:}" > "$W/bundle/tag"
-[[ -z ${CERTS_D:-} ]] || cp -r "$CERTS_D" "$W/bundle/certs.d"
+# Byte for byte what registry-trust writes (v0.2.3): the CA beside hosts.toml,
+# named relative to it, so that the two fit under any runtime's config_path.
+if [[ -n ${REGISTRY_CA:-} ]]; then
+  mkdir -p "$W/bundle/certs.d/registry.rlark.internal:5443"
+  printf '%s\n' "$(cat "$REGISTRY_CA")" > "$W/bundle/certs.d/registry.rlark.internal:5443/ca.crt"
+  printf '%s\n' 'server = "https://registry.rlark.internal:5443"' '' '[host."https://registry.rlark.internal:5443"]' '  capabilities = ["pull", "resolve"]' '  ca = "ca.crt"' \
+    > "$W/bundle/certs.d/registry.rlark.internal:5443/hosts.toml"
+fi
 for script in lib.sh install.sh upgrade.sh control-plane.sh; do install -m 755 "$HERE/$script" "$W/bundle/$script"; done
 cat > "$W/Dockerfile" <<'DOCKERFILE'
 FROM scratch
