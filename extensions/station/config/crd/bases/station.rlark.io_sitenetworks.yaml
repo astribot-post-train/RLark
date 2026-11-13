@@ -245,6 +245,17 @@ spec:
                       maxItems: 256
                       type: array
                       x-kubernetes-list-type: set
+                    dns:
+                      description: |-
+                        DNS are the site's name servers. A node's kubelet gives them to its
+                        pods; they are kept in /etc/rlark/station/resolv.conf on every node of
+                        the site (station-gateway). Without them a node's pods use the name
+                        servers the machine itself has.
+                      items:
+                        format: ipv4
+                        type: string
+                      maxItems: 3
+                      type: array
                     leavesViaRelay:
                       description: |-
                         LeavesViaRelay makes the leaves of this site peer with their relay only

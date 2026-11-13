@@ -36,6 +36,7 @@ type config struct {
 	Routes       []string      `json:"routes"`
 	UplinkRoutes []uplinkRoute `json:"uplinkRoutes"`
 	Names        []hostName    `json:"names"`
+	DNS          []string      `json:"dns"`
 }
 type hostName struct {
 	Name    string `json:"name"`
@@ -140,6 +141,11 @@ func parse(data []byte) (*desired, error) {
 	for _, name := range c.Names {
 		if net.ParseIP(name.Address) == nil || name.Name == "" || strings.ContainsAny(name.Name, " \t\n#") {
 			return nil, errors.New("a name requires a host name and an address")
+		}
+	}
+	for _, server := range c.DNS {
+		if net.ParseIP(server) == nil {
+			return nil, errors.New("a name server is an address")
 		}
 	}
 	return d, nil
@@ -378,6 +384,7 @@ func main() {
 	status := flag.Bool("status", false, "show non-secret WireGuard peer status as JSON")
 	snapshotPath := flag.String("observation-file", os.Getenv("STATION_GATEWAY_OBSERVATION_FILE"), "optional non-secret interface observation file")
 	hostsPath := flag.String("hosts-file", os.Getenv("STATION_GATEWAY_HOSTS_FILE"), "optional hosts file of the node, in which the configuration's names are kept")
+	resolvPath := flag.String("resolv-file", os.Getenv("STATION_GATEWAY_RESOLV_FILE"), "optional file in which the configuration's name servers are kept, for the kubelet to give to pods")
 	publicKey := flag.Bool("public-key", false, "create the node's key if it has none, print the public key and exit")
 	flag.Parse()
 	if *publicKey {
@@ -464,6 +471,9 @@ func main() {
 		}
 		if e == nil && *hostsPath != "" && d.Names != nil {
 			e = writeNames(*hostsPath, d.Names)
+		}
+		if e == nil && *resolvPath != "" && d.DNS != nil {
+			e = writeResolv(*resolvPath, d.DNS)
 		}
 		if e == nil && source == "computed" {
 			if saved, readErr := os.ReadFile(from.lastApplied); readErr != nil || string(saved) != string(data) {

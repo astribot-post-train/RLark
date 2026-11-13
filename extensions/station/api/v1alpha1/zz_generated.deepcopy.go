@@ -388,6 +388,11 @@ func (in *SiteNetworkSite) DeepCopyInto(out *SiteNetworkSite) {
 		*out = make([]string, len(*in))
 		copy(*out, *in)
 	}
+	if in.DNS != nil {
+		in, out := &in.DNS, &out.DNS
+		*out = make([]string, len(*in))
+		copy(*out, *in)
+	}
 	if in.Names != nil {
 		in, out := &in.Names, &out.Names
 		*out = make([]SiteNetworkName, len(*in))

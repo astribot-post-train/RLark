@@ -34,3 +34,15 @@ func writeNames(path string, names []hostName) error {
 	}
 	return os.WriteFile(path, []byte(wanted), 0644)
 }
+
+// writeResolv keeps the site's name servers in a resolv.conf of their own.
+func writeResolv(path string, servers []string) error {
+	wanted := ""
+	for _, server := range servers {
+		wanted += "nameserver " + server + "\n"
+	}
+	if current, err := os.ReadFile(path); err == nil && string(current) == wanted {
+		return nil
+	}
+	return replaceFile(path, []byte(wanted), 0644)
+}

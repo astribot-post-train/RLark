@@ -89,12 +89,14 @@ undo() {
   [ -e "$S/left" ] || [ -e "$S/init-started" ] || { stamp "no control plane was made on this machine by this installer: nothing to undo"; exit 0; }
   SOCKET=$(cat "$S/socket")
   keep=/var/backups/rlark-control-plane/removed-$(date +%Y%m%d%H%M%S)
-  install -d -m 700 "$keep"
   if initialized; then
     NODE_NAME=$(sed -n 's/.* node=//p' "$S/cluster")
     adm get --raw /readyz >/dev/null 2>&1 || fail "the API of this control plane does not answer, so it cannot be seen whether other nodes are in its cluster: start it first (systemctl start kubelet)"
     others=$(adm get nodes -o name | grep -v "^node/$NODE_NAME\$" | tr '\n' ' ')
     [ -z "$others" ] || fail "other nodes are in this cluster ($others): they would be left without a control plane. Move them to another cluster first"
+  fi
+  install -d -m 700 "$keep"
+  if initialized; then
     adm -n kube-system exec "etcd-$NODE_NAME" -- etcdctl --endpoints https://127.0.0.1:2379 --cacert $K/pki/etcd/ca.crt --cert $K/pki/etcd/server.crt --key $K/pki/etcd/server.key \
       snapshot save /var/lib/etcd/rlark-snapshot-removed.db >/dev/null 2>&1 || fail "etcd snapshot"
     mv /var/lib/etcd/rlark-snapshot-removed.db "$keep/etcd-snapshot.db"
@@ -272,7 +274,7 @@ done
 [ ! -d "$B/cni" ] || cp -n "$B"/cni/* /opt/cni/bin/
 tunnel_service
 [ "$(ip -4 -o addr show dev "$TUNNEL_INTERFACE" | awk '{print $4}' | cut -d/ -f1)" = "$ADDRESS" ] || fail "the tunnel service is running, but $TUNNEL_INTERFACE does not hold $ADDRESS: journalctl -u rlark-station-gateway"
-if [ -e "$S/socket" ]; then modprobe overlay; modprobe br_netfilter; else own_runtime; echo "$SOCKET" > "$S/socket"; fi
+if [ -e "$S/socket" ]; then kernel; else own_runtime; echo "$SOCKET" > "$S/socket"; fi
 if [ "$(cat "$S/images" 2>/dev/null)" != "$(cat "$B/tag")" ]; then
   import_images "$B/images"
   import_images "$B/images/control-plane"

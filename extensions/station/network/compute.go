@@ -51,6 +51,8 @@ type Site struct {
 	// dials every other hub it can, which keeps its traffic to them off the relay.
 	LeavesViaRelay bool
 	Names          []HostName
+	// DNS are the site\'s name servers, for the pods of its members.
+	DNS []string
 }
 
 type Endpoint struct {
@@ -104,6 +106,9 @@ type NodeConfig struct {
 	// Names are the lines station-gateway keeps in the node's /etc/hosts. A
 	// document without them leaves the node's lines as they are.
 	Names []HostName `json:"names,omitempty"`
+	// DNS are the name servers station-gateway keeps in the node's
+	// /etc/rlark/station/resolv.conf, which the kubelet gives to pods.
+	DNS []string `json:"dns,omitempty"`
 }
 
 type HostName struct {
@@ -260,7 +265,7 @@ func Compute(topology Topology, members []Member) (Result, error) {
 		config := NodeConfig{
 			Interface: firstNonEmpty(self.Interface, topology.Interface), Address: self.address.String() + "/32",
 			ListenPort: firstPositive(self.ListenPort, topology.ListenPort), MTU: topology.MTU,
-			Peers: []Peer{}, Routes: []string{}, Names: append(topology.Names[:len(topology.Names):len(topology.Names)], self.site.Names...),
+			Peers: []Peer{}, Routes: []string{}, Names: append(topology.Names[:len(topology.Names):len(topology.Names)], self.site.Names...), DNS: self.site.DNS,
 		}
 		type candidate struct {
 			peer     Peer

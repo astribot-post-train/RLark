@@ -9,6 +9,7 @@
 #   containerd-fleet.service            a containerd of its own for the kubelet (the machine's docker is not touched)
 #   kubelet.service                     reads drop-ins from /etc/kubernetes/kubelet.conf.d
 #   /etc/hosts                          the site's names, kept by the tunnel service (lines ending in "# rlark names")
+#   /etc/rlark/station/resolv.conf      the site's name servers, likewise, for the kubelet to give to pods
 # and on its Node the annotations rlark.io/node-install-spec and -state (lib.sh).
 set -eu
 . /var/lib/rlark/bootstrap/lib.sh
@@ -74,7 +75,7 @@ stamp "tunnel up: $TUNNEL_ADDRESS on $TUNNEL_INTERFACE"
 
 # 2. A containerd for the kubelet, with the images a node needs before it
 #    can pull anything.
-if [ -z "${KEEP_RUNTIME:-}" ]; then own_runtime; else modprobe overlay; modprobe br_netfilter; fi
+if [ -z "${KEEP_RUNTIME:-}" ]; then own_runtime; else kernel; fi
 import_images "$B"/images
 stamp "container runtime ready, $(ls "$B"/images/*.tar | wc -l) image archives imported"
 
