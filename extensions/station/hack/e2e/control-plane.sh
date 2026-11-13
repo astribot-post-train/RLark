@@ -126,7 +126,10 @@ document() {
   # The names the site network declares (SiteNetwork, names): every machine's
   # document carries them and its tunnel service keeps them in /etc/hosts.
   local names="{\"name\":\"$ROBOT\",\"address\":\"${TUN[$(cat "$D/robot-cp" 2>/dev/null || echo ws)]}\"},{\"name\":\"$OFFICE\",\"address\":\"${TUN[office]}\"}"
-  echo "{\"interface\":\"st-wg0\",\"address\":\"${TUN[$node]}/32\",\"listenPort\":51820,\"mtu\":1380,\"peers\":[$peers],\"routes\":[\"10.254.240.0/24\"],\"names\":[$names],\"dns\":[\"${SITE_DNS:-172.18.0.1}\"]}"
+  # NO_NAMES: a site network that declares no names and no name servers yet.
+  local declared=",\"names\":[$names],\"dns\":[\"${SITE_DNS:-172.18.0.1}\"]"
+  [[ -z ${NO_NAMES:-} ]] || declared=
+  echo "{\"interface\":\"st-wg0\",\"address\":\"${TUN[$node]}/32\",\"listenPort\":51820,\"mtu\":1380,\"peers\":[$peers],\"routes\":[\"10.254.240.0/24\"]$declared}"
 }
 # tunnels: every machine gets its document the way its agent would store it:
 # beside a host service, or for the pod that runs the tunnel of an office node.
