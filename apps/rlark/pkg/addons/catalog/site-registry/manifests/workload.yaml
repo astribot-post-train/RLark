@@ -5,6 +5,13 @@ metadata:
   namespace: rlark-system
   labels:
     app: {{ .AddonName }}
+{{- if eq .Values.role "cache" }}
+  annotations:
+    rlark.io/not-ready-message: 站点缓存不可用
+{{- else if eq .Values.role "registry" }}
+  annotations:
+    rlark.io/not-ready-message: 站点仓库不可用
+{{- end }}
 spec:
 {{- if ne .Values.role "mirror" }}
   replicas: 1
@@ -19,7 +26,7 @@ spec:
       labels:
         app: {{ .AddonName }}
       annotations:
-        rlark.io/config: {{ printf "%s|%s|%s|%s|%s" .Values.listen .Values.s3Bucket .Values.s3Region .Values.s3Endpoint .Values.s3RootDirectory | printf "%q" }}
+        rlark.io/config: {{ printf "%s|%s|%s|%s|%s|%s|%s|%s|%s|%s" .Values.listen .Values.s3Bucket .Values.s3Region .Values.s3Endpoint .Values.s3RootDirectory .Values.upstream .Values.ttl .Values.caCert .Values.relayImage .Values.relayIdle | printf "%q" }}
     spec:
       hostNetwork: true
       dnsPolicy: ClusterFirstWithHostNet
@@ -44,10 +51,25 @@ spec:
           env:
             - name: OTEL_TRACES_EXPORTER
               value: none
+{{- if ne .Values.role "mirror" }}
+            # Every fetch from the origin (cache) or from the object store (registry) goes through the relay,
+            # which ends a connection that stays open but silent: the client reads a body without a deadline.
+            - name: HTTPS_PROXY
+              value: http://127.0.0.1:{{ .Values.relayPort }}
+{{- end }}
+{{- if eq .Values.role "cache" }}
+            - name: SSL_CERT_FILE
+              value: /etc/distribution/upstream-ca.crt
+            # One connection per upstream request: over HTTP/2 every request shares one TCP connection, and one
+            # stalled stream on it held up all fetches from the origin (rehearsal 11-14).
+            - name: GODEBUG
+              value: http2client=0
+{{- else }}
             - name: REGISTRY_STORAGE_S3_ACCESSKEY
               valueFrom: {secretKeyRef: {name: {{ .Values.secret }}, key: s3-accesskey}}
             - name: REGISTRY_STORAGE_S3_SECRETKEY
               valueFrom: {secretKeyRef: {name: {{ .Values.secret }}, key: s3-secretkey}}
+{{- end }}
             - name: REGISTRY_HTTP_SECRET
               valueFrom: {secretKeyRef: {name: {{ .Values.secret }}, key: http-secret}}
           readinessProbe:
@@ -62,15 +84,34 @@ spec:
           volumeMounts:
             - name: config
               mountPath: /etc/distribution
+{{- if eq .Values.role "cache" }}
+            - name: cache
+              mountPath: /var/lib/registry
+{{- end }}
 {{- if ne .Values.role "mirror" }}
             - name: credentials
               mountPath: /run/site-registry
               readOnly: true
+        - name: relay
+          image: {{ .Values.relayImage }}
+          imagePullPolicy: IfNotPresent
+          command: [rlark-tools, idle-relay, --listen, "127.0.0.1:{{ .Values.relayPort }}", --idle, "{{ .Values.relayIdle }}"]
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
 {{- end }}
       volumes:
         - name: config
           configMap:
             name: {{ .AddonName }}
+            defaultMode: 0755
+{{- if eq .Values.role "cache" }}
+        - name: cache
+          hostPath:
+            path: {{ .Values.cacheDir }}
+            type: DirectoryOrCreate
+{{- end }}
 {{- if ne .Values.role "mirror" }}
         - name: credentials
           secret:
@@ -79,4 +120,8 @@ spec:
               - {key: htpasswd, path: htpasswd}
               - {key: tls.crt, path: tls.crt}
               - {key: tls.key, path: tls.key}
+{{- if eq .Values.role "cache" }}
+              - {key: proxy-username, path: proxy-username}
+              - {key: proxy-password, path: proxy-password}
+{{- end }}
 {{- end }}

@@ -24,6 +24,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/yaml"
+	"k8s.io/client-go/kubernetes"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
@@ -43,6 +44,9 @@ const (
 	// update of a Deployment's annotations moves the Deployment's generation, so the two kept each other
 	// moving and the Addon never read as ready.
 	AddonGenerationAnnotation = "rlark.io/addon-generation"
+	// NotReadyMessageAnnotation on an Addon workload names, in the operator's words, what it means when the
+	// workload is not ready ("site cache unavailable"); the Addon's status message starts with it.
+	NotReadyMessageAnnotation = "rlark.io/not-ready-message"
 )
 
 var errAddonCleanupPending = errors.New("addon resource deletion pending")
@@ -162,6 +166,11 @@ func (r *pullReconciler) Reconcile(ctx context.Context, req reconcile.Request) (
 				return reconcile.Result{RequeueAfter: AddonRequeueInterval}, nil
 			}
 		}
+	}
+
+	if err := r.replacePodsOnUnselectedNodes(ctx, &mgmtAddon); err != nil {
+		r.updateStatus(ctx, &mgmtAddon, rlarkv1alpha1.AddonPhaseFailed, fmt.Sprintf("placement: %v", err))
+		return reconcile.Result{RequeueAfter: AddonRequeueInterval}, nil
 	}
 
 	// Check readiness
@@ -418,6 +427,97 @@ func (r *pullReconciler) cleanupAddon(ctx context.Context, mgmtAddon *rlarkv1alp
 	return nil
 }
 
+// replacePodsOnUnselectedNodes deletes a Pod of an Addon Deployment that runs on a node its node selector no
+// longer matches, so the Deployment starts it again on a node that does. The scheduler reads the selector only
+// when it places a Pod; without this, moving a label (the node a site's image cache runs on, say) would leave
+// the Pod where it was. A DaemonSet's controller does this by itself.
+func (r *pullReconciler) replacePodsOnUnselectedNodes(ctx context.Context, mgmtAddon *rlarkv1alpha1.Addon) error {
+	deployments := &appsv1.DeploymentList{}
+	if err := r.c.LocalKubeClient.List(ctx, deployments, client.MatchingLabels{addons.LabelAddonName: mgmtAddon.Name}); err != nil {
+		return err
+	}
+	for _, d := range deployments.Items {
+		selector := d.Spec.Template.Spec.NodeSelector
+		if len(selector) == 0 {
+			continue
+		}
+		pods := &corev1.PodList{}
+		if err := r.c.LocalKubeClient.List(ctx, pods, client.InNamespace(d.Namespace), client.MatchingLabels(d.Spec.Selector.MatchLabels)); err != nil {
+			return err
+		}
+		for i := range pods.Items {
+			pod := &pods.Items[i]
+			if pod.Spec.NodeName == "" || pod.DeletionTimestamp != nil {
+				continue
+			}
+			node := &corev1.Node{}
+			if err := r.c.LocalKubeClient.Get(ctx, types.NamespacedName{Name: pod.Spec.NodeName}, node); client.IgnoreNotFound(err) != nil {
+				return err
+			}
+			matches := true
+			for k, v := range selector {
+				if node.Labels[k] != v {
+					matches = false
+				}
+			}
+			if matches {
+				continue
+			}
+			log.FromContext(ctx).Info("replacing a Pod on a node its selector no longer matches", "pod", pod.Name, "node", pod.Spec.NodeName)
+			if err := r.c.LocalKubeClient.Delete(ctx, pod, client.Preconditions{UID: &pod.UID}); client.IgnoreNotFound(err) != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// podState says why a workload's Pod is not ready: the init container still running and the last line it
+// logged (a prewarm reports its progress there), a container waiting on an image pull or a crash, or the
+// scheduler's reason. Empty when nothing more specific is known.
+func (r *pullReconciler) podState(ctx context.Context, namespace string, selector map[string]string) string {
+	pods := &corev1.PodList{}
+	if err := r.c.LocalKubeClient.List(ctx, pods, client.InNamespace(namespace), client.MatchingLabels(selector)); err != nil || len(pods.Items) == 0 {
+		return ""
+	}
+	pod := pods.Items[0]
+	for _, s := range pod.Status.InitContainerStatuses {
+		if s.State.Running != nil {
+			return fmt.Sprintf("init container %s running since %s: %s", s.Name, s.State.Running.StartedAt.Format("15:04:05"), r.lastLogLine(ctx, &pod, s.Name))
+		}
+		if s.State.Waiting != nil {
+			return fmt.Sprintf("init container %s %s: %s", s.Name, s.State.Waiting.Reason, s.State.Waiting.Message)
+		}
+	}
+	for _, s := range pod.Status.ContainerStatuses {
+		if s.State.Waiting != nil {
+			return fmt.Sprintf("container %s %s: %s", s.Name, s.State.Waiting.Reason, s.State.Waiting.Message)
+		}
+	}
+	for _, c := range pod.Status.Conditions {
+		if c.Type == corev1.PodScheduled && c.Status == corev1.ConditionFalse {
+			return "not scheduled: " + c.Message
+		}
+	}
+	return ""
+}
+
+func (r *pullReconciler) lastLogLine(ctx context.Context, pod *corev1.Pod, container string) string {
+	if r.c.LocalKubeConfig == nil {
+		return ""
+	}
+	clientset, err := kubernetes.NewForConfig(r.c.LocalKubeConfig)
+	if err != nil {
+		return ""
+	}
+	tail := int64(1)
+	raw, err := clientset.CoreV1().Pods(pod.Namespace).GetLogs(pod.Name, &corev1.PodLogOptions{Container: container, TailLines: &tail}).DoRaw(ctx)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(raw))
+}
+
 func (r *pullReconciler) checkReady(ctx context.Context, mgmtAddon *rlarkv1alpha1.Addon) (bool, string, error) {
 	logger := log.FromContext(ctx)
 	labels := client.MatchingLabels{
@@ -436,7 +536,14 @@ func (r *pullReconciler) checkReady(ctx context.Context, mgmtAddon *rlarkv1alpha
 		foundWorkloads = true
 		// Pods of an older template (a rollout stuck on an image pull, say) do not count.
 		if d.Status.ObservedGeneration < d.Generation || d.Status.UpdatedReplicas < *d.Spec.Replicas || d.Status.Replicas > d.Status.UpdatedReplicas || d.Status.ReadyReplicas < *d.Spec.Replicas {
-			return false, fmt.Sprintf("Deployment %s: %d/%d updated, %d ready", d.Name, d.Status.UpdatedReplicas, *d.Spec.Replicas, d.Status.ReadyReplicas), nil
+			msg := fmt.Sprintf("Deployment %s: %d/%d updated, %d ready", d.Name, d.Status.UpdatedReplicas, *d.Spec.Replicas, d.Status.ReadyReplicas)
+			if why := r.podState(ctx, d.Namespace, d.Spec.Selector.MatchLabels); why != "" {
+				msg += "; " + why
+			}
+			if label := d.Annotations[NotReadyMessageAnnotation]; label != "" {
+				msg = label + ": " + msg
+			}
+			return false, msg, nil
 		}
 	}
 
