@@ -7,8 +7,9 @@
 #
 # It asks Station API for nothing and carries no credential. Run again, it
 # goes on where an earlier run stopped, and changes nothing on a machine that
-# is finished. "IMAGE control-plane undo" takes the control plane away again
-# and puts the machine back into the cluster it had left.
+# is finished. "IMAGE control-plane check" runs the pre-flight alone and
+# changes nothing. "IMAGE control-plane undo" takes the control plane away
+# again and puts the machine back into the cluster it had left.
 #
 # In order:
 #   pre-flight  every refusal, before anything is changed
@@ -129,9 +130,9 @@ undo() {
   echo "Done."
 }
 case ${1:-} in
-"") ;;
+""|check) ;;
 undo) undo; exit 0 ;;
-*) fail "the only argument is undo" ;;
+*) fail "the arguments are check and undo" ;;
 esac
 
 # --- Pre-flight: every refusal comes before anything is changed.
@@ -213,8 +214,9 @@ else
   [ "$(cat "$S/cluster")" = "name=$name pods=$POD_SUBNET services=$SERVICE_SUBNET address=$ADDRESS node=$NODE_NAME" ] ||
     fail "this machine is a control plane already, made with: $(cat "$S/cluster"). Its name, networks, address and node name are not changed by running this again"
 fi
-( : > "$ETCD_SNAPSHOT_DIR/.rlark-write-test" ) 2>/dev/null && rm -f "$ETCD_SNAPSHOT_DIR/.rlark-write-test" ||
-  { install -d "$ETCD_SNAPSHOT_DIR" 2>/dev/null && [ -w "$ETCD_SNAPSHOT_DIR" ]; } || fail "ETCD_SNAPSHOT_DIR=$ETCD_SNAPSHOT_DIR cannot be written"
+at=$ETCD_SNAPSHOT_DIR
+until [ -e "$at" ]; do at=$(dirname "$at"); done
+[ -d "$at" ] && [ -w "$at" ] || fail "ETCD_SNAPSHOT_DIR=$ETCD_SNAPSHOT_DIR cannot be written"
 
 # The runtime: the one the machine's kubelet has, or one of its own. After a
 # reboot the control plane comes back only if the runtime does.
@@ -230,9 +232,16 @@ elif [ -e $K/kubelet.conf ]; then
 else
   command -v containerd >/dev/null || fail "containerd is required; it is installed together with docker"
 fi
-install -d "$S"
-echo "$name" > "$S/name"
 stamp "pre-flight passed: $NODE_NAME becomes the control plane at $name ($ADDRESS, Kubernetes $VERSION); the system keeps $SYSTEM_RESERVED_MEMORY and $SYSTEM_RESERVED_CPU CPUs; swap ($(awk 'NR > 1 {sum += $3} END {print int(sum / 1048576)}' /proc/swaps) Gi) stays as it is and pods get none"
+if [ "${1:-}" = check ]; then
+  if initialized; then echo "Checked only: nothing was changed. This machine is the control plane at $name."
+  elif [ -e $K/kubelet.conf ]; then echo "Checked only: nothing was changed. This machine would leave the cluster it is a node of ($(sed -n 's/^ *server: //p' $K/kubelet.conf)) and become the control plane at $name."
+  else echo "Checked only: nothing was changed. This machine can become the control plane at $name."
+  fi
+  exit 0
+fi
+install -d "$S" "$ETCD_SNAPSHOT_DIR"
+echo "$name" > "$S/name"
 
 # --- leave
 if { [ -e $K/kubelet.conf ] && [ ! -e "$S/init-started" ]; } || [ -e "$S/leaving" ]; then

@@ -151,12 +151,12 @@ first_tunnel() {
   on "$node" sh -c 'cat > /etc/rlark/station/bootstrap.json' < "$D/tunnel-$node.json"
 }
 
-# run_cp NODE [undo] [NAME=VALUE ...]: the mode, as the person's one command
+# run_cp NODE [undo|check] [NAME=VALUE ...]: the mode, as the person's one command
 # runs it, except that the installer shares the machine's namespaces by
 # container name, the machine being a container without a docker of its own.
 run_cp() {
   local node=$1 action= env=(); shift
-  [[ ${1:-} != undo ]] || { action=undo; shift; }
+  [[ ${1:-} != undo && ${1:-} != check ]] || { action=$1; shift; }
   for pair in "$@"; do env+=(-e "$pair"); done
   docker run --rm --name "$P-run-$node" --privileged --net="container:$P-$node" --pid="container:$P-$node" ${DOCKER_ARGS:-} "${env[@]}" "$INSTALLER" control-plane $action
 }
