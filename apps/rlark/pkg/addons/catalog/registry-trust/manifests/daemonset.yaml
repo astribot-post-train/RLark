@@ -60,7 +60,9 @@ spec:
                   for mirror in $(echo "$MIRRORS" | tr ',' ' '); do
                     printf '\n[host."%s"]\n  capabilities = ["pull", "resolve"]\n' "$mirror"
                   done
-                  printf '\n[host."https://%s"]\n  capabilities = ["pull", "resolve"]\n  ca = "%s/%s/ca.crt"\n' "$host" "$certs" "$host"
+                  # ca is relative to this directory: the same file holds for any runtime's certs.d, so the
+                  # installer can lay down exactly these bytes before the node joins
+                  printf '\n[host."https://%s"]\n  capabilities = ["pull", "resolve"]\n  ca = "ca.crt"\n' "$host"
                 } > "/host$certs/$host/hosts.toml"
                 echo "trusted $host in $certs"
               done
