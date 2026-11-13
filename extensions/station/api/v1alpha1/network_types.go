@@ -95,7 +95,7 @@ type SiteNetworkSite struct {
 	// of its own: machines of one build, each behind a device of its own
 	// that has the same address on every one of them (a robot's computer
 	// behind the robot's router), are declared once.
-	LeafUplink *SiteNetworkUplink `json:"leafUplink,omitempty"`
+	LeafUplink *SiteNetworkLeafUplink `json:"leafUplink,omitempty"`
 	// DNS are the site's name servers. A node's kubelet gives them to its
 	// pods; they are kept in /etc/rlark/station/resolv.conf on every node of
 	// the site (station-gateway). Without them a node's pods use the name
@@ -192,6 +192,36 @@ type SiteNetworkUplink struct {
 	// is the one that has an address in the gateway's network.
 	// +kubebuilder:validation:MaxLength=15
 	Interface string `json:"interface,omitempty"`
+}
+
+type SiteNetworkLeafUplink struct {
+	SiteNetworkUplink `json:",inline"`
+	// Setup is what the gateway device of a new leaf runs once so that the
+	// leaf can reach the site at all: before it, the leaf can fetch nothing,
+	// its own installer included, and the device fetches this for it.
+	Setup *SiteNetworkUplinkSetup `json:"setup,omitempty"`
+}
+
+// SiteNetworkUplinkSetup names a file of an Addon's package in the catalog.
+// Station API hands it out for an admission's one-time code and knows
+// nothing of what it does; whoever publishes the Addon keeps the device as
+// the file leaves it.
+type SiteNetworkUplinkSetup struct {
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=63
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	Addon string `json:"addon"`
+	// Path is the file's path inside the Addon's package.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=255
+	// +kubebuilder:validation:Pattern=`^[A-Za-z0-9_][A-Za-z0-9._-]*(/[A-Za-z0-9_][A-Za-z0-9._-]*)*$`
+	Path string `json:"path"`
+	// Login is the account on the gateway device the printed command logs in
+	// as; the operator types its password.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=32
+	// +kubebuilder:validation:Pattern=`^[a-z_][a-z0-9_-]*$`
+	Login string `json:"login"`
 }
 
 type SiteNetworkStatus struct {
