@@ -429,8 +429,9 @@ func (r *pullReconciler) checkReady(ctx context.Context, mgmtAddon *rlarkv1alpha
 	logger.Info("checkReady: deployments found", "count", len(depList.Items))
 	for _, d := range depList.Items {
 		foundWorkloads = true
-		if d.Status.ReadyReplicas < *d.Spec.Replicas {
-			return false, fmt.Sprintf("Deployment %s: %d/%d ready", d.Name, d.Status.ReadyReplicas, *d.Spec.Replicas), nil
+		// Pods of an older template (a rollout stuck on an image pull, say) do not count.
+		if d.Status.ObservedGeneration < d.Generation || d.Status.UpdatedReplicas < *d.Spec.Replicas || d.Status.Replicas > d.Status.UpdatedReplicas || d.Status.ReadyReplicas < *d.Spec.Replicas {
+			return false, fmt.Sprintf("Deployment %s: %d/%d updated, %d ready", d.Name, d.Status.UpdatedReplicas, *d.Spec.Replicas, d.Status.ReadyReplicas), nil
 		}
 	}
 
@@ -451,7 +452,7 @@ func (r *pullReconciler) checkReady(ctx context.Context, mgmtAddon *rlarkv1alpha
 		if ds.Status.DesiredNumberScheduled == 0 && len(pod.NodeSelector) == 0 && (pod.Affinity == nil || pod.Affinity.NodeAffinity == nil) {
 			return false, fmt.Sprintf("DaemonSet %s: no nodes scheduled", ds.Name), nil
 		}
-		if ds.Status.NumberReady < ds.Status.DesiredNumberScheduled {
+		if ds.Status.UpdatedNumberScheduled < ds.Status.DesiredNumberScheduled || ds.Status.NumberReady < ds.Status.DesiredNumberScheduled {
 			return false, fmt.Sprintf("DaemonSet %s: %d/%d ready", ds.Name, ds.Status.NumberReady, ds.Status.DesiredNumberScheduled), nil
 		}
 	}
@@ -464,7 +465,7 @@ func (r *pullReconciler) checkReady(ctx context.Context, mgmtAddon *rlarkv1alpha
 	logger.Info("checkReady: statefulsets found", "count", len(ssList.Items))
 	for _, ss := range ssList.Items {
 		foundWorkloads = true
-		if ss.Status.ReadyReplicas < *ss.Spec.Replicas {
+		if ss.Status.ObservedGeneration < ss.Generation || ss.Status.UpdatedReplicas < *ss.Spec.Replicas || ss.Status.ReadyReplicas < *ss.Spec.Replicas {
 			return false, fmt.Sprintf("StatefulSet %s: %d/%d ready", ss.Name, ss.Status.ReadyReplicas, *ss.Spec.Replicas), nil
 		}
 	}

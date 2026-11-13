@@ -353,7 +353,7 @@ func TestReadyAddonSchedulesDriftReconciliation(t *testing.T) {
 	}
 	mgmt := fake.NewClientBuilder().WithScheme(scheme).WithObjects(a).WithStatusSubresource(&rlarkv1alpha1.Addon{}).Build()
 	replicas := int32(1)
-	local := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(&appsv1.Deployment{}, &appsv1.DaemonSet{}).WithObjects(&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "ready", Namespace: "rlark-system", Labels: map[string]string{"rlark.io/addon-name": "csi"}}, Spec: appsv1.DeploymentSpec{Replicas: &replicas}, Status: appsv1.DeploymentStatus{ReadyReplicas: 1}}).Build()
+	local := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(&appsv1.Deployment{}, &appsv1.DaemonSet{}).WithObjects(&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "ready", Namespace: "rlark-system", Labels: map[string]string{"rlark.io/addon-name": "csi"}}, Spec: appsv1.DeploymentSpec{Replicas: &replicas}, Status: appsv1.DeploymentStatus{Replicas: 1, UpdatedReplicas: 1, ReadyReplicas: 1}}).Build()
 	r := &pullReconciler{c: &Controller{Controller: base.Controller{ManagementClient: mgmt, LocalKubeClient: local, AgentType: string(rlarkv1alpha1.AgentTypeKubernetes)}}}
 	req := reconcile.Request{NamespacedName: types.NamespacedName{Name: "csi", Namespace: "test"}}
 	if _, err := r.Reconcile(ctx, req); err != nil {
@@ -363,7 +363,8 @@ func TestReadyAddonSchedulesDriftReconciliation(t *testing.T) {
 	if err := local.Get(ctx, types.NamespacedName{Name: "csi-driver-rclone-controller", Namespace: "rlark-system"}, &dep); err != nil {
 		t.Fatal(err)
 	}
-	dep.Status.ReadyReplicas = *dep.Spec.Replicas
+	dep.Status.ObservedGeneration = dep.Generation
+	dep.Status.Replicas, dep.Status.UpdatedReplicas, dep.Status.ReadyReplicas = *dep.Spec.Replicas, *dep.Spec.Replicas, *dep.Spec.Replicas
 	if err := local.Status().Update(ctx, &dep); err != nil {
 		t.Fatal(err)
 	}
@@ -371,8 +372,8 @@ func TestReadyAddonSchedulesDriftReconciliation(t *testing.T) {
 	if err := local.Get(ctx, types.NamespacedName{Name: "csi-driver-rclone-node", Namespace: "rlark-system"}, &ds); err != nil {
 		t.Fatal(err)
 	}
-	ds.Status.DesiredNumberScheduled = 1
-	ds.Status.NumberReady = 1
+	ds.Status.ObservedGeneration = ds.Generation
+	ds.Status.DesiredNumberScheduled, ds.Status.UpdatedNumberScheduled, ds.Status.NumberReady = 1, 1, 1
 	if err := local.Status().Update(ctx, &ds); err != nil {
 		t.Fatal(err)
 	}
@@ -477,5 +478,22 @@ func TestCheckReadyDaemonSetForAClassOfNodesMayHaveNone(t *testing.T) {
 				t.Fatalf("checkReady = %v %q %v, want %v", ready, msg, err, tt.ready)
 			}
 		})
+	}
+}
+
+func TestCheckReadyDeploymentStuckRolloutIsNotReady(t *testing.T) {
+	ctx := context.Background()
+	addon := &rlarkv1alpha1.Addon{ObjectMeta: metav1.ObjectMeta{Name: "a", UID: "u"}}
+	one := int32(1)
+	// The old ReplicaSet's Pod is ready, the new one cannot pull its image.
+	d := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{Name: "c", Namespace: "rlark-system", Generation: 2, Labels: map[string]string{"rlark.io/addon-name": "a"}},
+		Spec:       appsv1.DeploymentSpec{Replicas: &one},
+		Status:     appsv1.DeploymentStatus{ObservedGeneration: 2, Replicas: 2, UpdatedReplicas: 1, ReadyReplicas: 1},
+	}
+	cl := fake.NewClientBuilder().WithScheme(clientgoscheme.Scheme).WithObjects(d).WithStatusSubresource(d).Build()
+	r := &pullReconciler{c: &Controller{Controller: base.Controller{LocalKubeClient: cl}}}
+	if ready, msg, err := r.checkReady(ctx, addon); err != nil || ready {
+		t.Fatalf("checkReady = %v %q %v, want not ready", ready, msg, err)
 	}
 }
