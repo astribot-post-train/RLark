@@ -81,6 +81,8 @@ type Config struct {
 	PodOrphanSweepPageSize  int64
 	PodStaleTTL             time.Duration
 	TaskRuntimeResyncPeriod time.Duration
+	// ManagementNodeLabels are labels the site declares on management Nodes.
+	ManagementNodeLabels []string
 
 	NodeServerConfig           nodeserver.Config
 	Image                      string
@@ -152,6 +154,7 @@ func (c *Config) SetupFlags(fs *pflag.FlagSet) {
 	fs.StringVar(&c.RLarkServerSSHHostKey, "rlark-server-ssh-host-key", c.RLarkServerSSHHostKey, "RLark server SSH host key")
 	fs.IntVar(&c.SSHMaxConnectionsPerDomain, "ssh-max-connections-per-domain", c.SSHMaxConnectionsPerDomain, "Maximum adaptive SSH connections per domain")
 	fs.StringVar(&c.Image, "image", c.Image, "RLark container image (used for network sidecar, SSH server, etc.)")
+	fs.StringSliceVar(&c.ManagementNodeLabels, "management-node-labels", c.ManagementNodeLabels, "Node labels, besides RLark's own, that are declared on the management Node and carried to the Kubernetes Node: a key, or a prefix ending in / or - (cluster mode)")
 
 	fs.BoolVar(&c.EnableSameClusterDirect, "enable-same-cluster-direct", c.EnableSameClusterDirect, "Enable direct access to pods in the same cluster")
 	fs.BoolVar(&c.EnableCrossClusterDirect, "enable-cross-cluster-direct", c.EnableCrossClusterDirect, "Enable direct access to pods in different clusters")

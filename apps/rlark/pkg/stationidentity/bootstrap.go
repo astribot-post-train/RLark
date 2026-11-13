@@ -23,12 +23,14 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 )
 
 var nodeAdmissionGVR = schema.GroupVersionResource{Group: stationObservationGroup, Version: stationObservationVersion, Resource: "nodeadmissions"}
+var rlarkNodeGVR = schema.GroupVersionResource{Group: "rlinf.io", Version: "v1alpha1", Resource: "nodes"}
 
 // Bootstrap serves a machine that is not a node yet. Its only credential is
 // the one-time code of a NodeAdmission: the code buys the installer, the
@@ -187,7 +189,10 @@ func (b *Bootstrap) Redeem(ctx context.Context, code, publicKey string) (Bootstr
 	if admission == nil {
 		return BootstrapAnswer{State: "rejected", Reason: "unknown code"}, http.StatusNotFound, nil
 	}
-	text := func(fields ...string) string { value, _, _ := unstructured.NestedString(admission.Object, fields...); return value }
+	text := func(fields ...string) string {
+		value, _, _ := unstructured.NestedString(admission.Object, fields...)
+		return value
+	}
 	switch redeemedBy := text("spec", "publicKey"); {
 	case redeemedBy == "":
 		expires, err := time.Parse(time.RFC3339, text("spec", "expiresAt"))
@@ -226,6 +231,15 @@ func (b *Bootstrap) Redeem(ctx context.Context, code, publicKey string) (Bootstr
 	}
 	join.APIServer = text("spec", "apiServer")
 	labels, _, _ := unstructured.NestedStringMap(admission.Object, "spec", "labels")
+	// A machine installed anew under a name the management plane knows has a
+	// management Node already, with the labels declared for it before: the
+	// agent would put those back over what this admission declares.
+	if len(labels) > 0 {
+		patch, _ := json.Marshal(map[string]any{"metadata": map[string]any{"labels": labels}})
+		if _, err := b.Management.Resource(rlarkNodeGVR).Namespace(clusterID).Patch(ctx, admission.GetName(), types.MergePatchType, patch, metav1.PatchOptions{}); err != nil && !apierrors.IsNotFound(err) {
+			return BootstrapAnswer{}, 0, fmt.Errorf("declare the labels on management Node %s/%s: %w", clusterID, admission.GetName(), err)
+		}
+	}
 	pairs := make([]string, 0, len(labels))
 	for key, value := range labels {
 		pairs = append(pairs, key+"="+value)

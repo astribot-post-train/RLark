@@ -337,3 +337,27 @@ func TestDiskPressure(t *testing.T) {
 func boolPointer(value bool) *bool {
 	return &value
 }
+
+func TestManagementOwnedNodeLabels(t *testing.T) {
+	t.Cleanup(func() { siteOwnedLabels = nil })
+	for _, entry := range []string{"", "robot-body", "kubernetes.io/hostname", "node-role.kubernetes.io/", "node.k8s.io/x", "/x"} {
+		if err := SetManagementOwnedLabels([]string{entry}); err == nil {
+			t.Errorf("entry %q was accepted", entry)
+		}
+	}
+	if err := SetManagementOwnedLabels([]string{"fleet.astribot/robot-body", "site.example/"}); err != nil {
+		t.Fatal(err)
+	}
+	for key, want := range map[string]bool{
+		"rlark.io/node-category": true, "rlark.io/node-category-robot": true,
+		"rlark.io/robot-model": true, "rlark.io/robot-body": true, "rlark.io/robot-id": true,
+		"fleet.astribot/robot-body": true, "site.example/anything": true,
+		// What a node says of itself stays the node's.
+		"fleet.astribot/robot-body-state": false, "fleet.astribot/orin-state": false, "fleet.astribot/node-profile-state": false,
+		"rlark.io/enabled": false, "rlark.io/cluster-id": false, "kubernetes.io/hostname": false,
+	} {
+		if got := isManagementOwnedNodeLabel(key); got != want {
+			t.Errorf("%s: owned by the management Node = %v, want %v", key, got, want)
+		}
+	}
+}
