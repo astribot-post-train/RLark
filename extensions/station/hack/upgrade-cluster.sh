@@ -51,6 +51,10 @@ if [[ -z ${ROLLBACK:-} ]]; then
 fi
 stamp "cluster at $current -> $VERSION; order:$(echo $nodes | sed 's#node/# #g')"
 
+# A node that restarts must get its Pod network back without the kubernetes
+# Service's address (calico-endpoint.sh says why): set once for the cluster.
+[[ -n ${ROLLBACK:-} ]] || "$(dirname "$0")/calico-endpoint.sh" "$K"
+
 # job runs one phase of upgrade.sh on one node and waits for it; the API may
 # be away for a while when the phase restarts the control plane.
 job() { # node phase

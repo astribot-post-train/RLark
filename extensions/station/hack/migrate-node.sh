@@ -100,8 +100,15 @@ namespace=$(mgmt get clusters.rlinf.io "$CLUSTER" -o jsonpath='{.spec.agentNames
 until [[ $(mgmt -n "$namespace" get nodeadmissions.station.rlark.io "$NODE" -o jsonpath='{.status.phase}') == Joined ]]; do sleep 2; done
 stamp "$NODE: enrolled in $CLUSTER under its own identity after $(( $(date +%s) - started )) s"
 
-# What it left behind.
+# What it left behind. Where the old and the new cluster are one registered
+# cluster (its control plane was built anew on another machine and the nodes
+# move over), the node's enrollment and Station are the ones it goes on with.
 [[ $mode == control-plane ]] || old delete node "$NODE" --ignore-not-found >/dev/null
+if [[ $old_cluster == "$CLUSTER" ]]; then
+  stamp "$NODE: same cluster $CLUSTER under its new control plane; its enrollment and Station stay"
+  new get node "$NODE" -o wide
+  exit 0
+fi
 mgmt -n "$old_namespace" delete networkenrollments.station.rlark.io,stationobservations.station.rlark.io "$NODE" --ignore-not-found >/dev/null
 for station in $(mgmt -n "$old_namespace" get stations.station.rlark.io -o json | python3 -c '
 import json, sys

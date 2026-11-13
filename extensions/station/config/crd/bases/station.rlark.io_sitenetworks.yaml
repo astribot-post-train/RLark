@@ -84,6 +84,33 @@ spec:
                 maximum: 9000
                 minimum: 576
                 type: integer
+              names:
+                description: |-
+                  Names are what every node resolves at the same address wherever it is:
+                  what is reached through the tunnel, as a cluster's control plane and
+                  the management plane are. A site's own names come after them. Every
+                  node keeps its names in its /etc/hosts (station-gateway), so that
+                  nothing on a node holds the address of a machine that may move.
+                items:
+                  description: SiteNetworkName resolves a name to an address.
+                  properties:
+                    address:
+                      format: ipv4
+                      type: string
+                    name:
+                      maxLength: 253
+                      minLength: 1
+                      pattern: ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$
+                      type: string
+                  required:
+                  - address
+                  - name
+                  type: object
+                maxItems: 64
+                type: array
+                x-kubernetes-list-map-keys:
+                - name
+                x-kubernetes-list-type: map
               nodes:
                 description: Nodes lists only the nodes that need more than the leaf
                   default.
@@ -218,6 +245,17 @@ spec:
                       maxItems: 256
                       type: array
                       x-kubernetes-list-type: set
+                    dns:
+                      description: |-
+                        DNS are the site's name servers. A node's kubelet gives them to its
+                        pods; they are kept in /etc/rlark/station/resolv.conf on every node of
+                        the site (station-gateway). Without them a node's pods use the name
+                        servers the machine itself has.
+                      items:
+                        format: ipv4
+                        type: string
+                      maxItems: 3
+                      type: array
                     leavesViaRelay:
                       description: |-
                         LeavesViaRelay makes the leaves of this site peer with their relay only
@@ -232,6 +270,30 @@ spec:
                       maxLength: 63
                       minLength: 1
                       type: string
+                    names:
+                      description: |-
+                        Names are what the nodes of this site resolve at an address of the
+                        site's own, as its registry is.
+                      items:
+                        description: SiteNetworkName resolves a name to an address.
+                        properties:
+                          address:
+                            format: ipv4
+                            type: string
+                          name:
+                            maxLength: 253
+                            minLength: 1
+                            pattern: ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$
+                            type: string
+                        required:
+                        - address
+                        - name
+                        type: object
+                      maxItems: 64
+                      type: array
+                      x-kubernetes-list-map-keys:
+                      - name
+                      x-kubernetes-list-type: map
                     reaches:
                       description: Reaches lists the sites whose Site-scoped endpoints
                         this site can dial.

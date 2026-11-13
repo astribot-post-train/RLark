@@ -113,9 +113,10 @@ func (r *NetworkReconciler) reconcile(ctx context.Context) (reconcile.Result, er
 
 	spec := siteNetwork.Spec
 	siteOfCluster := map[string]string{}
-	topology := network.Topology{Pool: spec.Pool, MTU: int(spec.MTU), Interface: spec.Interface, ListenPort: int(spec.ListenPort), KeepaliveSeconds: int(spec.KeepaliveSeconds)}
+	topology := network.Topology{Pool: spec.Pool, MTU: int(spec.MTU), Interface: spec.Interface, ListenPort: int(spec.ListenPort), KeepaliveSeconds: int(spec.KeepaliveSeconds), Names: hostNames(spec.Names)}
 	for _, site := range spec.Sites {
-		topology.Sites = append(topology.Sites, network.Site{Name: site.Name, Mesh: site.Mesh, Reaches: site.Reaches, LeavesViaRelay: site.LeavesViaRelay})
+		names := hostNames(site.Names)
+		topology.Sites = append(topology.Sites, network.Site{Name: site.Name, Mesh: site.Mesh, Reaches: site.Reaches, LeavesViaRelay: site.LeavesViaRelay, Names: names, DNS: site.DNS})
 		for _, cluster := range site.Clusters {
 			siteOfCluster[cluster] = site.Name
 		}
@@ -456,4 +457,12 @@ func (r *NetworkReconciler) reconcile(ctx context.Context) (reconcile.Result, er
 		}
 	}
 	return reconcile.Result{}, nil
+}
+
+func hostNames(declared []stationv1alpha1.SiteNetworkName) []network.HostName {
+	var names []network.HostName
+	for _, name := range declared {
+		names = append(names, network.HostName(name))
+	}
+	return names
 }
