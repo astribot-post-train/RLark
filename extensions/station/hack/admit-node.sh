@@ -52,7 +52,7 @@ else
 fi
 rm -f "$admission"
 
-trust="c=\$(mktemp) && curl -fsSk https://$STATION_API/v1/bootstrap/ca -o \$c && echo \"$ca_digest  \$c\" | sha256sum -c - && curl -fsS --cacert \$c https://$STATION_API/b/$code"
+trust="c=\$(mktemp) && curl --connect-timeout 15 -fsSk https://$STATION_API/v1/bootstrap/ca -o \$c && echo \"$ca_digest  \$c\" | sha256sum -c - && curl -fsS --cacert \$c https://$STATION_API/b/$code"
 # The device before the machine fetches its setup with the machine's code and
 # runs it only if it is, byte for byte, the file this API serves now.
 read -r gateway login < <(kubectl --kubeconfig "$KCP" -n station-system get sitenetwork default -o json | python3 -c '
