@@ -11,6 +11,14 @@
 # changes nothing. "IMAGE control-plane undo" takes the control plane away
 # again and puts the machine back into the cluster it had left.
 #
+# A cluster's control plane moves to another machine with the cluster:
+#   on the machine it leaves   IMAGE control-plane handover   no more writes, a last snapshot, everything stopped
+#   (the snapshot directory is carried over; the site network gives the name the new machine's address)
+#   on the machine it goes to  IMAGE control-plane            with FROM_SNAPSHOT; a worker of the cluster may be that machine
+#   on the machine it leaves   IMAGE control-plane undo       once the nodes are Ready under the new one
+# Until that undo, "IMAGE control-plane resume" on the old machine (after undo
+# on the new one, and the name given back) takes up where handover stopped.
+#
 # In order:
 #   pre-flight  every refusal, before anything is changed
 #   leave       a machine that is a node of another cluster is drained there
@@ -87,18 +95,99 @@ etcd 100m 1 384 1536
 kube-controller-manager 100m 1 192 1024
 kube-scheduler 50m 500m 96 512'
 
+tunnel_address() {
+  ip -4 -o addr show dev "$TUNNEL_INTERFACE" 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | grep . && return 0
+  for document in /var/lib/station/wg/last-applied.json /etc/rlark/station/bootstrap.json; do
+    # The machine's own is the one with a prefix length; the names' have none.
+    [ -s "$document" ] || continue
+    tr -d ' \t\n' < "$document" | grep -o '"address":"[0-9.]*/' | head -1 | cut -d'"' -f4 | cut -d/ -f1 | grep . && return 0
+  done
+}
+# named_elsewhere: what the site network gives this control plane's name, if
+# it is not this machine's address; from the document the machine's tunnel
+# runs on (station-gateway's order). The other nodes find the control plane
+# by it: the name may be missing there still, not be elsewhere.
+tunnel_document() {
+  for document in /run/station-network/config.json /var/lib/station/wg/last-applied.json /etc/rlark/station/bootstrap.json; do
+    [ ! -s "$document" ] || { echo "$document"; return; }
+  done
+}
+named_elsewhere() {
+  tr -d ' \t\n' < "$(tunnel_document)" | grep -o '"names":\[[^]]*\]' | grep -o "{\"name\":\"$name\",\"address\":\"[0-9.]*\"}" | grep -v -F "\"$(tunnel_address | head -1)\"" || true
+}
+# unanswered: this machine dials peers of the site tunnel and none has
+# answered it. No node would reach a control plane here. (The first machine
+# of a site dials nobody.)
+unanswered() {
+  grep -q '"endpoint"' "$(tunnel_document)" && ! "$B/bin/station-gateway" --config "$(tunnel_document)" --status 2>/dev/null | grep -q '"lastHandshake":"'
+}
+# same_cluster: this machine is a node of the very cluster whose control
+# plane it takes over (FROM_SNAPSHOT): the cluster's CA is the one it trusts.
+same_cluster() {
+  [ -n "${FROM_SNAPSHOT:-}" ] && [ -e $K/pki/ca.crt ] && tar -xOf "$FROM_SNAPSHOT/pki.tar" pki/ca.crt 2>/dev/null | cmp -s - $K/pki/ca.crt
+}
+# held: the control plane's static pods are taken from the kubelet, or given
+# back. What was running is ended either way: nothing of a control plane
+# that is handed over goes on beside the one that takes its place.
+ports_closed() { for port in "$@"; do [ -z "$(ss -Hltn "sport = :$port")" ] || return 1; done; }
+handover() {
+  initialized || fail "this machine is not a control plane made by this installer"
+  [ ! -e "$S/handed-over" ] || { echo "Nothing to do: handed over $(cat "$S/handed-over"). The last snapshot is in $(cat "$S/snapshot-dir")."; exit 0; }
+  SOCKET=$(cat "$S/socket")
+  install -d "$S/held"
+  # No more writes: the API, and what writes through it. etcd answers on.
+  for component in kube-apiserver kube-controller-manager kube-scheduler; do [ ! -e $K/manifests/$component.yaml ] || mv $K/manifests/$component.yaml "$S/held/"; done
+  tries=0
+  until ports_closed 6443; do tries=$((tries + 1)); [ $tries -lt 90 ] || fail "the API server has not stopped after 3 min: journalctl -u kubelet"; sleep 2; done
+  stamp "the API is stopped: nothing is written any more"
+  /opt/rlark/bin/rlark-etcd-snapshot > "$S/last-snapshot" || fail "the last etcd snapshot: $(cat "$S/last-snapshot")"
+  systemctl disable --now rlark-etcd-snapshot.timer >/dev/null 2>&1
+  [ ! -e $K/manifests/etcd.yaml ] || mv $K/manifests/etcd.yaml "$S/held/"
+  tries=0
+  until ports_closed 2379; do tries=$((tries + 1)); [ $tries -lt 90 ] || fail "etcd has not stopped after 3 min: journalctl -u kubelet"; sleep 2; done
+  # The node's other pods end too: the cluster starts them where it goes on.
+  systemctl disable --now kubelet >/dev/null 2>&1
+  CTR=$(ctr_of "$SOCKET")
+  for task in $("$CTR" -a "$SOCKET" -n k8s.io tasks ls -q); do "$CTR" -a "$SOCKET" -n k8s.io tasks kill -s SIGKILL "$task" >/dev/null 2>&1 || true; done
+  date '+%F %T' > "$S/handed-over"
+  stamp "handed over. The last snapshot: $(cat "$S/last-snapshot")"
+  echo "Done. Next: carry $(cat "$S/snapshot-dir") (the snapshots and pki.tar; root only) to the machine that takes over, give $(cat "$S/name") its tunnel address in the site network (SiteNetwork, names), and run the installer there with FROM_SNAPSHOT. This machine keeps everything until \"control-plane undo\"; \"control-plane resume\" takes up here again."
+}
+resume() {
+  [ -e "$S/handed-over" ] || fail "this control plane was not handed over"
+  name=$(cat "$S/name")
+  [ -z "$(named_elsewhere)" ] || fail "the site network gives $(cat "$S/name") to another machine ($(named_elsewhere)): the nodes look for the control plane there. Give the name back first (SiteNetwork, names)"
+  mv "$S"/held/*.yaml $K/manifests/
+  systemctl enable --now kubelet >/dev/null 2>&1
+  systemctl enable --now rlark-etcd-snapshot.timer >/dev/null 2>&1
+  rm -f "$S/handed-over"
+  tries=0
+  until adm get --raw /readyz >/dev/null 2>&1; do tries=$((tries + 1)); [ $tries -lt 150 ] || fail "the API does not answer after 5 min: journalctl -u kubelet"; sleep 2; done
+  stamp "the control plane is running again, as it was when it was handed over"
+  echo "Done."
+}
+
 undo() {
   [ -e "$S/left" ] || [ -e "$S/init-started" ] || { stamp "no control plane was made on this machine by this installer: nothing to undo"; exit 0; }
   SOCKET=$(cat "$S/socket")
   keep=/var/backups/rlark-control-plane/removed-$(date +%Y%m%d%H%M%S)
-  if initialized; then
+  name=$(cat "$S/name" 2>/dev/null || true)
+  # Its nodes have their control plane elsewhere when this one was handed
+  # over, or when the site network gives the name to another machine.
+  if initialized && [ ! -e "$S/handed-over" ] && [ -z "$(named_elsewhere)" ]; then
     NODE_NAME=$(sed -n 's/.* node=//p' "$S/cluster")
     adm get --raw /readyz >/dev/null 2>&1 || fail "the API of this control plane does not answer, so it cannot be seen whether other nodes are in its cluster: start it first (systemctl start kubelet)"
     others=$(adm get nodes -o name | grep -v "^node/$NODE_NAME\$" | tr '\n' ' ')
     [ -z "$others" ] || fail "other nodes are in this cluster ($others): they would be left without a control plane. Move them to another cluster first"
   fi
   install -d -m 700 "$keep"
-  if initialized; then
+  if initialized && [ -e "$S/handed-over" ]; then
+    (umask 077 && tar -cpf "$keep/etc-kubernetes.tar" -C / etc/kubernetes)
+    # A machine that was the cluster's control plane has no place to go back to.
+    rm -rf "$OLD"
+    stamp "kept in $keep: /etc/kubernetes; the last snapshot is in $(cat "$S/snapshot-dir")"
+  elif initialized; then
+    NODE_NAME=$(sed -n 's/.* node=//p' "$S/cluster")
     adm -n kube-system exec "etcd-$NODE_NAME" -- etcdctl --endpoints https://127.0.0.1:2379 --cacert $K/pki/etcd/ca.crt --cert $K/pki/etcd/server.crt --key $K/pki/etcd/server.key \
       snapshot save /var/lib/etcd/rlark-snapshot-removed.db >/dev/null 2>&1 || fail "etcd snapshot"
     mv /var/lib/etcd/rlark-snapshot-removed.db "$keep/etcd-snapshot.db"
@@ -133,7 +222,9 @@ undo() {
 case ${1:-} in
 ""|check) ;;
 undo) undo; exit 0 ;;
-*) fail "the arguments are check and undo" ;;
+handover) handover; exit 0 ;;
+resume) resume; exit 0 ;;
+*) fail "the arguments are check, undo, handover and resume" ;;
 esac
 
 # --- Pre-flight: every refusal comes before anything is changed.
@@ -148,27 +239,15 @@ if [ -e $K/kubelet.conf ]; then
   have=$("$kubelet" --version | awk '{print $2}')
   [ "$have" = "$VERSION" ] || fail "this machine's kubelet is $have and this installer's Kubernetes is $VERSION. Upgrade the node in its cluster to $VERSION first (upgrade-cluster.sh), or use the installer of $have"
 fi
-tunnel_address() {
-  ip -4 -o addr show dev "$TUNNEL_INTERFACE" 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | grep . && return 0
-  for document in /var/lib/station/wg/last-applied.json /etc/rlark/station/bootstrap.json; do
-    # The machine's own is the one with a prefix length; the names' have none.
-    [ -s "$document" ] || continue
-    tr -d ' \t\n' < "$document" | grep -o '"address":"[0-9.]*/' | head -1 | cut -d'"' -f4 | cut -d/ -f1 | grep . && return 0
-  done
-}
 ADDRESS=$(tunnel_address | head -1) || true
 [ -n "$ADDRESS" ] || fail "this machine has no address in the site tunnel: $TUNNEL_INTERFACE has none, and neither /var/lib/station/wg/last-applied.json nor /etc/rlark/station/bootstrap.json holds a tunnel configuration. The nodes reach the control plane through the tunnel: enroll the machine in the site network first"
 modprobe wireguard || fail "the kernel has no wireguard module"
 systemctl is-enabled rlark-station-gateway >/dev/null 2>&1 || [ -e /var/lib/station/wg/last-applied.json ] || [ -e /etc/rlark/station/bootstrap.json ] ||
   fail "the tunnel on $TUNNEL_INTERFACE is run by a pod of the cluster this machine would leave, and its configuration is not kept on the machine (/var/lib/station/wg/last-applied.json): the tunnel would not come back after a reboot"
-# The names the site network gives this machine, from the document its tunnel
-# runs on (station-gateway's order). The other nodes find the control plane by
-# them: this control plane's name may be missing there still, not be elsewhere.
-declared=
-for document in /run/station-network/config.json /var/lib/station/wg/last-applied.json /etc/rlark/station/bootstrap.json; do
-  [ ! -s "$document" ] || { declared=$(tr -d ' \t\n' < "$document" | grep -o '"names":\[[^]]*\]' || true); break; }
-done
-elsewhere=$(echo "$declared" | grep -o "{\"name\":\"$name\",\"address\":\"[0-9.]*\"}" | grep -v -F "\"$ADDRESS\"" || true)
+# A tunnel that is up already is asked now; one this installer starts, when it has.
+! ip link show dev "$TUNNEL_INTERFACE" >/dev/null 2>&1 || ! unanswered ||
+  fail "no peer of the site tunnel that this machine dials has answered it on $TUNNEL_INTERFACE: no node would reach a control plane here. $B/bin/station-gateway --config $(tunnel_document) --status"
+elsewhere=$(named_elsewhere)
 [ -z "$elsewhere" ] || fail "the site network gives $name another address than this machine's $ADDRESS ($elsewhere): every other node would look for the control plane there. Change the SiteNetwork (names) first"
 # The addresses the machine has in the networks it stands in: nothing of the
 # control plane may hold one (the last step looks).
@@ -197,7 +276,8 @@ initialized || [ "$available" -ge $need ] ||
 if ! initialized; then
   [ "$(df -k --output=avail /var/lib | tail -1)" -ge 10485760 ] || fail "/var/lib has less than 10 GiB free: etcd and the images need them"
   if [ ! -e "$S/init-started" ]; then
-    for subnet in "$POD_SUBNET" "$SERVICE_SUBNET"; do
+    # (A worker of the cluster it takes over has that cluster's pod routes.)
+    same_cluster || for subnet in "$POD_SUBNET" "$SERVICE_SUBNET"; do
       routes=$( { ip -4 route show root "$subnet"; ip -4 route show match "$subnet"; } | grep -v -E '^default |proto bird' | sort -u | tr '\n' ';')
       [ -z "$routes" ] || fail "$subnet is in use on this machine's networks already ($routes): the cluster's pod and Service networks must be free"
     done
@@ -228,7 +308,7 @@ elif [ -e $K/kubelet.conf ]; then
   [ -S "$SOCKET" ] || fail "cannot find the node's container runtime socket"
   unit=$(sed -n 's#.*/\([^/]*\.service\)$#\1#p' "/proc/$(ss -Hxlp | awk -v s="$(readlink -f "$SOCKET")" '$5 == s' | sed -n 's/.*pid=\([0-9]*\).*/\1/p')/cgroup" | head -1)
   systemctl is-enabled "$unit" >/dev/null 2>&1 || fail "the container runtime of this node ($SOCKET, ${unit:-not a service}) is not started at boot: after a reboot the control plane would not come back. systemctl enable $unit"
-  old get node "$node" >/dev/null 2>&1 ||
+  same_cluster || old get node "$node" >/dev/null 2>&1 ||
     fail "the cluster this machine is a node of does not answer its kubelet ($(sed -n 's/^ *server: //p' $K/kubelet.conf)): the node cannot be drained there. Nothing was changed"
 else
   command -v containerd >/dev/null || fail "containerd is required; it is installed together with docker"
@@ -243,9 +323,21 @@ if [ "${1:-}" = check ]; then
 fi
 install -d "$S" "$ETCD_SNAPSHOT_DIR"
 echo "$name" > "$S/name"
+echo "$ETCD_SNAPSHOT_DIR" > "$S/snapshot-dir"
 
 # --- leave
 if { [ -e $K/kubelet.conf ] && [ ! -e "$S/init-started" ]; } || [ -e "$S/leaving" ]; then
+  if [ ! -e "$S/leaving" ] && same_cluster; then
+    # A worker of the cluster whose control plane it becomes: that control
+    # plane is handed over and answers nobody, and the node and its pods are
+    # in the snapshot. What is this node's own in its kubelet configuration
+    # is in its drop-ins, which stay.
+    echo "$SOCKET" > "$S/socket"
+    dirname "$kubelet" > "$S/old-bin"
+    : > "$S/kubelet-overrides.yaml"
+    keep_old_cluster
+    touch "$S/leaving" "$S/took-over"
+  fi
   if [ ! -e "$S/leaving" ]; then
     echo "$SOCKET" > "$S/socket"
     dirname "$kubelet" > "$S/old-bin"
@@ -275,7 +367,8 @@ if { [ -e $K/kubelet.conf ] && [ ! -e "$S/init-started" ]; } || [ -e "$S/leaving
   date > "$S/left"
   rm -f "$S/leaving"
   changed=left
-  stamp "left the old cluster; runtime $SOCKET and its images are kept. Its Node object $node stays there, cordoned, until an administrator of that cluster removes it (kubectl delete node $node); undo needs it gone only if the name is given to another machine"
+  [ ! -e "$S/took-over" ] || stamp "no longer a worker of its cluster, whose control plane it takes over; runtime $SOCKET and its images are kept"
+  [ -e "$S/took-over" ] || stamp "left the old cluster; runtime $SOCKET and its images are kept. Its Node object $node stays there, cordoned, until an administrator of that cluster removes it (kubectl delete node $node); undo needs it gone only if the name is given to another machine"
 fi
 
 # --- tunnel, runtime, kubelet
@@ -285,6 +378,12 @@ for binary in "$B"/bin/*; do
 done
 [ ! -d "$B/cni" ] || cp -n "$B"/cni/* /opt/cni/bin/
 tunnel_service
+tries=0
+while unanswered; do
+  tries=$((tries + 1))
+  [ $tries -lt 120 ] || fail "no peer of the site tunnel that this machine dials has answered it after 2 min: no node would reach a control plane here. station-gateway --config $(tunnel_document) --status"
+  sleep 1
+done
 [ "$(ip -4 -o addr show dev "$TUNNEL_INTERFACE" | awk '{print $4}' | cut -d/ -f1)" = "$ADDRESS" ] || fail "the tunnel service is running, but $TUNNEL_INTERFACE does not hold $ADDRESS: journalctl -u rlark-station-gateway"
 kernel
 [ -e "$S/socket" ] || { own_runtime; echo "$SOCKET" > "$S/socket"; }
@@ -455,8 +554,12 @@ cat > "$B/rlark-etcd-snapshot" <<SNAPSHOT
 set -eu
 umask 077
 P=/etc/kubernetes/pki
-/opt/rlark/bin/kubectl --kubeconfig /etc/kubernetes/admin.conf -n kube-system exec etcd-$NODE_NAME -- etcdctl --endpoints https://127.0.0.1:2379 \\
-  --cacert \$P/etcd/ca.crt --cert \$P/etcd/server.crt --key \$P/etcd/server.key snapshot save /var/lib/etcd/rlark-snapshot.db >/dev/null
+# Asked of etcd itself, not through the API: the last snapshot of a control
+# plane that is handed over is taken when its API has stopped.
+ctr="$(ctr_of "$SOCKET") -a $SOCKET -n k8s.io"
+\$ctr run --rm --net-host --mount type=bind,src=\$P/etcd,dst=/pki,options=rbind:ro --mount type=bind,src=/var/lib/etcd,dst=/var/lib/etcd,options=rbind:rw \\
+  "\$(\$ctr images ls -q | grep '/etcd:' | sort -V | tail -1)" rlark-etcd-snapshot etcdctl --endpoints https://127.0.0.1:2379 \\
+  --cacert /pki/ca.crt --cert /pki/server.crt --key /pki/server.key snapshot save /var/lib/etcd/rlark-snapshot.db > "$ETCD_SNAPSHOT_DIR/snapshot.log" 2>&1 || { cat "$ETCD_SNAPSHOT_DIR/snapshot.log" >&2; exit 1; }
 at=\$(date +%Y%m%d-%H%M%S)
 mv /var/lib/etcd/rlark-snapshot.db "$ETCD_SNAPSHOT_DIR/etcd-\$at.db.part"
 mv "$ETCD_SNAPSHOT_DIR/etcd-\$at.db.part" "$ETCD_SNAPSHOT_DIR/etcd-\$at.db"
