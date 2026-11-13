@@ -40,7 +40,8 @@ func TestWriteNamesKeepsForeignLinesAndTheFile(t *testing.T) {
 
 func TestWriteResolvFollowsTheSiteAndElseTheMachine(t *testing.T) {
 	dir := t.TempDir()
-	path, own := filepath.Join(dir, "resolv.conf"), filepath.Join(dir, "machine")
+	// The directory is not there on a node the installer did not make.
+	path, own := filepath.Join(dir, "rlark", "station", "resolv.conf"), filepath.Join(dir, "machine")
 	if err := os.WriteFile(own, []byte("nameserver 10.11.0.1\nsearch lab\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
