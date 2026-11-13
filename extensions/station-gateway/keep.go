@@ -275,6 +275,7 @@ func (k *keeper) pass() (string, error) {
 		return "rejected", errors.New(reason + ": the program before it is back")
 	}
 	os.Remove(k.target + ".interrupted")
+	os.Remove(k.target + ".trial-of-an-earlier-boot")
 	return "replaced", os.Remove(trialPath)
 }
 
