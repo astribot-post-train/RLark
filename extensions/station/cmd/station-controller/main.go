@@ -129,6 +129,10 @@ func main() {
 		ctrl.Log.Error(err, "create SiteNetwork reconciler")
 		os.Exit(1)
 	}
+	networkReconciler.MemberCredentialNamespaces = []string{credentialsNamespace}
+	if nodeOperations {
+		networkReconciler.MemberCredentialNamespaces = append(networkReconciler.MemberCredentialNamespaces, nodeOperationCredentialsNamespace)
+	}
 	if err := networkReconciler.SetupWithManager(manager); err != nil {
 		ctrl.Log.Error(err, "register SiteNetwork reconciler")
 		os.Exit(1)

@@ -46,6 +46,9 @@ type NetworkReconciler struct {
 	reader  client.Reader
 	network types.NamespacedName
 	now     func() time.Time
+	// MemberCredentialNamespaces hold the Secrets the management plane
+	// reaches the member clusters' APIs with.
+	MemberCredentialNamespaces []string
 }
 
 const (
@@ -129,6 +132,9 @@ func (r *NetworkReconciler) reconcile(ctx context.Context) (reconcile.Result, er
 	})
 
 	spec := siteNetwork.Spec
+	if err := r.keepMemberCredentials(ctx, spec); err != nil {
+		return reconcile.Result{}, err
+	}
 	siteOfCluster := map[string]string{}
 	topology := network.Topology{Pool: spec.Pool, MTU: int(spec.MTU), Interface: spec.Interface, ListenPort: int(spec.ListenPort), KeepaliveSeconds: int(spec.KeepaliveSeconds), Names: hostNames(spec.Names)}
 	for _, site := range spec.Sites {

@@ -4,12 +4,12 @@
 # management machine as root, in this order:
 #
 #   admit-member.sh install    MEMBER_KUBECONFIG CLUSTER_ID
-#   admit-member.sh credential MEMBER_KUBECONFIG CLUSTER_ID MEMBER_SERVER [TLS_SERVER_NAME]
+#   admit-member.sh credential MEMBER_KUBECONFIG CLUSTER_ID API_NAME
 #
 # install    puts the reader identity, the API's CA, the agent and the gateway into the cluster.
-# credential stores how station-api and station-controller reach the cluster's API (through the
-#            tunnel: MEMBER_SERVER is the control plane's tunnel address, TLS_SERVER_NAME its name).
-#            Run again when the cluster's control plane has moved to another machine.
+# credential stores how station-api and station-controller reach the cluster's API: by API_NAME,
+#            the control plane's name in the SiteNetwork's names. station-controller keeps the
+#            credential at the address that name has, so it is stored once per cluster.
 #
 # A machine joins a cluster as a node by admit-node.sh; a robot that carries a
 # cluster of its own is not a form the site has any more.
@@ -36,7 +36,7 @@ install)
   stamp installed
   ;;
 credential)
-  SERVER=$4 TLS_NAME=${5:-}
+  NAME=$4
   member apply -f - <<EOF
 apiVersion: v1
 kind: Secret
@@ -53,7 +53,7 @@ EOF
   cat > "$work/kubeconfig" <<EOF
 apiVersion: v1
 kind: Config
-clusters: [{name: member, cluster: {server: "$SERVER", certificate-authority-data: $ca${TLS_NAME:+, tls-server-name: "$TLS_NAME"}}}]
+clusters: [{name: member, cluster: {server: "https://$NAME:6443", certificate-authority-data: $ca, tls-server-name: "$NAME"}}]
 users: [{name: reader, user: {token: $token}}]
 contexts: [{name: member, context: {cluster: member, user: reader}}]
 current-context: member

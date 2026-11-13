@@ -10,6 +10,7 @@ import (
 
 	stationv1alpha1 "github.com/rlinf/rlark/extensions/station/api/v1alpha1"
 	"github.com/rlinf/rlark/extensions/station/network"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -61,6 +62,9 @@ func newNetworkTest(t *testing.T, objects ...client.Object) (*NetworkReconciler,
 	t.Helper()
 	scheme := runtime.NewScheme()
 	if err := stationv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	if err := corev1.AddToScheme(scheme); err != nil {
 		t.Fatal(err)
 	}
 	c := fake.NewClientBuilder().WithScheme(scheme).
