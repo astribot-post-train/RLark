@@ -33,7 +33,7 @@ func liveTopology() (Topology, []Member) {
 			Endpoints: []Endpoint{{Address: "36.103.180.169:51820", Scope: ScopePublic}},
 			Advertise: []Advertisement{{CIDR: "172.27.0.0/24", Sites: []string{"office"}}}},
 		{ID: "rlark-robot-s1u-01/s1u-01-x86", Site: "lab", Role: RoleLeaf, PublicKey: keyRobot, Address: "10.254.240.3",
-			Uplink: &Uplink{Gateway: "192.168.0.11", Source: "192.168.31.250", Interface: "enp2s0"}},
+			Uplink: &Uplink{Gateway: "192.168.0.11"}},
 		{ID: "rlark-ksyun-gpu/10-0-2-196", Site: "ksyun", Role: RoleHub, PublicKey: keyTrain, Address: "10.254.240.4", NodeAddress: "10.0.2.196",
 			Interface: "st-hub0", ListenPort: 51821,
 			Endpoints: []Endpoint{{Address: "36.103.180.169:51821", Scope: ScopePublic}},
@@ -51,7 +51,7 @@ func liveTopology() (Topology, []Member) {
 var liveConfigs = map[string]string{
 	"rlark-local-dev-gpu/cailiang":  `{"interface": "st-wg0", "address": "10.254.240.1/32", "listenPort": 51820, "mtu": 1380, "peers": [{"publicKey": "ixGRrgUmo9UMpnCg00v3DPbRT2NEqvmm6eI/lfzpEEc=", "allowedIPs": ["10.254.240.2/32", "172.27.0.0/24"], "endpoint": "36.103.180.169:51820", "keepaliveSeconds": 25}, {"publicKey": "YxGnfRDiE+94DLi/fCMeVe3zl73UTudA9apw8/BWjXs=", "allowedIPs": ["10.254.240.3/32"]}, {"publicKey": "5Go4sNJOoyAwxL5PXdMYnVHRJJQWkNzdBRUKDWzDzS0=", "endpoint": "36.103.180.169:51821", "keepaliveSeconds": 25, "allowedIPs": ["10.254.240.4/32", "172.27.1.0/24"]}, {"publicKey": "Rpk1Y6lpJXIGOdNcgLMYs0J6mBG+67d85HVJs+upaR4=", "allowedIPs": ["10.254.240.5/32"]}, {"publicKey": "uaC5QIh01DyQvTqCObM2dl4hcMIedM5lPYIhkrcQjQQ=", "allowedIPs": ["10.254.240.6/32"]}], "routes": ["10.254.240.2/32", "10.254.240.3/32", "10.254.240.4/32", "172.27.0.0/24", "172.27.1.0/24", "10.254.240.5/32", "10.254.240.6/32"]}`,
 	"rlark-ksyun-gpu/10-0-2-57":     `{"interface": "st-wg0", "address": "10.254.240.2/32", "listenPort": 51820, "mtu": 1380, "peers": [{"publicKey": "DwjZS7W8Yab4SZN62rtBuvKzrzWwoa6nHwObl1Ck2XM=", "allowedIPs": ["10.254.240.1/32"]}, {"publicKey": "YxGnfRDiE+94DLi/fCMeVe3zl73UTudA9apw8/BWjXs=", "allowedIPs": ["10.254.240.3/32"]}, {"publicKey": "Rpk1Y6lpJXIGOdNcgLMYs0J6mBG+67d85HVJs+upaR4=", "allowedIPs": ["10.254.240.5/32"]}, {"publicKey": "uaC5QIh01DyQvTqCObM2dl4hcMIedM5lPYIhkrcQjQQ=", "allowedIPs": ["10.254.240.6/32"]}], "routes": ["10.254.240.1/32", "10.254.240.3/32", "10.254.240.5/32", "10.254.240.6/32"]}`,
-	"rlark-robot-s1u-01/s1u-01-x86": `{"interface": "st-wg0", "address": "10.254.240.3/32", "listenPort": 0, "mtu": 1380, "peers": [{"publicKey": "DwjZS7W8Yab4SZN62rtBuvKzrzWwoa6nHwObl1Ck2XM=", "allowedIPs": ["10.254.240.1/32"], "endpoint": "10.11.14.128:51820", "keepaliveSeconds": 25}, {"publicKey": "ixGRrgUmo9UMpnCg00v3DPbRT2NEqvmm6eI/lfzpEEc=", "allowedIPs": ["10.254.240.2/32", "10.0.2.57/32"], "endpoint": "36.103.180.169:51820", "keepaliveSeconds": 25}, {"publicKey": "5Go4sNJOoyAwxL5PXdMYnVHRJJQWkNzdBRUKDWzDzS0=", "allowedIPs": ["10.254.240.4/32", "10.0.2.196/32"], "endpoint": "36.103.180.169:51821", "keepaliveSeconds": 25}, {"publicKey": "Rpk1Y6lpJXIGOdNcgLMYs0J6mBG+67d85HVJs+upaR4=", "allowedIPs": ["10.254.240.5/32"], "endpoint": "10.11.13.192:51820", "keepaliveSeconds": 25}, {"publicKey": "uaC5QIh01DyQvTqCObM2dl4hcMIedM5lPYIhkrcQjQQ=", "allowedIPs": ["10.254.240.6/32"], "endpoint": "10.11.14.135:51820", "keepaliveSeconds": 25}], "routes": ["10.254.240.1/32", "10.254.240.2/32", "10.254.240.4/32", "10.0.2.57/32", "10.0.2.196/32", "10.254.240.5/32", "10.254.240.6/32"], "uplinkRoutes": [{"destination": "10.11.14.128/32", "gateway": "192.168.0.11", "source": "192.168.31.250", "interface": "enp2s0"}, {"destination": "36.103.180.169/32", "gateway": "192.168.0.11", "source": "192.168.31.250", "interface": "enp2s0"}, {"destination": "10.11.13.192/32", "gateway": "192.168.0.11", "source": "192.168.31.250", "interface": "enp2s0"}, {"destination": "10.11.14.135/32", "gateway": "192.168.0.11", "source": "192.168.31.250", "interface": "enp2s0"}]}`,
+	"rlark-robot-s1u-01/s1u-01-x86": `{"interface": "st-wg0", "address": "10.254.240.3/32", "listenPort": 0, "mtu": 1380, "peers": [{"publicKey": "DwjZS7W8Yab4SZN62rtBuvKzrzWwoa6nHwObl1Ck2XM=", "allowedIPs": ["10.254.240.1/32"], "endpoint": "10.11.14.128:51820", "keepaliveSeconds": 25}, {"publicKey": "ixGRrgUmo9UMpnCg00v3DPbRT2NEqvmm6eI/lfzpEEc=", "allowedIPs": ["10.254.240.2/32", "10.0.2.57/32"], "endpoint": "36.103.180.169:51820", "keepaliveSeconds": 25}, {"publicKey": "5Go4sNJOoyAwxL5PXdMYnVHRJJQWkNzdBRUKDWzDzS0=", "allowedIPs": ["10.254.240.4/32", "10.0.2.196/32"], "endpoint": "36.103.180.169:51821", "keepaliveSeconds": 25}, {"publicKey": "Rpk1Y6lpJXIGOdNcgLMYs0J6mBG+67d85HVJs+upaR4=", "allowedIPs": ["10.254.240.5/32"], "endpoint": "10.11.13.192:51820", "keepaliveSeconds": 25}, {"publicKey": "uaC5QIh01DyQvTqCObM2dl4hcMIedM5lPYIhkrcQjQQ=", "allowedIPs": ["10.254.240.6/32"], "endpoint": "10.11.14.135:51820", "keepaliveSeconds": 25}], "routes": ["10.254.240.1/32", "10.254.240.2/32", "10.254.240.4/32", "10.0.2.57/32", "10.0.2.196/32", "10.254.240.5/32", "10.254.240.6/32"], "uplinkRoutes": [{"destination": "10.11.14.128/32", "gateway": "192.168.0.11"}, {"destination": "36.103.180.169/32", "gateway": "192.168.0.11"}, {"destination": "10.11.13.192/32", "gateway": "192.168.0.11"}, {"destination": "10.11.14.135/32", "gateway": "192.168.0.11"}]}`,
 	"rlark-ksyun-gpu/10-0-2-196":    `{"interface": "st-hub0", "address": "10.254.240.4/32", "listenPort": 51821, "mtu": 1380, "peers": [{"publicKey": "DwjZS7W8Yab4SZN62rtBuvKzrzWwoa6nHwObl1Ck2XM=", "allowedIPs": ["10.254.240.1/32", "10.11.5.12/32"]}, {"publicKey": "YxGnfRDiE+94DLi/fCMeVe3zl73UTudA9apw8/BWjXs=", "allowedIPs": ["10.254.240.3/32"]}, {"publicKey": "Rpk1Y6lpJXIGOdNcgLMYs0J6mBG+67d85HVJs+upaR4=", "allowedIPs": ["10.254.240.5/32"]}, {"publicKey": "uaC5QIh01DyQvTqCObM2dl4hcMIedM5lPYIhkrcQjQQ=", "allowedIPs": ["10.254.240.6/32"]}], "routes": ["10.254.240.1/32", "10.11.5.12/32", "10.254.240.3/32", "10.254.240.5/32", "10.254.240.6/32"]}`,
 	"rlark-local-dev-gpu/alexfu":    `{"interface": "st-wg0", "address": "10.254.240.5/32", "listenPort": 51820, "mtu": 1380, "peers": [{"publicKey": "DwjZS7W8Yab4SZN62rtBuvKzrzWwoa6nHwObl1Ck2XM=", "allowedIPs": ["10.254.240.1/32"], "endpoint": "10.11.14.128:51820", "keepaliveSeconds": 25}, {"publicKey": "YxGnfRDiE+94DLi/fCMeVe3zl73UTudA9apw8/BWjXs=", "allowedIPs": ["10.254.240.3/32"]}, {"publicKey": "ixGRrgUmo9UMpnCg00v3DPbRT2NEqvmm6eI/lfzpEEc=", "allowedIPs": ["10.254.240.2/32", "10.0.2.57/32"], "endpoint": "36.103.180.169:51820", "keepaliveSeconds": 25}, {"publicKey": "5Go4sNJOoyAwxL5PXdMYnVHRJJQWkNzdBRUKDWzDzS0=", "allowedIPs": ["10.254.240.4/32", "10.0.2.196/32"], "endpoint": "36.103.180.169:51821", "keepaliveSeconds": 25}, {"publicKey": "uaC5QIh01DyQvTqCObM2dl4hcMIedM5lPYIhkrcQjQQ=", "allowedIPs": ["10.254.240.6/32"], "endpoint": "10.11.14.135:51820", "keepaliveSeconds": 25}], "routes": ["10.254.240.1/32", "10.254.240.3/32", "10.254.240.2/32", "10.0.2.57/32", "10.254.240.4/32", "10.0.2.196/32", "10.254.240.6/32"]}`,
 	"rlark-local-dev-gpu/wendychen": `{"interface": "st-wg0", "address": "10.254.240.6/32", "listenPort": 51820, "mtu": 1380, "peers": [{"publicKey": "DwjZS7W8Yab4SZN62rtBuvKzrzWwoa6nHwObl1Ck2XM=", "allowedIPs": ["10.254.240.1/32"], "endpoint": "10.11.14.128:51820", "keepaliveSeconds": 25}, {"publicKey": "YxGnfRDiE+94DLi/fCMeVe3zl73UTudA9apw8/BWjXs=", "allowedIPs": ["10.254.240.3/32"]}, {"publicKey": "ixGRrgUmo9UMpnCg00v3DPbRT2NEqvmm6eI/lfzpEEc=", "allowedIPs": ["10.254.240.2/32", "10.0.2.57/32"], "endpoint": "36.103.180.169:51820", "keepaliveSeconds": 25}, {"publicKey": "5Go4sNJOoyAwxL5PXdMYnVHRJJQWkNzdBRUKDWzDzS0=", "allowedIPs": ["10.254.240.4/32", "10.0.2.196/32"], "endpoint": "36.103.180.169:51821", "keepaliveSeconds": 25}, {"publicKey": "Rpk1Y6lpJXIGOdNcgLMYs0J6mBG+67d85HVJs+upaR4=", "allowedIPs": ["10.254.240.5/32"], "endpoint": "10.11.13.192:51820", "keepaliveSeconds": 25}], "routes": ["10.254.240.1/32", "10.254.240.3/32", "10.254.240.2/32", "10.0.2.57/32", "10.254.240.4/32", "10.0.2.196/32", "10.254.240.5/32"]}`,
@@ -161,7 +161,7 @@ func collectionSite(robots int) (Topology, []Member) {
 		members = append(members, Member{
 			ID: fmt.Sprintf("robots/s1u-%02d-x86", i+1), Site: "collection", Role: RoleLeaf, PublicKey: fmt.Sprintf("robot-%02d", i+1),
 			Address: fmt.Sprintf("10.254.241.%d", i+1),
-			Uplink:  &Uplink{Gateway: "192.168.0.11", Source: "192.168.0.10", Interface: "enp2s0"},
+			Uplink:  &Uplink{Gateway: "192.168.0.11"},
 		})
 	}
 	return topology, members
@@ -367,7 +367,7 @@ func TestLeavesOfASiteShareItsUplink(t *testing.T) {
 	members = append(members,
 		Member{ID: "rlark-robot-s1u-01/s1u-02-x86", Site: "lab", Role: RoleLeaf, PublicKey: strings.Repeat("E", 43) + "=", Address: "10.254.240.7"},
 		Member{ID: "rlark-robot-s1u-01/own", Site: "lab", Role: RoleLeaf, PublicKey: strings.Repeat("F", 43) + "=", Address: "10.254.240.8",
-			Uplink: &Uplink{Gateway: "10.9.9.1", Source: "10.9.9.2", Interface: "eth7"}},
+			Uplink: &Uplink{Gateway: "10.9.9.1"}},
 		Member{ID: "rlark-robot-s1u-01/hub", Site: "lab", Role: RoleHub, PublicKey: strings.Repeat("G", 43) + "=", Address: "10.254.240.9",
 			Endpoints: []Endpoint{{Address: "10.11.13.200:51820", Scope: ScopeSite}}})
 	result, err := Compute(topology, members)
@@ -380,12 +380,12 @@ func TestLeavesOfASiteShareItsUplink(t *testing.T) {
 			t.Fatalf("%s: routes %+v problems %v", id, routes, result.Problems[id])
 		}
 		for _, r := range routes {
-			if r.Gateway != "192.168.0.11" || r.Source != "" || r.Interface != "" {
+			if r.Gateway != "192.168.0.11" {
 				t.Fatalf("%s: %+v", id, r)
 			}
 		}
 	}
-	if own := result.Configs["rlark-robot-s1u-01/own"].UplinkRoutes; len(own) == 0 || own[0].Gateway != "10.9.9.1" || own[0].Source != "10.9.9.2" || own[0].Interface != "eth7" {
+	if own := result.Configs["rlark-robot-s1u-01/own"].UplinkRoutes; len(own) == 0 || own[0].Gateway != "10.9.9.1" {
 		t.Fatalf("a leaf's own uplink: %+v, problems %v", own, result.Problems["rlark-robot-s1u-01/own"])
 	}
 	if hub := result.Configs["rlark-robot-s1u-01/hub"].UplinkRoutes; len(hub) != 0 {

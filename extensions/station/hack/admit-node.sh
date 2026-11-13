@@ -11,8 +11,8 @@
 #   STATION_API  host:port of Station API as the machine reaches it
 # Environment: KCP (management kubeconfig), CA (Station API's CA file), TAINTS
 # ("k=v:Effect,..."), ADDRESS (pin the tunnel address), UPLINK
-# ("gateway,source,interface" for a machine whose default route does not lead
-# out), TTL (default "2 hours").
+# (the gateway of a machine whose default route does not lead out, where its
+# site declares no leafUplink), TTL (default "2 hours").
 set -euo pipefail
 : "${KCP:=/home/cailiang/.local/share/rlark-runtime/kcp-admin.kubeconfig}" "${CA:=/tmp/station-api-ca.crt}"
 CLUSTER=$1 NODE=$2 API_SERVER=$3 STATION_API=$4; shift 4
@@ -37,7 +37,7 @@ spec:
   apiServer: $API_SERVER
 ADMISSION
   [[ -z ${ADDRESS:-} ]] || echo "  address: $ADDRESS"
-  [[ -z ${UPLINK:-} ]] || { IFS=, read -r gateway source interface <<<"$UPLINK"; echo "  uplink: {gateway: $gateway, source: $source, interface: $interface}"; }
+  [[ -z ${UPLINK:-} ]] || { echo "  uplink: {gateway: $UPLINK}"; }
   [[ -z ${TAINTS:-} ]] || echo "  taints: [\"${TAINTS//,/\", \"}\"]"
   [[ $# == 0 ]] || { echo "  labels:"; for label in "$@"; do echo "    ${label%%=*}: \"${label#*=}\""; done; }
   # A node that has an admission keeps it: for a node that joined by a code

@@ -348,7 +348,7 @@ func TestNetworkAdmitsAMachineByCode(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Namespace: "ns-dev", Name: "robot", Generation: 1},
 		Spec: stationv1alpha1.NodeAdmissionSpec{ClusterID: "dev", CodeHash: strings.Repeat("0", 64), APIServer: "10.11.14.128:16443",
 			ExpiresAt: metav1.NewTime(time.Unix(1_800_000_600, 0)),
-			Uplink:    &stationv1alpha1.SiteNetworkUplink{Gateway: "192.168.0.11", Source: "192.168.31.250", Interface: "enp2s0"}},
+			Uplink:    &stationv1alpha1.SiteNetworkUplink{Gateway: "192.168.0.11"}},
 	}
 	r, c := newNetworkTest(t, append(objects, testSiteNetwork(), admission)...)
 	admissionStatus := func() stationv1alpha1.NodeAdmissionStatus {

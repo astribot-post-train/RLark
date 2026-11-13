@@ -177,21 +177,13 @@ type SiteNetworkAdvertisement struct {
 }
 
 // SiteNetworkUplink makes the node reach the endpoints it dials through a
-// given gateway instead of its default route.
+// given gateway instead of its default route. The node dials from its own
+// address in the gateway's network, on the interface that has it: an address
+// of another network would be one nothing has given the node, and whatever
+// is given that address later takes the node's answers.
 type SiteNetworkUplink struct {
 	// +kubebuilder:validation:Format=ipv4
 	Gateway string `json:"gateway"`
-	// Source is the address the node dials from. Without it, and that is the
-	// rule, it is the node's own address in the gateway's network: a node
-	// that dials from an address of another network holds an address there
-	// that nothing has given it, and whatever is given that address later
-	// takes the node's answers.
-	// +kubebuilder:validation:MaxLength=15
-	Source string `json:"source,omitempty"`
-	// Interface is the node's interface towards the gateway. Without it, it
-	// is the one that has an address in the gateway's network.
-	// +kubebuilder:validation:MaxLength=15
-	Interface string `json:"interface,omitempty"`
 }
 
 type SiteNetworkLeafUplink struct {

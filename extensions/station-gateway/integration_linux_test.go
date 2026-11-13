@@ -64,18 +64,18 @@ func TestKernelReconciliation(t *testing.T) {
 	if err = netlink.LinkSetUp(uplink); err != nil {
 		t.Fatal(err)
 	}
-	d.UplinkRoutes = []uplinkRoute{{Destination: "198.51.100.1/32", Gateway: "192.0.2.1", Source: "192.0.2.10", Interface: "station-uplink"}}
+	d.UplinkRoutes = []uplinkRoute{{Destination: "198.51.100.1/32", Gateway: "192.0.2.1"}}
 	if err = apply(d, key, false); err != nil {
 		t.Fatalf("add uplink: %v", err)
 	}
 	if err = apply(d, key, false); err != nil {
 		t.Fatalf("reconcile uplink: %v", err)
 	}
-	d.UplinkRoutes[0].Source = "192.0.2.11"
+	d.UplinkRoutes[0].Gateway = "203.0.113.1"
 	if err = apply(d, key, false); err == nil {
-		t.Fatal("accepted missing uplink source")
+		t.Fatal("accepted a gateway in no network of the node")
 	}
-	d.UplinkRoutes[0].Source = "192.0.2.10"
+	d.UplinkRoutes[0].Gateway = "192.0.2.1"
 	_, uplinkDst, _ := net.ParseCIDR("198.51.100.1/32")
 	conflict := netlink.Route{LinkIndex: uplink.Attrs().Index, Dst: uplinkDst, Gw: net.ParseIP("192.0.2.1"), Src: net.ParseIP("192.0.2.10"), Protocol: 99, Priority: routePriority, Table: 254}
 	if err = netlink.RouteReplace(&conflict); err != nil {
@@ -309,10 +309,12 @@ func TestKernelUplinkFollowsTheDocument(t *testing.T) {
 		}
 		return found
 	}
-	// As a robot is today: the source is an address of another network, by declaration.
-	old := []uplinkRoute{{Destination: hub.String(), Gateway: "192.168.0.11", Source: "192.168.31.251", Interface: "robot-lan"}, {Destination: other.String(), Gateway: "192.168.0.11", Source: "192.168.31.251", Interface: "robot-lan"}}
-	if err := applyUplink(old, true); err != nil {
-		t.Fatal(err)
+	// A route this program installed earlier with another source (as a robot had: an address of the site's network).
+	for _, dst := range []*net.IPNet{hub, other} {
+		earlier := netlink.Route{LinkIndex: lan.Attrs().Index, Dst: dst, Gw: net.ParseIP("192.168.0.11"), Src: net.ParseIP("192.168.31.251"), Protocol: routeProtocol, Priority: routePriority, Table: 254}
+		if err := netlink.RouteAdd(&earlier); err != nil {
+			t.Fatal(err)
+		}
 	}
 	// Another origin's route at its own metric stays, and is the one in use while it is there.
 	foreign := netlink.Route{LinkIndex: lan.Attrs().Index, Dst: hub, Gw: net.ParseIP("192.168.0.11"), Src: net.ParseIP("192.168.31.251"), Protocol: 4, Priority: 100, Table: 254}

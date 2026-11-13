@@ -41,7 +41,7 @@ uplink=$(mgmt -n station-system get sitenetwork default -o json | python3 -c '
 import json, sys
 for n in json.load(sys.stdin)["spec"]["nodes"]:
     if (n["clusterID"], n["nodeName"]) == tuple(sys.argv[1:3]) and n.get("uplink"):
-        print(",".join(n["uplink"][k] for k in ("gateway", "source", "interface")))' "$old_cluster" "$NODE")
+        print(n["uplink"]["gateway"])' "$old_cluster" "$NODE")
 ! old get nodes -l node-role.kubernetes.io/control-plane -o name | grep -qx "node/$NODE" || { echo "$NODE is the control plane of $old_cluster: that cluster would end with it. A control plane moves to another machine with its cluster (the installer's control-plane mode, FROM_SNAPSHOT)" >&2; exit 1; }
 [[ $old_cluster != "$CLUSTER" ]] || { echo "$NODE is a node of $CLUSTER already. A cluster whose control plane moves to another machine keeps its nodes where they are (the installer's control-plane mode, FROM_SNAPSHOT)" >&2; exit 1; }
 stamp "$NODE: $old_cluster -> $CLUSTER, keeps $address${uplink:+ uplink $uplink}"

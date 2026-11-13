@@ -213,14 +213,13 @@ func TestTrailingJSONRejected(t *testing.T) {
 
 func TestUplinkRouteValidation(t *testing.T) {
 	base := `{"interface":"wg-site","address":"10.254.240.1/32","listenPort":51820,"mtu":1420,"uplinkRoutes":[%s]}`
-	valid := `{"destination":"10.11.14.128/32","gateway":"192.168.0.11","source":"192.168.31.250","interface":"enp2s0"}`
-	if _, err := parse([]byte(fmt.Sprintf(base, valid))); err != nil {
+	if _, err := parse([]byte(fmt.Sprintf(base, `{"destination":"10.11.14.128/32","gateway":"192.168.0.11"}`))); err != nil {
 		t.Fatal(err)
 	}
 	for _, bad := range []string{
-		`{"destination":"10.11.0.0/16","gateway":"192.168.0.11","source":"192.168.31.250","interface":"enp2s0"}`,
-		`{"destination":"10.11.14.128/32","gateway":"bad","source":"192.168.31.250","interface":"enp2s0"}`,
-		`{"destination":"10.11.14.128/32","gateway":"192.168.0.11","source":"bad","interface":"enp2s0"}`,
+		`{"destination":"10.11.0.0/16","gateway":"192.168.0.11"}`,
+		`{"destination":"10.11.14.128/32","gateway":"bad"}`,
+		`{"destination":"10.11.14.128/32","gateway":"192.168.0.11","source":"192.168.31.250"}`,
 	} {
 		if _, err := parse([]byte(fmt.Sprintf(base, bad))); err == nil {
 			t.Errorf("accepted invalid uplink %s", bad)

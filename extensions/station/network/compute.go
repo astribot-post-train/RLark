@@ -69,9 +69,7 @@ type Advertisement struct {
 }
 
 type Uplink struct {
-	Gateway   string
-	Source    string
-	Interface string
+	Gateway string
 }
 
 type Member struct {
@@ -129,8 +127,6 @@ type Peer struct {
 type UplinkRoute struct {
 	Destination string `json:"destination"`
 	Gateway     string `json:"gateway"`
-	Source      string `json:"source,omitempty"`
-	Interface   string `json:"interface,omitempty"`
 }
 
 type Result struct {
@@ -237,7 +233,8 @@ func Compute(topology Topology, members []Member) (Result, error) {
 			valid = false
 		}
 		if member.Role == RoleLeaf && member.ListenPort != 0 {
-			problem("listenPort %d is not used: no one dials a leaf, and it dials from a port of its own choosing", member.ListenPort)
+			problem("a leaf has no listenPort: no one dials it, and it dials from a port of its own choosing")
+			valid = false
 		}
 		if member.Role == RoleHub && len(member.Endpoints) == 0 {
 			problem("a hub needs at least one endpoint")
@@ -364,7 +361,6 @@ func Compute(topology Topology, members []Member) (Result, error) {
 				seen[endpoint] = true
 				config.UplinkRoutes = append(config.UplinkRoutes, UplinkRoute{
 					Destination: endpoint.String() + "/32", Gateway: uplink.Gateway,
-					Source: uplink.Source, Interface: uplink.Interface,
 				})
 			}
 		}

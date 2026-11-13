@@ -202,25 +202,13 @@ spec:
                     uplink:
                       description: |-
                         SiteNetworkUplink makes the node reach the endpoints it dials through a
-                        given gateway instead of its default route.
+                        given gateway instead of its default route. The node dials from its own
+                        address in the gateway's network, on the interface that has it: an address
+                        of another network would be one nothing has given the node, and whatever
+                        is given that address later takes the node's answers.
                       properties:
                         gateway:
                           format: ipv4
-                          type: string
-                        interface:
-                          description: |-
-                            Interface is the node's interface towards the gateway. Without it, it
-                            is the one that has an address in the gateway's network.
-                          maxLength: 15
-                          type: string
-                        source:
-                          description: |-
-                            Source is the address the node dials from. Without it, and that is the
-                            rule, it is the node's own address in the gateway's network: a node
-                            that dials from an address of another network holds an address there
-                            that nothing has given it, and whatever is given that address later
-                            takes the node's answers.
-                          maxLength: 15
                           type: string
                       required:
                       - gateway
@@ -272,12 +260,6 @@ spec:
                         gateway:
                           format: ipv4
                           type: string
-                        interface:
-                          description: |-
-                            Interface is the node's interface towards the gateway. Without it, it
-                            is the one that has an address in the gateway's network.
-                          maxLength: 15
-                          type: string
                         setup:
                           description: |-
                             Setup is what the gateway device of a new leaf runs once so that the
@@ -309,15 +291,6 @@ spec:
                           - login
                           - path
                           type: object
-                        source:
-                          description: |-
-                            Source is the address the node dials from. Without it, and that is the
-                            rule, it is the node's own address in the gateway's network: a node
-                            that dials from an address of another network holds an address there
-                            that nothing has given it, and whatever is given that address later
-                            takes the node's answers.
-                          maxLength: 15
-                          type: string
                       required:
                       - gateway
                       type: object

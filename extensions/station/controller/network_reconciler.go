@@ -135,7 +135,7 @@ func (r *NetworkReconciler) reconcile(ctx context.Context) (reconcile.Result, er
 		names := hostNames(site.Names)
 		topology.Sites = append(topology.Sites, network.Site{Name: site.Name, Mesh: site.Mesh, Reaches: site.Reaches, LeavesViaRelay: site.LeavesViaRelay, Names: names, DNS: site.DNS})
 		if site.LeafUplink != nil {
-			topology.Sites[len(topology.Sites)-1].LeafUplink = &network.Uplink{Gateway: site.LeafUplink.Gateway, Source: site.LeafUplink.Source, Interface: site.LeafUplink.Interface}
+			topology.Sites[len(topology.Sites)-1].LeafUplink = &network.Uplink{Gateway: site.LeafUplink.Gateway}
 		}
 		for _, cluster := range site.Clusters {
 			siteOfCluster[cluster] = site.Name
@@ -316,7 +316,7 @@ func (r *NetworkReconciler) reconcile(ctx context.Context) (reconcile.Result, er
 			member.Advertise = append(member.Advertise, network.Advertisement{CIDR: advertisement.CIDR, Sites: advertisement.Sites})
 		}
 		if node.Uplink != nil {
-			member.Uplink = &network.Uplink{Gateway: node.Uplink.Gateway, Source: node.Uplink.Source, Interface: node.Uplink.Interface}
+			member.Uplink = &network.Uplink{Gateway: node.Uplink.Gateway}
 		}
 		members = append(members, member)
 		enrolled[id] = true
@@ -354,7 +354,7 @@ func (r *NetworkReconciler) reconcile(ctx context.Context) (reconcile.Result, er
 		declaredOnly[id] = true
 		member := network.Member{ID: id, Site: site, Role: network.RoleLeaf, PublicKey: admission.Spec.PublicKey, Address: admission.Status.Address, ListenPort: int(node.ListenPort)}
 		if node.Uplink != nil {
-			member.Uplink = &network.Uplink{Gateway: node.Uplink.Gateway, Source: node.Uplink.Source, Interface: node.Uplink.Interface}
+			member.Uplink = &network.Uplink{Gateway: node.Uplink.Gateway}
 		}
 		members = append(members, member)
 	}
