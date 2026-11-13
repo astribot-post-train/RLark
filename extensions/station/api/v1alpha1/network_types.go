@@ -91,6 +91,11 @@ type SiteNetworkSite struct {
 	// and reach everything else through it. Without it a leaf also dials
 	// every other hub it can.
 	LeavesViaRelay bool `json:"leavesViaRelay,omitempty"`
+	// LeafUplink is the uplink of every leaf of this site that declares none
+	// of its own: machines of one build, each behind a device of its own
+	// that has the same address on every one of them (a robot's computer
+	// behind the robot's router), are declared once.
+	LeafUplink *SiteNetworkUplink `json:"leafUplink,omitempty"`
 	// DNS are the site's name servers. A node's kubelet gives them to its
 	// pods; they are kept in /etc/rlark/station/resolv.conf on every node of
 	// the site (station-gateway). Without them a node's pods use the name
@@ -172,15 +177,21 @@ type SiteNetworkAdvertisement struct {
 }
 
 // SiteNetworkUplink makes the node reach the endpoints it dials through a
-// given gateway and source address instead of its default route.
+// given gateway instead of its default route.
 type SiteNetworkUplink struct {
-	// +kubebuilder:validation:MaxLength=15
+	// +kubebuilder:validation:Format=ipv4
 	Gateway string `json:"gateway"`
+	// Source is the address the node dials from. Without it, and that is the
+	// rule, it is the node's own address in the gateway's network: a node
+	// that dials from an address of another network holds an address there
+	// that nothing has given it, and whatever is given that address later
+	// takes the node's answers.
 	// +kubebuilder:validation:MaxLength=15
-	Source string `json:"source"`
-	// +kubebuilder:validation:MinLength=1
+	Source string `json:"source,omitempty"`
+	// Interface is the node's interface towards the gateway. Without it, it
+	// is the one that has an address in the gateway's network.
 	// +kubebuilder:validation:MaxLength=15
-	Interface string `json:"interface"`
+	Interface string `json:"interface,omitempty"`
 }
 
 type SiteNetworkStatus struct {

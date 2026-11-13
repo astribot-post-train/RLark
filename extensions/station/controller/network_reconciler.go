@@ -117,6 +117,9 @@ func (r *NetworkReconciler) reconcile(ctx context.Context) (reconcile.Result, er
 	for _, site := range spec.Sites {
 		names := hostNames(site.Names)
 		topology.Sites = append(topology.Sites, network.Site{Name: site.Name, Mesh: site.Mesh, Reaches: site.Reaches, LeavesViaRelay: site.LeavesViaRelay, Names: names, DNS: site.DNS})
+		if site.LeafUplink != nil {
+			topology.Sites[len(topology.Sites)-1].LeafUplink = &network.Uplink{Gateway: site.LeafUplink.Gateway, Source: site.LeafUplink.Source, Interface: site.LeafUplink.Interface}
+		}
 		for _, cluster := range site.Clusters {
 			siteOfCluster[cluster] = site.Name
 		}

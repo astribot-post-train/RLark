@@ -53,6 +53,8 @@ type Site struct {
 	Names          []HostName
 	// DNS are the site\'s name servers, for the pods of its members.
 	DNS []string
+	// LeafUplink is the uplink of the site's leaves that have none of their own.
+	LeafUplink *Uplink
 }
 
 type Endpoint struct {
@@ -127,8 +129,8 @@ type Peer struct {
 type UplinkRoute struct {
 	Destination string `json:"destination"`
 	Gateway     string `json:"gateway"`
-	Source      string `json:"source"`
-	Interface   string `json:"interface"`
+	Source      string `json:"source,omitempty"`
+	Interface   string `json:"interface,omitempty"`
 }
 
 type Result struct {
@@ -349,7 +351,11 @@ func Compute(topology Topology, members []Member) (Result, error) {
 			}
 			config.Peers = append(config.Peers, c.peer)
 		}
-		if self.Uplink != nil {
+		uplink := self.Uplink
+		if uplink == nil && self.Role == RoleLeaf {
+			uplink = self.site.LeafUplink
+		}
+		if uplink != nil {
 			seen := map[netip.Addr]bool{}
 			for _, endpoint := range dialed {
 				if seen[endpoint] {
@@ -357,8 +363,8 @@ func Compute(topology Topology, members []Member) (Result, error) {
 				}
 				seen[endpoint] = true
 				config.UplinkRoutes = append(config.UplinkRoutes, UplinkRoute{
-					Destination: endpoint.String() + "/32", Gateway: self.Uplink.Gateway,
-					Source: self.Uplink.Source, Interface: self.Uplink.Interface,
+					Destination: endpoint.String() + "/32", Gateway: uplink.Gateway,
+					Source: uplink.Source, Interface: uplink.Interface,
 				})
 			}
 		}
