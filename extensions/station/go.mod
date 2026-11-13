@@ -3,6 +3,7 @@ module github.com/rlinf/rlark/extensions/station
 go 1.26.0
 
 require (
+	golang.org/x/crypto v0.47.0
 	k8s.io/api v0.36.0
 	k8s.io/apimachinery v0.36.3
 	k8s.io/client-go v0.36.0

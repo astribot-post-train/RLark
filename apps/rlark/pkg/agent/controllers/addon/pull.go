@@ -18,6 +18,7 @@ import (
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/yaml"
@@ -27,6 +28,7 @@ import (
 
 	rlarkv1alpha1 "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
 	"github.com/rlinf/rlark/apps/rlark/pkg/addons"
+	raykubernetes "github.com/rlinf/rlark/apps/rlark/pkg/agent/controllers/task/workload/ray/kubernetes"
 	"github.com/rlinf/rlark/apps/rlark/pkg/apis"
 )
 
@@ -190,6 +192,10 @@ func (r *pullReconciler) applyObject(ctx context.Context, obj *unstructured.Unst
 		obj.SetNamespace(apis.Namespace)
 	}
 
+	if err := r.injectImagePullSecrets(ctx, obj); err != nil {
+		return err
+	}
+
 	key := types.NamespacedName{Name: obj.GetName(), Namespace: obj.GetNamespace()}
 
 	existing := &unstructured.Unstructured{}
@@ -243,6 +249,32 @@ func (r *pullReconciler) applyObject(ctx context.Context, obj *unstructured.Unst
 		return fmt.Errorf("update %s/%s: %w", gvk.Kind, key, err)
 	}
 	return nil
+}
+
+// injectImagePullSecrets gives the Pods of an Addon workload the image registry
+// credentials distributed to this cluster, matched by image name exactly as for
+// a Task's Pods, so an Addon needs no pull-secret parameter of its own.
+func (r *pullReconciler) injectImagePullSecrets(ctx context.Context, obj *unstructured.Unstructured) error {
+	raw, found, err := unstructured.NestedMap(obj.Object, "spec", "template")
+	if err != nil || !found {
+		return err
+	}
+	template := &corev1.PodTemplateSpec{}
+	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(raw, template); err != nil {
+		return fmt.Errorf("%s/%s pod template: %w", obj.GetKind(), obj.GetName(), err)
+	}
+	before := len(template.Spec.ImagePullSecrets)
+	if err := raykubernetes.EnsureImagePullSecrets(ctx, r.c.LocalKubeClient, template, obj.GetNamespace()); err != nil {
+		return err
+	}
+	if len(template.Spec.ImagePullSecrets) == before {
+		return nil
+	}
+	secrets := make([]interface{}, 0, len(template.Spec.ImagePullSecrets))
+	for _, secret := range template.Spec.ImagePullSecrets {
+		secrets = append(secrets, map[string]interface{}{"name": secret.Name})
+	}
+	return unstructured.SetNestedSlice(obj.Object, secrets, "spec", "template", "spec", "imagePullSecrets")
 }
 
 // desiredFieldsMatch ignores server-defaulted fields absent from the rendered
@@ -410,7 +442,13 @@ func (r *pullReconciler) checkReady(ctx context.Context, mgmtAddon *rlarkv1alpha
 	logger.Info("checkReady: daemonsets found", "count", len(dsList.Items), "labels", labels)
 	for _, ds := range dsList.Items {
 		foundWorkloads = true
-		if ds.Status.DesiredNumberScheduled == 0 {
+		if ds.Status.ObservedGeneration < ds.Generation {
+			return false, fmt.Sprintf("DaemonSet %s: not yet observed", ds.Name), nil
+		}
+		// A DaemonSet meant for one class of nodes (a robot's, say) is fine on a
+		// cluster without such nodes; one meant for every node is not.
+		pod := ds.Spec.Template.Spec
+		if ds.Status.DesiredNumberScheduled == 0 && len(pod.NodeSelector) == 0 && (pod.Affinity == nil || pod.Affinity.NodeAffinity == nil) {
 			return false, fmt.Sprintf("DaemonSet %s: no nodes scheduled", ds.Name), nil
 		}
 		if ds.Status.NumberReady < ds.Status.DesiredNumberScheduled {

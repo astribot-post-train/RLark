@@ -4,9 +4,15 @@ import (
 	"bytes"
 	"embed"
 	"fmt"
+	"io/fs"
+	"log"
+	"os"
 	"path"
+	"sort"
 	"strings"
+	"sync"
 	"text/template"
+	"time"
 
 	"go.yaml.in/yaml/v3"
 	"k8s.io/apimachinery/pkg/util/validation"
@@ -69,15 +75,30 @@ type Addon interface {
 	Render(values map[string]string, namespace string, addonName string, addonUID string) ([]Manifest, error)
 }
 
+// CatalogDirEnv names a directory of catalog items that are not compiled in.
+// Each item is a subdirectory holding addon.yaml and its manifest templates,
+// either in manifests/ or beside addon.yaml (the shape of a mounted
+// ConfigMap, whose keys cannot contain a slash). The directory is read again
+// when it is asked for and the last reading is older than a few seconds, so
+// an item added to it is offered without rebuilding or restarting anything.
+// A built-in item is not replaced by one of the same name.
+const CatalogDirEnv = "RLARK_ADDON_CATALOG_DIR"
+
 type registry struct {
 	addons map[string]Addon
+
+	dir      string
+	mu       sync.Mutex
+	readAt   time.Time
+	external map[string]Addon
+	problem  string
 }
 
 // Registry is an exported variable.
 var Registry *registry
 
 func init() {
-	Registry = &registry{addons: make(map[string]Addon)}
+	Registry = &registry{addons: make(map[string]Addon), dir: os.Getenv(CatalogDirEnv)}
 	if err := Registry.load(); err != nil {
 		panic(fmt.Sprintf("failed to load addon catalog: %v", err))
 	}
@@ -121,6 +142,8 @@ func (r *registry) load() error {
 		a := &embeddedAddon{
 			meta:          meta,
 			dir:           entry.Name(),
+			files:         manifestsFS,
+			manifestsDir:  manifestsDir,
 			manifestFiles: manifestFiles,
 		}
 		r.addons[meta.Name] = a
@@ -129,10 +152,73 @@ func (r *registry) load() error {
 	return nil
 }
 
+// fromDir reads the items of the catalog directory, at most every five seconds.
+func (r *registry) fromDir() map[string]Addon {
+	if r.dir == "" {
+		return nil
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if time.Since(r.readAt) < 5*time.Second {
+		return r.external
+	}
+	r.readAt = time.Now()
+	found, problems := map[string]Addon{}, []string{}
+	entries, err := os.ReadDir(r.dir)
+	if err != nil {
+		problems = append(problems, err.Error())
+	}
+	for _, entry := range entries {
+		// A mounted ConfigMap keeps its revisions in entries that start with "..".
+		if strings.HasPrefix(entry.Name(), "..") {
+			continue
+		}
+		item := os.DirFS(path.Join(r.dir, entry.Name()))
+		data, err := fs.ReadFile(item, "addon.yaml")
+		if err != nil {
+			continue
+		}
+		var meta AddonMeta
+		if err := yaml.Unmarshal(data, &meta); err != nil || meta.Name == "" {
+			problems = append(problems, fmt.Sprintf("%s/addon.yaml is not a catalog item: %v", entry.Name(), err))
+			continue
+		}
+		if _, builtIn := r.addons[meta.Name]; builtIn {
+			problems = append(problems, fmt.Sprintf("%s: %q is a built-in item and is not replaced", entry.Name(), meta.Name))
+			continue
+		}
+		manifestsDir := "manifests"
+		files, err := fs.ReadDir(item, manifestsDir)
+		if err != nil {
+			manifestsDir = "."
+			files, _ = fs.ReadDir(item, manifestsDir)
+		}
+		a := &embeddedAddon{meta: meta, dir: meta.Name, files: item, manifestsDir: manifestsDir}
+		for _, file := range files {
+			if name := file.Name(); name != "addon.yaml" && !strings.HasPrefix(name, "..") && path.Ext(name) == ".yaml" {
+				a.manifestFiles = append(a.manifestFiles, name)
+			}
+		}
+		sort.Strings(a.manifestFiles)
+		found[meta.Name] = a
+	}
+	if problem := strings.Join(problems, "; "); problem != r.problem {
+		r.problem = problem
+		if problem != "" {
+			log.Printf("addon catalog directory %s: %s", r.dir, problem)
+		}
+	}
+	r.external = found
+	return found
+}
+
 // List is an exported method.
 func (r *registry) List() []AddonMeta {
 	var result []AddonMeta
 	for _, a := range r.addons {
+		result = append(result, a.Meta())
+	}
+	for _, a := range r.fromDir() {
 		result = append(result, a.Meta())
 	}
 	return result
@@ -140,13 +226,20 @@ func (r *registry) List() []AddonMeta {
 
 // Get is an exported method.
 func (r *registry) Get(name string) (Addon, bool) {
-	a, ok := r.addons[name]
+	if a, ok := r.addons[name]; ok {
+		return a, true
+	}
+	a, ok := r.fromDir()[name]
 	return a, ok
 }
 
 type embeddedAddon struct {
-	meta          AddonMeta
-	dir           string
+	meta AddonMeta
+	dir  string
+	// files and manifestsDir are where the manifest templates are read from:
+	// the compiled-in catalog or an item of the catalog directory.
+	files         fs.FS
+	manifestsDir  string
 	manifestFiles []string
 }
 
@@ -179,6 +272,15 @@ func (a *embeddedAddon) Render(values map[string]string, namespace string, addon
 			return nil, fmt.Errorf("parameter %s is required", p.Name)
 		}
 		renderValues[p.Name] = v
+		if a.dir == "csi-driver-rclone" && (p.Name == "nodeUpdateStrategy" || p.Name == "nodeImagePullPolicy") {
+			valid := false
+			for _, option := range p.Options {
+				valid = valid || v == option
+			}
+			if !valid {
+				return nil, fmt.Errorf("parameter %s must be one of %v", p.Name, p.Options)
+			}
+		}
 	}
 
 	addonLabels := map[string]string{
@@ -202,8 +304,8 @@ func (a *embeddedAddon) Render(values map[string]string, namespace string, addon
 
 	var result []Manifest
 	for _, fname := range a.manifestFiles {
-		manifestPath := path.Join("catalog", a.dir, "manifests", fname)
-		raw, err := manifestsFS.ReadFile(manifestPath)
+		manifestPath := path.Join(a.manifestsDir, fname)
+		raw, err := fs.ReadFile(a.files, manifestPath)
 		if err != nil {
 			return nil, fmt.Errorf("read manifest %s: %w", manifestPath, err)
 		}

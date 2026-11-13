@@ -1,0 +1,40 @@
+site_name: 团队设计与运维文档
+site_description: 团队环境的设计、部署和运维资料
+docs_dir: docs
+site_dir: site-team
+use_directory_urls: false
+theme:
+  name: material
+  language: zh
+  features:
+    - navigation.sections
+    - content.code.copy
+plugins:
+  - search
+nav:
+  - 首页: index.md
+  - Station 设计:
+      - 网络设计: design/station-network-plan.zh-CN.html
+      - API 契约: design/station-api-contract.zh-CN.md
+      - 身份协议: design/station-identity-protocol.zh-CN.md
+  - 存储与镜像:
+      - 共享存储与镜像仓库方案: design/shared-storage-registry-plan.zh-CN.md
+      - 私有镜像仓库操作: operations/private-registry.zh-CN.md
+  - DataTools:
+      - NAS 与云端运行约定: design/datatools-storage-paths.zh-CN.md
+  - Fleet 集成:
+      - NAS 固定路径: design/fleet-storage-paths.zh-CN.md
+      - PostgreSQL 迁移方案: design/fleet-postgres-plan.zh-CN.md
+  - 部署与运维:
+      - 金山云裸金属资产: design/bare-metal-assets.zh-CN.md
+      - Station 部署快照: design/station-deploy/README.zh-CN.md
+  - English:
+      - Kingsoft Cloud bare-metal assets: design/bare-metal-assets.md
+      - Home: index.en.md
+      - DataTools NAS paths: design/datatools-storage-paths.md
+      - Fleet NAS paths: design/fleet-storage-paths.md
+      - Station API contract: design/station-api-contract.md
+      - Station identity protocol: design/station-identity-protocol.md
+      - Shared storage and registry: design/shared-storage-registry-plan.md
+      - Private registry operations: operations/private-registry.md
+      - Station deployment snapshot: design/station-deploy/README.md

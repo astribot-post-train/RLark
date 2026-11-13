@@ -226,6 +226,9 @@ func (e *Engine) apply(ctx context.Context, declaration *corev1.Secret, desired 
 		targetResource = resource.Namespace(object.GetNamespace())
 	}
 	existing, err := targetResource.Get(ctx, object.GetName(), metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		existing = nil
+	}
 	if err == nil {
 		owner := existing.GetAnnotations()[e.Mode.OwnershipPrefix+"definition-uid"]
 		if owner != string(declaration.UID) && !desired.config.Apply.AdoptExisting {
@@ -242,6 +245,16 @@ func (e *Engine) apply(ctx context.Context, declaration *corev1.Secret, desired 
 	applied, err := targetResource.Patch(ctx, object.GetName(), types.ApplyPatchType, data, metav1.PatchOptions{
 		FieldManager: e.Mode.FieldManagerPrefix + shortHash(string(declaration.UID)), Force: &force,
 	})
+	if apierrors.IsInvalid(err) && existing != nil && object.GetKind() == "StorageClass" {
+		// A StorageClass cannot be changed in place (parameters, reclaim policy).
+		// It is only read when a volume is provisioned, so replacing it leaves
+		// existing volumes as they are.
+		if err = targetResource.Delete(ctx, object.GetName(), metav1.DeleteOptions{}); err == nil {
+			applied, err = targetResource.Patch(ctx, object.GetName(), types.ApplyPatchType, data, metav1.PatchOptions{
+				FieldManager: e.Mode.FieldManagerPrefix + shortHash(string(declaration.UID)), Force: &force,
+			})
+		}
+	}
 	if err != nil {
 		return InventoryItem{}, err
 	}

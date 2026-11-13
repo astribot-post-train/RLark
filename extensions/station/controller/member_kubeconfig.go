@@ -87,29 +87,11 @@ func (r *KubeconfigNodeReader) VerifyNode(ctx context.Context, clusterID, _ stri
 	if clusterID == "" || nodeName == "" {
 		return "", "", false, errors.New("cluster ID and Node name are required")
 	}
-	kubeconfig, err := r.source.Kubeconfig(ctx, clusterID)
+	memberClient, err := r.Client(ctx, clusterID)
 	if err != nil {
-		return "", "", false, fmt.Errorf("resolve member Kubernetes credentials: %w", err)
+		return "", "", false, err
 	}
-	digest := sha256.Sum256(kubeconfig)
-	r.mu.Lock()
-	entry, ok := r.cache[clusterID]
-	if !ok || entry.digest != digest {
-		config, configErr := secureRESTConfigFromKubeconfig(kubeconfig)
-		if configErr != nil {
-			r.mu.Unlock()
-			return "", "", false, fmt.Errorf("member kubeconfig is not supported: %w", configErr)
-		}
-		memberClient, clientErr := kubernetes.NewForConfig(config)
-		if clientErr != nil {
-			r.mu.Unlock()
-			return "", "", false, fmt.Errorf("create member Kubernetes client: %w", clientErr)
-		}
-		entry = cachedMemberClient{digest: digest, client: memberClient}
-		r.cache[clusterID] = entry
-	}
-	r.mu.Unlock()
-	node, err := entry.client.CoreV1().Nodes().Get(ctx, nodeName, metav1.GetOptions{})
+	node, err := memberClient.CoreV1().Nodes().Get(ctx, nodeName, metav1.GetOptions{})
 	if apierrors.IsNotFound(err) {
 		return "", "", false, nil
 	}
@@ -120,6 +102,36 @@ func (r *KubeconfigNodeReader) VerifyNode(ctx context.Context, clusterID, _ stri
 		return string(node.UID), node.Status.NodeInfo.SystemUUID, false, nil
 	}
 	return string(node.UID), node.Status.NodeInfo.SystemUUID, true, nil
+}
+
+// Client resolves a verified member API client and refreshes it on credential rotation.
+func (r *KubeconfigNodeReader) Client(ctx context.Context, clusterID string) (kubernetes.Interface, error) {
+	if clusterID == "" {
+		return nil, errors.New("cluster ID is required")
+	}
+	kubeconfig, err := r.source.Kubeconfig(ctx, clusterID)
+	if err != nil {
+		return nil, fmt.Errorf("resolve member Kubernetes credentials: %w", err)
+	}
+	digest := sha256.Sum256(kubeconfig)
+	r.mu.Lock()
+	entry, ok := r.cache[clusterID]
+	if !ok || entry.digest != digest {
+		config, configErr := secureRESTConfigFromKubeconfig(kubeconfig)
+		if configErr != nil {
+			r.mu.Unlock()
+			return nil, fmt.Errorf("member kubeconfig is not supported: %w", configErr)
+		}
+		memberClient, clientErr := kubernetes.NewForConfig(config)
+		if clientErr != nil {
+			r.mu.Unlock()
+			return nil, fmt.Errorf("create member Kubernetes client: %w", clientErr)
+		}
+		entry = cachedMemberClient{digest: digest, client: memberClient}
+		r.cache[clusterID] = entry
+	}
+	r.mu.Unlock()
+	return entry.client, nil
 }
 
 func secureRESTConfigFromKubeconfig(kubeconfig []byte) (*rest.Config, error) {

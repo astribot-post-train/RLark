@@ -300,10 +300,14 @@ Key configurable parameters for `csi-driver-rclone`:
 | `nodeDriverRegistrarImage` | Node driver registrar sidecar image | `rlinf/csi-rclone/csi-node-driver-registrar:v2.16.0` |
 | `driverName` | CSI driver registration name | `rclone.csi.veloxpack.io` |
 | `nodeSelector` | Node DaemonSet selector in `label=value` format | `""` |
+| `nodeUpdateStrategy` | Node DaemonSet update strategy: `RollingUpdate` or `OnDelete` | `RollingUpdate` |
+| `nodeImagePullPolicy` | Node containers: `Always` or `IfNotPresent` | `Always` |
 | `controllerNodeSelector` | Controller Deployment node selector in `label=value` format; use it when its images are available only on specific nodes | `""` |
 | `controllerReplicas` | Controller Deployment replicas | `1` |
 | `controllerLogLevel` | Controller log level (0-10) | `5` |
 | `nodeLogLevel` | Node DaemonSet log level (0-10) | `5` |
+
+Use `OnDelete` when existing rclone processes must remain running during expansion: new nodes receive Pods, while existing Pods require an explicit maintenance replacement. A node plugin restart may disrupt its FUSE mounts. For preloaded images, `IfNotPresent` avoids a pull from an unavailable node-local registry; verify image digests and provide a recovery source before enabling new nodes. The Node DaemonSet already tolerates all taints; a hostname selector can still exclude a control-plane node. Verify each eligible node's `CSINode` registration and an actual volume read/write, not only Addon Ready.
 
 Both selector parameters accept a single Kubernetes label key and value. An invalid selector fails rendering; an empty value leaves that workload unrestricted.
 

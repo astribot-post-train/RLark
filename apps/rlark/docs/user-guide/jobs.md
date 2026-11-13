@@ -10,6 +10,8 @@ For a Ray Job, each role may request up to 16 named TCP or UDP ports. Set the co
 
 An operator must first restrict kube-proxy `nodePortAddresses` to `10.254.240.0/24`, restart/verify kube-proxy on every node, and confirm non-WG addresses cannot reach a test NodePort. Only then set `RLARK_WG_NODEPORT_ENABLED=true` on that cluster's Agent. The Agent refuses the feature if the kube-proxy ConfigMap has broader addresses. A fixed-port conflict leaves the Task in an error state; it does not silently choose another port. Stopping or deleting the Task removes its Service. Removing all ports from an active Task replaces the external Service with an inert, non-NodePort Service until cleanup. A new Task incarnation may receive different automatically allocated ports. A stale Station WG observation prevents the UI from offering a copyable endpoint, but does not by itself revoke an existing Service.
 
+The Job detail groups each role’s requested ports with its current WG address and a copy action; unavailable or stale node observations are shown as waiting.
+
 ## Using the UI
 
 Platform Console → Jobs → Create Job. Enter a display name and define the Worker roles. Job display names and role names are limited to 50 characters. Role names must be unique ignoring case; RLark normalizes them into Kubernetes-safe Task resource names. Job display names may be reused because RLark assigns each Job a separate generated resource ID.

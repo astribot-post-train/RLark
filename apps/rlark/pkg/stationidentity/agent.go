@@ -261,6 +261,7 @@ func readWireguardSnapshot(path string, now time.Time) json.RawMessage {
 	var snapshot struct {
 		ObservedAt time.Time `json:"observedAt"`
 		Interface  string    `json:"interface"`
+		PublicKey  string    `json:"publicKey"`
 		Addresses  []string  `json:"addresses"`
 	}
 	dec := json.NewDecoder(bytes.NewReader(data))
@@ -272,7 +273,7 @@ func readWireguardSnapshot(path string, now time.Time) json.RawMessage {
 	if dec.Decode(&extra) != io.EOF || snapshot.ObservedAt.IsZero() || snapshot.ObservedAt.After(now.Add(5*time.Second)) || now.Sub(snapshot.ObservedAt) > 30*time.Second {
 		return nil
 	}
-	raw, err := json.Marshal(wireguardObservation{Interface: snapshot.Interface, Addresses: snapshot.Addresses})
+	raw, err := json.Marshal(wireguardObservation{Interface: snapshot.Interface, PublicKey: snapshot.PublicKey, Addresses: snapshot.Addresses})
 	if err != nil || validateWireguardObservation(raw) != nil {
 		return nil
 	}

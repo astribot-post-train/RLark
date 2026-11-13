@@ -51,6 +51,34 @@ func (r ManagementClusterResolver) ResolveNamespace(ctx context.Context, namespa
 	return registration, nil
 }
 
+// ClusterIDs lists the registered member-cluster identities after verifying
+// each has a unique, non-empty agent namespace.
+func (r ManagementClusterResolver) ClusterIDs(ctx context.Context) ([]string, error) {
+	if r.Reader == nil {
+		return nil, ErrInvalidRegistration
+	}
+	list := &unstructured.UnstructuredList{}
+	list.SetGroupVersionKind(clusterListGVK)
+	if err := r.Reader.List(ctx, list); err != nil {
+		return nil, fmt.Errorf("list RLark Clusters: %w", err)
+	}
+	ids := make([]string, 0, len(list.Items))
+	namespaces := make(map[string]string, len(list.Items))
+	for i := range list.Items {
+		item := &list.Items[i]
+		namespace, found, err := unstructured.NestedString(item.Object, "spec", "agentNamespace")
+		if err != nil || !found || namespace == "" {
+			return nil, fmt.Errorf("Cluster %q has invalid agentNamespace", item.GetName())
+		}
+		if prior := namespaces[namespace]; prior != "" {
+			return nil, fmt.Errorf("Clusters %q and %q share agent namespace %q", prior, item.GetName(), namespace)
+		}
+		namespaces[namespace] = item.GetName()
+		ids = append(ids, item.GetName())
+	}
+	return ids, nil
+}
+
 // ManagementNodeReadiness reads a namespaced RLark Node without trusting labels
 // for Cluster membership; the caller supplies the already-verified Cluster scope.
 type ManagementNodeReadiness struct{ Reader client.Reader }

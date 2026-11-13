@@ -1,14 +1,13 @@
 export type RegistryTagPage = { items: string[]; next: string };
-export type RegistryTagPreview = { page: RegistryTagPage } | { error: unknown };
+export type RegistryTagPreview<P = RegistryTagPage> =
+  | { page: P }
+  | { error: unknown };
 
-export async function loadRegistryTagPreviews(
+export async function loadRegistryTagPreviews<P = RegistryTagPage>(
   repositories: string[],
-  fetchTags: (
-    repository: string,
-    signal: AbortSignal,
-  ) => Promise<RegistryTagPage>,
+  fetchTags: (repository: string, signal: AbortSignal) => Promise<P>,
   signal: AbortSignal,
-  onResult: (repository: string, result: RegistryTagPreview) => void,
+  onResult: (repository: string, result: RegistryTagPreview<P>) => void,
 ): Promise<void> {
   let index = 0;
   async function worker() {

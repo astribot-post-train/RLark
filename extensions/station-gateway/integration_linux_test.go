@@ -144,12 +144,13 @@ func TestKernelStatus(t *testing.T) {
 	}
 	var observation struct {
 		Interface string   `json:"interface"`
+		PublicKey string   `json:"publicKey"`
 		Addresses []string `json:"addresses"`
 	}
 	if err := json.Unmarshal(data, &observation); err != nil {
 		t.Fatal(err)
 	}
-	if observation.Interface != "wg-status" || len(observation.Addresses) == 0 || observation.Addresses[0] != "10.253.5.1/32" {
+	if observation.Interface != "wg-status" || observation.PublicKey != private.PublicKey().String() || len(observation.Addresses) == 0 || observation.Addresses[0] != "10.253.5.1/32" {
 		t.Fatalf("unexpected snapshot: %s", data)
 	}
 	if bytes.Contains(data, []byte(private.String())) || bytes.Contains(data, []byte(peerKey.PublicKey().String())) {
@@ -237,5 +238,43 @@ func TestKernelIncrementalPeersAndPrunedRoutes(t *testing.T) {
 	routes, err := netlink.RouteList(link, netlink.FAMILY_V4)
 	if err != nil || len(device.Peers) != 1 || device.Peers[0].PublicKey != first.PublicKey() || len(routes) != 1 || routes[0].Dst.String() != "10.253.1.2/32" {
 		t.Fatalf("after the node left: peers %d, routes %v, %v", len(device.Peers), routes, err)
+	}
+}
+
+// A node with no port of its own gets one from the kernel, and another when a
+// peer it dials has stayed away.
+func TestKernelTakesAnotherPort(t *testing.T) {
+	if os.Getenv("STATION_NETNS_TEST") != "1" {
+		t.Skip("requires disposable privileged network namespace")
+	}
+	key, _ := wgtypes.GeneratePrivateKey()
+	hub, _ := wgtypes.GeneratePrivateKey()
+	d, err := parse([]byte(`{"interface":"wg-st-port","address":"10.253.0.3/32","listenPort":0,"mtu":1420,"peers":[{"publicKey":"` + hub.PublicKey().String() + `","endpoint":"192.0.2.1:51820","allowedIPs":["10.253.0.1/32"],"keepaliveSeconds":25}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := wgctrl.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	port := func() int {
+		if err := apply(d, key, false); err != nil {
+			t.Fatal(err)
+		}
+		device, err := c.Device(d.Interface)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return device.ListenPort
+	}
+	dialling = redial{}
+	first := port()
+	if again := port(); first == 0 || again != first {
+		t.Fatalf("ports %d then %d: the kernel's port must stay while the wait lasts", first, again)
+	}
+	dialling.since = time.Now().Add(-time.Minute)
+	if second := port(); second == 0 || second == first {
+		t.Fatalf("port %d after %d: a peer that stays away must cost a new port", second, first)
 	}
 }

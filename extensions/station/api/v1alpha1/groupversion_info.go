@@ -19,6 +19,7 @@ func AddToScheme(scheme *runtime.Scheme) error {
 		&StationSequence{}, &StationSequenceList{},
 		&StationRebind{}, &StationRebindList{},
 		&StationAuditEvent{}, &StationAuditEventList{},
+		&NodeOperation{}, &NodeOperationList{},
 		&SiteNetwork{}, &SiteNetworkList{},
 		&NetworkEnrollment{}, &NetworkEnrollmentList{},
 		&NodeAdmission{}, &NodeAdmissionList{},

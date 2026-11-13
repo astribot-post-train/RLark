@@ -5,6 +5,8 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -169,6 +171,39 @@ func TestDuplicatePeerRejected(t *testing.T) {
 	}
 }
 
+func TestNodeUIDOwnershipMetadataIsOptionalAndValidated(t *testing.T) {
+	key, err := wgtypes.GeneratePrivateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	valid := fmt.Sprintf(`{"interface":"wg-site","nodeUID":"node-uid","publicKey":%q,"address":"10.253.0.1/32","listenPort":51820,"mtu":1420,"peers":[{"publicKey":%q,"nodeUID":"peer-uid","allowedIPs":["10.253.0.2/32"]}]}`, key.PublicKey().String(), key.PublicKey().String())
+	if _, err := parse([]byte(valid)); err != nil {
+		t.Fatalf("valid ownership metadata rejected: %v", err)
+	}
+	invalid := strings.Replace(valid, key.PublicKey().String(), "not-a-key", 1)
+	if _, err := parse([]byte(invalid)); err == nil {
+		t.Fatal("invalid interface public key accepted")
+	}
+	legacy := `{"interface":"wg-site","address":"10.253.0.1/32","listenPort":51820,"mtu":1420}`
+	if _, err := parse([]byte(legacy)); err != nil {
+		t.Fatalf("legacy config without ownership metadata rejected: %v", err)
+	}
+	desired, err := parse([]byte(fmt.Sprintf(`{"interface":"wg-site","nodeUID":"node-uid","publicKey":%q,"address":"10.253.0.1/32","listenPort":51820,"mtu":1420}`, key.PublicKey().String())))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := validateNodeWireGuardOwnership(desired, key); err != nil {
+		t.Fatalf("matching local key rejected: %v", err)
+	}
+	other, err := wgtypes.GeneratePrivateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := validateNodeWireGuardOwnership(desired, other); err == nil {
+		t.Fatal("mismatched configured public key accepted")
+	}
+}
+
 func TestTrailingJSONRejected(t *testing.T) {
 	data := []byte(`{"interface":"wg-site","address":"10.253.0.1/32","listenPort":51820,"mtu":1420} {}`)
 	if _, err := parse(data); err == nil {
@@ -206,5 +241,47 @@ func TestParsesComputedDocument(t *testing.T) {
 	}
 	if d.Interface != "st-wg0" || len(d.peers) != 5 || len(d.routes) != 7 || len(d.UplinkRoutes) != 4 || d.peers[0].Endpoint.String() != "10.11.14.128:51820" || *d.peers[0].PersistentKeepaliveInterval != 25*time.Second {
 		t.Fatalf("computed document parsed as %+v", d)
+	}
+}
+
+func TestRedialTakesAnotherPortOnlyWhileADialledPeerStaysAway(t *testing.T) {
+	hub, _ := wgtypes.GeneratePrivateKey()
+	leaf, _ := wgtypes.GeneratePrivateKey()
+	endpoint := &net.UDPAddr{IP: net.ParseIP("192.0.2.1"), Port: 51820}
+	d := &desired{peers: []wgtypes.PeerConfig{{PublicKey: hub.PublicKey(), Endpoint: endpoint}, {PublicKey: leaf.PublicKey()}}}
+	now := time.Unix(1_800_000_000, 0)
+	device := func(hubHandshake time.Time) *wgtypes.Device {
+		return &wgtypes.Device{Peers: []wgtypes.Peer{{PublicKey: hub.PublicKey(), LastHandshakeTime: hubHandshake}, {PublicKey: leaf.PublicKey()}}}
+	}
+	var r redial
+	// A peer that is not dialled never counts, and neither does an answering one.
+	if r.due(d, device(now.Add(-time.Minute)), now) || r.due(d, device(now.Add(59*time.Minute)), now.Add(time.Hour)) {
+		t.Fatal("an answering peer asked for another port")
+	}
+	r = redial{}
+	var taken []time.Duration
+	for at := time.Duration(0); at <= 2*time.Hour; at += 10 * time.Second {
+		if r.due(d, device(time.Time{}), now.Add(at)) {
+			taken = append(taken, at)
+		}
+	}
+	want := []time.Duration{30 * time.Second, 90 * time.Second, 210 * time.Second, 450 * time.Second, 930 * time.Second, 1890 * time.Second, 2850 * time.Second}
+	if len(taken) < len(want) || !reflect.DeepEqual(taken[:len(want)], want) {
+		t.Fatalf("ports were taken at %v, want %v first", taken, want)
+	}
+	// Once the peer answers the count starts again.
+	if r.due(d, device(now.Add(2*time.Hour)), now.Add(2*time.Hour)) || r.wait != redialFirst {
+		t.Fatalf("an answer did not reset the wait: %v", r.wait)
+	}
+}
+
+func TestListenPortZeroLeavesThePortToTheKernel(t *testing.T) {
+	key, _ := wgtypes.GeneratePrivateKey()
+	d, err := parse([]byte(`{"interface":"st-wg0","address":"10.254.240.3/32","listenPort":0,"mtu":1380}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg, changed := deviceConfig(d, key, &wgtypes.Device{PrivateKey: key, ListenPort: 40123}); changed || cfg.ListenPort != nil {
+		t.Fatalf("the kernel's port was replaced: %+v", cfg)
 	}
 }

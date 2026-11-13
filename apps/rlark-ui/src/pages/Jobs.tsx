@@ -2876,15 +2876,15 @@ export function JobDetailPage({
             />
             {Object.keys(exposedPortMap).length > 0 && (
               <section
-                className="worker-config-section"
+                className="worker-config-section job-access-section"
                 aria-label={zh ? "WG 访问端口" : "WG access ports"}
               >
                 <header className="worker-config-section-head">
                   <strong>{zh ? "WG 访问端口" : "WG access ports"}</strong>
                 </header>
                 {Object.entries(exposedPortMap).map(([taskName, exposure]) => (
-                  <div key={taskName} className="form-section">
-                    <strong>{taskName}</strong>
+                  <div key={taskName} className="job-access-card">
+                    <strong className="job-access-task">{taskName}</strong>
                     {exposure.error && (
                       <span role="status">{exposure.error}</span>
                     )}
@@ -2908,7 +2908,7 @@ export function JobDetailPage({
                           : [],
                       );
                       return (
-                        <div key={port.name} className="env-row">
+                        <div key={port.name} className="job-access-row">
                           <span>
                             {port.name} · {port.protocol} · {port.targetPort} →{" "}
                             {port.nodePort}
@@ -2918,7 +2918,7 @@ export function JobDetailPage({
                               <button
                                 key={address}
                                 type="button"
-                                className="secondary-button"
+                                className="job-access-copy"
                                 title={
                                   zh
                                     ? "复制 WG 访问地址"

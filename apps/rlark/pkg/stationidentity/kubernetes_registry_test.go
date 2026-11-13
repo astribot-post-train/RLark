@@ -160,9 +160,10 @@ func TestKubernetesStationBindingResolverRequiresUniqueCurrentBinding(t *testing
 		name     string
 		stations []*unstructured.Unstructured
 		inactive bool
+		valid    bool
 	}{
 		{name: "retired", stations: []*unstructured.Unstructured{makeStation("station-a", "agent-a", "node-a", "node-uid-a", "station-uid-a", 2, true, "Retired")}, inactive: true},
-		{name: "conflict", stations: []*unstructured.Unstructured{makeStation("station-a", "agent-a", "node-a", "node-uid-a", "station-uid-a", 2, false, "Conflict")}, inactive: true},
+		{name: "conflict with current UID remains observable", stations: []*unstructured.Unstructured{makeStation("station-a", "agent-a", "node-a", "node-uid-a", "station-uid-a", 2, false, "Conflict")}, valid: true},
 		{name: "ambiguous", stations: []*unstructured.Unstructured{valid, makeStation("station-b", "agent-a", "node-a", "node-uid-a", "station-uid-b", 3, false, "Bound")}},
 		{name: "same name changed UID", stations: []*unstructured.Unstructured{makeStation("station-a", "agent-a", "node-a", "new-node-uid", "station-uid-a", 2, false, "Bound")}},
 		{name: "same name replacement cannot bypass old binding", stations: []*unstructured.Unstructured{makeStation("station-old", "agent-a", "node-a", "old-node-uid", "station-old-uid", 1, false, "Conflict"), makeStation("station-new", "agent-a", "node-a", "node-uid-a", "station-new-uid", 1, false, "Bound")}},
@@ -177,6 +178,12 @@ func TestKubernetesStationBindingResolverRequiresUniqueCurrentBinding(t *testing
 			if tc.inactive {
 				if err != nil || !got.Inactive {
 					t.Fatalf("inactive binding=%#v err=%v", got, err)
+				}
+				return
+			}
+			if tc.valid {
+				if err != nil || got.Inactive {
+					t.Fatalf("current conflicting binding is not observable: binding=%#v err=%v", got, err)
 				}
 				return
 			}

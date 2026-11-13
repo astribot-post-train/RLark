@@ -82,6 +82,7 @@ test("stale observations retain historical addresses and explicitly show their r
   };
   assert.equal(nodeNetworkModel(node, stale).message, "stale");
   assert.match(render(stale), /上次上报 · 2026-11-11 12:00:00/);
+  assert.equal((render(stale).match(/<button/g) ?? []).length, 1);
 });
 
 test("unavailable telemetry does not present cached addresses as current or searchable", () => {

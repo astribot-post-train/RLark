@@ -65,6 +65,8 @@ Verify the storage chain:
 - Existing `persistentVolumeClaim`: RLark does not create, adopt, mutate, or delete the referenced PVC. Its lifecycle and data retention are external to the Task.
 - Pod-scoped `ephemeral.volumeClaimTemplate`: deleting a Worker Pod deletes its ephemeral PVC; a new Pod receives a new PVC.
 - HostPath: lifecycle actions do not delete node data.
+- Storage-class volumes (object storage, SMB): the PersistentVolume is removed together with its claim (`reclaimPolicy: Delete`). The remote is not touched: the driver's volume deletion does nothing to the bucket or share. A volume provisioned before a class used `Delete` keeps `Retain` and stays `Released` until an administrator deletes the PersistentVolume object.
+- Storage classes after a Gateway upgrade: at startup the Gateway renders every storage again from its stored fields and rewrites those whose StorageClass or remote configuration would differ. The cluster agent replaces a StorageClass whose immutable fields changed; volumes that are already bound are unaffected, because a class is only read when a volume is provisioned.
 - Other Kubernetes-native volumes: the Job editor cannot create or modify them. Editing or cloning a Job writes the original volume definition back unchanged, so the volume type keeps its own lifecycle.
 
 An existing PVC reference must include `claimName`, and the claim must already exist in the workload namespace. Kubernetes reports mount or binding failures through the workload and Pod status. Deleting a referenced PVC is an external administrative action; confirm that no workload uses it and account for the bound PV's reclaim policy.
@@ -74,3 +76,23 @@ An existing PVC reference must include `claimName`, and the claim must already e
 ## API Equivalent
 
 Use StorageClass, provider, and object-file endpoints described in the [Storage API](../storage-api.md).
+
+## Mount endpoint
+
+An S3 storage class can specify an optional mount endpoint. Empty values use Endpoint; an override only affects target-cluster CSI mounts, while Gateway validation and file browsing retain Endpoint. This supports Gateway public access and cloud Job internal access to the same bucket. URL validation does not establish cloud connectivity: verify with a read-only test Job. All targets share this override; use separate storage classes for different networks. Clearing the field on edit restores Endpoint. SMB does not offer this option.
+
+S3 classes can also scope a mount to an object `prefix` inside the bucket and select the rclone VFS cache mode (`writes` or `off`). Existing classes default to `writes`. Use a separate class for workloads that require cache-disabled writes; verify close-error handling and retries on the actual target cluster before production use. See the [Storage API](../storage-api.md) for the generated `remotePath` behavior.
+
+
+### KS3 multipart acceptance limitation
+
+Cache mode `off` is not a provider compatibility guarantee. In a tested KS3 configuration with CSI rclone v0.2.0 (embedded rclone v1.71.2), a completed multipart object's 32-hex ETag differs from content MD5. Streaming close can return EIO (`corrupted on transfer`) despite independently verified object bytes. Do not disable integrity checks to accept such a mount. Validate the driver/provider combination before using it for archival. Unknown-size streams also require a suitable multipart chunk size: the default 5 MiB and 10,000-part limit allow only about 48.8 GiB. The current storage form does not expose chunk sizing; large-checkpoint acceptance requires a compatible driver/configuration and real failure/recovery testing. Separate mounts have independent directory caches, so close success alone does not promise immediate visibility through another mount.
+
+
+## Per-storage S3 mount profiles
+
+Create/update accepts `mount_profile` (`default`, `read`, `archive`) and `mount_options` (an array of `key=value` strings). List returns these plus `effective_mount_options` and `effective_backend_options`. Omitted update fields retain their stored values; an empty options array clears overrides. Default preserves existing settings. Read enforces a read-only mount with a five-minute directory cache. Archive enforces write cache off, a five-second directory cache, 32 MiB S3 upload chunks and four concurrent upload parts. This is a configuration profile, not a successful KS3 archival acceptance claim.
+
+Explicit options override profile defaults. Duplicate/unknown keys and conflicts with `vfs_cache_mode` or mandatory profile settings are rejected. Supported keys: `vfs-cache-mode`, `read-only`, `fast-list`, `dir-cache-time`, `attr-timeout`, `poll-interval`, `vfs-write-back`, `vfs-cache-max-age`, `buffer-size`, `transfers`, `checkers`, `low-level-retries`, `tpslimit`, `tpslimit-burst`, `s3-chunk-size`, `s3-upload-concurrency`. Backend options are rendered as `chunk_size` / `upload_concurrency` in the remote configuration. Arbitrary credentials, paths, control endpoints and `ignore-checksum` cannot be supplied here. SMB does not accept S3 profiles or overrides.
+
+Profiles do not set an account-wide request budget. Confirm the source and scope of 429 responses before choosing TPS limits across Fleet, DataTools and the image registry; CSI and Gateway have separate request paths. A short directory cache is not an atomic publication or visibility guarantee. Updates apply to newly mounted volumes: stop/update/start the affected Job only in its maintenance window. Changing a storage does not restart active Jobs automatically.

@@ -178,13 +178,23 @@ func (g *Gateway) handleRegistryTags(c *gin.Context) {
 		respondError(c, http.StatusBadRequest, CodeInvalidQueryParameter, "invalid repository or tag cursor")
 		return
 	}
+	tags, next, ok := listRegistryTags(c, g.registryBrowser(), credential, repository, last)
+	if !ok {
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"items": tags, "next": next})
+}
+
+// listRegistryTags reads one validated tag page. On failure it writes the
+// error response and returns false.
+func listRegistryTags(c *gin.Context, browser *registryBrowser, credential storedImageRegistryCredential, repository, last string) ([]string, string, bool) {
 	query := url.Values{"n": {registryBrowsePageSize}}
 	if last != "" {
 		query.Set("last", last)
 	}
-	response, err := g.registryBrowser().request(c.Request.Context(), credential, http.MethodGet, "/v2/"+repository+"/tags/list", query)
+	response, err := browser.request(c.Request.Context(), credential, http.MethodGet, "/v2/"+repository+"/tags/list", query)
 	if !registryBrowseResponse(c, response, err) {
-		return
+		return nil, "", false
 	}
 	defer response.Body.Close()
 	var data struct {
@@ -193,26 +203,26 @@ func (g *Gateway) handleRegistryTags(c *gin.Context) {
 	var tags []string
 	if err := json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(&data); err != nil || len(data.Tags) == 0 || json.Unmarshal(data.Tags, &tags) != nil || len(tags) > 50 {
 		respondError(c, http.StatusBadGateway, CodeUpstreamUnavailable, "invalid registry tags response")
-		return
+		return nil, "", false
 	}
 	for _, tag := range tags {
 		if !registryTagPattern.MatchString(tag) {
 			respondError(c, http.StatusBadGateway, CodeUpstreamUnavailable, "invalid registry tags response")
-			return
+			return nil, "", false
 		}
 	}
 	next := ""
 	if strings.Contains(response.Header.Get("Link"), `rel="next"`) {
 		if len(tags) == 0 || tags[len(tags)-1] == last {
 			respondError(c, http.StatusBadGateway, CodeUpstreamUnavailable, "invalid registry tags cursor")
-			return
+			return nil, "", false
 		}
 		next = tags[len(tags)-1]
 	}
 	if tags == nil {
 		tags = []string{}
 	}
-	c.JSON(http.StatusOK, gin.H{"items": tags, "next": next})
+	return tags, next, true
 }
 
 func (g *Gateway) handleRegistryManifest(c *gin.Context) {

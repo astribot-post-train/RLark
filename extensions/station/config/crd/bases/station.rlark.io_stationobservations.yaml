@@ -147,6 +147,11 @@ spec:
                       type: object
                     maxItems: 64
                     type: array
+                  publicKey:
+                    description: PublicKey is the public key of the observed interface;
+                      private keys are never reported.
+                    maxLength: 64
+                    type: string
                 required:
                 - interface
                 type: object

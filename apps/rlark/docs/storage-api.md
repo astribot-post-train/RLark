@@ -289,3 +289,64 @@ workload:
 ```
 
 Kubernetes creates a PVC for each Pod from `volumeClaimTemplate` and removes it with the Pod. The current Web UI writes this generic ephemeral-volume form and uses the Storage API to retrieve RLark-managed StorageClass declarations for the selected cluster. `pvcStorageMap` and `pvcSizeGbMap` are not part of the canonical Task schema; old resources that depend on those fields must be replaced during a breaking upgrade.
+
+## Mount endpoint override
+
+The optional S3 field `mount_endpoint` is accepted by create/update and returned by list. `endpoint` remains the address used by Gateway credential validation (`HeadBucket`) and file APIs; CSI Secret generation uses `mount_endpoint` when nonempty. Omitted or empty values use `endpoint`; sending an empty value on update clears the override. Both addresses use the same provider, bucket, region, credentials and path-style setting, and the same endpoint URL normalization. SMB rejects a nonempty `mount_endpoint`.
+
+For a cloud-specific storage class, keep a public Gateway endpoint and set a cloud-internal mount endpoint. Gateway does not probe the mount endpoint: verify DNS, TLS, credentials and actual mounting from the target cluster. Configuration success and listing do not establish delivery or mount readiness. All clusters targeted by this declaration receive the same mount endpoint; create separate declarations when clusters need different addresses. Existing mounted volumes are not guaranteed to reload a changed endpoint; validate with a new test Pod before migrating workloads.
+
+```json
+{
+  "name": "ks3-post-train-ksyun",
+  "type": "s3",
+  "clusters": ["rlark-ksyun-gpu"],
+  "provider": "Other",
+  "endpoint": "https://ks3-cn-ningxia.ksyuncs.com",
+  "mount_endpoint": "https://ks3-cn-ningxia-internal.ksyuncs.com",
+  "bucket": "stardust",
+  "region": "cn-ningxia",
+  "path_style": false
+}
+```
+
+This is an environment-specific configuration example, not a ready-to-submit request: supply authorized credentials through a protected channel. Do not include credentials in source control or logs. Delivery remains asynchronous; confirm the generated `sc-<id>` in the target cluster before using it in a Job.
+
+## S3 prefix and VFS cache mode
+
+S3 declarations accept optional `prefix` and `vfs_cache_mode` fields on create/update and return them from list. `prefix` is a slash-separated path within the bucket and becomes the mounted root below the bucket; for example, bucket `stardust` and prefix `ks3-regular` generate rclone `remotePath: stardust/ks3-regular`. Empty prefix mounts the bucket root. `vfs_cache_mode` accepts `writes` or `off`; create requests without it use `writes`; update requests without it retain the stored mode. The setting applies only to the generated CSI StorageClass mount options. The prefix scopes the CSI mount only; Gateway file APIs still address bucket-relative keys, so it is not an authorization boundary. SMB rejects these S3-only fields.
+
+For large outputs that must be visible in object storage when a file is closed, use a dedicated class with `vfs_cache_mode: off`. With cache disabled, remote upload errors can be returned from file operations such as close; applications must propagate those errors and retry failed files. This setting does not provide application-level atomic publication or replace end-to-end failure testing.
+
+```json
+{
+  "name": "fleet-ks3",
+  "type": "s3",
+  "clusters": ["rlark-ksyun-gpu"],
+  "provider": "Other",
+  "endpoint": "https://ks3-cn-ningxia.ksyuncs.com",
+  "bucket": "stardust",
+  "region": "cn-ningxia",
+  "path_style": false,
+  "prefix": "ks3-regular",
+  "vfs_cache_mode": "off"
+}
+```
+
+The Gateway validates bucket access against the configured endpoint with `HeadBucket`. A 403 is an authorization response and does not by itself indicate that the endpoint is unreachable; check the credential, bucket policy and required permissions. Never put credentials in source control, examples, or logs.
+
+
+### KS3 multipart acceptance limitation
+
+Cache mode `off` is not a provider compatibility guarantee. In a tested KS3 configuration with CSI rclone v0.2.0 (embedded rclone v1.71.2), a completed multipart object's 32-hex ETag differs from content MD5. Streaming close can return EIO (`corrupted on transfer`) despite independently verified object bytes. Do not disable integrity checks to accept such a mount. Validate the driver/provider combination before using it for archival. Unknown-size streams also require a suitable multipart chunk size: the default 5 MiB and 10,000-part limit allow only about 48.8 GiB. The current storage form does not expose chunk sizing; large-checkpoint acceptance requires a compatible driver/configuration and real failure/recovery testing. Separate mounts have independent directory caches, so close success alone does not promise immediate visibility through another mount.
+
+
+## Per-storage S3 mount profiles
+
+Create/update accepts `mount_profile` (`default`, `read`, `archive`) and `mount_options` (an array of `key=value` strings). List returns these plus `effective_mount_options` and `effective_backend_options`. Omitted update fields retain their stored values; an empty options array clears overrides. Default preserves existing settings. Read enforces a read-only mount with a five-minute directory cache. Archive enforces write cache off, a five-second directory cache, 32 MiB S3 upload chunks and four concurrent upload parts. This is a configuration profile, not a successful KS3 archival acceptance claim.
+
+Explicit options override profile defaults. Duplicate/unknown keys and conflicts with `vfs_cache_mode` or mandatory profile settings are rejected. Supported keys: `vfs-cache-mode`, `read-only`, `fast-list`, `dir-cache-time`, `attr-timeout`, `poll-interval`, `vfs-write-back`, `vfs-cache-max-age`, `buffer-size`, `transfers`, `checkers`, `low-level-retries`, `tpslimit`, `tpslimit-burst`, `s3-chunk-size`, `s3-upload-concurrency`. Backend options are rendered as `chunk_size` / `upload_concurrency` in the remote configuration. Arbitrary credentials, paths, control endpoints and `ignore-checksum` cannot be supplied here. SMB does not accept S3 profiles or overrides.
+
+Each generated S3 StorageClass uses a stable class-specific rclone remote alias (`s3-<storage-class-id>`) in both `remote` and `configData`. This prevents read and archive classes on the same node plugin from sharing mutable rclone configuration. It isolates configuration only; it does not repair provider checksum semantics.
+
+Profiles do not set an account-wide request budget. Confirm the source and scope of 429 responses before choosing TPS limits across Fleet, DataTools and the image registry; CSI and Gateway have separate request paths. A short directory cache is not an atomic publication or visibility guarantee. Updates apply to newly mounted volumes: stop/update/start the affected Job only in its maintenance window. Changing a storage does not restart active Jobs automatically.

@@ -198,7 +198,7 @@ func (r *NetworkReconciler) reconcile(ctx context.Context) (reconcile.Result, er
 		}
 		declared[id] = stationv1alpha1.SiteNetworkNode{
 			ClusterID: admission.Spec.ClusterID, NodeName: admission.Name, Role: string(network.RoleLeaf),
-			Address: address, ListenPort: admission.Spec.ListenPort, Uplink: admission.Spec.Uplink,
+			Address: address, Uplink: admission.Spec.Uplink,
 		}
 	}
 

@@ -48,6 +48,9 @@ func (s *NodeNetworkSummaryReader) Read(ctx context.Context, clusterID, nodeName
 		return NodeNetworkSummary{}, ErrIdentityUnavailable
 	}
 	binding, err := current.CurrentNodeBinding(ctx, nodeName)
+	if errors.Is(err, ErrStationBindingNotFound) {
+		return NodeNetworkSummary{State: "unreported"}, nil
+	}
 	if err != nil {
 		return NodeNetworkSummary{}, err
 	}

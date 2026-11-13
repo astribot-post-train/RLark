@@ -58,10 +58,6 @@ spec:
     nodeName: s1u-01-x86
     role: Leaf
     address: 10.254.240.3
-    # Not the site's 51820: after the unclean reboot of 11-12 16:39 the lab
-    # router kept the old NAT mapping of that source port alive (peers keep
-    # sending to it) and dropped the replies of three peers.
-    listenPort: 51830
     uplink:
       gateway: 192.168.0.11
       source: 192.168.31.250

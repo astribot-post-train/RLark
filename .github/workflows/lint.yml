@@ -133,6 +133,9 @@ jobs:
       - name: Build documentation
         run: mkdocs build --strict --config-file apps/rlark/mkdocs.yml
 
+      - name: Build team documentation
+        run: mkdocs build --strict --config-file mkdocs-team.yml
+
       - name: Check Markdown internal links
         uses: lycheeverse/lychee-action@e7477775783ea5526144ba13e8db5eec57747ce8 # v2
         with:

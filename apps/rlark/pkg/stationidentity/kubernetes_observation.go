@@ -146,10 +146,14 @@ func (s *KubernetesObservationSink) Store(ctx context.Context, evidence Evidence
 			return fmt.Errorf("read StationObservation: %w", getErr)
 		}
 		annotations := current.GetAnnotations()
-		if annotations[observationClusterIDKey] == evidence.ClusterID && annotations[observationNodeUIDKey] != evidence.NodeUID {
+		if annotations[observationClusterIDKey] == evidence.ClusterID && annotations[observationNodeUIDKey] != evidence.NodeUID && evidence.StationUID == "" {
 			// The member API server has just vouched for this Node under this
-			// name, so the Node the stored snapshot belongs to is gone. Its
-			// snapshot goes with it; nothing of it is carried over.
+			// name and it is bound to no Station, so the Node the stored
+			// snapshot belongs to is gone. Its snapshot goes with it; nothing
+			// of it is carried over. This is what lets a machine that replaced
+			// a node be observed at all: its Station then shows Conflict and
+			// can be rebound. A bound identity with another Node UID is not
+			// this case: it is a verified rebind or a conflict, decided below.
 			uid := current.GetUID()
 			if err := resource.Delete(ctx, evidence.NodeName, metav1.DeleteOptions{Preconditions: &metav1.Preconditions{UID: &uid}}); err != nil && !apierrors.IsNotFound(err) && !apierrors.IsConflict(err) {
 				return fmt.Errorf("replace StationObservation of a previous Node: %w", err)
@@ -157,10 +161,46 @@ func (s *KubernetesObservationSink) Store(ctx context.Context, evidence Evidence
 			continue
 		}
 		storedStationUID := annotations[observationStationUIDKey]
-		if annotations[observationClusterIDKey] != evidence.ClusterID || annotations[observationNodeUIDKey] != evidence.NodeUID || storedStationUID != "" && storedStationUID != evidence.StationUID || evidence.StationUID == "" && storedStationUID != "" {
+		storedNodeUID := annotations[observationNodeUIDKey]
+		storedBindingVersion, versionErr := strconv.ParseInt(annotations[observationBindingVersionKey], 10, 64)
+		reboundIdentity := evidence.StationUID != "" && storedStationUID == evidence.StationUID && storedNodeUID != evidence.NodeUID && versionErr == nil && storedBindingVersion > 0 && evidence.Generation > storedBindingVersion
+		if annotations[observationClusterIDKey] != evidence.ClusterID || storedNodeUID != evidence.NodeUID && !reboundIdentity || storedStationUID != "" && storedStationUID != evidence.StationUID || evidence.StationUID == "" && storedStationUID != "" {
 			return ErrObservationOwnershipConflict
 		}
 		metadataPatch := map[string]interface{}{}
+		if reboundIdentity {
+			oldStatus, found, nestedErr := unstructured.NestedMap(current.Object, "status")
+			if nestedErr != nil {
+				return fmt.Errorf("read previous observation status: %w", nestedErr)
+			}
+			hasOldSnapshot := false
+			if found {
+				for _, field := range []string{"systemUUID", "bootTime", "roles", "probes", "wireguard"} {
+					if _, exists := oldStatus[field]; exists {
+						hasOldSnapshot = true
+						break
+					}
+				}
+			}
+			if hasOldSnapshot {
+				clearStatus, marshalErr := json.Marshal(map[string]interface{}{
+					"metadata": map[string]interface{}{"resourceVersion": current.GetResourceVersion()},
+					// nodeUID and reportedAt are required by the CRD schema. Keep
+					// their old values until the fresh snapshot replaces them.
+					"status": map[string]interface{}{"systemUUID": nil, "bootTime": nil, "roles": nil, "probes": nil, "wireguard": nil},
+				})
+				if marshalErr != nil {
+					return marshalErr
+				}
+				if _, patchErr := resource.Patch(ctx, evidence.NodeName, types.MergePatchType, clearStatus, metav1.PatchOptions{}, "status"); apierrors.IsConflict(patchErr) {
+					continue
+				} else if patchErr != nil {
+					return fmt.Errorf("clear previous Node identity observation: %w", patchErr)
+				}
+				continue
+			}
+			metadataPatch[observationNodeUIDKey] = evidence.NodeUID
+		}
 		if evidence.StationUID != "" && storedStationUID == "" {
 			metadataPatch[observationStationUIDKey] = evidence.StationUID
 		}

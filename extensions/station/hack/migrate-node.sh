@@ -31,12 +31,11 @@ pull=; [[ -z ${PULL_SECRET:-} ]] || pull="imagePullSecrets: [{name: $PULL_SECRET
 NS=${JOB_NAMESPACE:-kube-system}
 
 # What the node has now is what it keeps.
-read -r old_namespace address port < <(mgmt get networkenrollments.station.rlark.io -A -o json | python3 -c '
+read -r old_namespace address < <(mgmt get networkenrollments.station.rlark.io -A -o json | python3 -c '
 import json, sys
 for e in json.load(sys.stdin)["items"]:
     if e["metadata"]["name"] == sys.argv[1] and e["status"].get("phase") == "Enrolled":
-        config = json.loads(e["status"]["config"])
-        print(e["metadata"]["namespace"], e["status"]["tunnelAddress"], config["listenPort"])' "$NODE") || true
+        print(e["metadata"]["namespace"], e["status"]["tunnelAddress"])' "$NODE") || true
 [[ -n ${old_namespace:-} ]] || { echo "$NODE has no Enrolled NetworkEnrollment in the management plane: it is not a node of the site network under that name (kubectl get networkenrollments.station.rlark.io -A)" >&2; exit 1; }
 old_cluster=$(mgmt -n "$old_namespace" get networkenrollments.station.rlark.io "$NODE" -o jsonpath='{.spec.clusterID}')
 uplink=$(mgmt -n station-system get sitenetwork default -o json | python3 -c '
@@ -46,9 +45,9 @@ for n in json.load(sys.stdin)["spec"]["nodes"]:
         print(",".join(n["uplink"][k] for k in ("gateway", "source", "interface")))' "$old_cluster" "$NODE")
 old get nodes -l node-role.kubernetes.io/control-plane -o name | grep -qx "node/$NODE" && mode=control-plane || mode=node
 [[ $mode == node || ${CONTROL_PLANE:-} == yes ]] || { echo "$NODE is the control plane of $old_cluster: move the other nodes first, then this one with CONTROL_PLANE=yes" >&2; exit 1; }
-stamp "$NODE: $old_cluster -> $CLUSTER, keeps $address port $port${uplink:+ uplink $uplink}"
+stamp "$NODE: $old_cluster -> $CLUSTER, keeps $address${uplink:+ uplink $uplink}"
 
-command=$(KCP=$KCP ADDRESS=$address LISTEN_PORT=$port UPLINK=$uplink TAINTS=${TAINTS:-} "$HERE/admit-node.sh" "$CLUSTER" "$NODE" "$API_SERVER" "$STATION_API" "$@")
+command=$(KCP=$KCP ADDRESS=$address UPLINK=$uplink TAINTS=${TAINTS:-} "$HERE/admit-node.sh" "$CLUSTER" "$NODE" "$API_SERVER" "$STATION_API" "$@")
 code=$(echo "$command" | sed -n 's#.*/b/\([a-z0-9]*\) .*#\1#p')
 name=$(echo "node-migrate-$NODE" | cut -c1-63)
 if [[ $mode == control-plane ]]; then

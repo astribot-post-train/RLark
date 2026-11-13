@@ -7,7 +7,7 @@
 #   API_SERVER   host:port of the cluster's API as the machine reaches it without the tunnel
 #   STATION_API  host:port of Station API as the machine reaches it
 # Environment: KCP (management kubeconfig), TAINTS ("k=v:Effect,..."), ADDRESS
-# (pin the tunnel address), LISTEN_PORT, UPLINK ("gateway,source,interface" for
+# (pin the tunnel address), UPLINK ("gateway,source,interface" for
 # a machine whose default route does not lead out), TTL (default "2 hours").
 # The Gateway's "add node" page does the same and shows the same command.
 set -euo pipefail
@@ -27,7 +27,6 @@ spec:
   apiServer: $API_SERVER
 ADMISSION
   [[ -z ${ADDRESS:-} ]] || echo "  address: $ADDRESS"
-  [[ -z ${LISTEN_PORT:-} ]] || echo "  listenPort: $LISTEN_PORT"
   [[ -z ${UPLINK:-} ]] || { IFS=, read -r gateway source interface <<<"$UPLINK"; echo "  uplink: {gateway: $gateway, source: $source, interface: $interface}"; }
   [[ -z ${TAINTS:-} ]] || echo "  taints: [\"${TAINTS//,/\", \"}\"]"
   [[ $# == 0 ]] || { echo "  labels:"; for label in "$@"; do echo "    ${label%%=*}: \"${label#*=}\""; done; }

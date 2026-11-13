@@ -1,0 +1,103 @@
+# Install once per member cluster for nodes without the WireGuard network label.
+# Reuse the cluster's station-agent ConfigMap, station-agent ServiceAccount,
+# station-api-ca Secret, and verified private Station Agent image.
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: station-agent
+  namespace: station-system
+spec:
+  selector:
+    matchLabels:
+      app: station-agent
+  template:
+    metadata:
+      labels:
+        app: station-agent
+    spec:
+      serviceAccountName: station-agent
+      automountServiceAccountToken: false
+      tolerations:
+      - operator: Exists
+      containers:
+      - name: station-agent
+        image: REPLACE_WITH_STATION_AGENT_IMAGE
+        imagePullPolicy: IfNotPresent
+        command:
+        - /usr/local/bin/station-agent
+        args:
+        - --api-url=$(STATION_API_URL)
+        - --cluster-id=$(STATION_CLUSTER_ID)
+        - --token-file=/var/run/secrets/station/token
+        - --ca-file=/var/run/secrets/station-api-ca/ca.crt
+        - --interval=30s
+        - --request-timeout=10s
+        env:
+        - name: STATION_API_URL
+          valueFrom:
+            configMapKeyRef:
+              name: station-agent
+              key: api-url
+        - name: STATION_CLUSTER_ID
+          valueFrom:
+            configMapKeyRef:
+              name: station-agent
+              key: cluster-id
+        ports:
+        - name: health
+          containerPort: 8081
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: health
+          periodSeconds: 20
+          timeoutSeconds: 3
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            port: health
+          periodSeconds: 10
+          timeoutSeconds: 3
+        resources:
+          requests:
+            cpu: 10m
+            memory: 24Mi
+          limits:
+            cpu: 200m
+            memory: 128Mi
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 65532
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop: [ALL]
+        volumeMounts:
+        - name: token
+          mountPath: /var/run/secrets/station
+          readOnly: true
+        - name: station-api-ca
+          mountPath: /var/run/secrets/station-api-ca
+          readOnly: true
+      volumes:
+      - name: token
+        projected:
+          sources:
+          - serviceAccountToken:
+              path: token
+              audience: station.rlark.io
+              expirationSeconds: 600
+      - name: station-api-ca
+        secret:
+          secretName: station-api-ca
+          items:
+          - key: ca.crt
+            path: ca.crt
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: station.rlark.io/network
+                operator: NotIn
+                values: [enabled]

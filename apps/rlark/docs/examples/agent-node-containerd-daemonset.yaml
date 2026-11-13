@@ -1,0 +1,66 @@
+# Install once per member cluster when nodes use the standard containerd socket.
+# Replace the image and confirm the existing rlark-agent ServiceAccount,
+# agent-certs Secret, registry policy, and control-plane address for this cluster.
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: rlark-node-agent-containerd
+  namespace: rlark-system
+spec:
+  selector:
+    matchLabels:
+      app: rlark-node-agent-containerd
+  template:
+    metadata:
+      labels:
+        app: rlark-node-agent-containerd
+    spec:
+      hostNetwork: true
+      hostPID: true
+      dnsPolicy: ClusterFirstWithHostNet
+      serviceAccountName: rlark-agent
+      tolerations:
+      - operator: Exists
+      nodeSelector:
+        rlark.io/containerd: containerd
+      containers:
+      - name: agent
+        image: REPLACE_WITH_RLARK_AGENT_IMAGE
+        imagePullPolicy: IfNotPresent
+        command:
+        - /usr/local/bin/agent
+        args:
+        - --mode=node
+        - --server-address=https://rlark-server:8443
+        - --client-cert=/etc/agent-certs/cert.pem
+        - --client-key=/etc/agent-certs/key.pem
+        - --ca-cert=/etc/agent-certs/ca-cert.pem
+        - --metrics-bind-address=:0
+        - --rlark-server-ssh-address=client@rlark-server:2222
+        - --containerd-socket=/run/containerd/containerd.sock
+        - --image=REPLACE_WITH_RLARK_AGENT_IMAGE
+        env:
+        - name: NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+        volumeMounts:
+        - name: agent-certs
+          mountPath: /etc/agent-certs
+          readOnly: true
+        - name: nodeserver-socket
+          mountPath: /var/run/rlark
+        - name: containerd-socket
+          mountPath: /run/containerd
+      volumes:
+      - name: agent-certs
+        secret:
+          secretName: agent-certs
+      - name: nodeserver-socket
+        hostPath:
+          path: /var/run/rlark
+          type: DirectoryOrCreate
+      - name: containerd-socket
+        hostPath:
+          path: /run/containerd
+          type: Directory
