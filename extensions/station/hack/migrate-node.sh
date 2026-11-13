@@ -3,8 +3,8 @@
 # logging in to it: an admission into the new cluster is written, and a Job in
 # the old cluster runs the bootstrap image on the node, which leaves the old
 # cluster and joins the new one (install.sh, step 0). The node keeps its
-# container runtime and images, its WireGuard key, its tunnel address, listen
-# port and uplink. The same command serves every node of every cluster.
+# container runtime and images, its WireGuard key, its tunnel address and
+# uplink. The same command serves every node of every cluster.
 #
 #   migrate-node.sh OLD_KUBECONFIG NEW_KUBECONFIG NEW_CLUSTER_ID NODE API_SERVER STATION_API IMAGE [label=value ...]
 #

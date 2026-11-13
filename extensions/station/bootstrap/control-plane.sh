@@ -502,6 +502,13 @@ if [ "$(kubectl --kubeconfig $K/kubelet.conf get node "$NODE_NAME" -o jsonpath='
   node_install "$SETTINGS" ok
   changed=annotations
 fi
+# The cluster's agent registers with the management plane the nodes that
+# carry this label; a control plane is one of them. Not its category: a
+# node class's addons choose their nodes by that.
+if [ "$(adm get node "$NODE_NAME" -o jsonpath='{.metadata.labels.rlark\.io/enabled}')" != true ]; then
+  adm label node "$NODE_NAME" --overwrite rlark.io/enabled=true >/dev/null
+  changed=label
+fi
 rm -rf "$B/images"
 if [ -z "$changed" ]; then
   echo "Nothing to do: this machine is the control plane at https://$name:6443 (Kubernetes $VERSION, node $NODE_NAME, installed from $spec). Nothing was changed."
