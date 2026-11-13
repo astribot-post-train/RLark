@@ -17,8 +17,8 @@
 #                                                             are given to that node's kubelet, and to nobody else
 #   on the machine it goes to  IMAGE control-plane            with FROM_CONTROL_PLANE=<the old one's tunnel address>,
 #                                                             on that node, a worker of the cluster: it takes the
-#                                                             snapshot, waits until the site network gives the name
-#                                                             its address (SiteNetwork, names), and goes on from there
+#                                                             snapshot and goes on from there; the site network is
+#                                                             to give the name its address (SiteNetwork, names)
 #   on the machine it leaves   IMAGE control-plane undo       once the nodes are Ready under the new one
 # Until that undo, "IMAGE control-plane resume" on the old machine (after undo
 # on the new one, and the name given back) takes up where handover stopped.
@@ -279,14 +279,11 @@ systemctl is-enabled rlark-station-gateway >/dev/null 2>&1 || [ -e /var/lib/stat
 # A tunnel that is up already is asked now; one this installer starts, when it has.
 ! ip link show dev "$TUNNEL_INTERFACE" >/dev/null 2>&1 || ! unanswered ||
   fail "no peer of the site tunnel that this machine dials has answered it on $TUNNEL_INTERFACE: no node would reach a control plane here. $B/bin/station-gateway --config $(tunnel_document) --status"
-tries=0
-while [ -n "${FROM_CONTROL_PLANE:-}" ] && [ -n "$(named_elsewhere)" ] && [ $tries -lt 120 ]; do
-  [ $tries != 0 ] || stamp "this node has the snapshot; waiting for the site network to give $name its address $ADDRESS (SiteNetwork, names)"
-  tries=$((tries + 1))
-  sleep 5
-done
+# The node a control plane was handed over to does not wait to be named: the
+# other nodes learn the name's new address from their agents, whom Station
+# API knows by asking their cluster's API, and that is this machine now.
 elsewhere=$(named_elsewhere)
-[ -z "$elsewhere" ] || fail "the site network gives $name another address than this machine's $ADDRESS ($elsewhere): every other node would look for the control plane there. Change the SiteNetwork (names) first"
+[ -n "${FROM_CONTROL_PLANE:-}" ] || [ -z "$elsewhere" ] || fail "the site network gives $name another address than this machine's $ADDRESS ($elsewhere): every other node would look for the control plane there. Change the SiteNetwork (names) first"
 # The addresses the machine has in the networks it stands in: nothing of the
 # control plane may hold one (the last step looks).
 machine_addresses() {
