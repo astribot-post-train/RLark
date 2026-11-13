@@ -111,7 +111,7 @@ stamp "tunnel up: $TUNNEL_ADDRESS on $TUNNEL_INTERFACE"
 if [ -z "${KEEP_RUNTIME:-}" ]; then
 containerd config default | sed -e 's#/var/lib/containerd#/var/lib/containerd-fleet#g' -e 's#/run/containerd#/run/containerd-fleet#g' \
   -e 's#SystemdCgroup = false#SystemdCgroup = true#' -e "s#registry.k8s.io/pause:[0-9.]*#$(cat "$B"/images/pause.ref)#" \
-  -e "s#config_path = \"\"#config_path = \"/etc/containerd-fleet/certs.d\"#" -e "s#config_path = ''#config_path = '/etc/containerd-fleet/certs.d'#" \
+  -e "s#^\\( *config_path = \\).*#\\1'/etc/containerd-fleet/certs.d'#" \
   > /etc/containerd-fleet/config.toml
 [ ! -d "$B"/certs.d ] || cp -r "$B"/certs.d /etc/containerd-fleet/
 cat > /etc/systemd/system/containerd-fleet.service <<UNIT
