@@ -708,6 +708,37 @@ takeover_back() {
   echo "objects that are not the ones they were before the handover:"; diff "$D/state-before" "$D/state-back" | grep '^[<>]' || echo "  none"
   k "$from" get nodes -o wide
 }
+# move_cp TO: hack/move-control-plane.sh as an administrator runs it from a
+# machine of the site (robot2 here: it resolves the control plane's name by
+# the site's names, wherever that is). The harness has no management plane:
+# the tool's kubectl is a stand-in that answers for the SiteNetwork from the
+# harness's own record of the name and gives every other call to the cluster.
+move_cp() {
+  local to=$1 from; from=$(cat "$D/robot-cp" 2>/dev/null || echo ws)
+  exists "$to" || { machine "$to"; worker "$to" "$from" "$ROBOT:6443"; k "$from" wait --for=condition=Ready "node/$to" --timeout=180s; }
+  for node in "$from" "$to"; do on "$node" sh -c "ctr -a /run/containerd-fleet/containerd.sock -n k8s.io images import - || ctr -n k8s.io images import -" < "$D/installer.tar" >/dev/null 2>&1; done
+  on "$from" cat /etc/kubernetes/admin.conf | on robot2 sh -c 'cat > /root/admin.conf'
+  cluster_state "$from" > "$D/state-before"
+  mkdir -p "$D/tool"
+  cat > "$D/tool/kubectl" <<TOOL
+#!/bin/bash
+shift 2   # --kubeconfig FILE
+case "\$*" in
+*"get sitenetwork default"*) echo '{"spec":{"names":[{"name":"$ROBOT","address":"'\$(cat $D/name-address)'"},{"name":"$OFFICE","address":"${TUN[office]}"}]}}' ;;
+*"patch sitenetwork default"*) python3 -c 'import json,sys; print(next(n["address"] for n in json.load(sys.stdin)["spec"]["names"] if n["name"] == sys.argv[1]))' $ROBOT > $D/name-address
+  for node in ${!TUN[*]}; do [[ \$(bash $0 tun \$node) != \$(cat $D/name-address) ]] || echo \$node > $D/robot-cp; done; bash $0 tunnels ;;
+*) exec docker exec -i -e PATH=/opt/rlark/bin:/opt/robot-kubernetes/bin:/usr/bin:/bin $P-robot2 kubectl --kubeconfig /root/admin.conf "\$@" ;;
+esac
+TOOL
+  chmod 755 "$D/tool/kubectl"; echo "${TUN[$from]}" > "$D/name-address"
+  api_watch robot1 &
+  PATH=$D/tool:$PATH KCP=none "$REPO/extensions/station/hack/move-control-plane.sh" none "$to" "$INSTALLER"
+  sleep 60; api_outage
+  cluster_state "$to" > "$D/state-after"
+  echo "objects that are not the ones they were (none but the two control planes' own are expected):"; diff "$D/state-before" "$D/state-after" | grep '^[<>]' || echo "  none"
+  on "$to" tail -5 /var/lib/rlark/bootstrap/control-plane.log
+}
+tun() { echo "${TUN[$1]}"; }
 down() {
   local name
   for name in $(docker ps -a --format '{{.Names}}' | grep "^$P-"); do docker rm -f -v "$name" >/dev/null; done
