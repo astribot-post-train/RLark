@@ -114,6 +114,12 @@ func main() {
 		}
 	}
 
+	// Before anything is put on the machine and before the code is spent: it
+	// is also what the device before this machine fetches its uplink setup with.
+	if err := uplinkCheck(server, hostRoot); err != nil {
+		log.Fatal(err)
+	}
+
 	log.Print("copying the bundle to the host")
 	if err := copyTree("/bundle", hostRoot+stage); err != nil {
 		log.Fatalf("copy the bundle: %v", err)
@@ -128,11 +134,6 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// Before the code is spent: it is also what the device before this
-	// machine fetches its uplink setup with.
-	if err := uplinkCheck(server); err != nil {
-		log.Fatal(err)
-	}
 	key, err := exec.Command(stage+"/bin/station-gateway", "--public-key").Output()
 	if err != nil {
 		log.Fatalf("create the WireGuard key: %v", err)

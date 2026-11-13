@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"slices"
 	"strings"
+	"syscall"
 )
 
 // uplinkCheck refuses a machine that dials Station API from an address it
@@ -15,7 +16,7 @@ import (
 // router): nothing has given it that address, and whatever is given it later
 // takes the machine's answers. The machine is to dial from its own address,
 // and the device before it to let it out (the site's leafUplink).
-func uplinkCheck(server string) error {
+func uplinkCheck(server, root string) error {
 	target, err := url.Parse(server)
 	if err != nil {
 		return err
@@ -27,7 +28,10 @@ func uplinkCheck(server string) error {
 	}
 	source, remote := conn.LocalAddr().(*net.UDPAddr).IP, conn.RemoteAddr().(*net.UDPAddr).IP
 	conn.Close()
-	route, err := exec.Command("/bin/sh", "-c", "PATH=/usr/sbin:/sbin:/usr/bin:/bin ip -4 -o route get "+remote.String()).Output()
+	// The machine's own ip, in the machine's files (root): the image has none.
+	lookup := exec.Command("/bin/sh", "-c", "PATH=/usr/sbin:/sbin:/usr/bin:/bin ip -4 -o route get "+remote.String())
+	lookup.SysProcAttr = &syscall.SysProcAttr{Chroot: root}
+	route, err := lookup.Output()
 	if err != nil {
 		return fmt.Errorf("ip route get %s: %w", remote, err)
 	}

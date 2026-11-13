@@ -29,17 +29,17 @@ func TestKernelUplinkCheck(t *testing.T) {
 	ip("route add default via 192.168.0.11")
 	const server = "https://10.11.14.128:18443"
 
-	if err := uplinkCheck(server); err != nil {
+	if err := uplinkCheck(server, ""); err != nil {
 		t.Fatalf("a machine that dials from its own address behind the router: %v", err)
 	}
-	if err := uplinkCheck("https://192.168.0.11:18443"); err != nil {
+	if err := uplinkCheck("https://192.168.0.11:18443", ""); err != nil {
 		t.Fatalf("a server in the machine's own network: %v", err)
 	}
 
 	// The address of the venue's network that nothing gave the machine.
 	ip("addr add 192.168.31.251/32 dev inner")
 	ip("route add 10.11.0.0/16 via 192.168.0.11 src 192.168.31.251")
-	err := uplinkCheck(server)
+	err := uplinkCheck(server, "")
 	if err == nil || !strings.Contains(err.Error(), "dials out from 192.168.31.251") || !strings.Contains(err.Error(), "gateway 192.168.0.11 (there it has 192.168.0.10)") {
 		t.Fatalf("a machine with a foreign source address: %v", err)
 	}
