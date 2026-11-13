@@ -286,7 +286,8 @@ done
 [ ! -d "$B/cni" ] || cp -n "$B"/cni/* /opt/cni/bin/
 tunnel_service
 [ "$(ip -4 -o addr show dev "$TUNNEL_INTERFACE" | awk '{print $4}' | cut -d/ -f1)" = "$ADDRESS" ] || fail "the tunnel service is running, but $TUNNEL_INTERFACE does not hold $ADDRESS: journalctl -u rlark-station-gateway"
-if [ -e "$S/socket" ]; then kernel; else own_runtime; echo "$SOCKET" > "$S/socket"; fi
+kernel
+[ -e "$S/socket" ] || { own_runtime; echo "$SOCKET" > "$S/socket"; }
 if [ "$(cat "$S/images" 2>/dev/null)" != "$(cat "$B/tag")" ]; then
   import_images "$B/images"
   import_images "$B/images/control-plane"
