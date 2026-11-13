@@ -169,8 +169,12 @@ registry() {
 import_images() {
   CTR=$(ctr_of "$SOCKET")
   [ -x "$CTR" ] || fail "cannot find ctr beside the containerd of $SOCKET"
+  # This machine's platform alone: an archive saved from an image store that
+  # keeps an image's index names other platforms and attestations whose
+  # content it does not hold, and an import of everything fails for them.
+  case $(uname -m) in aarch64) platform=linux/arm64 ;; *) platform=linux/amd64 ;; esac
   for archive in "$1"/*.tar; do
-    "$CTR" -a "$SOCKET" -n k8s.io images import "$archive" >/dev/null || fail "import $archive"
+    "$CTR" -a "$SOCKET" -n k8s.io images import --platform $platform "$archive" >/dev/null || fail "import $archive"
   done
 }
 
