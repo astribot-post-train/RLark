@@ -24,6 +24,8 @@ CLUSTER=$1 NODE=$2 API_SERVER=$3 STATION_API=$4; shift 4
 ca_digest=$(sha256sum < "$CA" | cut -d' ' -f1)
 [[ $(curl -fsS --cacert "$CA" "https://$STATION_API/v1/bootstrap/ca" | sha256sum | cut -d' ' -f1) == "$ca_digest" ]] ||
   { echo "Station API at $STATION_API does not serve, over a connection the CA in $CA verifies, that same CA; nothing was admitted" >&2; exit 1; }
+[[ -z ${SITE:-} ]] || kubectl --kubeconfig "$KCP" -n station-system get sitenetwork default -o jsonpath='{range .spec.sites[*]}{.name}{"\n"}{end}' | grep -qx "$SITE" ||
+  { echo "the SiteNetwork has no site $SITE; nothing was admitted" >&2; exit 1; }
 namespace=$(kubectl --kubeconfig "$KCP" get clusters.rlinf.io "$CLUSTER" -o jsonpath='{.spec.agentNamespace}')
 code=$(head -c 512 /dev/urandom | tr -dc 'a-z0-9' | cut -c1-8)
 {
