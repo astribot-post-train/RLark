@@ -29,7 +29,9 @@ import (
 // (.previous), and that version is not tried again on this node (.rejected).
 // A machine that restarts during a trial takes the program before it back by
 // itself, before the service starts: the tunnel may be the only way to the
-// cluster, so nothing of the cluster can be needed for that.
+// cluster, so nothing of the cluster can be needed for that. The restart may
+// have had nothing to do with the program, so the version is tried once more
+// (.interrupted) and rejected when its trial is cut short a second time.
 type keeper struct {
 	self        string // this program's own file
 	target      string // the machine's program as this container sees it
@@ -135,12 +137,16 @@ func (k *keeper) reconciling() bool {
 }
 
 // guard is the unit's drop-in: a machine that starts with a trial of an
-// earlier boot standing takes the program before it back and rejects the
-// version. systemd reads it at boot; this boot's trials are the keeper's.
+// earlier boot standing takes the program before it back, and rejects the
+// version if that has happened to it before. The trial's file stays under
+// another name as the record. systemd reads the drop-in at boot; this boot's
+// trials are the keeper's.
 func (k *keeper) guard() error {
 	content := "# Written by station-gateway --keep-host-program (station-agent-host).\n[Service]\n" +
 		"ExecStartPre=/bin/sh -c 'p=" + k.name + `; [ -e $$p.trial ] || exit 0; [ "$$(cut -d" " -f2 $$p.trial)" != "$$(cat /proc/sys/kernel/random/boot_id)" ] || exit 0; ` +
-		`cp -p $$p.previous $$p.back && mv $$p.back $$p && cut -d" " -f1 $$p.trial > $$p.rejected && rm $$p.trial'` + "\n"
+		`d=$$(cut -d" " -f1 $$p.trial); cp -p $$p.previous $$p.back && mv $$p.back $$p || exit 1; ` +
+		// The first trial a restart cuts short is tried again; the second is the version's last.
+		`if [ "$$(cat $$p.interrupted 2>/dev/null)" = "$$d" ]; then echo $$d > $$p.rejected; else echo $$d > $$p.interrupted; fi; mv $$p.trial $$p.trial-of-an-earlier-boot'` + "\n"
 	path := filepath.Join(k.dropIn, "10-trial.conf")
 	if had, _ := os.ReadFile(path); string(had) == content {
 		return nil
@@ -161,6 +167,9 @@ func (k *keeper) settledState() error {
 	}
 	if _, err := os.Stat(k.target + ".trial"); err == nil {
 		return errors.New("a new program is on trial")
+	}
+	if failure, err := os.ReadFile(k.target + ".failure"); err == nil {
+		return errors.New("the last pass failed: " + strings.TrimSpace(string(failure)))
 	}
 	theirs, err := digest(k.target)
 	if err != nil || theirs != own {
@@ -265,6 +274,7 @@ func (k *keeper) pass() (string, error) {
 		}
 		return "rejected", errors.New(reason + ": the program before it is back")
 	}
+	os.Remove(k.target + ".interrupted")
 	return "replaced", os.Remove(trialPath)
 }
 
@@ -306,8 +316,15 @@ func (k *keeper) run(stop <-chan os.Signal) {
 	defer ticker.Stop()
 	for {
 		next, err := k.pass()
+		// What the last pass could not do stands beside the program, for the
+		// pod's readiness and for whoever looks at the machine.
 		if err != nil {
 			log.Printf("keep %s: %v", k.name, err)
+			if err := os.WriteFile(k.target+".failure", []byte(err.Error()+"\n"), 0644); err != nil {
+				log.Printf("keep %s: %v", k.name, err)
+			}
+		} else {
+			os.Remove(k.target + ".failure")
 		}
 		if next != state && next != "" {
 			state = next
