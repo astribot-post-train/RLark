@@ -159,7 +159,7 @@ func TestApplyObjectRetriesAfterUpdateFailure(t *testing.T) {
 	makeConfig := func(value string) *unstructured.Unstructured {
 		return &unstructured.Unstructured{Object: map[string]interface{}{
 			"apiVersion": "v1", "kind": "ConfigMap",
-			"metadata": map[string]interface{}{"name": "test", "namespace": "rlark-system", "labels": map[string]interface{}{"rlark.io/addon-name": "a", "rlark.io/addon-uid": "uid"}, "annotations": map[string]interface{}{AddonResourceVersionAnnotation: "1"}},
+			"metadata": map[string]interface{}{"name": "test", "namespace": "rlark-system", "labels": map[string]interface{}{"rlark.io/addon-name": "a", "rlark.io/addon-uid": "uid"}, "annotations": map[string]interface{}{AddonGenerationAnnotation: "1"}},
 			"data":     map[string]interface{}{"key": value},
 		}}
 	}
@@ -265,11 +265,11 @@ func findAddonCondition(conditions []metav1.Condition, conditionType string) *me
 
 func TestApplyObjectRepairsOwnedDriftAndRejectsForeignObjects(t *testing.T) {
 	ctx := context.Background()
-	addon := &rlarkv1alpha1.Addon{ObjectMeta: metav1.ObjectMeta{Name: "csi", UID: types.UID("addon-uid"), ResourceVersion: "42"}}
+	addon := &rlarkv1alpha1.Addon{ObjectMeta: metav1.ObjectMeta{Name: "csi", UID: types.UID("addon-uid"), Generation: 42}}
 	makeObject := func(uid string) *unstructured.Unstructured {
 		return &unstructured.Unstructured{Object: map[string]interface{}{
 			"apiVersion": "apps/v1", "kind": "Deployment",
-			"metadata": map[string]interface{}{"name": "driver", "namespace": "rlark-system", "labels": map[string]interface{}{"rlark.io/addon-name": "csi", "rlark.io/addon-uid": uid}, "annotations": map[string]interface{}{AddonResourceVersionAnnotation: "42"}},
+			"metadata": map[string]interface{}{"name": "driver", "namespace": "rlark-system", "labels": map[string]interface{}{"rlark.io/addon-name": "csi", "rlark.io/addon-uid": uid}, "annotations": map[string]interface{}{AddonGenerationAnnotation: "42"}},
 			"spec":     map[string]interface{}{"template": map[string]interface{}{"spec": map[string]interface{}{"nodeSelector": map[string]interface{}{"kubernetes.io/hostname": "worker"}}}},
 		}}
 	}
@@ -495,5 +495,37 @@ func TestCheckReadyDeploymentStuckRolloutIsNotReady(t *testing.T) {
 	r := &pullReconciler{c: &Controller{Controller: base.Controller{LocalKubeClient: cl}}}
 	if ready, msg, err := r.checkReady(ctx, addon); err != nil || ready {
 		t.Fatalf("checkReady = %v %q %v, want not ready", ready, msg, err)
+	}
+}
+
+// A status write changes the management Addon's resourceVersion but not its generation. The local object,
+// already rendered from that generation and unchanged, must not be written again: an annotation update
+// moves a Deployment's generation, and the Addon would read as not ready on every reconciliation.
+func TestApplyObjectLeavesAnUnchangedObjectAloneAcrossStatusWrites(t *testing.T) {
+	ctx := context.Background()
+	addon := &rlarkv1alpha1.Addon{ObjectMeta: metav1.ObjectMeta{Name: "site-registry", UID: types.UID("addon-uid"), Generation: 3, ResourceVersion: "1001"}}
+	makeObject := func() *unstructured.Unstructured {
+		return &unstructured.Unstructured{Object: map[string]interface{}{
+			"apiVersion": "apps/v1", "kind": "Deployment",
+			"metadata": map[string]interface{}{"name": "site-registry", "namespace": "rlark-system", "labels": map[string]interface{}{"rlark.io/addon-name": "site-registry", "rlark.io/addon-uid": "addon-uid"}, "annotations": map[string]interface{}{AddonGenerationAnnotation: "3"}},
+			"spec":     map[string]interface{}{"template": map[string]interface{}{"spec": map[string]interface{}{"hostNetwork": true}}},
+		}}
+	}
+	cl := fake.NewClientBuilder().WithObjects(makeObject()).Build()
+	r := &pullReconciler{c: &Controller{Controller: base.Controller{LocalKubeClient: cl}}}
+	before := makeObject()
+	if err := cl.Get(ctx, types.NamespacedName{Name: "site-registry", Namespace: "rlark-system"}, before); err != nil {
+		t.Fatal(err)
+	}
+	addon.ResourceVersion = "1002"
+	if err := r.applyObject(ctx, makeObject(), addon); err != nil {
+		t.Fatal(err)
+	}
+	after := makeObject()
+	if err := cl.Get(ctx, types.NamespacedName{Name: "site-registry", Namespace: "rlark-system"}, after); err != nil {
+		t.Fatal(err)
+	}
+	if after.GetResourceVersion() != before.GetResourceVersion() {
+		t.Fatalf("object written again after a status-only change: resourceVersion %s -> %s", before.GetResourceVersion(), after.GetResourceVersion())
 	}
 }
