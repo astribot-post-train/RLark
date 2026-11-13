@@ -12,9 +12,13 @@
 # again and puts the machine back into the cluster it had left.
 #
 # A cluster's control plane moves to another machine with the cluster:
-#   on the machine it leaves   IMAGE control-plane handover   no more writes, a last snapshot, everything stopped
-#   (the snapshot directory is carried over; the site network gives the name the new machine's address)
-#   on the machine it goes to  IMAGE control-plane            with FROM_SNAPSHOT; a worker of the cluster may be that machine
+#   on the machine it leaves   IMAGE control-plane handover   with SUCCESSOR=<node>: no more writes, a last snapshot,
+#                                                             everything stopped; the snapshot and the cluster's keys
+#                                                             are given to that node's kubelet, and to nobody else
+#   on the machine it goes to  IMAGE control-plane            with FROM_CONTROL_PLANE=<the old one's tunnel address>,
+#                                                             on that node, a worker of the cluster: it takes the
+#                                                             snapshot, waits until the site network gives the name
+#                                                             its address (SiteNetwork, names), and goes on from there
 #   on the machine it leaves   IMAGE control-plane undo       once the nodes are Ready under the new one
 # Until that undo, "IMAGE control-plane resume" on the old machine (after undo
 # on the new one, and the name given back) takes up where handover stopped.
@@ -63,6 +67,8 @@
 #   SYSTEM_RESERVED_MEMORY  what Kubernetes may never take (Gi or Mi; all but 8 Gi)
 #   SYSTEM_RESERVED_CPU     likewise, in CPUs (all but 4)
 #   ETCD_SNAPSHOT_DIR       /var/backups/rlark-etcd; ETCD_SNAPSHOT_KEEP 14
+#   FROM_CONTROL_PLANE      the tunnel address of the control plane that was
+#                           handed over to this node: its snapshot is taken from it
 #   FROM_SNAPSHOT           a directory written by another control plane's
 #                           snapshot service (etcd-*.db and pki.tar): this
 #                           machine takes that control plane's place
@@ -151,12 +157,23 @@ handover() {
   for task in $("$CTR" -a "$SOCKET" -n k8s.io tasks ls -q); do "$CTR" -a "$SOCKET" -n k8s.io tasks kill -s SIGKILL "$task" >/dev/null 2>&1 || true; done
   date '+%F %T' > "$S/handed-over"
   stamp "handed over. The last snapshot: $(cat "$S/last-snapshot")"
-  echo "Done. Next: carry $(cat "$S/snapshot-dir") (the snapshots and pki.tar; root only) to the machine that takes over, give $(cat "$S/name") its tunnel address in the site network (SiteNetwork, names), and run the installer there with FROM_SNAPSHOT. This machine keeps everything until \"control-plane undo\"; \"control-plane resume\" takes up here again."
+  address=$(tunnel_address | head -1)
+  if [ -n "${SUCCESSOR:-}" ]; then
+    printf '[Unit]\nDescription=The last snapshot of this control plane, for the node %s that takes over\nAfter=rlark-station-gateway.service\n[Service]\nExecStart=%s snapshot-serve %s:6444 %s %s %s\nRestart=always\nRestartSec=2\n[Install]\nWantedBy=multi-user.target\n' \
+      "$SUCCESSOR" "$B/station-bootstrap" "$address" "$SUCCESSOR" "$(cat "$S/snapshot-dir")" $K/pki > /etc/systemd/system/rlark-control-plane-handover.service
+    systemctl daemon-reload
+    systemctl enable --now rlark-control-plane-handover >/dev/null 2>&1 || fail "the snapshot is not served: journalctl -u rlark-control-plane-handover"
+    echo "Done. Next: run the installer on $SUCCESSOR with FROM_CONTROL_PLANE=$address, and give $(cat "$S/name") the tunnel address of $SUCCESSOR in the site network (SiteNetwork, names). This machine keeps everything until \"control-plane undo\"; \"control-plane resume\" takes up here again."
+  else
+    echo "Done. Next: carry $(cat "$S/snapshot-dir") (the snapshots and pki.tar; root only) to the machine that takes over, give $(cat "$S/name") its tunnel address in the site network (SiteNetwork, names), and run the installer there with FROM_SNAPSHOT. This machine keeps everything until \"control-plane undo\"; \"control-plane resume\" takes up here again."
+  fi
 }
 resume() {
   [ -e "$S/handed-over" ] || fail "this control plane was not handed over"
   name=$(cat "$S/name")
   [ -z "$(named_elsewhere)" ] || fail "the site network gives $(cat "$S/name") to another machine ($(named_elsewhere)): the nodes look for the control plane there. Give the name back first (SiteNetwork, names)"
+  systemctl disable --now rlark-control-plane-handover >/dev/null 2>&1 || true
+  rm -f /etc/systemd/system/rlark-control-plane-handover.service
   mv "$S"/held/*.yaml $K/manifests/
   systemctl enable --now kubelet >/dev/null 2>&1
   systemctl enable --now rlark-etcd-snapshot.timer >/dev/null 2>&1
@@ -194,6 +211,8 @@ undo() {
     (umask 077 && tar -cpf "$keep/etc-kubernetes.tar" -C / etc/kubernetes)
     stamp "kept in $keep: /etc/kubernetes and a last snapshot of etcd"
   fi
+  systemctl disable --now rlark-control-plane-handover >/dev/null 2>&1 || true
+  rm -f /etc/systemd/system/rlark-control-plane-handover.service
   systemctl disable --now rlark-etcd-snapshot.timer >/dev/null 2>&1 || true
   rm -f /etc/systemd/system/rlark-etcd-snapshot.timer /etc/systemd/system/rlark-etcd-snapshot.service /opt/rlark/bin/rlark-etcd-snapshot
   systemctl stop kubelet 2>/dev/null || true
@@ -233,6 +252,19 @@ esac
 { echo "$name" | grep -q -E '^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$' && echo "$name" | grep -q '[a-z]'; } ||
   fail "CONTROL_PLANE_NAME=$name is not a name. An address is not accepted: a control plane that is known by an address cannot move without every node's certificates and kubeconfig changing"
 [ -n "${POD_SUBNET:-}" ] && [ -n "${SERVICE_SUBNET:-}" ] || fail "POD_SUBNET and SERVICE_SUBNET are required: the cluster's pod and Service networks, which no other cluster of the site may use"
+# The control plane that was handed over to this node gives it its last
+# snapshot and the cluster's keys, for this node's kubelet certificate. It may
+# be asked before it is handed over: this waits.
+HANDOVER=/var/lib/rlark/control-plane-handover
+if [ -n "${FROM_CONTROL_PLANE:-}" ] && ! initialized; then
+  FROM_SNAPSHOT=$HANDOVER
+  tries=0
+  until [ -e $HANDOVER/pki.tar ] || "$B/station-bootstrap" snapshot-fetch "$FROM_CONTROL_PLANE:6444" "$name" $HANDOVER 2> "$B/handover.log"; do
+    tries=$((tries + 1))
+    [ $tries -lt 120 ] || fail "the control plane at $FROM_CONTROL_PLANE has not given this node its snapshot after 10 min ($(tail -1 "$B/handover.log")): it does once it is handed over to this node (control-plane handover with SUCCESSOR=$node)"
+    sleep 5
+  done
+fi
 [ ! -e $K/manifests/kube-apiserver.yaml ] || [ -e "$S/init-started" ] ||
   fail "this machine is the control plane of a cluster already ($(sed -n 's/^ *server: //p' $K/admin.conf 2>/dev/null)): that cluster ends when it leaves, which is not this command's to decide"
 if [ -e $K/kubelet.conf ]; then
@@ -247,6 +279,12 @@ systemctl is-enabled rlark-station-gateway >/dev/null 2>&1 || [ -e /var/lib/stat
 # A tunnel that is up already is asked now; one this installer starts, when it has.
 ! ip link show dev "$TUNNEL_INTERFACE" >/dev/null 2>&1 || ! unanswered ||
   fail "no peer of the site tunnel that this machine dials has answered it on $TUNNEL_INTERFACE: no node would reach a control plane here. $B/bin/station-gateway --config $(tunnel_document) --status"
+tries=0
+while [ -n "${FROM_CONTROL_PLANE:-}" ] && [ -n "$(named_elsewhere)" ] && [ $tries -lt 120 ]; do
+  [ $tries != 0 ] || stamp "this node has the snapshot; waiting for the site network to give $name its address $ADDRESS (SiteNetwork, names)"
+  tries=$((tries + 1))
+  sleep 5
+done
 elsewhere=$(named_elsewhere)
 [ -z "$elsewhere" ] || fail "the site network gives $name another address than this machine's $ADDRESS ($elsewhere): every other node would look for the control plane there. Change the SiteNetwork (names) first"
 # The addresses the machine has in the networks it stands in: nothing of the
@@ -387,6 +425,7 @@ done
 [ "$(ip -4 -o addr show dev "$TUNNEL_INTERFACE" | awk '{print $4}' | cut -d/ -f1)" = "$ADDRESS" ] || fail "the tunnel service is running, but $TUNNEL_INTERFACE does not hold $ADDRESS: journalctl -u rlark-station-gateway"
 kernel
 [ -e "$S/socket" ] || { own_runtime; echo "$SOCKET" > "$S/socket"; }
+registry
 if [ "$(cat "$S/images" 2>/dev/null)" != "$(cat "$B/tag")" ]; then
   import_images "$B/images"
   import_images "$B/images/control-plane"
@@ -493,6 +532,7 @@ until adm get --raw /readyz >/dev/null 2>&1; do
   [ $tries -lt 150 ] || fail "the API does not answer at https://$name:6443 after 5 min: journalctl -u kubelet"
   sleep 2
 done
+rm -rf "$HANDOVER"
 if [ -e "$S/from-snapshot" ]; then
   # The snapshot's other control-plane nodes are none any more: etcd is this
   # one member. A machine among them that should stay in the cluster is

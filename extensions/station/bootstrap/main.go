@@ -33,6 +33,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -73,6 +74,16 @@ func main() {
 	}
 	if len(os.Args) > 2 && os.Args[1] == "cert-addresses" {
 		certAddresses(os.Args[2], os.Args[3:])
+		return
+	}
+	if len(os.Args) == 6 && os.Args[1] == "snapshot-serve" {
+		snapshotServe(os.Args[2], os.Args[3], os.Args[4], os.Args[5])
+		return
+	}
+	if len(os.Args) == 5 && os.Args[1] == "snapshot-fetch" {
+		if err := snapshotFetch(os.Args[2], os.Args[3], os.Args[4]); err != nil {
+			log.Fatal(err)
+		}
 		return
 	}
 	if os.Geteuid() != 0 {
@@ -139,8 +150,11 @@ func main() {
 		log.Fatalf("create the WireGuard key: %v", err)
 	}
 	request, _ := json.Marshal(map[string]string{"code": code, "public_key": strings.TrimSpace(string(key))})
+	// Station API says what the machine waits for (the controller; the site's
+	// registry cache being filled, which takes its time on a new site), and
+	// the machine waits as long as it is told, up to an hour.
 	var granted answer
-	for deadline := time.Now().Add(2 * time.Minute); ; time.Sleep(2 * time.Second) {
+	for began, heard, said := time.Now(), time.Now(), ""; ; time.Sleep(2 * time.Second) {
 		response, err := client.Post(server+"/v1/bootstrap/redeem", "application/json", bytes.NewReader(request))
 		if err == nil {
 			body, _ := io.ReadAll(io.LimitReader(response.Body, 1<<20))
@@ -152,9 +166,16 @@ func main() {
 			if response.StatusCode != http.StatusAccepted {
 				log.Fatalf("the code was refused (%d): %s", response.StatusCode, body)
 			}
+			if heard = time.Now(); granted.Reason != said {
+				said = granted.Reason
+				log.Printf("waiting: %s", said)
+			}
 		}
-		if time.Now().After(deadline) {
-			log.Fatalf("no tunnel configuration after two minutes: %s %v", granted.Reason, err)
+		if time.Since(heard) > 2*time.Minute {
+			log.Fatalf("Station API has not answered for two minutes: %v", err)
+		}
+		if time.Since(began) > time.Hour {
+			log.Fatalf("not admitted after an hour: %s", granted.Reason)
 		}
 	}
 	log.Printf("admitted as %s in %s, tunnel address %s", granted.NodeName, granted.ClusterID, granted.TunnelAddress)
@@ -183,7 +204,7 @@ func main() {
 		"JOIN_API_SERVER="+granted.Join.APIServer, "JOIN_TOKEN="+granted.Join.Token, "JOIN_CA_HASH="+granted.Join.CACertHash,
 		"NODE_LABELS="+granted.Labels, "NODE_TAINTS="+granted.Taints)
 	if os.Getenv("RLARK_MIGRATE") != "" {
-		migrate(settings)
+		asUnit("rlark-node-migrate", stage+"/install.sh", stage+"/install.log", settings, "RLARK_MIGRATE", "NODE_", "TUNNEL_", "JOIN_", "PATH")
 		return
 	}
 	install := hostCommand(stage + "/install.sh")
@@ -194,19 +215,19 @@ func main() {
 	}
 }
 
-// migrate runs install.sh as a unit of the host's systemd: the machine is a
-// node already and this program runs in one of its pods, which the node's
-// leaving its cluster ends. The unit goes on; its output is install.log.
-func migrate(settings []string) {
-	arguments := []string{"--unit", "rlark-node-migrate", "--collect", "--quiet"}
-	// What install.sh reads, and no more, each name once (the last value
-	// stands): the systemd of Ubuntu 20.04 refuses a unit whose environment
-	// names a variable twice (PATH: the container's and ours) or holds a line
-	// break (RLARK_CA) with "Invalid environment block".
+// asUnit runs a script of the bundle as a unit of the host's systemd and
+// shows its log: this program runs in a pod of the node, which the script
+// ends (the node leaves its cluster, or its control plane stops). The unit
+// goes on. It is given the settings whose names begin as listed, and no more,
+// each name once (the last value stands): the systemd of Ubuntu 20.04 refuses
+// a unit whose environment names a variable twice (PATH: the container's and
+// ours) or holds a line break (RLARK_CA) with "Invalid environment block".
+func asUnit(unit, command, logFile string, settings []string, begin ...string) {
+	arguments := []string{"--unit", unit, "--collect", "--quiet"}
 	chosen, order := map[string]string{}, []string{}
 	for _, setting := range settings {
 		name := strings.SplitN(setting, "=", 2)[0]
-		if name == "RLARK_MIGRATE" || strings.HasPrefix(name, "NODE_") || strings.HasPrefix(name, "TUNNEL_") || strings.HasPrefix(name, "JOIN_") || name == "PATH" {
+		if slices.ContainsFunc(begin, func(prefix string) bool { return strings.HasPrefix(name, prefix) }) {
 			if _, seen := chosen[name]; !seen {
 				order = append(order, name)
 			}
@@ -216,17 +237,18 @@ func migrate(settings []string) {
 	for _, name := range order {
 		arguments = append(arguments, "--setenv="+chosen[name])
 	}
-	arguments = append(arguments, "/bin/sh", "-c", "exec /bin/sh "+stage+"/install.sh > "+stage+"/install.log 2>&1")
+	_ = os.Remove(logFile)
+	arguments = append(arguments, "/bin/sh", "-c", "exec /bin/sh "+command+" > "+logFile+" 2>&1")
 	if output, err := exec.Command("systemd-run", arguments...).CombinedOutput(); err != nil {
-		log.Fatalf("start the migration unit (settings %s): %v: %s", strings.Join(order, " "), err, output)
+		log.Fatalf("start %s (settings %s): %v: %s", unit, strings.Join(order, " "), err, output)
 	}
-	log.Printf("migration runs as rlark-node-migrate.service; its log is %s/install.log", stage)
+	log.Printf("running as %s.service; its log is %s", unit, logFile)
 	for shown := 0; ; time.Sleep(time.Second) {
-		if data, err := os.ReadFile(stage + "/install.log"); err == nil && len(data) > shown {
+		if data, err := os.ReadFile(logFile); err == nil && len(data) > shown {
 			os.Stdout.Write(data[shown:])
 			shown = len(data)
 		}
-		if state, _ := exec.Command("systemctl", "is-active", "rlark-node-migrate").Output(); strings.TrimSpace(string(state)) != "active" && strings.TrimSpace(string(state)) != "activating" {
+		if state, _ := exec.Command("systemctl", "is-active", unit).Output(); strings.TrimSpace(string(state)) != "active" && strings.TrimSpace(string(state)) != "activating" {
 			return
 		}
 	}
@@ -282,7 +304,12 @@ func onHost(script string, arguments ...string) {
 	if err != nil {
 		log.Fatal(err)
 	}
-	if err := os.WriteFile(hostRoot+stage+"/station-bootstrap", self, 0755); err != nil {
+	// In its place by a rename: the file may be running (the snapshot service
+	// of a control plane that was handed over).
+	if err := os.WriteFile(hostRoot+stage+"/station-bootstrap.new", self, 0755); err != nil {
+		log.Fatal(err)
+	}
+	if err := os.Rename(hostRoot+stage+"/station-bootstrap.new", hostRoot+stage+"/station-bootstrap"); err != nil {
 		log.Fatal(err)
 	}
 	if err := syscall.Chroot(hostRoot); err != nil {
@@ -291,9 +318,16 @@ func onHost(script string, arguments ...string) {
 	if err := os.Chdir(stage); err != nil {
 		log.Fatal(err)
 	}
+	settings := append(os.Environ(), "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin")
+	// From a Job on the node (RLARK_DETACH): the script ends the Job's own pod.
+	if os.Getenv("RLARK_DETACH") != "" {
+		asUnit("rlark-"+strings.TrimSuffix(script, ".sh"), strings.Join(append([]string{stage + "/" + script}, arguments...), " "), stage+"/"+strings.TrimSuffix(script, ".sh")+".log", settings,
+			"CONTROL_PLANE_", "POD_", "SERVICE_", "FROM_", "SUCCESSOR", "ETCD_", "SYSTEM_RESERVED_", "NODE_NAME", "TUNNEL_INTERFACE", "PATH")
+		return
+	}
 	run := hostCommand(stage+"/"+script, arguments...)
 	run.Stdout, run.Stderr = os.Stdout, os.Stderr
-	run.Env = append(os.Environ(), "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin")
+	run.Env = settings
 	if err := run.Run(); err != nil {
 		log.Fatalf("%s: %v", strings.TrimSuffix(script, ".sh"), err)
 	}
