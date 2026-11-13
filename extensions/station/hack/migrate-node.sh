@@ -43,6 +43,7 @@ for n in json.load(sys.stdin)["spec"]["nodes"]:
     if (n["clusterID"], n["nodeName"]) == tuple(sys.argv[1:3]) and n.get("uplink"):
         print(",".join(n["uplink"][k] for k in ("gateway", "source", "interface")))' "$old_cluster" "$NODE")
 ! old get nodes -l node-role.kubernetes.io/control-plane -o name | grep -qx "node/$NODE" || { echo "$NODE is the control plane of $old_cluster: that cluster would end with it. A control plane moves to another machine with its cluster (the installer's control-plane mode, FROM_SNAPSHOT)" >&2; exit 1; }
+[[ $old_cluster != "$CLUSTER" ]] || { echo "$NODE is a node of $CLUSTER already. A cluster whose control plane moves to another machine keeps its nodes where they are (the installer's control-plane mode, FROM_SNAPSHOT)" >&2; exit 1; }
 stamp "$NODE: $old_cluster -> $CLUSTER, keeps $address${uplink:+ uplink $uplink}"
 
 command=$(KCP=$KCP CA=$CA ADDRESS=$address UPLINK=$uplink TAINTS=${TAINTS:-} "$HERE/admit-node.sh" "$CLUSTER" "$NODE" "$API_SERVER" "$STATION_API" "$@")
@@ -94,9 +95,7 @@ until ready_since; do
     exit 1
   fi
   if (( $(date +%s) - started > ${TIMEOUT:-600} )); then
-    # A move within one registered cluster leaves the admission: it is the
-    # node's declaration there, and the node goes on under it where it is.
-    [[ $old_cluster == "$CLUSTER" ]] || mgmt -n "$(mgmt get clusters.rlinf.io "$CLUSTER" -o jsonpath='{.spec.agentNamespace}')" delete nodeadmissions.station.rlark.io "$NODE" --ignore-not-found >/dev/null
+    mgmt -n "$(mgmt get clusters.rlinf.io "$CLUSTER" -o jsonpath='{.spec.agentNamespace}')" delete nodeadmissions.station.rlark.io "$NODE" --ignore-not-found >/dev/null
     new delete node "$NODE" --ignore-not-found >/dev/null
     echo "$NODE is not Ready in $CLUSTER after ${TIMEOUT:-600} s. The node returns to its old control plane by itself when its join fails: old get node $NODE" >&2
     exit 1
@@ -105,35 +104,6 @@ until ready_since; do
 done
 stamp "$NODE: Ready in $CLUSTER after $(( $(date +%s) - started )) s"
 namespace=$(mgmt get clusters.rlinf.io "$CLUSTER" -o jsonpath='{.spec.agentNamespace}')
-if [[ $old_cluster == "$CLUSTER" ]]; then
-  # The node is the one it was, registered anew by the new control plane: its
-  # Station is bound to the Node object it has there. Nobody else knows the
-  # moment; without this the node waits for a person, and a hundred do.
-  uid=$(new get node "$NODE" -o jsonpath='{.metadata.uid}')
-  read -r station station_uid version bound < <(mgmt -n "$old_namespace" get stations.station.rlark.io -o json | python3 -c '
-import json, sys
-s = next(s for s in json.load(sys.stdin)["items"] if s["spec"]["binding"]["nodeName"] == sys.argv[1] and not s["spec"].get("retired"))
-print(s["metadata"]["name"], s["metadata"]["uid"], s["spec"]["binding"]["version"], s["spec"]["binding"]["nodeUID"])' "$NODE")
-  if [[ $bound != "$uid" ]]; then
-    request=rejoin-$NODE-$(date +%Y%m%d%H%M%S)
-    mgmt apply -f - >/dev/null <<REBIND
-apiVersion: station.rlark.io/v1alpha1
-kind: StationRebind
-metadata: {name: $request, namespace: $old_namespace}
-spec:
-  requestID: $request
-  stationRef: {name: $station, uid: $station_uid}
-  expectedBindingVersion: $version
-  targetNodeName: $NODE
-  targetNodeUID: $uid
-  reason: "the node joined the new control plane of $CLUSTER"
-  requestedBy: ${SUDO_USER:-root}@$(hostname)
-REBIND
-    until phase=$(mgmt -n "$old_namespace" get stationrebinds.station.rlark.io "$request" -o jsonpath='{.status.phase}') && [[ $phase == Applied || $phase == Rejected ]]; do sleep 1; done
-    stamp "$NODE: its Station $station is bound to its Node in the new control plane ($request: $phase)"
-    [[ $phase == Applied ]] || { echo "the rebind of $station was rejected: mgmt -n $old_namespace get stationrebinds.station.rlark.io $request -o yaml. The node is Ready in the new control plane; its admission keeps it among its peers meanwhile" >&2; exit 1; }
-  fi
-fi
 tries=0
 until [[ $(mgmt -n "$namespace" get nodeadmissions.station.rlark.io "$NODE" -o jsonpath='{.status.phase}') == Joined ]]; do
   tries=$((tries + 1))
@@ -142,15 +112,8 @@ until [[ $(mgmt -n "$namespace" get nodeadmissions.station.rlark.io "$NODE" -o j
 done
 stamp "$NODE: enrolled in $CLUSTER under its own identity after $(( $(date +%s) - started )) s"
 
-# What it left behind. Where the old and the new cluster are one registered
-# cluster (its control plane was built anew on another machine and the nodes
-# move over), the node's enrollment and Station are the ones it goes on with.
+# What it left behind.
 old delete node "$NODE" --ignore-not-found >/dev/null
-if [[ $old_cluster == "$CLUSTER" ]]; then
-  stamp "$NODE: same cluster $CLUSTER under its new control plane; its enrollment and Station stay"
-  new get node "$NODE" -o wide
-  exit 0
-fi
 mgmt -n "$old_namespace" delete networkenrollments.station.rlark.io,stationobservations.station.rlark.io "$NODE" --ignore-not-found >/dev/null
 for station in $(mgmt -n "$old_namespace" get stations.station.rlark.io -o json | python3 -c '
 import json, sys
