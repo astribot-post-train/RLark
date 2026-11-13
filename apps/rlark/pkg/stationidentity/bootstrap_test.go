@@ -146,7 +146,7 @@ func TestBootstrapServesTheSitesUplinkSetupForAnUnredeemedCode(t *testing.T) {
 		"spec": map[string]interface{}{"sites": []interface{}{
 			map[string]interface{}{"name": "office", "clusters": []interface{}{"office-gpu"}},
 			map[string]interface{}{"name": "robots", "clusters": []interface{}{"robot-s1u"}, "leafUplink": map[string]interface{}{
-				"gateway": "192.168.0.11", "setup": map[string]interface{}{"addon": "fleet-robot-s1u", "path": "bootstrap/orin-uplink.sh"}}},
+				"gateway": "192.168.0.11", "setup": map[string]interface{}{"addon": "fleet-robot-s1u", "path": "bootstrap/orin-uplink.sh", "login": "astribot"}}},
 			map[string]interface{}{"name": "escape", "clusters": []interface{}{"escape"}, "leafUplink": map[string]interface{}{
 				"gateway": "192.168.0.11", "setup": map[string]interface{}{"addon": "fleet-robot-s1u", "path": "../../secret"}}},
 		}},
@@ -161,13 +161,16 @@ func TestBootstrapServesTheSitesUplinkSetupForAnUnredeemedCode(t *testing.T) {
 	management := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(),
 		map[schema.GroupVersionResource]string{nodeAdmissionGVR: "NodeAdmissionList"},
 		admission("s1u-03-x86", "robot-s1u", "robotcode"), admission("gpu-9", "office-gpu", "officecode"), admission("out", "escape", "escapecode"), network)
-	b := &Bootstrap{Management: management, AddonsDir: addons + "/addons", Now: func() time.Time { return now }}
+	b := &Bootstrap{Management: management, AddonsDir: addons + "/addons", CA: []byte("the CA\n"), Now: func() time.Time { return now }}
 	get := func(path string) (int, string) {
 		recorder := httptest.NewRecorder()
 		b.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, path, nil))
 		return recorder.Code, recorder.Body.String()
 	}
 
+	if status, body := get("/v1/bootstrap/ca"); status != http.StatusOK || body != "the CA\n" {
+		t.Fatalf("the CA, byte for byte: %d %q", status, body)
+	}
 	if status, body := get("/b/robotcode/uplink"); status != http.StatusOK || body != setup {
 		t.Fatalf("the setup of the robot's site: %d %q", status, body)
 	}

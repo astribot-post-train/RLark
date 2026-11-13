@@ -79,7 +79,7 @@ func uplinkCheck(server string, moving bool) error {
 	if holder != nil {
 		return fmt.Errorf("this machine dials out from %s, and %s on %s answers for that address too: the machine's answers go there. The node stays in its cluster; take the address from one of the two first", source, holder, device.Name)
 	}
-	log.Printf("this node dials out from %s, not an address in the network of its gateway %s; nothing else answers for it on %s now", source, gateway, device.Name)
+	log.Printf("this node dials out from %s, not an address in the network of its gateway %s. Nothing else answers for it on %s now: that says the device at %s does not hold it, and nothing about the network beyond that device, which this node cannot probe", source, gateway, device.Name, gateway)
 	return nil
 }
 

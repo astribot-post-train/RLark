@@ -93,6 +93,14 @@ func (b *Bootstrap) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		b.uplink(w, r, strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/b/"), "/uplink"))
 	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/b/"):
 		b.script(w, r, strings.TrimPrefix(r.URL.Path, "/b/"))
+	case r.Method == http.MethodGet && r.URL.Path == "/v1/bootstrap/ca":
+		// Public: an operator's command fetches it without verifying the
+		// connection, compares it with the digest the command holds, and
+		// verifies every connection after that with it. The CA outlives the
+		// certificates it signs, so a command stays good when this API's
+		// certificate is renewed.
+		w.Header().Set("Content-Type", "application/x-pem-file")
+		_, _ = w.Write(b.CA)
 	case r.Method == http.MethodGet && r.URL.Path == "/v1/bootstrap/image":
 		// The archive is hundreds of megabytes; the server's write timeout is for API calls.
 		_ = http.NewResponseController(w).SetWriteDeadline(b.now().Add(30 * time.Minute))
