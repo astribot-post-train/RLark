@@ -9,6 +9,13 @@ data:
     log:
       level: warn
     storage:
+{{- if eq .Values.role "cache" }}
+      filesystem:
+        rootdirectory: /var/lib/registry
+    proxy:
+      remoteurl: {{ .Values.upstream }}
+      ttl: {{ .Values.ttl }}
+{{- else }}
       s3:
         bucket: {{ .Values.s3Bucket }}
         region: {{ .Values.s3Region }}
@@ -17,6 +24,7 @@ data:
         chunksize: 5242880
         secure: true
         v4auth: true
+{{- end }}
 {{- if eq .Values.role "mirror" }}
       maintenance:
         readonly:
@@ -28,8 +36,10 @@ data:
     http:
       addr: {{ .Values.listen }}
 {{- else }}
+{{- if eq .Values.role "registry" }}
       redirect:
         disable: true
+{{- end }}
     http:
       addr: {{ .Values.listen }}
       tls:
@@ -39,4 +49,8 @@ data:
       htpasswd:
         realm: RLark registry
         path: /run/site-registry/htpasswd
+{{- end }}
+{{- if eq .Values.role "cache" }}
+  upstream-ca.crt: |
+{{ indent 4 .Values.caCert }}
 {{- end }}

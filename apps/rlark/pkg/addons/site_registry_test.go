@@ -55,6 +55,36 @@ func TestSiteRegistryRendersBothRoles(t *testing.T) {
 	if daemonSet.Kind != "DaemonSet" || len(daemonSet.Spec.Template.Spec.Volumes) != 1 || daemonSet.Spec.Template.Spec.Containers[0].ReadinessProbe.TCPSocket.Host != "127.0.0.1" {
 		t.Fatalf("mirror workload:\n%s", m[1].Raw)
 	}
+
+	cache := map[string]string{"role": "cache", "image": "registry@sha256:x", "listen": "0.0.0.0:5443", "upstream": "https://origin.rlark.internal:5443",
+		"caCert": "-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----", "cacheDir": "/var/lib/rlark/site-cache", "ttl": "336h"}
+	m, err = a.Render(cache, "ns", "site-cache", "u")
+	if err != nil {
+		t.Fatal(err)
+	}
+	config = corev1.ConfigMap{}
+	if err := yaml.UnmarshalStrict(m[0].Raw, &config); err != nil {
+		t.Fatalf("%v\n%s", err, m[0].Raw)
+	}
+	body := config.Data["config.yml"]
+	if !strings.Contains(body, "remoteurl: https://origin.rlark.internal:5443") || !strings.Contains(body, "ttl: 336h") || !strings.Contains(body, "rootdirectory: /var/lib/registry") ||
+		strings.Contains(body, "s3:") || !strings.Contains(body, "htpasswd") || !strings.Contains(config.Data["upstream-ca.crt"], "AAAA") {
+		t.Fatalf("cache config:\n%s", m[0].Raw)
+	}
+	deployment = appsv1.Deployment{}
+	if err := yaml.UnmarshalStrict(m[1].Raw, &deployment); err != nil {
+		t.Fatalf("%v\n%s", err, m[1].Raw)
+	}
+	spec = deployment.Spec.Template.Spec
+	env := map[string]bool{}
+	for _, e := range spec.Containers[0].Env {
+		env[e.Name] = true
+	}
+	if deployment.Kind != "Deployment" || spec.NodeSelector["rlark.io/site-registry"] != "true" || len(spec.Volumes) != 3 ||
+		spec.Volumes[1].HostPath == nil || spec.Volumes[1].HostPath.Path != "/var/lib/rlark/site-cache" ||
+		!env["REGISTRY_PROXY_USERNAME"] || !env["REGISTRY_PROXY_PASSWORD"] || !env["SSL_CERT_FILE"] || env["REGISTRY_STORAGE_S3_ACCESSKEY"] {
+		t.Fatalf("cache workload:\n%s", m[1].Raw)
+	}
 }
 
 func TestRegistryTrustRendersOneDaemonSetPerNodeClass(t *testing.T) {
