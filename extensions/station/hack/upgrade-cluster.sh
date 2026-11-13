@@ -122,6 +122,7 @@ fi
 # the node (upgrade.sh, PHASE=certs; nothing is done where none does), and
 # nothing else starts unless etcd then answers where it advertises.
 for item in $(k get nodes -l node-role.kubernetes.io/control-plane -o name); do
+  [[ " $nodes " == *" $item "* ]] || continue
   job "${item#node/}" certs
   until k get --raw /readyz >/dev/null 2>&1; do sleep 1; done
   url=$(k -n kube-system get pod "etcd-${item#node/}" -o jsonpath='{.metadata.annotations.kubeadm\.kubernetes\.io/etcd\.advertise-client-urls}')
@@ -132,7 +133,10 @@ done
 
 # The control plane's upgrade replaces kube-proxy on every node and may move
 # CoreDNS to any: each node that runs pods gets the images first.
+# A run that only brings NODES up to a control plane already at VERSION rolls
+# nothing out to the others.
 for node in $(k get nodes -o jsonpath='{range .items[*]}{.metadata.name} {.status.conditions[?(@.type=="Ready")].status}{"\n"}{end}' | sed -n 's/ True$//p'); do
+  [[ $step == 1 || " $nodes " == *" node/$node "* ]] || continue
   job "$node" images
 done
 stamp "images of $VERSION on every Ready node"
