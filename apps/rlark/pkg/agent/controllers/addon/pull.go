@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -36,8 +37,11 @@ import (
 const (
 	AddonRequeueInterval = 10 * time.Second
 
-	// AddonResourceVersionAnnotation annotates local resources linking back to the management Addon CR.
-	AddonResourceVersionAnnotation = "rlark.io/addon-resource-version"
+	// AddonGenerationAnnotation records the management Addon's generation (its spec revision) a local
+	// resource was rendered from. Its resourceVersion is not used: every status write changes it, and an
+	// update of a Deployment's annotations moves the Deployment's generation, so the two kept each other
+	// moving and the Addon never read as ready.
+	AddonGenerationAnnotation = "rlark.io/addon-generation"
 )
 
 var errAddonCleanupPending = errors.New("addon resource deletion pending")
@@ -150,7 +154,7 @@ func (r *pullReconciler) Reconcile(ctx context.Context, req reconcile.Request) (
 		for _, obj := range objs {
 			injectLabels(obj, mgmtAddon.Name, string(mgmtAddon.UID))
 			obj.SetAnnotations(mergeMaps(obj.GetAnnotations(), map[string]string{
-				AddonResourceVersionAnnotation: mgmtAddon.ResourceVersion,
+				AddonGenerationAnnotation: strconv.FormatInt(mgmtAddon.Generation, 10),
 			}))
 			if err := r.applyObject(ctx, obj, &mgmtAddon); err != nil {
 				r.updateStatus(ctx, &mgmtAddon, rlarkv1alpha1.AddonPhaseFailed, fmt.Sprintf("apply %s/%s: %v", obj.GetKind(), obj.GetName(), err))
@@ -223,14 +227,14 @@ func (r *pullReconciler) applyObject(ctx context.Context, obj *unstructured.Unst
 	// The annotation identifies the rendered revision, but does not prove that
 	// the live fields still match it. Check desired fields on each reconciliation.
 	existingAnnotations := existing.GetAnnotations()
-	if existingAnnotations != nil && existingAnnotations[AddonResourceVersionAnnotation] == mgmtAddon.ResourceVersion && desiredFieldsMatch(obj, existing) {
+	if existingAnnotations != nil && existingAnnotations[AddonGenerationAnnotation] == strconv.FormatInt(mgmtAddon.Generation, 10) && desiredFieldsMatch(obj, existing) {
 		return nil
 	}
 
 	logger.Info("updating resource")
 	mergedLabels := mergeMaps(existing.GetLabels(), obj.GetLabels())
 	mergedAnnotations := mergeMaps(existing.GetAnnotations(), obj.GetAnnotations())
-	mergedAnnotations[AddonResourceVersionAnnotation] = mgmtAddon.ResourceVersion
+	mergedAnnotations[AddonGenerationAnnotation] = strconv.FormatInt(mgmtAddon.Generation, 10)
 
 	existing.SetLabels(mergedLabels)
 	existing.SetAnnotations(mergedAnnotations)
