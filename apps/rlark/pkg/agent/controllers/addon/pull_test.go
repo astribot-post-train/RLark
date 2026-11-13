@@ -529,3 +529,38 @@ func TestApplyObjectLeavesAnUnchangedObjectAloneAcrossStatusWrites(t *testing.T)
 		t.Fatalf("object written again after a status-only change: resourceVersion %s -> %s", before.GetResourceVersion(), after.GetResourceVersion())
 	}
 }
+
+func TestCheckReadyDaemonSetNamesTheNodesItWaitsOn(t *testing.T) {
+	ctx := context.Background()
+	addon := &rlarkv1alpha1.Addon{ObjectMeta: metav1.ObjectMeta{Name: "a", UID: "u"}}
+	ds := &appsv1.DaemonSet{
+		ObjectMeta: metav1.ObjectMeta{Name: "trust", Namespace: "rlark-system", Generation: 1, Labels: map[string]string{"rlark.io/addon-name": "a"}},
+		Spec:       appsv1.DaemonSetSpec{Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": "trust"}}},
+		Status:     appsv1.DaemonSetStatus{ObservedGeneration: 1, DesiredNumberScheduled: 3, UpdatedNumberScheduled: 3, NumberReady: 1},
+	}
+	node := func(name string, ready corev1.ConditionStatus) *corev1.Node {
+		return &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: name}, Status: corev1.NodeStatus{Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: ready}}}}
+	}
+	pod := func(name, nodeName string, ready corev1.ConditionStatus, waiting string) *corev1.Pod {
+		p := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "rlark-system", Labels: map[string]string{"app": "trust"}},
+			Spec:       corev1.PodSpec{NodeName: nodeName},
+			Status:     corev1.PodStatus{Phase: corev1.PodRunning, Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: ready}}},
+		}
+		if waiting != "" {
+			p.Status.Phase = corev1.PodPending
+			p.Status.ContainerStatuses = []corev1.ContainerStatus{{State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: waiting}}}}
+		}
+		return p
+	}
+	cl := fake.NewClientBuilder().WithScheme(clientgoscheme.Scheme).WithObjects(ds,
+		node("cailiang", corev1.ConditionTrue), node("nb260706069", corev1.ConditionUnknown), node("wendychen", corev1.ConditionTrue),
+		pod("t1", "cailiang", corev1.ConditionTrue, ""), pod("t2", "nb260706069", corev1.ConditionFalse, ""), pod("t3", "wendychen", corev1.ConditionFalse, "ImagePullBackOff"),
+	).WithStatusSubresource(ds).Build()
+	r := &pullReconciler{c: &Controller{Controller: base.Controller{LocalKubeClient: cl}}}
+	ready, msg, err := r.checkReady(ctx, addon)
+	want := "DaemonSet trust: 1/3 ready; waiting on nb260706069 (node NotReady), wendychen (ImagePullBackOff)"
+	if err != nil || ready || msg != want {
+		t.Fatalf("checkReady = %v %q %v, want %q", ready, msg, err, want)
+	}
+}

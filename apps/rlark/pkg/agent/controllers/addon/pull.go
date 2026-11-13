@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"reflect"
 	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -457,7 +458,11 @@ func (r *pullReconciler) checkReady(ctx context.Context, mgmtAddon *rlarkv1alpha
 			return false, fmt.Sprintf("DaemonSet %s: no nodes scheduled", ds.Name), nil
 		}
 		if ds.Status.UpdatedNumberScheduled < ds.Status.DesiredNumberScheduled || ds.Status.NumberReady < ds.Status.DesiredNumberScheduled {
-			return false, fmt.Sprintf("DaemonSet %s: %d/%d ready", ds.Name, ds.Status.NumberReady, ds.Status.DesiredNumberScheduled), nil
+			waiting, err := r.daemonSetWaitingOn(ctx, &ds)
+			if err != nil {
+				return false, "", err
+			}
+			return false, fmt.Sprintf("DaemonSet %s: %d/%d ready%s", ds.Name, ds.Status.NumberReady, ds.Status.DesiredNumberScheduled, waiting), nil
 		}
 	}
 
@@ -479,6 +484,56 @@ func (r *pullReconciler) checkReady(ctx context.Context, mgmtAddon *rlarkv1alpha
 	}
 
 	return true, "", nil
+}
+
+// daemonSetWaitingOn names the nodes whose Pod of ds is not ready, each with
+// why: a node that is down shows as such, so a page tells "waiting for a node
+// that is off" from "an image that does not pull".
+func (r *pullReconciler) daemonSetWaitingOn(ctx context.Context, ds *appsv1.DaemonSet) (string, error) {
+	pods := &corev1.PodList{}
+	if err := r.c.LocalKubeClient.List(ctx, pods, client.InNamespace(ds.Namespace), client.MatchingLabels(ds.Spec.Selector.MatchLabels)); err != nil {
+		return "", err
+	}
+	var waiting []string
+	for _, pod := range pods.Items {
+		if podReady(&pod) {
+			continue
+		}
+		node := &corev1.Node{}
+		if err := r.c.LocalKubeClient.Get(ctx, client.ObjectKey{Name: pod.Spec.NodeName}, node); err != nil {
+			waiting = append(waiting, fmt.Sprintf("%s (node not found)", pod.Spec.NodeName))
+			continue
+		}
+		waiting = append(waiting, fmt.Sprintf("%s (%s)", pod.Spec.NodeName, podWaitReason(&pod, node)))
+	}
+	if len(waiting) == 0 {
+		return "", nil
+	}
+	sort.Strings(waiting)
+	return "; waiting on " + strings.Join(waiting, ", "), nil
+}
+
+func podReady(pod *corev1.Pod) bool {
+	for _, condition := range pod.Status.Conditions {
+		if condition.Type == corev1.PodReady {
+			return condition.Status == corev1.ConditionTrue
+		}
+	}
+	return false
+}
+
+func podWaitReason(pod *corev1.Pod, node *corev1.Node) string {
+	for _, condition := range node.Status.Conditions {
+		if condition.Type == corev1.NodeReady && condition.Status != corev1.ConditionTrue {
+			return "node NotReady"
+		}
+	}
+	for _, status := range pod.Status.ContainerStatuses {
+		if status.State.Waiting != nil {
+			return status.State.Waiting.Reason
+		}
+	}
+	return string(pod.Status.Phase)
 }
 
 func (r *pullReconciler) checkFailedPods(ctx context.Context, mgmtAddon *rlarkv1alpha1.Addon) string {
