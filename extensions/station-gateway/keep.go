@@ -77,6 +77,15 @@ func (k *keeper) running() (map[int]bool, error) {
 	if err != nil {
 		return nil, err
 	}
+	// The pod shares the machine's process namespace, and so does every
+	// container on the machine: a program of the same path inside one of
+	// them (a node of a cluster run in containers, say) is not the
+	// machine's service. The machine's own processes are in the namespace
+	// of its first process.
+	own, err := os.Readlink(filepath.Join(k.proc, "1/ns/pid"))
+	if err != nil {
+		return nil, fmt.Errorf("see the machine's process namespace: %w", err)
+	}
 	for _, entry := range entries {
 		pid, err := strconv.Atoi(entry.Name())
 		if err != nil {
@@ -84,6 +93,9 @@ func (k *keeper) running() (map[int]bool, error) {
 		}
 		cmdline, err := os.ReadFile(filepath.Join(k.proc, entry.Name(), "cmdline"))
 		if err != nil || string(bytes.SplitN(cmdline, []byte{0}, 2)[0]) != k.name {
+			continue
+		}
+		if namespace, err := os.Readlink(filepath.Join(k.proc, entry.Name(), "ns/pid")); err != nil || namespace != own {
 			continue
 		}
 		// The link leads to the file the process was started from, also
