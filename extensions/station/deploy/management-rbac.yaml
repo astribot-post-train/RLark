@@ -28,6 +28,11 @@ rules:
 - apiGroups: ["rlinf.io"]
   resources: ["clusters"]
   verbs: ["get", "list"]
+# A machine admitted under a name the management plane knows: the labels its
+# admission declares are put on that Node before it joins (bootstrap.go).
+- apiGroups: ["rlinf.io"]
+  resources: ["nodes"]
+  verbs: ["patch"]
 - apiGroups: ["station.rlark.io"]
   resources: ["stations"]
   verbs: ["get", "list"]

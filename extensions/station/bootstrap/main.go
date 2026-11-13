@@ -193,14 +193,26 @@ func main() {
 // leaving its cluster ends. The unit goes on; its output is install.log.
 func migrate(settings []string) {
 	arguments := []string{"--unit", "rlark-node-migrate", "--collect", "--quiet"}
+	// What install.sh reads, and no more, each name once (the last value
+	// stands): the systemd of Ubuntu 20.04 refuses a unit whose environment
+	// names a variable twice (PATH: the container's and ours) or holds a line
+	// break (RLARK_CA) with "Invalid environment block".
+	chosen, order := map[string]string{}, []string{}
 	for _, setting := range settings {
-		if name := strings.SplitN(setting, "=", 2)[0]; strings.HasPrefix(name, "RLARK_") || strings.HasPrefix(name, "NODE_") || strings.HasPrefix(name, "TUNNEL_") || strings.HasPrefix(name, "JOIN_") || name == "PATH" {
-			arguments = append(arguments, "--setenv="+setting)
+		name := strings.SplitN(setting, "=", 2)[0]
+		if name == "RLARK_MIGRATE" || strings.HasPrefix(name, "NODE_") || strings.HasPrefix(name, "TUNNEL_") || strings.HasPrefix(name, "JOIN_") || name == "PATH" {
+			if _, seen := chosen[name]; !seen {
+				order = append(order, name)
+			}
+			chosen[name] = setting
 		}
+	}
+	for _, name := range order {
+		arguments = append(arguments, "--setenv="+chosen[name])
 	}
 	arguments = append(arguments, "/bin/sh", "-c", "exec /bin/sh "+stage+"/install.sh > "+stage+"/install.log 2>&1")
 	if output, err := exec.Command("systemd-run", arguments...).CombinedOutput(); err != nil {
-		log.Fatalf("start the migration unit: %v: %s", err, output)
+		log.Fatalf("start the migration unit (settings %s): %v: %s", strings.Join(order, " "), err, output)
 	}
 	log.Printf("migration runs as rlark-node-migrate.service; its log is %s/install.log", stage)
 	for shown := 0; ; time.Sleep(time.Second) {

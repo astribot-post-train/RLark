@@ -40,6 +40,12 @@ spec:
         - --member-credentials-namespace=station-member-credentials
         - --tls-cert-file=/var/run/secrets/station-api-tls/tls.crt
         - --tls-key-file=/var/run/secrets/station-api-tls/tls.key
+        # Node admission by one-time code (hack/admit-node.sh, hack/migrate-node.sh,
+        # the Gateway's "add node" page): without these three the redeem
+        # endpoint answers 401 "bearer token required".
+        - --bootstrap-ca-file=/var/run/station-bootstrap/ca.crt
+        - --bootstrap-image-file=/var/run/station-bootstrap/REPLACE_INSTALLER_TAG.tar
+        - --bootstrap-image-ref=REPLACE_INSTALLER_IMAGE
         env:
         - name: STATION_API_DATABASE_DSN
           valueFrom:
@@ -87,6 +93,9 @@ spec:
         - name: database-ca
           mountPath: /var/run/secrets/station-db
           readOnly: true
+        - name: bootstrap
+          mountPath: /var/run/station-bootstrap
+          readOnly: true
       volumes:
       - name: management-kubeconfig
         secret:
@@ -103,3 +112,12 @@ spec:
           items:
           - key: ca.crt
             path: ca.crt
+      # On the node above: ca.crt, the CA machines verify this API with, and
+      # <installer tag>.tar, the installer image as a docker archive
+      # (bootstrap/build.sh writes it; `docker save` of the pushed image is the
+      # same). A new installer version is a new archive here and the two
+      # REPLACE_INSTALLER values above; both must be readable by uid 65532.
+      - name: bootstrap
+        hostPath:
+          path: /var/lib/rlark/station-bootstrap
+          type: Directory
