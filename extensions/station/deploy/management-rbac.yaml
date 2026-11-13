@@ -50,6 +50,10 @@ rules:
 - apiGroups: ["station.rlark.io"]
   resources: ["nodeadmissions"]
   verbs: ["list", "update"]
+# The registry cache of a new node's site: the node is admitted when it is filled.
+- apiGroups: ["rlinf.io"]
+  resources: ["addons"]
+  verbs: ["list"]
 # The uplink setup a new leaf's site declares (GET /b/<code>/uplink).
 - apiGroups: ["station.rlark.io"]
   resources: ["sitenetworks"]

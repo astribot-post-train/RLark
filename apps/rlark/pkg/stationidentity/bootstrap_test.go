@@ -53,7 +53,7 @@ func TestBootstrapRedeemsACodeOnceForOneKey(t *testing.T) {
 			"labels": map[string]interface{}{"rlark.io/robot-id": "before", "rlark.io/robot-model": "s1u"}},
 	}}
 	management := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(),
-		map[schema.GroupVersionResource]string{nodeAdmissionGVR: "NodeAdmissionList"}, admission, known)
+		map[schema.GroupVersionResource]string{nodeAdmissionGVR: "NodeAdmissionList", addonGVR: "AddonList"}, admission, known)
 	member := kubefake.NewSimpleClientset(&corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{Namespace: "kube-public", Name: "cluster-info"}, Data: map[string]string{"kubeconfig": testClusterInfo}})
 	b := &Bootstrap{Management: management, Now: func() time.Time { return now },
@@ -82,6 +82,28 @@ func TestBootstrapRedeemsACodeOnceForOneKey(t *testing.T) {
 	if _, err := resource.Update(ctx, stored, metav1.UpdateOptions{}); err != nil {
 		t.Fatal(err)
 	}
+	// The site's registry cache is being filled: the machine waits and is told
+	// what the cache says, until the cache is Ready for its last change. A
+	// registry that is no cache is not waited for.
+	addon := func(name, role, phase, message string, generation, seen int64) *unstructured.Unstructured {
+		return &unstructured.Unstructured{Object: map[string]interface{}{
+			"apiVersion": "rlinf.io/v1alpha1", "kind": "Addon",
+			"metadata": map[string]interface{}{"name": name, "namespace": "rlark-local-dev-gpu", "generation": generation},
+			"spec":     map[string]interface{}{"addonName": "site-registry", "values": map[string]interface{}{"role": role}},
+			"status":   map[string]interface{}{"phase": phase, "message": message, "observedGeneration": seen},
+		}}
+	}
+	addons := management.Resource(addonGVR).Namespace("rlark-local-dev-gpu")
+	_, _ = addons.Create(ctx, addon("origin", "registry", "Failed", "站点缓存不可用: no", 1, 1), metav1.CreateOptions{})
+	_, _ = addons.Create(ctx, addon("cache", "cache", "Installing", "站点缓存预热中: pass 1", 1, 1), metav1.CreateOptions{})
+	if answer, status, err := b.Redeem(ctx, code, key); err != nil || status != http.StatusAccepted || answer.Reason != "站点缓存预热中: pass 1" || answer.Join != nil {
+		t.Fatalf("while the cache is filled: %+v %d %v", answer, status, err)
+	}
+	_, _ = addons.Update(ctx, addon("cache", "cache", "Ready", "", 2, 1), metav1.UpdateOptions{})
+	if answer, status, err := b.Redeem(ctx, code, key); err != nil || status != http.StatusAccepted || !strings.Contains(answer.Reason, "has not reported on its last change") {
+		t.Fatalf("a Ready that is older than the cache's last change: %+v %d %v", answer, status, err)
+	}
+	_, _ = addons.Update(ctx, addon("cache", "cache", "Ready", "", 2, 2), metav1.UpdateOptions{})
 	answer, status, err := b.Redeem(ctx, code, key)
 	if err != nil || status != http.StatusOK || answer.State != "ready" || answer.NodeName != "s1u-01-x86" || answer.TunnelAddress != "10.254.240.3" ||
 		answer.Join.APIServer != "10.11.14.128:16443" || len(answer.Join.Token) != 23 || !strings.HasPrefix(answer.Join.CACertHash, "sha256:") ||

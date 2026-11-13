@@ -120,7 +120,6 @@ own_runtime() {
     -e 's#SystemdCgroup = false#SystemdCgroup = true#' -e "s#registry.k8s.io/pause:[0-9.]*#$(cat "$B"/images/pause.ref)#" \
     -e "s#^\\( *config_path = \\).*#\\1'/etc/containerd-fleet/certs.d'#" \
     > /etc/containerd-fleet/config.toml
-  [ ! -d "$B"/certs.d ] || cp -r "$B"/certs.d /etc/containerd-fleet/
   cat > /etc/systemd/system/containerd-fleet.service <<UNIT
 [Unit]
 Description=containerd for the RLark kubelet
@@ -142,6 +141,28 @@ UNIT
   systemctl daemon-reload
   systemctl enable --now containerd-fleet >/dev/null 2>&1 || fail "containerd-fleet did not start: journalctl -u containerd-fleet"
   changed=runtime
+}
+
+# registry: the site's registry, as the runtime the kubelet will use sees it.
+# The bundle's certs.d is the first trust this machine has in it, put where
+# that runtime reads it (the site's addon writes the same there later). Then
+# the runtime asks the registry for an image without a credential: "not
+# authorized" is the answer of a registry that was reached and is trusted. A
+# site whose network names no registry (SiteNetwork, names) has none to ask.
+REGISTRY=registry.rlark.internal:5443
+registry() {
+  CTR=$(ctr_of "$SOCKET")
+  pid=$(ss -Hxlp | awk -v s="$(readlink -f "$SOCKET")" '$5 == s' | sed -n 's/.*pid=\([0-9]*\).*/\1/p')
+  config=$(tr '\0' '\n' < "/proc/$pid/cmdline" | sed -n '/^--config$/{n;p}')
+  hosts=$("$(dirname "$CTR")/containerd" ${config:+--config "$config"} config dump | sed -n "s/^ *config_path = ['\"]\(.*\)['\"]\$/\1/p" | head -1)
+  [ ! -d "$B"/certs.d ] || [ -z "$hosts" ] || { install -d "$hosts" && cp -r "$B"/certs.d/. "$hosts"/; }
+  grep -q "[[:space:]]${REGISTRY%:*} # rlark names\$" /etc/hosts || return 0
+  answer=$("$CTR" -a "$SOCKET" -n k8s.io images pull ${hosts:+--hosts-dir "$hosts"} "$REGISTRY/rlark/probe:none" 2>&1 | tail -1 || true)
+  case $answer in
+  *401*|*nauthorized*|*"authorization failed"*|*"access denied"*) ;;
+  *x509*|*certificate*) fail "the container runtime at $SOCKET does not trust the site's registry $REGISTRY (it reads its registries' certificates in ${hosts:-no directory: config_path is not set in ${config:-/etc/containerd/config.toml}}): $answer" ;;
+  *) fail "the container runtime at $SOCKET does not reach the site's registry $REGISTRY ($(getent hosts "${REGISTRY%:*}" | awk '{print $1}')): $answer" ;;
+  esac
 }
 
 # import_images DIR: the archives a node needs before it can pull anything.

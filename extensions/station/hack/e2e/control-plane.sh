@@ -667,10 +667,18 @@ takeover_to() {
   for robot in robot1 robot2; do on $robot sh -c 'sha256sum /etc/kubernetes/kubelet.conf /var/lib/kubelet/pki/kubelet-client-current.pem; crictl ps -q 2>/dev/null | sort | sha256sum' > "$D/$robot-before"; done
   api_watch robot2 &
   t0=$(now)
-  run_cp "$from" handover
+  # B is started first and waits: for A's snapshot, then for the name.
+  run_cp "$to" CONTROL_PLANE_NAME=$ROBOT POD_SUBNET=10.242.0.0/16 SERVICE_SUBNET=10.243.0.0/16 FROM_CONTROL_PLANE=${TUN[$from]} ETCD_SNAPSHOT_DIR=/mnt/site/etcd-robot-$to > "$D/takeover-$to.log" 2>&1 &
+  local taking=$!
+  run_cp "$from" handover SUCCESSOR=$to
   stamp "handed over $(since "$t0") after the command"
+  [[ -z ${REBOOT_A:-} ]] || { docker restart "$P-$from" >/dev/null; sleep 25; tunnels; on "$from" sh -c 'echo "after the restart of the machine: kubelet $(systemctl is-active kubelet), API port $(ss -Hltn "sport = :6443" | wc -l) listeners, etcd port $(ss -Hltn "sport = :2379" | wc -l), snapshot service $(systemctl is-active rlark-control-plane-handover)"'; }
+  # A robot, a node of the cluster too, is not given the cluster's keys.
+  echo "robot1 asks for the snapshot with its kubelet's certificate: HTTP $(on robot1 curl -s -m 5 -o /dev/null -w '%{http_code}' --cacert /etc/kubernetes/pki/ca.crt --cert /var/lib/kubelet/pki/kubelet-client-current.pem --resolve "$ROBOT:6444:${TUN[$from]}" "https://$ROBOT:6444/")"
+  until grep -q 'waiting for the site network' "$D/takeover-$to.log"; do sleep 0.5; done
+  stamp "$to has the snapshot $(since "$t0") after the handover began; the name is given to it now"
   echo "$to" > "$D/robot-cp"; tunnels
-  run_cp "$to" CONTROL_PLANE_NAME=$ROBOT POD_SUBNET=10.242.0.0/16 SERVICE_SUBNET=10.243.0.0/16 FROM_SNAPSHOT=/mnt/site/etcd-robot ETCD_SNAPSHOT_DIR=/mnt/site/etcd-robot-$to
+  wait $taking; sed 's/^/    /' "$D/takeover-$to.log"
   k "$to" wait --for=condition=Ready "node/$to" node/robot1 node/robot2 --timeout=300s
   stamp "the robots are Ready under $to $(since "$t0") after the handover began"
   cluster_state "$to" > "$D/state-after"
