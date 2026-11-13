@@ -445,7 +445,9 @@ spec:
             - /station-gateway
             - --keep-host-program=/host/opt/rlark/bin/station-gateway
             - --host-program-settled
-          periodSeconds: 10
+          # One failed check is enough: the rollout must see a trial begin.
+          periodSeconds: 5
+          failureThreshold: 1
           timeoutSeconds: 5
         resources:
           requests:

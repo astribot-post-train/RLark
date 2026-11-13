@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"log"
 	"os"
 	"path/filepath"
 
@@ -25,6 +26,8 @@ type sources struct {
 	static string
 }
 
+var passedOver string
+
 // read returns the first document that exists and parses, and its origin.
 func (s sources) read() ([]byte, *desired, string, error) {
 	var firstErr error
@@ -37,6 +40,13 @@ func (s sources) read() ([]byte, *desired, string, error) {
 			var d *desired
 			if d, err = parse(data); err == nil {
 				return data, d, candidate.origin, nil
+			}
+			// A document this program cannot read is passed over for the
+			// next source, and said once: the node then runs on an older
+			// document than the one it was given.
+			if said := candidate.path + ": " + err.Error(); said != passedOver {
+				passedOver = said
+				log.Printf("the %s configuration is not usable: %v", candidate.origin, err)
 			}
 		}
 		if firstErr == nil && !errors.Is(err, os.ErrNotExist) {
