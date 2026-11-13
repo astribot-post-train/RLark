@@ -799,11 +799,11 @@ export function StationsPage({ copy: c }: { copy: Copy }) {
                 <code className="inline-code">{joinOperation.operation.status.nodeUID}</code>
                 <label className="station-field">
                   <span>{zh ? "重绑原因" : "Rebind reason"}</span>
-                  <textarea value={joinRebindReason} onChange={(event) => setJoinRebindReason(event.target.value)} maxLength={1024} rows={2} disabled={joinRebindPending || trackedOperation?.status?.phase === "Applied"} placeholder={zh ? "例如：Notebook 重装后重新加入集群" : "e.g. Notebook rejoined after a reset"} />
+                  <textarea value={joinRebindReason} onChange={(event) => setJoinRebindReason(event.target.value)} maxLength={1024} rows={2} disabled={joinRebindPending || trackedOperation?.operation.status?.phase === "Applied"} placeholder={zh ? "例如：Notebook 重装后重新加入集群" : "e.g. Notebook rejoined after a reset"} />
                 </label>
                 {joinRebindError && <div className="cert-error" role="alert">{joinRebindError}</div>}
-                {trackedOperation && <small className="muted">{zh ? `重绑 ${trackedOperation.status?.phase ?? "Accepted"} · ${trackedOperation.metadata.name}` : `Rebind ${trackedOperation.status?.phase ?? "Accepted"} · ${trackedOperation.metadata.name}`}</small>}
-                <button type="button" className="secondary-button" onClick={() => void submitJoinStationRebind()} disabled={joinRebindPending || !joinRebindReason.trim() || trackedOperation?.status?.phase === "Applied"}>
+                {trackedOperation && <small className="muted">{zh ? `重绑 ${trackedOperation.operation.status?.phase ?? "Accepted"} · ${trackedOperation.operation.metadata.name}` : `Rebind ${trackedOperation.operation.status?.phase ?? "Accepted"} · ${trackedOperation.operation.metadata.name}`}</small>}
+                <button type="button" className="secondary-button" onClick={() => void submitJoinStationRebind()} disabled={joinRebindPending || !joinRebindReason.trim() || trackedOperation?.operation.status?.phase === "Applied"}>
                   {joinRebindPending ? (zh ? "提交中…" : "Submitting…") : (zh ? "确认重绑并继续 Join" : "Approve rebind and continue Join")}
                 </button>
                 <small className="muted">{zh ? "提交的是 StationRebind 操作；controller 会从成员集群再次核验 Node UID，成功后 Join 自动继续。" : "This creates a StationRebind operation. The controller rechecks the Node UID in the member cluster; Join resumes after it is applied."}</small>

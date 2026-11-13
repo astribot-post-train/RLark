@@ -239,6 +239,5 @@ volumes:
 # 没抄进来、要合并树的人确认的两点：
 #   - rlark-ks3-registry-wg / -migrated 各有一个匿名卷挂在 /var/lib/registry；它们的存储后端是 KS3，
 #     按配置这个卷应是空的，这里没有保留。切换前 `docker exec <c> du -sh /var/lib/registry` 看一眼。
-#   - 正式前端：:5173 现在是 cailiang 账号下的 Vite 开发服务器（今天被重启三次，指向过假数据和测试网关）。
-#     最终形态是 `npm run build` 的产物由 gateway 或一个 nginx 服务提供，进这个文件；开发服务器换端口。
-#     需要合并树里的 UI 构建产物路径，定了之后在这里加一个服务。
+#   - 正式前端：服务 rlark-ui 定义在 rlark.compose.yaml（镜像由 apps/rlark-ui/Dockerfile 从同一提交构建，
+#     :80，/api/ 转给 rlark-gateway）。两份文件在控制面迁移时合成一份。
