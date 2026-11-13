@@ -82,7 +82,7 @@ spec:
     address: 198.18.99.1
     endpoints: [{address: "$(ip_of $HUB):51820", scope: Site}]
   - {clusterID: e2e-office, nodeName: e2e-office-worker, role: Hub, address: 198.18.99.5, endpoints: [{scope: Site}]}
-  - {clusterID: e2e-lab, nodeName: e2e-lab-control-plane, role: Leaf, address: 198.18.99.3, listenPort: 51830}
+  - {clusterID: e2e-lab, nodeName: e2e-lab-control-plane, role: Leaf, address: 198.18.99.3}
   - {clusterID: e2e-lab, nodeName: e2e-lab-worker, role: Leaf, address: 198.18.99.7}
 SITE
   until [[ $(mgmt get netenroll -A -o jsonpath='{range .items[*]}{.status.phase}{"\n"}{end}' | grep -c Enrolled) == 4 ]]; do sleep 2; done
