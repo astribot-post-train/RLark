@@ -11,9 +11,9 @@
 #                   are issued anew by kubeadm from the cluster's CA, and etcd
 #                   and the API server started again: the API is away for ten
 #                   seconds with etcd and then until the kubelet has started
-#                   the API server again, a minute where it holds a container
-#                   back that was started not long ago. No other container on
-#                   any node restarts.
+#                   the API server again: a minute, more where the kubelet
+#                   holds a container back that was started not long ago. No
+#                   other container on any node restarts.
 #                   Nothing is done on a node whose certificates are complete.
 #   PHASE=images    import the version's images: on every node before the
 #                   first is upgraded, because the control plane's upgrade
@@ -119,14 +119,15 @@ certs)
     # certificate from it whenever it makes one anew.
     admin create configmap kubeadm-config --from-file="ClusterConfiguration=$WATCH/ClusterConfiguration" --dry-run=client -o yaml | admin replace -f - >/dev/null
     # A static pod's container is started again by the kubelet when its
-    # process ends; etcd first, the API server does not come up without it.
+    # process ends, at once or, one that was started not long ago, up to five
+    # minutes later; etcd first, the API server does not come up without it.
     t0=$(date +%s)
     old=$(pid "${client##*:}"); kill "$old"
     while kill -0 "$old" 2>/dev/null; do sleep 1; done
     tries=0
     until curl -fsS -m 2 --cacert $P/etcd/ca.crt --cert $P/etcd/healthcheck-client.crt --key $P/etcd/healthcheck-client.key "$client/health" >/dev/null 2>&1; do
       tries=$((tries + 1))
-      [ $tries -lt 150 ] || fail "etcd does not answer at $client 150 s after its start with the new certificates. Back: $undo"
+      [ $tries -lt 330 ] || fail "etcd does not answer at $client 330 s after it was stopped to load the new certificates. Back: $undo"
       sleep 1
     done
     stamp "etcd answers at $client, the address it advertises, $(( $(date +%s) - t0 )) s after it was stopped"
@@ -139,7 +140,7 @@ certs)
     tries=0
     until curl -fsS -m 2 --cacert $P/ca.crt "https://$endpoint/readyz" >/dev/null 2>&1; do
       tries=$((tries + 1))
-      [ $tries -lt 150 ] || fail "the API server is not ready at $endpoint 150 s after its start with the new certificate. Back: $undo"
+      [ $tries -lt 330 ] || fail "the API server is not ready at $endpoint 330 s after it was stopped to load the new certificate. Back: $undo"
       sleep 1
     done
     stamp "the API server is ready at $endpoint $(( $(date +%s) - t0 )) s after it was stopped"
