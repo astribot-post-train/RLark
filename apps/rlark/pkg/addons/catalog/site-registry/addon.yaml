@@ -1,0 +1,72 @@
+name: site-registry
+displayName: 站点镜像仓库
+category: other
+version: v0.1.0
+description: |
+  站点的私有镜像仓库，内容放在 S3 兼容的对象存储（KS3）里，同一份存储可以在几个站点各起一个仓库或缓存。
+  role=registry：一个仓库进程（Deployment，宿主机网络，钉在带 nodeSelector 标签的节点上），HTTPS + htpasswd 认证，可推可拉。
+  role=mirror：每个节点一个只读缓存（DaemonSet，宿主机网络，建议只监听 127.0.0.1），直接读存储、不需要认证，由 registry-trust 的“优先端点”指过来。
+  密钥都不在参数里：存储的访问密钥、htpasswd、TLS 证书和私钥、http secret 放在一个 RLark 密钥对象里（键 s3-accesskey、s3-secretkey、http-secret、htpasswd、tls.crt、tls.key；mirror 只用前三个），分发到装本 Addon 的集群。
+  镜像须不依赖本仓库就能拉到（入网引导包预置或公网按 digest）。
+icon: package
+
+parameters:
+  - name: role
+    displayName: 角色
+    type: enum
+    default: registry
+    options: [registry, mirror]
+    required: true
+
+  - name: image
+    displayName: 仓库镜像
+    description: distribution（registry:3）镜像，按 digest 引用
+    type: string
+    default: ""
+    required: true
+
+  - name: listen
+    displayName: 监听地址
+    description: host:port，例如 0.0.0.0:5443（registry）或 127.0.0.1:5444（mirror）
+    type: string
+    default: ""
+    required: true
+
+  - name: nodeSelector
+    displayName: 节点选择
+    description: role=registry 时仓库所在节点的标签 label=value
+    type: string
+    default: rlark.io/site-registry=true
+    required: false
+
+  - name: secret
+    displayName: 密钥对象
+    description: 分发到本集群 rlark-system 的 RLark 密钥对象名
+    type: string
+    default: site-registry
+    required: true
+
+  - name: s3Bucket
+    displayName: 存储桶
+    type: string
+    default: ""
+    required: true
+
+  - name: s3Region
+    displayName: 区域
+    type: string
+    default: ""
+    required: true
+
+  - name: s3Endpoint
+    displayName: 存储端点
+    description: 例如 https://ks3-cn-ningxia.ksyuncs.com；云上节点用内网端点
+    type: string
+    default: ""
+    required: true
+
+  - name: s3RootDirectory
+    displayName: 存储根目录
+    type: string
+    default: ""
+    required: true

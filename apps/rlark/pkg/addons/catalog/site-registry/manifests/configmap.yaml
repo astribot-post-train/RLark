@@ -1,0 +1,42 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .AddonName }}
+  namespace: rlark-system
+data:
+  config.yml: |
+    version: 0.1
+    log:
+      level: warn
+    storage:
+      s3:
+        bucket: {{ .Values.s3Bucket }}
+        region: {{ .Values.s3Region }}
+        regionendpoint: {{ .Values.s3Endpoint }}
+        rootdirectory: {{ .Values.s3RootDirectory }}
+        chunksize: 5242880
+        secure: true
+        v4auth: true
+{{- if eq .Values.role "mirror" }}
+      maintenance:
+        readonly:
+          enabled: true
+        uploadpurging:
+          enabled: false
+      redirect:
+        disable: false
+    http:
+      addr: {{ .Values.listen }}
+{{- else }}
+      redirect:
+        disable: true
+    http:
+      addr: {{ .Values.listen }}
+      tls:
+        certificate: /run/site-registry/tls.crt
+        key: /run/site-registry/tls.key
+    auth:
+      htpasswd:
+        realm: RLark registry
+        path: /run/site-registry/htpasswd
+{{- end }}

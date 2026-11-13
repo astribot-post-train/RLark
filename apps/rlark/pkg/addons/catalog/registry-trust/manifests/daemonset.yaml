@@ -14,7 +14,6 @@ spec:
       labels:
         app: registry-trust
     spec:
-      hostPID: true
       tolerations:
         - operator: Exists
       terminationGracePeriodSeconds: 1
@@ -26,23 +25,45 @@ spec:
             - /bin/sh
             - -ec
             - |
-              # The registry config directory is the one of the container runtime this
-              # node's kubelet uses (containerd, containerd-robot, containerd-fleet ...).
-              endpoint=$(tr '\0' '\n' < /proc/$(pidof kubelet | cut -d' ' -f1)/cmdline | sed -n 's/^--container-runtime-endpoint=//p')
-              [ -n "$endpoint" ] || endpoint=$(sed -n 's/^containerRuntimeEndpoint: *//p' /host/var/lib/kubelet/config.yaml | tr -d '"')
-              runtime=$(basename "$(dirname "${endpoint#unix://}")")
-              certs=$(sed -n 's/^ *config_path *= *"\([^":]*\).*/\1/p' "/host/etc/$runtime/config.toml" | head -n 1)
+              # The runtime is the one this node's kubelet is configured with, read from
+              # the host's kubelet files, not from a process: a host may run more kubelets
+              # inside containers.
+              endpoint=$(sed -n 's/.*--container-runtime-endpoint=\([^ "]*\).*/\1/p' /host/var/lib/kubelet/kubeadm-flags.env 2>/dev/null | head -n 1)
+              [ -n "$endpoint" ] || endpoint=$(sed -n 's/^containerRuntimeEndpoint: *//p' /host/var/lib/kubelet/config.yaml 2>/dev/null | tr -d "\"'")
+              runtime=$(basename "$(dirname "${endpoint:-unix:///run/containerd/containerd.sock}")")
+              certs=$(sed -n "s/^ *config_path *= *[\"']\([^\"':]*\).*/\1/p" "/host/etc/$runtime/config.toml" 2>/dev/null | grep . | head -n 1 || true)
               certs=${certs:-/etc/$runtime/certs.d}
               for host in $(echo "$HOSTS" | tr ',' ' '); do
                 mkdir -p "/host$certs/$host"
                 printf '%s\n' "$CA_CERT" > "/host$certs/$host/ca.crt"
-                printf 'server = "https://%s"\n\n[host."https://%s"]\n  capabilities = ["pull", "resolve"]\n  ca = "%s/%s/ca.crt"\n' "$host" "$host" "$certs" "$host" > "/host$certs/$host/hosts.toml"
+                {
+                  printf 'server = "https://%s"\n' "$host"
+                  for mirror in $(echo "$MIRRORS" | tr ',' ' '); do
+                    printf '\n[host."%s"]\n  capabilities = ["pull", "resolve"]\n' "$mirror"
+                  done
+                  printf '\n[host."https://%s"]\n  capabilities = ["pull", "resolve"]\n  ca = "%s/%s/ca.crt"\n' "$host" "$certs" "$host"
+                } > "/host$certs/$host/hosts.toml"
                 echo "trusted $host in $certs"
               done
+              # /etc/hosts: only the lines carrying the marker are ours; they are rewritten
+              # in place (same file, other lines untouched) to match the parameters.
+              marker='# rlark registry-trust'
+              grep -v " $marker\$" /host/etc/hosts > /tmp/hosts || true
+              if [ -n "$ADDRESS" ]; then
+                for name in $(echo "$HOSTS" | tr ',' '\n' | sed 's/:[0-9]*$//' | grep -v '^[0-9.]*$' | sort -u); do
+                  printf '%s %s %s\n' "$ADDRESS" "$name" "$marker" >> /tmp/hosts
+                done
+              fi
+              cmp -s /tmp/hosts /host/etc/hosts || cat /tmp/hosts > /host/etc/hosts
+              grep " $marker\$" /host/etc/hosts || echo "no managed /etc/hosts lines"
               while :; do sleep 3600; done
           env:
             - name: HOSTS
               value: "{{ .Values.hosts }}"
+            - name: ADDRESS
+              value: "{{ .Values.address }}"
+            - name: MIRRORS
+              value: "{{ .Values.mirrors }}"
             - name: CA_CERT
               value: |
 {{ indent 16 .Values.caCert }}
