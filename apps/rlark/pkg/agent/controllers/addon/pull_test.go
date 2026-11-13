@@ -410,3 +410,41 @@ func TestReadyAddonSchedulesDriftReconciliation(t *testing.T) {
 		t.Fatal("scheduled reconciliation left drifted config")
 	}
 }
+
+func TestApplyObjectInjectsDistributedImagePullSecrets(t *testing.T) {
+	ctx := context.Background()
+	credential := func(name, registry string) *corev1.Secret {
+		return &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "rlark-system", Labels: map[string]string{"rlark.io/image-registry-credential": "true"}, Annotations: map[string]string{"rlark.io/registry": registry}},
+			Type:       corev1.SecretTypeDockerConfigJson,
+			Data:       map[string][]byte{corev1.DockerConfigJsonKey: []byte("{}")},
+		}
+	}
+	cl := fake.NewClientBuilder().WithScheme(clientgoscheme.Scheme).WithObjects(credential("ir-site", "registry.rlark.internal:5443"), credential("ir-other", "other.example:5000")).Build()
+	r := &pullReconciler{c: &Controller{Controller: base.Controller{LocalKubeClient: cl}}}
+	addon := &rlarkv1alpha1.Addon{ObjectMeta: metav1.ObjectMeta{Name: "a", UID: "u", ResourceVersion: "1"}}
+	objs, err := parseManifest([]byte(`apiVersion: apps/v1
+kind: DaemonSet
+metadata: {name: d, namespace: rlark-system}
+spec:
+  selector: {matchLabels: {app: d}}
+  template:
+    metadata: {labels: {app: d}}
+    spec:
+      containers: [{name: c, image: "registry.rlark.internal:5443/fleet/robot@sha256:0000000000000000000000000000000000000000000000000000000000000000"}]
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	injectLabels(objs[0], addon.Name, string(addon.UID))
+	if err := r.applyObject(ctx, objs[0], addon); err != nil {
+		t.Fatal(err)
+	}
+	var got appsv1.DaemonSet
+	if err := cl.Get(ctx, types.NamespacedName{Name: "d", Namespace: "rlark-system"}, &got); err != nil {
+		t.Fatal(err)
+	}
+	if secrets := got.Spec.Template.Spec.ImagePullSecrets; len(secrets) != 1 || secrets[0].Name != "ir-site" {
+		t.Fatalf("imagePullSecrets = %v, want [ir-site]", secrets)
+	}
+}
