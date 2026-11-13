@@ -8,7 +8,13 @@
 #   CNI_BIN    directory with the CNI plugins
 #   IMAGES     directory with the image archives a node needs before it can pull
 #              (pause, kube-proxy, the CNI's images, station-agent, the RLark node
-#              agent) and pause.ref, the reference of the pause image among them
+#              agent) and pause.ref, the reference of the pause image among them;
+#              in its subdirectory control-plane the archives only a control
+#              plane needs (API server, controller manager, scheduler, etcd,
+#              CoreDNS, the CNI's controllers), which no worker imports
+#   MANIFESTS  optional directory of manifests a new control plane applies, in
+#              name order (control-plane.sh): calico.yaml as its project
+#              publishes it, then whatever the site adds to every cluster
 #   CERTS_D    optional containerd certs.d directory: how the node reaches the site's registries
 set -euo pipefail
 REF=$1 OUT=$2
@@ -22,9 +28,12 @@ for binary in kubeadm kubelet kubectl; do install -m 755 "$KUBE_BIN/$binary" "$W
 [[ -z ${CNI_BIN:-} ]] || find "$CNI_BIN" -maxdepth 1 -type f -perm -u+x -exec install -m 755 {} "$W/bundle/cni/" \;
 cp "$IMAGES"/*.tar "$W/bundle/images/"
 [[ ! -e $IMAGES/pause.ref ]] || cp "$IMAGES/pause.ref" "$W/bundle/images/"
+[[ ! -d $IMAGES/control-plane ]] || cp -r "$IMAGES/control-plane" "$W/bundle/images/"
+[[ -z ${MANIFESTS:-} ]] || cp -r "$MANIFESTS" "$W/bundle/manifests"
+# The tag is what a node says it was installed from (rlark.io/node-install-spec).
+echo "${REF##*:}" > "$W/bundle/tag"
 [[ -z ${CERTS_D:-} ]] || cp -r "$CERTS_D" "$W/bundle/certs.d"
-install -m 755 "$HERE/install.sh" "$W/bundle/install.sh"
-install -m 755 "$HERE/upgrade.sh" "$W/bundle/upgrade.sh"
+for script in lib.sh install.sh upgrade.sh control-plane.sh; do install -m 755 "$HERE/$script" "$W/bundle/$script"; done
 cat > "$W/Dockerfile" <<'DOCKERFILE'
 FROM scratch
 COPY bundle /bundle

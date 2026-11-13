@@ -84,6 +84,33 @@ spec:
                 maximum: 9000
                 minimum: 576
                 type: integer
+              names:
+                description: |-
+                  Names are what every node resolves at the same address wherever it is:
+                  what is reached through the tunnel, as a cluster's control plane and
+                  the management plane are. A site's own names come after them. Every
+                  node keeps its names in its /etc/hosts (station-gateway), so that
+                  nothing on a node holds the address of a machine that may move.
+                items:
+                  description: SiteNetworkName resolves a name to an address.
+                  properties:
+                    address:
+                      format: ipv4
+                      type: string
+                    name:
+                      maxLength: 253
+                      minLength: 1
+                      pattern: ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$
+                      type: string
+                  required:
+                  - address
+                  - name
+                  type: object
+                maxItems: 64
+                type: array
+                x-kubernetes-list-map-keys:
+                - name
+                x-kubernetes-list-type: map
               nodes:
                 description: Nodes lists only the nodes that need more than the leaf
                   default.
@@ -234,36 +261,23 @@ spec:
                       type: string
                     names:
                       description: |-
-                        Names are what the nodes of this site resolve the site's services at:
-                        its registry, a cluster's control plane, the management plane. Every
-                        node keeps them in its /etc/hosts (station-gateway), so that nothing on
-                        a node holds the address of a machine that may move.
+                        Names are what the nodes of this site resolve at an address of the
+                        site's own, as its registry is.
                       items:
-                        description: |-
-                          SiteNetworkName resolves a name to Address, or to the tunnel address of the
-                          node ClusterID/NodeName: a service that moves to another node is one
-                          change here.
+                        description: SiteNetworkName resolves a name to an address.
                         properties:
                           address:
-                            maxLength: 15
-                            type: string
-                          clusterID:
-                            maxLength: 128
+                            format: ipv4
                             type: string
                           name:
                             maxLength: 253
                             minLength: 1
                             pattern: ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$
                             type: string
-                          nodeName:
-                            maxLength: 253
-                            type: string
                         required:
+                        - address
                         - name
                         type: object
-                        x-kubernetes-validations:
-                        - message: give address or clusterID and nodeName
-                          rule: has(self.address) != has(self.nodeName)
                       maxItems: 64
                       type: array
                       x-kubernetes-list-map-keys:

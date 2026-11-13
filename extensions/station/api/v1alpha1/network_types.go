@@ -59,6 +59,15 @@ type SiteNetworkSpec struct {
 	// +listType=map
 	// +listMapKey=name
 	Sites []SiteNetworkSite `json:"sites"`
+	// Names are what every node resolves at the same address wherever it is:
+	// what is reached through the tunnel, as a cluster's control plane and
+	// the management plane are. A site's own names come after them. Every
+	// node keeps its names in its /etc/hosts (station-gateway), so that
+	// nothing on a node holds the address of a machine that may move.
+	// +kubebuilder:validation:MaxItems=64
+	// +listType=map
+	// +listMapKey=name
+	Names []SiteNetworkName `json:"names,omitempty"`
 	// Nodes lists only the nodes that need more than the leaf default.
 	// +kubebuilder:validation:MaxItems=256
 	Nodes []SiteNetworkNode `json:"nodes,omitempty"`
@@ -82,31 +91,22 @@ type SiteNetworkSite struct {
 	// and reach everything else through it. Without it a leaf also dials
 	// every other hub it can.
 	LeavesViaRelay bool `json:"leavesViaRelay,omitempty"`
-	// Names are what the nodes of this site resolve the site's services at:
-	// its registry, a cluster's control plane, the management plane. Every
-	// node keeps them in its /etc/hosts (station-gateway), so that nothing on
-	// a node holds the address of a machine that may move.
+	// Names are what the nodes of this site resolve at an address of the
+	// site's own, as its registry is.
 	// +kubebuilder:validation:MaxItems=64
 	// +listType=map
 	// +listMapKey=name
 	Names []SiteNetworkName `json:"names,omitempty"`
 }
 
-// SiteNetworkName resolves a name to Address, or to the tunnel address of the
-// node ClusterID/NodeName: a service that moves to another node is one
-// change here.
-// +kubebuilder:validation:XValidation:rule="has(self.address) != has(self.nodeName)",message="give address or clusterID and nodeName"
+// SiteNetworkName resolves a name to an address.
 type SiteNetworkName struct {
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=253
 	// +kubebuilder:validation:Pattern=`^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$`
 	Name string `json:"name"`
-	// +kubebuilder:validation:MaxLength=15
-	Address string `json:"address,omitempty"`
-	// +kubebuilder:validation:MaxLength=128
-	ClusterID string `json:"clusterID,omitempty"`
-	// +kubebuilder:validation:MaxLength=253
-	NodeName string `json:"nodeName,omitempty"`
+	// +kubebuilder:validation:Format=ipv4
+	Address string `json:"address"`
 }
 
 type SiteNetworkNode struct {

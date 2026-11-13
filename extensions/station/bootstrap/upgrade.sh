@@ -243,6 +243,8 @@ RESTORE
     if [ $tries -ge 60 ]; then
       # No reason to wait for the timer: the same way back, now.
       systemctl start $WATCHDOG.service || true
+      [ ! -e /etc/rlark/node-install ] || kubectl --kubeconfig /etc/kubernetes/kubelet.conf annotate node "$node" --overwrite \
+        "rlark.io/node-install-state=the kubelet of $KUBE_VERSION did not start; back on $from" >/dev/null 2>&1 || true
       grep -v -E 'Failed to ensure lease|Unable to register node|node .* not found' "$keep/kubelet-failed.log" | tail -15 >&2
       fail "the kubelet of $KUBE_VERSION was not healthy 2 min after its start; its log is $keep/kubelet-failed.log. $(cat "$WATCH/restored")"
     fi
@@ -254,6 +256,11 @@ confirm)
   [ "$from" = "$KUBE_VERSION" ] || fail "the node runs $from, not $KUBE_VERSION: $(cat "$WATCH/restored" 2>/dev/null)"
   disarm
   stamp "watchdog removed: the node stays on $KUBE_VERSION"
+  # The node's install annotations follow it (lib.sh, node_install): the
+  # bundle is this one now, the site settings are the ones the node was
+  # installed from. A node the installer did not make declares nothing.
+  [ ! -e /etc/rlark/node-install ] || kubectl --kubeconfig /etc/kubernetes/kubelet.conf annotate node "$node" --overwrite \
+    "rlark.io/node-install-spec=$(cat "$B/tag").$(cat /etc/rlark/node-install)" rlark.io/node-install-state=ok >/dev/null
   ;;
 rollback)
   disarm

@@ -415,6 +415,11 @@ func (in *SiteNetworkSpec) DeepCopyInto(out *SiteNetworkSpec) {
 			(*in)[i].DeepCopyInto(&(*out)[i])
 		}
 	}
+	if in.Names != nil {
+		in, out := &in.Names, &out.Names
+		*out = make([]SiteNetworkName, len(*in))
+		copy(*out, *in)
+	}
 	if in.Nodes != nil {
 		in, out := &in.Nodes, &out.Nodes
 		*out = make([]SiteNetworkNode, len(*in))
