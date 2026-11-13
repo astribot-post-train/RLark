@@ -48,6 +48,15 @@ type Site struct {
 	// only: everything else is reached through it. Without it a leaf also
 	// dials every other hub it can, which keeps its traffic to them off the relay.
 	LeavesViaRelay bool
+	// Names are what the site's members resolve its services at.
+	Names []Name
+}
+
+// Name resolves to Address, or to the tunnel address of the member Member.
+type Name struct {
+	Name    string
+	Address string
+	Member  string
 }
 
 type Endpoint struct {
@@ -98,6 +107,14 @@ type NodeConfig struct {
 	Peers        []Peer        `json:"peers"`
 	Routes       []string      `json:"routes"`
 	UplinkRoutes []UplinkRoute `json:"uplinkRoutes,omitempty"`
+	// Names are the lines station-gateway keeps in the node's /etc/hosts. A
+	// document without them leaves the node's lines as they are.
+	Names []HostName `json:"names,omitempty"`
+}
+
+type HostName struct {
+	Name    string `json:"name"`
+	Address string `json:"address"`
 }
 
 type Peer struct {
@@ -245,11 +262,34 @@ func Compute(topology Topology, members []Member) (Result, error) {
 		}
 	}
 
+	// A name whose node has not enrolled yet is left out: the members of the
+	// site keep the line they have for it.
+	names := map[string][]HostName{}
+	for _, site := range topology.Sites {
+		for _, name := range site.Names {
+			address := name.Address
+			for _, member := range nodes {
+				if member.ID == name.Member {
+					address = member.address.String()
+				}
+			}
+			if _, err := netip.ParseAddr(address); err == nil {
+				names[site.Name] = append(names[site.Name], HostName{Name: name.Name, Address: address})
+				continue
+			}
+			for _, member := range nodes {
+				if member.Site == site.Name {
+					result.Problems[member.ID] = append(result.Problems[member.ID], fmt.Sprintf("name %s has no address yet: %q is not one and %q is not a member", name.Name, name.Address, name.Member))
+				}
+			}
+		}
+	}
+
 	for _, self := range nodes {
 		config := NodeConfig{
 			Interface: firstNonEmpty(self.Interface, topology.Interface), Address: self.address.String() + "/32",
 			ListenPort: firstPositive(self.ListenPort, topology.ListenPort), MTU: topology.MTU,
-			Peers: []Peer{}, Routes: []string{},
+			Peers: []Peer{}, Routes: []string{}, Names: names[self.Site],
 		}
 		type candidate struct {
 			peer     Peer

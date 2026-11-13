@@ -115,7 +115,11 @@ func (r *NetworkReconciler) reconcile(ctx context.Context) (reconcile.Result, er
 	siteOfCluster := map[string]string{}
 	topology := network.Topology{Pool: spec.Pool, MTU: int(spec.MTU), Interface: spec.Interface, ListenPort: int(spec.ListenPort), KeepaliveSeconds: int(spec.KeepaliveSeconds)}
 	for _, site := range spec.Sites {
-		topology.Sites = append(topology.Sites, network.Site{Name: site.Name, Mesh: site.Mesh, Reaches: site.Reaches, LeavesViaRelay: site.LeavesViaRelay})
+		names := make([]network.Name, 0, len(site.Names))
+		for _, name := range site.Names {
+			names = append(names, network.Name{Name: name.Name, Address: name.Address, Member: name.ClusterID + "/" + name.NodeName})
+		}
+		topology.Sites = append(topology.Sites, network.Site{Name: site.Name, Mesh: site.Mesh, Reaches: site.Reaches, LeavesViaRelay: site.LeavesViaRelay, Names: names})
 		for _, cluster := range site.Clusters {
 			siteOfCluster[cluster] = site.Name
 		}

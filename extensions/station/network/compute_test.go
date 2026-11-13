@@ -336,3 +336,32 @@ func TestComputeLeavesThroughTheRelayOnly(t *testing.T) {
 		t.Errorf("a leaf without a relay is reported and peers with nobody: %v", result.Problems["robots/s1u-01-x86"])
 	}
 }
+
+func TestNamesResolveToAddressesAndMembers(t *testing.T) {
+	topology := Topology{Pool: "10.254.240.0/24", MTU: 1380, Interface: "st-wg0", ListenPort: 51820, KeepaliveSeconds: 25, Sites: []Site{{Name: "lab", Names: []Name{
+		{Name: "registry.rlark.internal", Address: "10.11.14.128"},
+		{Name: "cp.robots.rlark.internal", Member: "robots/workstation"},
+		{Name: "cp.later.rlark.internal", Member: "later/server"},
+	}}, {Name: "cloud"}}}
+	members := []Member{
+		{ID: "robots/workstation", Site: "lab", Role: RoleHub, PublicKey: "a", Address: "10.254.240.5", Relay: true, Endpoints: []Endpoint{{Address: "192.168.31.55:51820", Scope: ScopeSite}}},
+		{ID: "robots/robot", Site: "lab", Role: RoleLeaf, PublicKey: "b", Address: "10.254.240.7"},
+		{ID: "cloud/gpu", Site: "cloud", Role: RoleHub, PublicKey: "c", Address: "10.254.240.2", Endpoints: []Endpoint{{Address: "1.2.3.4:51820", Scope: ScopePublic}}},
+	}
+	result, err := Compute(topology, members)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []HostName{{Name: "registry.rlark.internal", Address: "10.11.14.128"}, {Name: "cp.robots.rlark.internal", Address: "10.254.240.5"}}
+	for _, id := range []string{"robots/workstation", "robots/robot"} {
+		if got := result.Configs[id].Names; !reflect.DeepEqual(got, want) {
+			t.Fatalf("%s names: %+v", id, got)
+		}
+		if len(result.Problems[id]) != 1 {
+			t.Fatalf("%s problems: %v", id, result.Problems[id])
+		}
+	}
+	if result.Configs["cloud/gpu"].Names != nil {
+		t.Fatalf("another site's names reached cloud: %+v", result.Configs["cloud/gpu"].Names)
+	}
+}
