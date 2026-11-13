@@ -314,6 +314,18 @@ func (e *Engine) deleteOwned(ctx context.Context, declaration *corev1.Secret, it
 	if err != nil {
 		return err
 	}
+	// An item recorded in a namespace that has since been replaced (the cluster was rebuilt under the same
+	// id, or the namespace was deleted and created again) went away with that namespace: the object now
+	// under its name belongs to the new namespace and is not this item.
+	if item.Namespace != "" && item.NamespaceUID != "" {
+		namespace, err := e.TargetClient.Resource(schema.GroupVersionResource{Version: "v1", Resource: "namespaces"}).Get(ctx, item.Namespace, metav1.GetOptions{})
+		if err != nil && !apierrors.IsNotFound(err) {
+			return err
+		}
+		if err == nil && namespace.GetUID() != item.NamespaceUID {
+			return nil
+		}
+	}
 	if existing.GetUID() != item.UID || existing.GetAnnotations()[e.Mode.OwnershipPrefix+"definition-uid"] != string(declaration.UID) {
 		return fmt.Errorf("ownership lost for %s/%s", item.Namespace, item.Name)
 	}
