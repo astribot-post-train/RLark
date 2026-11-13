@@ -91,12 +91,22 @@ UNIT
   changed=tunnel
 }
 
-# kernel: the modules and settings a node's pod network needs, now and at
-# every boot, whatever container runtime the node has.
+# kernel: the modules and settings a node's pod network and its pods need,
+# now and at every boot, whatever container runtime the node has.
 kernel() {
   for module in overlay br_netfilter; do modprobe $module || fail "the kernel has no $module module"; done
   printf '%s\n' overlay br_netfilter wireguard > /etc/modules-load.d/rlark.conf
-  printf '%s\n' 'net.ipv4.ip_forward = 1' 'net.bridge.bridge-nf-call-iptables = 1' > /etc/sysctl.d/90-rlark.conf
+  # inotify instances and watches are counted for the whole machine, all its
+  # pods together: the kernel's 128 instances are used up by some tens of
+  # pods ("too many open files"). A machine's higher limit is kept.
+  {
+    printf '%s\n' 'net.ipv4.ip_forward = 1' 'net.bridge.bridge-nf-call-iptables = 1'
+    for limit in max_user_instances=1024 max_user_watches=524288; do
+      held=$(sysctl -n "fs.inotify.${limit%=*}")
+      [ "$held" -gt "${limit#*=}" ] || held=${limit#*=}
+      echo "fs.inotify.${limit%=*} = $held"
+    done
+  } > /etc/sysctl.d/90-rlark.conf
   sysctl -q -p /etc/sysctl.d/90-rlark.conf
 }
 
