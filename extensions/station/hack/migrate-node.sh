@@ -36,7 +36,8 @@ import json, sys
 for e in json.load(sys.stdin)["items"]:
     if e["metadata"]["name"] == sys.argv[1] and e["status"].get("phase") == "Enrolled":
         config = json.loads(e["status"]["config"])
-        print(e["metadata"]["namespace"], e["status"]["tunnelAddress"], config["listenPort"])' "$NODE")
+        print(e["metadata"]["namespace"], e["status"]["tunnelAddress"], config["listenPort"])' "$NODE") || true
+[[ -n ${old_namespace:-} ]] || { echo "$NODE has no Enrolled NetworkEnrollment in the management plane: it is not a node of the site network under that name (kubectl get networkenrollments.station.rlark.io -A)" >&2; exit 1; }
 old_cluster=$(mgmt -n "$old_namespace" get networkenrollments.station.rlark.io "$NODE" -o jsonpath='{.spec.clusterID}')
 uplink=$(mgmt -n station-system get sitenetwork default -o json | python3 -c '
 import json, sys
@@ -93,6 +94,14 @@ ready_since() {
   [[ $at == True\ * ]] && (( $(date -d "${at#True }" +%s) >= started ))
 }
 until ready_since; do
+  # The Job has failed and the node is Ready where it was: it did not leave,
+  # or it is back. (A node that has left takes its Job's pod along; that pod
+  # is called failed in the old cluster some minutes later.)
+  if [[ $(old -n "$NS" get job "$name" -o jsonpath='{.status.failed}' 2>/dev/null) -ge 1 && $(old get node "$NODE" -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null) == True ]]; then
+    echo "$NODE did not move: the installer on it failed and the node is Ready under its old control plane. The end of its log:" >&2
+    old -n "$NS" logs "job/$name" --tail=8 >&2 || true
+    exit 1
+  fi
   if (( $(date +%s) - started > ${TIMEOUT:-600} )); then
     # A move within one registered cluster leaves the admission: it is the
     # node's declaration there, and the node goes on under it where it is.
