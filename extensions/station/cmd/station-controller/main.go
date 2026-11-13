@@ -133,6 +133,10 @@ func main() {
 		ctrl.Log.Error(err, "register SiteNetwork reconciler")
 		os.Exit(1)
 	}
+	if err := (&controller.NodeClassReconciler{Client: manager.GetClient(), Reader: manager.GetAPIReader()}).SetupWithManager(manager); err != nil {
+		ctrl.Log.Error(err, "register NodeClass reconciler")
+		os.Exit(1)
+	}
 	if err := manager.AddHealthzCheck("healthz", healthz.Ping); err != nil {
 		ctrl.Log.Error(err, "register health check")
 		os.Exit(1)

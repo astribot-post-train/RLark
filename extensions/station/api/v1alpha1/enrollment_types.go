@@ -17,7 +17,11 @@ type NodeClass struct {
 
 type NodeClassSpec struct {
 	// Labels and Taints (key=value:effect) are what a node of the class
-	// registers with.
+	// registers with. A change of Labels reaches the nodes that have joined
+	// as far as the cluster agent carries management labels to the cluster
+	// (rlark.io/node-category, rlark.io/robot-* and the prefixes the agent
+	// is started with); a change of Taints reaches a node when it is
+	// installed anew.
 	// +kubebuilder:validation:MaxProperties=32
 	Labels map[string]string `json:"labels,omitempty"`
 	// +kubebuilder:validation:MaxItems=8

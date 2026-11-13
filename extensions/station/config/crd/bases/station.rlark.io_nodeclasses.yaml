@@ -46,7 +46,11 @@ spec:
                   type: string
                 description: |-
                   Labels and Taints (key=value:effect) are what a node of the class
-                  registers with.
+                  registers with. A change of Labels reaches the nodes that have joined
+                  as far as the cluster agent carries management labels to the cluster
+                  (rlark.io/node-category, rlark.io/robot-* and the prefixes the agent
+                  is started with); a change of Taints reaches a node when it is
+                  installed anew.
                 maxProperties: 32
                 type: object
               taints:
