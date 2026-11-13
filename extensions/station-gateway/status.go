@@ -36,7 +36,7 @@ func observedPeers(device *wgtypes.Device) []peerObservation {
 	return peers
 }
 
-// publishObservation writes the interface, its addresses and, for every peer,
+// publishObservation writes the interface, its public key, its addresses and, for every peer,
 // its public key, the time of its last handshake and the bytes received from
 // and sent to it. It never includes the device's keys, a preshared key, an
 // endpoint or allowed addresses.
@@ -52,6 +52,18 @@ func publishObservation(path string, data []byte, now time.Time) error {
 	if link.Type() != "wireguard" || link.Attrs().Alias != owner {
 		return fmt.Errorf("interface is not owned by station gateway")
 	}
+	deviceClient, err := wgctrl.New()
+	if err != nil {
+		return fmt.Errorf("open wireguard device: %w", err)
+	}
+	device, err := deviceClient.Device(d.Interface)
+	closeErr := deviceClient.Close()
+	if err != nil {
+		return fmt.Errorf("read wireguard public key: %w", err)
+	}
+	if closeErr != nil {
+		return fmt.Errorf("close wireguard device client: %w", closeErr)
+	}
 	addresses, err := netlink.AddrList(link, netlink.FAMILY_ALL)
 	if err != nil {
 		return err
@@ -63,21 +75,13 @@ func publishObservation(path string, data []byte, now time.Time) error {
 		}
 	}
 	sort.Strings(values)
-	client, err := wgctrl.New()
-	if err != nil {
-		return err
-	}
-	defer client.Close()
-	device, err := client.Device(d.Interface)
-	if err != nil {
-		return err
-	}
 	content, err := json.Marshal(struct {
 		ObservedAt time.Time         `json:"observedAt"`
 		Interface  string            `json:"interface"`
+		PublicKey  string            `json:"publicKey"`
 		Addresses  []string          `json:"addresses"`
 		Peers      []peerObservation `json:"peers"`
-	}{now.UTC(), d.Interface, values, observedPeers(device)})
+	}{now.UTC(), d.Interface, device.PublicKey.String(), values, observedPeers(device)})
 	if err != nil {
 		return err
 	}

@@ -17,7 +17,8 @@ SOCKET=/run/containerd-fleet/containerd.sock
 # The site settings this node is installed from; what is this node's alone
 # (name, tunnel address, labels) is not among them.
 SETTINGS="worker api=$JOIN_API_SERVER interface=$TUNNEL_INTERFACE"
-command -v containerd >/dev/null || fail "containerd is required; it is installed together with docker"
+# A machine that is a node already keeps its runtime, wherever that is installed.
+[ -e /etc/kubernetes/kubelet.conf ] || command -v containerd >/dev/null || fail "containerd is required; it is installed together with docker"
 modprobe wireguard || fail "the kernel has no wireguard module"
 
 # 0. A machine that is a node already leaves its cluster first (RLARK_MIGRATE,
@@ -25,22 +26,18 @@ modprobe wireguard || fail "the kernel has no wireguard module"
 #    images it has, and its WireGuard key, and with that its tunnel address.
 if [ -e /etc/kubernetes/kubelet.conf ]; then
   [ -n "${RLARK_MIGRATE:-}" ] || fail "this machine is already a node (/etc/kubernetes/kubelet.conf exists); moving it is migrate-node.sh"
-  [ ! -e /etc/kubernetes/manifests/kube-apiserver.yaml ] || [ "$RLARK_MIGRATE" = control-plane ] ||
-    fail "this node is its cluster's control plane; the cluster ends when it leaves, so it moves last and with RLARK_MIGRATE=control-plane"
+  [ ! -e /etc/kubernetes/manifests/kube-apiserver.yaml ] || fail "this node is its cluster's control plane: the cluster would end with it. A control plane moves to another machine with its cluster (control-plane, FROM_SNAPSHOT), not into another cluster"
   SOCKET=$(sed -n 's/.*--container-runtime-endpoint=unix:\/\/\([^ "]*\).*/\1/p' /var/lib/kubelet/kubeadm-flags.env)
   [ -S "$SOCKET" ] || fail "cannot find the node's container runtime socket"
-  old=$(dirname "$(systemctl show kubelet -p ExecStart --value | sed -n 's/.*path=\([^ ;]*kubelet\) .*/\1/p')")
+  # While the machine is still a node of its cluster: a kernel without the
+  # modules is no reason to leave it.
+  kernel
   # What makes this machine a node of the old cluster is kept: if it does not
   # become a node of the new one, it goes back by itself (back_to_old_cluster).
-  # A control-plane node's etcd is not among it: migrate-node.sh snapshots it.
   OLD=$B/old-cluster
   keep_old_cluster
-  if [ -e /var/lib/etcd/rlark-snapshot-before-migrate.db ]; then
-    install -d /var/backups/rlark-node-migrate && mv /var/lib/etcd/rlark-snapshot-before-migrate.db /var/backups/rlark-node-migrate/etcd-snapshot.db
-    cp -a "$OLD/etc-kubernetes" /var/backups/rlark-node-migrate/
-  fi
   systemctl stop kubelet
-  "$old/kubeadm" reset --force --cri-socket "unix://$SOCKET" > "$B"/reset.log 2>&1 || { tail -20 "$B"/reset.log >&2; fail "kubeadm reset"; }
+  "$B"/bin/kubeadm reset --force --cri-socket "unix://$SOCKET" > "$B"/reset.log 2>&1 || { tail -20 "$B"/reset.log >&2; fail "kubeadm reset"; }
   rm -rf /etc/cni/net.d/*
   KEEP_RUNTIME=1
   stamp "left the old cluster; runtime $SOCKET and its images are kept"
@@ -58,7 +55,7 @@ if [ -e /etc/kubernetes/kubelet.conf ]; then
   trap back_to_old_cluster EXIT
 fi
 
-install -d /opt/rlark/bin /opt/cni/bin /etc/rlark/station /etc/kubernetes/kubelet.conf.d /etc/containerd-fleet
+install -d /opt/rlark/bin /opt/cni/bin /etc/rlark/station /etc/kubernetes/kubelet.conf.d
 install -m 755 "$B"/bin/* /opt/rlark/bin/
 cp -n "$B"/cni/* /opt/cni/bin/
 
@@ -75,7 +72,7 @@ stamp "tunnel up: $TUNNEL_ADDRESS on $TUNNEL_INTERFACE"
 
 # 2. A containerd for the kubelet, with the images a node needs before it
 #    can pull anything.
-if [ -z "${KEEP_RUNTIME:-}" ]; then own_runtime; else kernel; fi
+[ -n "${KEEP_RUNTIME:-}" ] || { kernel; own_runtime; }
 import_images "$B"/images
 stamp "container runtime ready, $(ls "$B"/images/*.tar | wc -l) image archives imported"
 

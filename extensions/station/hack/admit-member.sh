@@ -1,24 +1,18 @@
 #!/usr/bin/env bash
-# Admit a member cluster whose API the management plane reaches only through
-# the tunnel: a robot that carries its own single-node cluster behind a NAT.
-# Run on the management machine as root, in this order:
+# Register a member cluster with the site's Station: what the cluster runs for
+# it, and how the management plane reaches the cluster's API. Run on the
+# management machine as root, in this order:
 #
 #   admit-member.sh install    MEMBER_KUBECONFIG CLUSTER_ID
-#   admit-member.sh bootstrap  MEMBER_KUBECONFIG CLUSTER_ID NODE [COMPUTED.json]
 #   admit-member.sh credential MEMBER_KUBECONFIG CLUSTER_ID MEMBER_SERVER [TLS_SERVER_NAME]
-#   admit-member.sh rebind     MEMBER_KUBECONFIG CLUSTER_ID NODE REASON      (a replaced machine that keeps its name)
-#   admit-member.sh finish     MEMBER_KUBECONFIG CLUSTER_ID NODE
 #
 # install    puts the reader identity, the API's CA, the agent and the gateway into the cluster.
-# bootstrap  gives the node its first tunnel: its new public key is declared in the SiteNetwork
-#            (the one copied key of the procedure) and the node gets a static document. For a
-#            replaced machine COMPUTED.json is the document computed for the old one, saved
-#            before its enrollment is deleted here; without it the document holds the hubs only.
-# credential stores how station-api and station-controller reach the cluster's API (through the tunnel).
-# rebind     moves the Station of a same-named node to the node's new UID; address and identity stay.
-# finish     removes the declared key and the static document once the node has enrolled.
+# credential stores how station-api and station-controller reach the cluster's API (through the
+#            tunnel: MEMBER_SERVER is the control plane's tunnel address, TLS_SERVER_NAME its name).
+#            Run again when the cluster's control plane has moved to another machine.
 #
-# A worker of a site cluster needs none of this: it joins the cluster and is labelled.
+# A machine joins a cluster as a node by admit-node.sh; a robot that carries a
+# cluster of its own is not a form the site has any more.
 set -euo pipefail
 : "${KCP:=/home/cailiang/.local/share/rlark-runtime/kcp-admin.kubeconfig}"
 : "${REGISTRY:=10.254.240.1:5443}" "${API_URL:=https://10.11.14.128:18443}" "${API_CA:=/tmp/station-api-ca.crt}"
@@ -40,42 +34,6 @@ install)
   member label node --all --overwrite station.rlark.io/network=enabled
   member -n station-system rollout status ds/station-agent-network --timeout=300s
   stamp installed
-  ;;
-bootstrap)
-  NODE=$4 COMPUTED=${5:-}
-  pod=$(member -n station-system get pod -l app=station-agent-network --field-selector spec.nodeName="$NODE" -o name)
-  key=$(member -n station-system logs "$pod" -c wireguard | sed -n 's/.*wireguard public key: //p' | tail -1)
-  [[ ${#key} == 44 ]]
-  stamp "public key of $NODE: $key"
-  mgmt -n station-system get sitenetwork default -o json > /tmp/sitenetwork.json
-  mgmt get networkenrollments.station.rlark.io -A -o json > /tmp/enrollments.json
-  python3 - "$CLUSTER" "$NODE" "$key" "$COMPUTED" > /tmp/bootstrap.json <<'PY'
-import json, sys
-cluster, node, key, computed = sys.argv[1:5]
-spec = json.load(open('/tmp/sitenetwork.json'))['spec']
-index = next(i for i, n in enumerate(spec['nodes']) if (n['clusterID'], n['nodeName']) == (cluster, node))
-if computed:
-    document = json.load(open(computed))
-else:
-    keys = {(e['spec']['clusterID'], e['metadata']['name']): e['status']['publicKey']
-            for e in json.load(open('/tmp/enrollments.json'))['items'] if e.get('status', {}).get('phase') == 'Enrolled'}
-    hubs = [dict(n, publicKey=keys[n['clusterID'], n['nodeName']]) for n in spec['nodes']
-            if n.get('role') == 'Hub' and n.get('endpoints') and (n['clusterID'], n['nodeName']) in keys]
-    document = {'interface': spec['interface'], 'address': spec['nodes'][index]['address'] + '/32', 'mtu': spec['mtu'],
-                'peers': [{'publicKey': h['publicKey'], 'endpoint': h['endpoints'][0]['address'],
-                           'allowedIPs': [h['address'] + '/32'], 'keepaliveSeconds': spec['keepaliveSeconds']} for h in hubs],
-                'routes': [h['address'] + '/32' for h in hubs]}
-document['listenPort'] = 0
-json.dump(document, sys.stdout)
-patch = [{'op': 'add', 'path': f'/spec/nodes/{index}/publicKey', 'value': key}]
-json.dump(patch, open('/tmp/sitenetwork.patch.json', 'w'))
-PY
-  member -n station-system create configmap station-wireguard-config --from-file="$NODE.json"=/tmp/bootstrap.json --dry-run=client -o yaml | member apply -f -
-  mgmt -n station-system patch sitenetwork default --type=json --patch-file /tmp/sitenetwork.patch.json
-  # The replaced machine's enrollment would keep its key in every peer table.
-  mgmt -n "$CLUSTER" delete networkenrollments.station.rlark.io "$NODE" --ignore-not-found
-  member -n station-system delete "$pod"
-  stamp "bootstrap document and declared key in place"
   ;;
 credential)
   SERVER=$4 TLS_NAME=${5:-}
@@ -108,43 +66,5 @@ EOF
   mgmt -n station-member-credentials annotate secret "$secret" --overwrite station.rlark.io/cluster-id="$CLUSTER"
   stamp "member credential $secret stored"
   ;;
-rebind)
-  NODE=$4 REASON=$5
-  uid=$(member get node "$NODE" -o jsonpath='{.metadata.uid}')
-  read -r station station_uid version < <(mgmt -n "$CLUSTER" get stations.station.rlark.io -o json | python3 -c "
-import json, sys
-s = next(s for s in json.load(sys.stdin)['items'] if s['spec']['binding']['nodeName'] == sys.argv[1] and not s['spec'].get('retired'))
-print(s['metadata']['name'], s['metadata']['uid'], s['spec']['binding']['version'])" "$NODE")
-  request=replace-$NODE-$(date +%Y%m%d%H%M%S)
-  mgmt apply -f - <<EOF
-apiVersion: station.rlark.io/v1alpha1
-kind: StationRebind
-metadata: {name: $request, namespace: $CLUSTER}
-spec:
-  requestID: $request
-  stationRef: {name: $station, uid: $station_uid}
-  expectedBindingVersion: $version
-  targetNodeName: $NODE
-  targetNodeUID: $uid
-  reason: "$REASON"
-  requestedBy: ${SUDO_USER:-root}@$(hostname)
-EOF
-  stamp "rebind $request submitted: $station -> node UID $uid"
-  until phase=$(mgmt -n "$CLUSTER" get stationrebinds.station.rlark.io "$request" -o jsonpath='{.status.phase}') && [[ $phase == Applied || $phase == Rejected ]]; do sleep 1; done
-  stamp "rebind $phase"
-  [[ $phase == Applied ]]
-  until [[ $(mgmt -n "$CLUSTER" get networkenrollments.station.rlark.io "$NODE" -o jsonpath='{.status.phase}' 2>/dev/null) == Enrolled ]]; do sleep 1; done
-  stamp "$NODE enrolled"
-  ;;
-finish)
-  NODE=$4
-  [[ $(mgmt -n "$CLUSTER" get networkenrollments.station.rlark.io "$NODE" -o jsonpath='{.status.phase}') == Enrolled ]]
-  index=$(mgmt -n station-system get sitenetwork default -o json | python3 -c "
-import json, sys
-print(next(i for i, n in enumerate(json.load(sys.stdin)['spec']['nodes']) if (n['clusterID'], n['nodeName']) == tuple(sys.argv[1:3])))" "$CLUSTER" "$NODE")
-  mgmt -n station-system patch sitenetwork default --type=json -p "[{\"op\":\"remove\",\"path\":\"/spec/nodes/$index/publicKey\"}]"
-  member -n station-system delete configmap station-wireguard-config
-  stamp "declared key and static document removed"
-  ;;
-*) sed -n 2,22p "$0"; exit 2 ;;
+*) sed -n 2,14p "$0"; exit 2 ;;
 esac

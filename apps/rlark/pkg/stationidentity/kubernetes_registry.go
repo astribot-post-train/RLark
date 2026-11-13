@@ -208,7 +208,11 @@ func (r KubernetesStationBindingResolver) Resolve(ctx context.Context, clusterID
 		if phaseErr != nil {
 			return Binding{}, fmt.Errorf("read Station %q phase", station.GetName())
 		}
-		inactive := retired || phase == "Conflict" || phase == "Retired"
+		// A Conflict phase may reflect a stale pre-rebind observation. The
+		// current Station binding and member Node UID were verified above, so
+		// that exact agent must be allowed to publish the fresh observation that
+		// lets the Station controller resolve the conflict.
+		inactive := retired || phase == "Retired"
 		binding = Binding{NodeUID: uid, StationUID: string(station.GetUID()), Generation: version, Inactive: inactive}
 	}
 	if binding.StationUID == "" {

@@ -27,7 +27,7 @@ generate-crd-models: ## Generate TypeScript models from the checked-in CRD manif
 ##@ Docker
 
 .PHONY: docker-build docker-push
-docker-build: build ## Build rlark-ui image and load into local docker
+docker-build: ## Build rlark-ui image and load into local docker
 	docker buildx build \
 		--platform $(BUILDX_PLATFORMS) \
 		--load \
@@ -36,7 +36,7 @@ docker-build: build ## Build rlark-ui image and load into local docker
 		-f Dockerfile \
 		../..
 
-docker-push: build ## Build rlark-ui image and push to registry
+docker-push: ## Build rlark-ui image and push to registry
 	docker buildx build \
 		--platform $(BUILDX_PLATFORMS) \
 		--push \

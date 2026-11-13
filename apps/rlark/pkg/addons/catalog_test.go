@@ -3,6 +3,7 @@ package addons
 import (
 	"bytes"
 	"io"
+	"strings"
 	"testing"
 
 	"go.yaml.in/yaml/v3"
@@ -139,5 +140,101 @@ func TestRcloneSelectorsValidateAndDefault(t *testing.T) {
 				t.Fatal("default controller unexpectedly restricts placement")
 			}
 		}
+	}
+}
+
+func TestRclonePreservesExistingPodsWithOnDelete(t *testing.T) {
+	addon, _ := Registry.Get("csi-driver-rclone")
+	manifests, err := addon.Render(map[string]string{"nodeUpdateStrategy": "OnDelete", "nodeImagePullPolicy": "IfNotPresent"}, "rlark-system", "csi", "uid")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, manifest := range manifests {
+		decoder := yaml.NewDecoder(bytes.NewReader(manifest.Raw))
+		for {
+			var resource map[string]any
+			if err := decoder.Decode(&resource); err == io.EOF {
+				break
+			} else if err != nil {
+				t.Fatal(err)
+			}
+			if resource["kind"] != "DaemonSet" {
+				continue
+			}
+			spec := resource["spec"].(map[string]any)
+			strategy := spec["updateStrategy"].(map[string]any)
+			if strategy["type"] != "OnDelete" || strategy["rollingUpdate"] != nil {
+				t.Fatalf("unexpected strategy: %v", strategy)
+			}
+			pod := spec["template"].(map[string]any)["spec"].(map[string]any)
+			if pod["nodeSelector"] != nil {
+				t.Fatal("default node placement restricted")
+			}
+			for _, c := range pod["containers"].([]any) {
+				if c.(map[string]any)["imagePullPolicy"] != "IfNotPresent" {
+					t.Fatalf("unexpected container: %v", c)
+				}
+			}
+		}
+	}
+	for _, values := range []map[string]string{{"nodeUpdateStrategy": "invalid"}, {"nodeImagePullPolicy": "Never"}} {
+		if _, err := addon.Render(values, "rlark-system", "csi", "uid"); err == nil {
+			t.Fatal("invalid strategy accepted")
+		}
+	}
+}
+
+func TestRcloneNodeTpsLimitIsOptional(t *testing.T) {
+	addon, _ := Registry.Get("csi-driver-rclone")
+	for limit, want := range map[string]bool{"": false, "20": true} {
+		manifests, err := addon.Render(map[string]string{"nodeTpsLimit": limit}, "cluster", "csi-driver-rclone", "uid")
+		if err != nil {
+			t.Fatal(err)
+		}
+		found := false
+		for _, m := range manifests {
+			found = found || bytes.Contains(m.Raw, []byte("name: RCLONE_TPSLIMIT\n              value: \"20\""))
+		}
+		if found != want {
+			t.Fatalf("nodeTpsLimit=%q: RCLONE_TPSLIMIT rendered=%v", limit, found)
+		}
+	}
+}
+
+func TestRegistryTrustRendersHostsAndCA(t *testing.T) {
+	addon, _ := Registry.Get("registry-trust")
+	ca := "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----"
+	manifests, err := addon.Render(map[string]string{"hosts": "10.0.0.1:5443,10.0.0.2:5443", "caCert": ca, "image": "registry/shell:1", "kubectlImage": "registry/kubectl:1"}, "cluster", "registry-trust", "uid")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var daemonSet struct {
+		Spec struct {
+			Template struct {
+				Spec struct {
+					InitContainers []struct {
+						Image string
+						Env   []struct{ Name, Value string }
+					} `yaml:"initContainers"`
+					Volumes []struct {
+						HostPath struct{ Path string } `yaml:"hostPath"`
+					}
+				}
+			}
+		}
+	}
+	if err := yaml.Unmarshal([]byte(strings.Split(string(manifests[0].Raw), "\n---\n")[1]), &daemonSet); err != nil {
+		t.Fatal(err)
+	}
+	pod := daemonSet.Spec.Template.Spec
+	env := map[string]string{}
+	for _, e := range pod.InitContainers[0].Env {
+		env[e.Name] = e.Value
+	}
+	if env["HOSTS"] != "10.0.0.1:5443,10.0.0.2:5443" || env["CA_CERT"] != ca+"\n" {
+		t.Fatalf("env = %q", env)
+	}
+	if pod.Volumes[0].HostPath.Path != "/etc" || pod.InitContainers[0].Image != "registry/shell:1" {
+		t.Fatalf("pod = %+v", pod)
 	}
 }

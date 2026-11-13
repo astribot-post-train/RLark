@@ -1,18 +1,28 @@
 #!/usr/bin/env bash
-# Admit a machine as a node of a registered cluster and print the one command
-# to run on it. Run where the management plane's kubeconfig is.
+# Admit a machine as a node of a registered cluster and print what to run on
+# it: one command, and before it, for a machine of a site whose leaves stand
+# behind a device of their own (the site's leafUplink.setup), the command that
+# makes that device let the machine out. Run where the management plane's
+# kubeconfig is.
 #
 #   admit-node.sh CLUSTER_ID NODE_NAME API_SERVER STATION_API [label=value ...]
 #
 #   API_SERVER   host:port of the cluster's API as the machine reaches it without the tunnel
 #   STATION_API  host:port of Station API as the machine reaches it
-# Environment: KCP (management kubeconfig), TAINTS ("k=v:Effect,..."), ADDRESS
-# (pin the tunnel address), UPLINK ("gateway,source,interface" for
-# a machine whose default route does not lead out), TTL (default "2 hours").
-# The Gateway's "add node" page does the same and shows the same command.
+# Environment: KCP (management kubeconfig), CA (Station API's CA file), TAINTS
+# ("k=v:Effect,..."), ADDRESS (pin the tunnel address), UPLINK
+# ("gateway,source,interface" for a machine whose default route does not lead
+# out), TTL (default "2 hours").
 set -euo pipefail
-: "${KCP:=/home/cailiang/.local/share/rlark-runtime/kcp-admin.kubeconfig}"
+: "${KCP:=/home/cailiang/.local/share/rlark-runtime/kcp-admin.kubeconfig}" "${CA:=/tmp/station-api-ca.crt}"
 CLUSTER=$1 NODE=$2 API_SERVER=$3 STATION_API=$4; shift 4
+# What the operator runs as root is what this API gave. The machine has no CA
+# of ours yet: its command fetches the CA unverified, compares it with the
+# digest printed here, and verifies every connection after that with it. A
+# renewed certificate of the API leaves a command good; another CA does not.
+ca_digest=$(sha256sum < "$CA" | cut -d' ' -f1)
+[[ $(curl -fsS --cacert "$CA" "https://$STATION_API/v1/bootstrap/ca" | sha256sum | cut -d' ' -f1) == "$ca_digest" ]] ||
+  { echo "Station API at $STATION_API does not serve, over a connection the CA in $CA verifies, that same CA; nothing was admitted" >&2; exit 1; }
 namespace=$(kubectl --kubeconfig "$KCP" get clusters.rlinf.io "$CLUSTER" -o jsonpath='{.spec.agentNamespace}')
 code=$(head -c 512 /dev/urandom | tr -dc 'a-z0-9' | cut -c1-8)
 {
@@ -41,4 +51,18 @@ else
   grep -v ': null$' "$admission" | kubectl --kubeconfig "$KCP" create -f - >&2
 fi
 rm -f "$admission"
-echo "curl -sk https://$STATION_API/b/$code | sudo sh"
+
+trust="c=\$(mktemp) && curl --connect-timeout 15 -fsSk https://$STATION_API/v1/bootstrap/ca -o \$c && echo \"$ca_digest  \$c\" | sha256sum -c - && curl -fsS --cacert \$c https://$STATION_API/b/$code"
+# The device before the machine fetches its setup with the machine's code and
+# runs it only if it is, byte for byte, the file this API serves now.
+read -r gateway login < <(kubectl --kubeconfig "$KCP" -n station-system get sitenetwork default -o json | python3 -c '
+import json, sys
+for site in json.load(sys.stdin)["spec"]["sites"]:
+    uplink = site.get("leafUplink", {})
+    if sys.argv[1] in site.get("clusters", []) and "setup" in uplink:
+        print(uplink["gateway"], uplink["setup"]["login"])' "$CLUSTER") || true
+if [[ -n ${gateway:-} ]]; then
+  digest=$(curl -fsS --cacert "$CA" "https://$STATION_API/b/$code/uplink" | sha256sum | cut -d' ' -f1)
+  echo "ssh -t $login@$gateway 'f=\$(mktemp) $trust/uplink -o \$f && echo \"$digest  \$f\" | sha256sum -c - && sudo sh \$f'"
+fi
+echo "$trust | sudo sh"

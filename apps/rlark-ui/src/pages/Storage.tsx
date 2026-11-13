@@ -37,32 +37,16 @@ import {
 import { ColumnFilterPopover } from "../components/ColumnFilterPopover";
 import { SmbStorageFields } from "../components/SmbStorageFields";
 import {
-  normalizeStorageType,
   smbLocation,
   storageLocation,
   storageProviderLabel,
 } from "../utils/smbStorage";
+import {
+  normalizeStorageClass,
+  storageClassToForm,
+  type StorageClassFormState,
+} from "../utils/storageClass";
 import { formatChinaDateTime } from "../utils/time";
-
-type StorageClassFormState = {
-  name: string;
-  clusters: string[];
-  type: StorageType;
-  provider: StorageProvider;
-  endpoint: string;
-  region: string;
-  bucket: string;
-  access_key_id: string;
-  access_key_secret: string;
-  path_style: boolean;
-  host: string;
-  share: string;
-  sub_path: string;
-  username: string;
-  password: string;
-  domain: string;
-  description: string;
-};
 
 type ProviderOption = {
   name: string;
@@ -112,57 +96,8 @@ function storageClassSubmissionError(
   return errorMessage(error.body) || error.message || fallback;
 }
 
-function normalizeStorageClass(raw: any): StorageClass {
-  const name = raw?.name ?? raw?.id ?? "";
-  return {
-    id: raw?.id ?? name,
-    name,
-    namespace: raw?.namespace ?? "default",
-    clusters: Array.isArray(raw?.clusters) ? raw.clusters : [],
-    type: normalizeStorageType(raw?.type),
-    provider: (raw?.provider ?? "") as StorageProvider,
-    endpoint: raw?.endpoint ?? "",
-    region: raw?.region ?? "",
-    bucket: raw?.bucket ?? "",
-    accessKeyId: raw?.accessKeyId ?? raw?.access_key_id ?? "",
-    pathStyle: Boolean(raw?.pathStyle ?? raw?.path_style),
-    host: raw?.host ?? "",
-    share: raw?.share ?? "",
-    subPath: raw?.subPath ?? raw?.sub_path ?? "",
-    username: raw?.username ?? "",
-    domain: raw?.domain ?? "",
-    description: raw?.description ?? "",
-    createdAt: raw?.createdAt ?? raw?.created_at ?? "",
-  };
-}
-
 function isMaskedAccessKeyID(value: string): boolean {
   return /^.{2}\*+.{2}$/.test(value);
-}
-
-function storageClassToForm(
-  storageClass?: StorageClass,
-): StorageClassFormState {
-  const accessKeyID = storageClass?.accessKeyId ?? "";
-  return {
-    name: storageClass?.name ?? "",
-    clusters: storageClass?.clusters ?? [],
-    type: storageClass?.type ?? "s3",
-    provider: storageClass?.provider ?? "",
-    endpoint: storageClass?.endpoint ?? "",
-    region: storageClass?.region ?? "",
-    bucket: storageClass?.bucket ?? "",
-    access_key_id: accessKeyID,
-    access_key_secret: "",
-    path_style: storageClass?.pathStyle ?? false,
-    host: storageClass?.host ?? "",
-    share: storageClass?.share ?? "",
-    sub_path: storageClass?.subPath ?? "",
-    username: storageClass?.username ?? "",
-    password: "",
-    domain: storageClass?.domain ?? "",
-    description: storageClass?.description ?? "",
-  };
 }
 
 export function StorageClassesPage({
@@ -596,6 +531,14 @@ export function StorageClassDetailPage({
                   <strong>{storageClass.endpoint || "—"}</strong>
                 </div>
                 <div>
+                  <span className="muted">{c.storageClass.mountEndpoint}</span>
+                  <strong>
+                    {storageClass.mount_endpoint ||
+                      storageClass.endpoint ||
+                      "—"}
+                  </strong>
+                </div>
+                <div>
                   <span className="muted">{c.storageClass.pathStyle}</span>
                   <strong>
                     {storageClass.pathStyle
@@ -606,6 +549,35 @@ export function StorageClassDetailPage({
                         ? "禁用"
                         : "Disabled"}
                   </strong>
+                </div>
+                <div>
+                  <span className="muted">{c.storageClass.prefix}</span>
+                  <strong>{storageClass.prefix || "—"}</strong>
+                </div>
+                <div>
+                  <span className="muted">{c.storageClass.vfsCacheMode}</span>
+                  <strong>{storageClass.vfs_cache_mode || "writes"}</strong>
+                </div>
+                <div>
+                  <span className="muted">
+                    {zh ? "挂载配置" : "Mount profile"}
+                  </span>
+                  <strong>{storageClass.mount_profile || "default"}</strong>
+                </div>
+                <div>
+                  <span className="muted">
+                    {zh
+                      ? "生效选项（新挂载）"
+                      : "Effective options (new mounts)"}
+                  </span>
+                  <pre>
+                    {[
+                      ...(storageClass.effective_mount_options || []),
+                      ...Object.entries(
+                        storageClass.effective_backend_options || {},
+                      ).map(([key, value]) => `${key}=${value}`),
+                    ].join("\n")}
+                  </pre>
                 </div>
               </>
             )}
@@ -752,7 +724,13 @@ export function StorageClassCreatePage({
           password: form.password,
           domain: form.domain,
         }
-      : { ...form, type: "s3" as const };
+      : {
+          ...form,
+          mount_options: form.mount_options
+            .map((line) => line.trim())
+            .filter(Boolean),
+          type: "s3" as const,
+        };
     try {
       if (isEdit)
         await storageClassesApi.update(initialStorageClass!.name, payload);
@@ -961,6 +939,19 @@ export function StorageClassCreatePage({
                   />
                 </label>
                 <label>
+                  {c.storageClass.mountEndpoint}
+                  <input
+                    value={form.mount_endpoint}
+                    onChange={(e) =>
+                      setForm({ ...form, mount_endpoint: e.target.value })
+                    }
+                    placeholder={form.endpoint || "https://s3.amazonaws.com"}
+                  />
+                  <span className="muted">
+                    {c.storageClass.mountEndpointHint}
+                  </span>
+                </label>
+                <label>
                   {c.storageClass.region} *
                   <input
                     required
@@ -981,6 +972,81 @@ export function StorageClassCreatePage({
                     }
                     placeholder="my-bucket"
                   />
+                </label>
+                <label>
+                  {c.storageClass.prefix}
+                  <input
+                    value={form.prefix}
+                    onChange={(e) =>
+                      setForm({ ...form, prefix: e.target.value })
+                    }
+                    placeholder="ks3-regular"
+                  />
+                  <span className="muted">{c.storageClass.prefixHint}</span>
+                </label>
+                <label className="field">
+                  {zh ? "挂载配置" : "Mount profile"}
+                  <select
+                    value={form.mount_profile}
+                    onChange={(e) => {
+                      const profile = e.target.value as
+                        "default" | "read" | "archive";
+                      setForm({
+                        ...form,
+                        mount_profile: profile,
+                        vfs_cache_mode:
+                          profile === "archive" ? "off" : form.vfs_cache_mode,
+                      });
+                    }}
+                  >
+                    <option value="default">
+                      {zh ? "默认（兼容现有配置）" : "Default (compatible)"}
+                    </option>
+                    <option value="read">{zh ? "只读" : "Read only"}</option>
+                    <option value="archive">
+                      {zh ? "归档（关闭写缓存）" : "Archive (write cache off)"}
+                    </option>
+                  </select>
+                </label>
+                <label className="field">
+                  {zh
+                    ? "挂载选项覆盖（每行一项）"
+                    : "Mount option overrides (one per line)"}
+                  <textarea
+                    value={form.mount_options.join("\n")}
+                    onChange={(e) =>
+                      setForm({
+                        ...form,
+                        mount_options: e.target.value.split("\n"),
+                      })
+                    }
+                    placeholder={"tpslimit=2\nlow-level-retries=10"}
+                  />
+                  <span className="muted">
+                    {zh
+                      ? "仅新挂载生效；支持的选项由服务端校验。"
+                      : "Applies to new mounts; supported options are validated by the server."}
+                  </span>
+                </label>
+                <label>
+                  {c.storageClass.vfsCacheMode}
+                  <select
+                    value={form.vfs_cache_mode}
+                    disabled={form.mount_profile === "archive"}
+                    onChange={(e) =>
+                      setForm({
+                        ...form,
+                        vfs_cache_mode: e.target.value as "off" | "writes",
+                      })
+                    }
+                  >
+                    <option value="off">
+                      {c.storageClass.vfsCacheModeOff}
+                    </option>
+                    <option value="writes">
+                      {c.storageClass.vfsCacheModeWrites}
+                    </option>
+                  </select>
                 </label>
                 <label>
                   {c.storageClass.pathStyle}

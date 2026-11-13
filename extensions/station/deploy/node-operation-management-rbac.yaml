@@ -1,0 +1,83 @@
+# Apply only when the experimental node operation controller is explicitly enabled.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: station-node-operation-management
+rules:
+- apiGroups: ["station.rlark.io"]
+  resources: ["nodeoperations"]
+  verbs: ["get", "list", "watch", "patch"]
+- apiGroups: ["station.rlark.io"]
+  resources: ["nodeoperations/status"]
+  verbs: ["get", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: station-node-operation-management
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: station-node-operation-management
+subjects:
+- kind: ServiceAccount
+  name: station-controller
+  namespace: station-system
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: station-operation-member-credentials
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: station-node-operation-member-credentials
+  namespace: station-operation-member-credentials
+rules:
+- apiGroups: [""]
+  resources: ["secrets"]
+  verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: station-node-operation-member-credentials
+  namespace: station-operation-member-credentials
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: station-node-operation-member-credentials
+subjects:
+- kind: ServiceAccount
+  name: station-controller
+  namespace: station-system
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: station-operation-credentials
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: station-node-operation-credentials
+  namespace: station-operation-credentials
+rules:
+- apiGroups: [""]
+  resources: ["secrets"]
+  verbs: ["get", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: station-node-operation-credentials
+  namespace: station-operation-credentials
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: station-node-operation-credentials
+subjects:
+- kind: ServiceAccount
+  name: station-controller
+  namespace: station-system

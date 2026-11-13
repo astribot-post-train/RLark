@@ -1,6 +1,30 @@
 # 共享存储与镜像仓库：设计和运维
 
+## 金山云 Job 访问 KS3：只读排查
+
+2026-11-12 检查：RLark 的 `ks3-post-train` 声明使用 bucket `stardust` 和 endpoint `https://ks3-cn-ningxia.ksyuncs.com`。这是 Gateway 的 endpoint；已有云端类另用 `https://ks3-cn-ningxia-internal.ksyuncs.com` 供 CSI 挂载，此前隔离读取验证了该配对。本次从 `10-0-2-196` 直连公网 bucket 域名仍在 5 秒后超时，因此新类继承现有已验证的 endpoint 配对。此前的 HTTP 403 属于授权响应，不能证明 endpoint 不可达。创建 StorageClass 仍要求凭证通过 Gateway 的 `HeadBucket` 校验。
+
+裸金属节点只读检查确认两台 Kubernetes 节点均为 Ready。rclone CSI Node DaemonSet 当前只选择 `kubernetes.io/hostname=10-0-2-196`，就绪副本为 1。它已经通过 `operator: Exists` 容忍所有污点；使 `10-0-2-57` 被排除的是 hostname selector，而不是缺少控制面容忍。应更新 RLark 管理的 Addon 以移除 Node selector，再核验两台节点上的驱动注册。本次排查没有记录任何已完成的现场 Addon 或 StorageClass 变更。
+
+Fleet 专用类计划作为独立声明创建，使用 bucket `stardust`、prefix `ks3-regular`、虚拟主机寻址和 VFS 缓存模式 `off`。生成的 `remotePath` 应为 `stardust/ks3-regular`，对应 `ks3://stardust/ks3-regular/`；现有类保持不变。关闭缓存后真实挂载上的 close 错误和上传中断重传仍须测试通过，才可切换 Fleet Run。
+
+Gateway 现在为每个生成的 S3 StorageClass 使用稳定且按存储类隔离的 rclone remote 别名（`s3-<storage-class-id>`），并在 CSI 参数和配置段中统一使用该别名，避免同一节点插件上的读类和归档类共享可变 remote 配置。这不能解决 KS3 multipart ETag/CRC64 兼容性故障；CSI 驱动仍需增加面向提供商的完整性修复，并通过真实验收测试。
+
+> 2026-11-12 更新：Fleet 已决定使用 [NAS 固定完整路径](fleet-storage-paths.zh-CN.md)。下文 KS3 个人 Fleet 工作树为历史提案，不再作为 Fleet 新任务约定；KS3 数据及镜像试运行记录保留。
+
 本文记录当前环境的设计、已验证进度和手动操作，不代表 RLark 已正式支持或完成全部部署。进度是检查时的快照，不是持续健康监测。
+
+### 存储类角色和保留策略
+
+在 KS3 multipart 兼容性问题解决前，三个声明应保持独立：
+
+| 声明 | 范围 | 当前用途 | 决定 |
+| --- | --- | --- | --- |
+| `ks3-post-train` | 本地和机器人集群 | 既有共享 KS3 读取和挂载 | 保留 |
+| `ks3-post-train-ksyun` | 仅 `rlark-ksyun-gpu` | 云端只读 Job、模型/数据读取和验证 | 保留 |
+| `fleet-ks3-ksyun` | 仅 `rlark-ksyun-gpu`，前缀 `ks3-regular` | 关闭缓存的 Fleet 归档候选 | 保留用于隔离测试；未通过活动 Run 验收 |
+
+两个 `ks3-post-train` 声明不是重复项：前者保留本地/机器人端点和分发范围，带 `-ksyun` 的声明使用云端 CSI endpoint。在核对所有 PVC、Job 和验证引用前，不要删除任意一个。`fleet-ks3-ksyun` 在 close 仍返回 EIO 时不能替代云端只读类。
 
 ## 总体架构与设计决策
 
@@ -182,3 +206,38 @@ timeout 15 test -d /mnt/ks3/post_train/datasets && echo 'datasets accessible'
 6. **数据库与端到端：**单独设计 PostgreSQL 备份并验证恢复；联合验证代码版本、数据集、运行输出和镜像，覆盖存储或网络故障以及重启恢复，记录结果和剩余限制。
 
 修改机器人网络、重启工作负载、创建计费服务或迁移数据之前，应先确认目标及影响。不要将密钥写入文档或版本库。
+
+## 金山云 KS3 挂载验证：2026-11-12
+
+已实现可选 `mount_endpoint`：Gateway 使用现有公网 endpoint，CSI 使用云内域名，无 DNS 或固定 IP 修改。独立声明 `ks3-post-train-ksyun` 已仅分发到 `rlark-ksyun-gpu`，实际 StorageClass 为 `sc-1ff57f5f06154dfd`；原 `ks3-post-train` 仍只面向本地和机器人。
+
+两个短时 RLark Job 在 `10-0-2-196` 使用 Pod 级临时 PVC、只读 `/mnt/ks3` 挂载，读取已有 92 字节验证对象，其 SHA-256 与公网 API 读取结果一致。未写入 KS3。首次文件访问出现 I/O 错误，CSI 日志显示 KS3 ListObjects HTTP 429（HTML 响应），后续重试恢复；第二个新 Job 也经历失败后恢复。成功绑定 PVC 或 Pod Running 不足以证明文件可读，测试必须检查读取退出码和内容校验；应用需处理有界重试。尚未定位 429 根因，也未验证大文件、并发、跨节点、长期可靠性或写入。
+
+现场 Gateway 已切换至 `rlark-gateway:ks3-mount-endpoint-20261112`，旧容器 `rlark-gateway-pre-ks3-20261112` 停止保留。配置快照位于开发机受保护的 `~/.local/share/rlark-runtime/gateway-before-ks3-20261112.json`。Gateway 鉴权和新字段读取已验证；UI 开发服务从当前工作区加载新表单。回滚到不支持新字段的 Gateway 前，应先停止使用新声明的 Job；旧版编辑保存不能保留覆盖字段，不应使用它编辑该声明。两个测试 Job、Task、Pod、PVC 及对应 Retain PV 已核对清理完成。首个测试卷卸载曾报告忙，确认测试容器已结束后，仅对该测试挂载完成卸载清理；共享 CSI 未重启，现有 NAS 工作负载保持运行。凭证仅存于受保护的管理面声明及下发 Secret，不加入本文。
+
+使用时在 Job 中选择金山云集群和 `ks3-post-train-ksyun`，容器挂载路径按应用配置。当前验证仅覆盖 `10-0-2-196`，不要将使用该卷的任务调度到未安装 CSI 的节点。
+
+## Fleet KS3 实施快照：2026-11-12
+
+已通过升级后的 Gateway 创建 `fleet-ks3-ksyun` → `sc-801ae48b73084190`，只分发到 `rlark-ksyun-gpu`，配置为 `prefix=ks3-regular`、`remotePath=stardust/ks3-regular`、`vfs-cache-mode=off`，沿用已有公网 Gateway / 云内 CSI endpoint 配对。比对确认旧 `ks3-post-train-ksyun` 声明未变。Gateway 回滚容器为 `rlark-gateway-pre-fleet-storage-20261112`。
+
+验收状态为**待通过**。在 `10-0-2-196` 两次写入 491,520 字节流式文件，close 都返回 EIO，rclone 报告 `corrupted on transfer`。独立签名 KS3 GET 下载内容和 SHA-256 与源文件完全一致，但 ETag 与内容 MD5 不同。这说明本次路径存在 ETag 校验兼容性问题，不代表已证明通用上传正确。不得据此关闭完整性检查或切换 Fleet Run。5 字节对象也已到达 KS3，但大 checkpoint 与中断上传恢复仍未验证。隔离验证对象和资源单独清理，不改已有数据。
+
+当前 Run 的 `/root/fleet/code/fleet/runners/common/archive.py` 中，`Archiver.mounted()` 只接受 `fuse.ks3fs`，其实际部署版本尚未体现所述 rclone 缓存探测。保留启动检查，切换前核实目标 Fleet 版本；本次没有修改 Fleet 源码或 Run 配置。
+
+
+## 恢复执行与当前验收结果：2026-11-12 09:29 UTC
+
+用户确认另一操作结束后已恢复执行。Cluster Agent 以刚完成仓库迁移的版本为基础，仅替换 Agent 二进制，镜像为 `10.254.240.1:5443/rlark/cloud-agent@sha256:7515240c5d9f24640f7a6f92f052f943a12be3eb8dfe794e49c1dc6852162c3f`。原有参数、环境变量和 workload `--image` 保留。先在 Addon generation 5 应用 `nodeUpdateStrategy=OnDelete` / `nodeImagePullPolicy=IfNotPresent`，确认实际 DaemonSet 策略后，再在 generation 6 清空 `nodeSelector`，并将四个 CSI 镜像改为 KS3 仓库 `10.254.240.1:5443/csi-rclone/*@sha256:...` 的已核对 digest；Controller selector 仍为 `10-0-2-196`。
+
+两台节点的插件均为 3/3 Ready，`CSINode` 均注册 `rclone.csi.veloxpack.io`。196 上原 Pod `csi-driver-rclone-node-cwgw2` 的 UID 仍为 `f896bb7a-9c28-49a6-ba9b-6709eee7937a`，三个容器重启次数均为 0；57 新 Pod 为 `csi-driver-rclone-node-4pwh7`。`OnDelete` 意味着 196 仍运行旧模板中的相同驱动镜像，只有安排维护并显式替换 Pod 后才使用新镜像地址。不要为了让 updated 副本数相等而删除仍提供挂载的 Pod。
+
+隔离 PVC/Pod 在两台节点都成功挂载 `s3:stardust/ks3-regular`（`fuse.rclone`），CSI 请求确认 `vfs-cache-mode=off`。两台分别通过 5 字节文件的写入、close、rename 和本节点 SHA-256 读回。57 也通过挂载读取 196 写入的既有 491,520 字节验证对象，SHA-256 为 `2c2cd22ad2454be571aafde3be545ec44db86330585a860d1af8e274a493e203`；这只证明该既有对象可跨节点读取，不证明失败的 close 可以忽略。491,520 字节写入在两台均因 close EIO 失败，故**新类尚未通过 Fleet 写入验收，不应切换 Run**。
+
+进一步使用独立 S3 API 对同样内容做 singlepart / multipart 对照，均下载核对 SHA-256：singlepart 和 multipart 的分片 ETag 都是内容 MD5 `0302637dadb24a465621d1be04717fb3`，完成 multipart 后对象 ETag 为 `b2931c9fb143d6a49b330182336d1a52`，与 rclone 失败对象相同。CSI v0.2.0 内嵌 rclone v1.71.2；其 S3 后端把 32 位十六进制 ETag 解释为 MD5，而 KS3 该 multipart 路径不满足这一假设。应修复/升级驱动的 KS3 multipart 校验兼容性，并保留真实的内容校验；仅关闭 `use_multipart_etag` 或设置 `disable_checksum` 不能解决最终流式传输比较，不能以关闭校验替代修复。
+
+另有两项验收限制：默认 5 MiB multipart 分片最多支持约 48.8 GiB 的未知长度流，不能覆盖 80 GB checkpoint，需在兼容性修复时配置并验证合适的分片大小；另一节点即时读取新建文件返回 ENOENT，说明各挂载目录缓存尚未刷新，不能承诺跨节点即时可见。完整大文件、中途断网后的 close 错误及完整重传仍未通过；未对共享 CSI、节点网络或真实 Run 做故障注入。修复后须重跑这些测试，并验证目标 Fleet 版本支持 rclone 缓存探测，再在 Run 结束后切换。
+
+本会话没有修改 Fleet 或 DataTools Job。验证期间管理面的 Task 出现删除/重建，旧 Fleet Pod 和两个 DataTools Pod 被控制器回收，因此不能声称所有工作负载 UID 保持不变；现有 CSI Pod 身份已独立核对。重建后的 DataTools Pod 的两个 NAS 目录可 stat，仍为 `fuse.rclone`。本轮只清理本轮唯一验证前缀及具有已核对 Pod/claim UID 的测试 Pod、PVC、Retain PV，不清理业务数据。
+
+恢复记录：升级前 Agent 为 `10.254.240.1:5443/rlark/cloud-agent@sha256:3c8e38c898654ff120ceaf0216cd661d987f0049e213a428ec54a13131d35be1`。若需回滚 Agent，先恢复 Addon 的旧镜像值和 `nodeSelector`，避免旧目录调谐器忽略新参数、将 DaemonSet 自动恢复为 RollingUpdate；这会撤去 57 插件，必须先确认 57 没有活动 CSI 卷。不能直接回滚旧 Agent，也不能在有活动挂载时改回 RollingUpdate。优先保持已工作的节点插件和当前 Addon 配置，仅继续修复隔离测试中的 KS3 兼容性。

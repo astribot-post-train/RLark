@@ -143,14 +143,27 @@ func setNetworkEnvironment(spec *rlarkv1alpha1.TaskSpec, domain string) {
 	})
 }
 
+// setSSHEnvironment gives the Task the Job's key and an sshd port. The port is
+// 2222 unless the Task's own SSH environment names one: Tasks whose pods share
+// a node's network (a robot's device layer and its station) cannot all listen
+// on the same port, so their template says which.
 func setSSHEnvironment(spec *rlarkv1alpha1.TaskSpec, publicKey string) {
-	parameters, _ := json.Marshal(taskapi.SSHEnvironmentParametersV1{AuthorizedKeys: []string{publicKey}, Port: 2222})
-	environment := rlarkv1alpha1.TaskEnvironment{Type: taskapi.EnvironmentTypeSSH, Version: taskapi.EnvironmentVersionSSHV1, Parameters: apiextensionsv1.JSON{Raw: parameters}}
+	port := int32(2222)
+	index := -1
 	for i := range spec.Environments {
-		if spec.Environments[i].Type == environment.Type && spec.Environments[i].Version == environment.Version {
-			spec.Environments[i] = environment
-			return
+		if spec.Environments[i].Type == taskapi.EnvironmentTypeSSH && spec.Environments[i].Version == taskapi.EnvironmentVersionSSHV1 {
+			index = i
+			var declared taskapi.SSHEnvironmentParametersV1
+			if err := json.Unmarshal(spec.Environments[i].Parameters.Raw, &declared); err == nil && declared.Port >= 1 && declared.Port <= 65535 {
+				port = declared.Port
+			}
 		}
+	}
+	parameters, _ := json.Marshal(taskapi.SSHEnvironmentParametersV1{AuthorizedKeys: []string{publicKey}, Port: port})
+	environment := rlarkv1alpha1.TaskEnvironment{Type: taskapi.EnvironmentTypeSSH, Version: taskapi.EnvironmentVersionSSHV1, Parameters: apiextensionsv1.JSON{Raw: parameters}}
+	if index >= 0 {
+		spec.Environments[index] = environment
+		return
 	}
 	spec.Environments = append(spec.Environments, environment)
 }

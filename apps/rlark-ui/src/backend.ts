@@ -69,6 +69,23 @@ export interface ImageRegistryItem {
   };
 }
 
+/** One tag with image metadata read by the Gateway; `error` marks unreadable metadata. */
+export interface RegistryTagDetail {
+  tag: string;
+  digest?: string;
+  created?: string;
+  size?: number;
+  platforms?: string[];
+  error?: "unavailable";
+}
+
+export interface RegistryTagDetailPage {
+  items: RegistryTagDetail[];
+  next: string;
+  /** Set by the console when the Gateway lacks `tag-details` and only tag names are known. */
+  legacy?: boolean;
+}
+
 export interface StationItem {
   apiVersion: string;
   kind: "Station";
@@ -148,6 +165,33 @@ export interface StationRebindOperation {
 export interface StationRebindResponse {
   operation: StationRebindOperation;
   created: boolean;
+}
+
+export interface NodeOperation {
+  apiVersion: string;
+  kind: "NodeOperation";
+  metadata: { name: string; namespace: string; uid?: string; creationTimestamp?: string };
+  spec: {
+    requestID: string;
+    action: "Join" | "Remove" | "EnableWireGuard";
+    clusterID: string;
+    nodeName: string;
+    nodeUID?: string;
+    resetExistingKubeadm?: boolean;
+    containerdRuntime?: "containerd" | "fleet";
+    requestedBy: string;
+  };
+  status?: {
+    phase?: "Pending" | "Running" | "Blocked" | "Succeeded" | "Failed";
+    stage?: string;
+    nodeUID?: string;
+    conditions?: Array<{ type: string; status: string; reason?: string; message?: string }>;
+  };
+}
+
+export interface NodeOperationPageResponse {
+  items: NodeOperation[];
+  continue?: string;
 }
 
 export interface LocalizedText {
@@ -409,6 +453,16 @@ export const imageRegistriesApi = {
       { signal },
     );
   },
+  tagDetails(id: string, repository: string, last = "", signal?: AbortSignal) {
+    const query = new URLSearchParams({
+      repository,
+      ...(last ? { last } : {}),
+    });
+    return requestJson<RegistryTagDetailPage>(
+      `/api/v1/image-registries/${encodeURIComponent(id)}/tag-details?${query}`,
+      { signal },
+    );
+  },
   manifest(id: string, repository: string, tag: string, signal?: AbortSignal) {
     const query = new URLSearchParams({ repository, tag });
     return requestJson<{ digest: string }>(
@@ -459,6 +513,41 @@ export const stationsApi = {
     const query = new URLSearchParams({ cluster_id: clusterID });
     return requestJson<StationRebindOperation>(
       `/api/v1/station/rebinds/${encodeURIComponent(name)}?${query}`,
+      { signal },
+    );
+  },
+  createNodeOperation(input: {
+    cluster_id: string;
+    request_id: string;
+    action: "Join" | "Remove";
+    node_name: string;
+    node_uid?: string;
+    reset_existing_kubeadm?: boolean;
+    containerd_runtime?: "containerd" | "fleet";
+    ssh_address: string;
+    ssh_port: number;
+    ssh_user: string;
+    host_key_fingerprint: string;
+    ssh_password?: string;
+    ssh_private_key?: string;
+    sudo_password?: string;
+  }) {
+    return requestJson<NodeOperation>("/api/v1/station/node-operations", {
+      method: "POST",
+      body: input,
+    });
+  },
+  listNodeOperations(clusterID: string, signal?: AbortSignal) {
+    const query = new URLSearchParams({ cluster_id: clusterID, limit: "100" });
+    return requestJson<NodeOperationPageResponse>(
+      `/api/v1/station/node-operations?${query}`,
+      { signal },
+    );
+  },
+  getNodeOperation(name: string, clusterID: string, signal?: AbortSignal) {
+    const query = new URLSearchParams({ cluster_id: clusterID });
+    return requestJson<NodeOperation>(
+      `/api/v1/station/node-operations/${encodeURIComponent(name)}?${query}`,
       { signal },
     );
   },

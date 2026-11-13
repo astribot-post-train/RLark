@@ -50,6 +50,10 @@ rules:
 - apiGroups: ["station.rlark.io"]
   resources: ["nodeadmissions"]
   verbs: ["list", "update"]
+# The uplink setup a new leaf's site declares (GET /b/<code>/uplink).
+- apiGroups: ["station.rlark.io"]
+  resources: ["sitenetworks"]
+  verbs: ["get"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -62,6 +66,30 @@ roleRef:
 subjects:
 - kind: ServiceAccount
   name: station-api
+  namespace: station-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: station-controller-member-credentials
+  namespace: station-member-credentials
+rules:
+- apiGroups: [""]
+  resources: ["secrets"]
+  verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: station-controller-member-credentials
+  namespace: station-member-credentials
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: station-controller-member-credentials
+subjects:
+- kind: ServiceAccount
+  name: station-controller
   namespace: station-system
 ---
 apiVersion: rbac.authorization.k8s.io/v1

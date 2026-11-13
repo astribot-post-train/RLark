@@ -21,11 +21,14 @@ import (
 )
 
 func main() {
-	var kubeconfig, credentialsNamespace, metricsAddress, probeAddress, networkNamespace, networkName string
+	var kubeconfig, credentialsNamespace, nodeOperationCredentialsNamespace, metricsAddress, probeAddress, networkNamespace, networkName string
+	var nodeOperations bool
 	flag.StringVar(&kubeconfig, "management-kubeconfig", os.Getenv("KUBECONFIG"), "management API kubeconfig; omit to use in-cluster credentials")
 	flag.StringVar(&credentialsNamespace, "member-credentials-namespace", "station-system", "namespace containing per-member kubeconfig Secrets")
+	flag.StringVar(&nodeOperationCredentialsNamespace, "node-operation-member-credentials-namespace", "station-operation-member-credentials", "namespace containing least-privilege per-member kubeconfigs for node operations")
 	flag.StringVar(&metricsAddress, "metrics-bind-address", ":8080", "Prometheus metrics bind address")
 	flag.StringVar(&probeAddress, "health-probe-bind-address", ":8081", "health and readiness probe bind address")
+	flag.BoolVar(&nodeOperations, "enable-node-operations", false, "Enable experimental node operations; requires NodeOperation CRD and dedicated permissions")
 	flag.StringVar(&networkNamespace, "site-network-namespace", "station-system", "namespace of the SiteNetwork that answers NetworkEnrollments")
 	flag.StringVar(&networkName, "site-network-name", "default", "name of the SiteNetwork that answers NetworkEnrollments")
 	flag.Parse()
@@ -88,6 +91,38 @@ func main() {
 	if err := rebindReconciler.SetupWithManager(manager); err != nil {
 		ctrl.Log.Error(err, "register Rebind reconciler")
 		os.Exit(1)
+	}
+	if nodeOperations {
+		credentials := controller.NodeSecretCredentialSource{Reader: manager.GetAPIReader(), Writer: manager.GetClient(), Namespace: "station-operation-credentials"}
+		nodeOperationMemberSource := controller.SecretKubeconfigSource{Reader: manager.GetAPIReader(), Namespace: nodeOperationCredentialsNamespace}
+		nodeOperationMemberReader, err := controller.NewKubeconfigNodeReader(nodeOperationMemberSource)
+		if err != nil {
+			ctrl.Log.Error(err, "create node-operation member reader")
+			os.Exit(1)
+		}
+		join := &controller.SSHNodeJoinDriver{Credentials: credentials, Sudo: credentials, Members: nodeOperationMemberReader, Kubeconfigs: nodeOperationMemberSource}
+		peerCleaner := controller.ConfigMapNodeWireGuardPeerCleaner{
+			Members: nodeOperationMemberReader, Clusters: registration, Namespace: "station-system",
+			Observations: controller.ManagementNodeWireGuardEvidence{Reader: manager.GetAPIReader()},
+		}
+		executor := &controller.NodeLifecycleExecutor{
+			Credentials: credentials, Members: nodeOperationMemberReader, JoinDriver: join,
+			ResetDriver:       controller.SSHNodeResetDriver{Connection: join},
+			StaleResetDriver:  &controller.SSHStaleNodeResetDriver{Connection: join},
+			RegisteredMembers: nodeOperationMemberReader,
+			PeerCleaner:       peerCleaner,
+			JoinedReadiness:   controller.StationJoinedReadiness{Reader: manager.GetAPIReader(), Nodes: readiness},
+			RemovalReady:      peerCleaner.Check,
+		}
+		operations, err := controller.NewNodeOperationReconciler(manager.GetClient(), manager.GetAPIReader(), registration, executor)
+		if err != nil {
+			ctrl.Log.Error(err, "create node operation reconciler")
+			os.Exit(1)
+		}
+		if err := operations.SetupWithManager(manager); err != nil {
+			ctrl.Log.Error(err, "register node operation reconciler")
+			os.Exit(1)
+		}
 	}
 	networkReconciler, err := controller.NewNetworkReconciler(manager.GetClient(), manager.GetAPIReader(), types.NamespacedName{Namespace: networkNamespace, Name: networkName}, time.Now)
 	if err != nil {

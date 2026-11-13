@@ -71,7 +71,7 @@ export function NodeNetworkAddresses({
           >
             {entry.address}
           </code>
-          <button
+          {!(entry.kind === "wg" && model.message === "stale") && <button
             type="button"
             className="node-network-copy"
             aria-label={`${zh ? "复制" : "Copy"} ${entry.kind === "wg" ? "WG" : zh ? "节点 IP" : "node IP"} ${entry.address}`}
@@ -82,7 +82,7 @@ export function NodeNetworkAddresses({
             }}
           >
             <Copy size={12} />
-          </button>
+          </button>}
         </span>
       ))}
       {model.message && (

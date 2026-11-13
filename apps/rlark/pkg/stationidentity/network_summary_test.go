@@ -83,6 +83,30 @@ func (s summaryRegistryStub) Reader(context.Context, string) (IdentityReader, er
 	return s.reader, nil
 }
 
+func TestNodeNetworkSummaryUnboundAndIdentityErrors(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		err        error
+		unreported bool
+	}{
+		{"unbound", ErrStationBindingNotFound, true},
+		{"identity unavailable", ErrIdentityUnavailable, false},
+		{"identity conflict", ErrIdentityDenied, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := NodeNetworkSummaryReader{Registry: summaryRegistryStub{summaryReaderStub{err: tc.err}}, Client: testDynamicClient(), Namespaces: observationNamespaceMap{"cluster": "ns"}}
+			got, err := s.Read(context.Background(), "cluster", "node")
+			if tc.unreported {
+				if err != nil || got.State != "unreported" {
+					t.Fatalf("got %+v, %v", got, err)
+				}
+			} else if !errors.Is(err, tc.err) {
+				t.Fatalf("got error %v, want %v", err, tc.err)
+			}
+		})
+	}
+}
+
 func TestNodeNetworkSummaryChecksIdentityOwnershipAndFreshness(t *testing.T) {
 	now := time.Date(2026, 11, 11, 12, 0, 0, 0, time.UTC)
 	makeObservation := func(uid, station, received string) *unstructured.Unstructured {

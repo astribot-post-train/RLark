@@ -144,12 +144,13 @@ func TestKernelStatus(t *testing.T) {
 	}
 	var observation struct {
 		Interface string   `json:"interface"`
+		PublicKey string   `json:"publicKey"`
 		Addresses []string `json:"addresses"`
 	}
 	if err := json.Unmarshal(data, &observation); err != nil {
 		t.Fatal(err)
 	}
-	if observation.Interface != "wg-status" || len(observation.Addresses) == 0 || observation.Addresses[0] != "10.253.5.1/32" {
+	if observation.Interface != "wg-status" || observation.PublicKey != private.PublicKey().String() || len(observation.Addresses) == 0 || observation.Addresses[0] != "10.253.5.1/32" {
 		t.Fatalf("unexpected snapshot: %s", data)
 	}
 	if bytes.Contains(data, []byte(private.String())) || !bytes.Contains(data, []byte(`"peers":[{"publicKey":"`+peerKey.PublicKey().String()+`"}]`)) {

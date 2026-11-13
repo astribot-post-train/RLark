@@ -289,3 +289,64 @@ workload:
 ```
 
 Kubernetes 根据 `volumeClaimTemplate` 为每个 Pod 创建 PVC，并随 Pod 删除。当前 Web UI 写入这种通用临时卷形式，并通过 Storage API 获取已为所选集群配置的 RLark 管理 StorageClass 声明。`pvcStorageMap` 和 `pvcSizeGbMap` 不属于 canonical Task Schema；破坏性升级时必须替换依赖这些字段的旧资源。
+
+## 独立挂载 Endpoint
+
+S3 创建、更新及列表响应新增可选字段 `mount_endpoint`。`endpoint` 仍用于 Gateway 的凭证校验（`HeadBucket`）和文件 API；CSI Secret 使用非空的 `mount_endpoint`。缺省或空值沿用 `endpoint`，更新时传空值会清除覆盖。两端共用 provider、bucket、region、凭证和 path-style，并使用同一套 endpoint URL 规范化。SMB 拒绝非空的 `mount_endpoint`。
+
+云专用存储类可以让 Gateway 使用公网地址，CSI 使用云内挂载地址。Gateway 不探测挂载地址：必须在目标集群验证 DNS、TLS、权限和实际挂载；配置成功或列表可见不代表分发或挂载就绪。同一声明的所有目标集群使用相同挂载地址，需要不同地址时创建独立声明。不能假设已有挂载卷会自动重载地址变更，应先用新测试 Pod 验证再迁移工作负载。
+
+```json
+{
+  "name": "ks3-post-train-ksyun",
+  "type": "s3",
+  "clusters": ["rlark-ksyun-gpu"],
+  "provider": "Other",
+  "endpoint": "https://ks3-cn-ningxia.ksyuncs.com",
+  "mount_endpoint": "https://ks3-cn-ningxia-internal.ksyuncs.com",
+  "bucket": "stardust",
+  "region": "cn-ningxia",
+  "path_style": false
+}
+```
+
+这是环境专属配置示例，不能原样提交：需通过受保护的渠道补充获授权凭证，不得将凭证写入源码或日志。资源仍异步分发，Job 使用前需确认目标集群实际生成的 `sc-<id>`。
+
+## S3 前缀与 VFS 缓存模式
+
+S3 声明的创建/更新请求和列表响应支持可选字段 `prefix`、`vfs_cache_mode`。`prefix` 是 bucket 内以 `/` 分隔的对象路径，并作为挂载后的根目录；例如 bucket 为 `stardust`、prefix 为 `ks3-regular` 时，生成的 rclone 参数为 `remotePath: stardust/ks3-regular`。前缀为空时挂载 bucket 根目录。`vfs_cache_mode` 仅接受 `writes` 或 `off`；创建时省略使用 `writes`，更新时省略保留已存储模式。该设置只影响生成的 CSI StorageClass 挂载选项。前缀仅限定 CSI 挂载范围，Gateway 文件 API 仍使用 bucket 相对 key，因此前缀不是授权边界。SMB 不接受这些 S3 专属字段。
+
+大文件输出若要求关闭文件时对象已上传，应使用独立存储类并设置 `vfs_cache_mode: off`。关闭缓存后，远端上传错误可能从文件操作（例如 close）返回；应用必须检查错误并重传失败文件。该设置不提供应用级原子发布保证，也不能替代端到端故障测试。
+
+```json
+{
+  "name": "fleet-ks3",
+  "type": "s3",
+  "clusters": ["rlark-ksyun-gpu"],
+  "provider": "Other",
+  "endpoint": "https://ks3-cn-ningxia.ksyuncs.com",
+  "bucket": "stardust",
+  "region": "cn-ningxia",
+  "path_style": false,
+  "prefix": "ks3-regular",
+  "vfs_cache_mode": "off"
+}
+```
+
+Gateway 使用配置的 endpoint 执行 `HeadBucket` 校验。403 是授权响应，单凭它不能判断 endpoint 不可达；应检查凭证、bucket policy 和所需权限。不得将凭证写入源码、示例或日志。
+
+
+### KS3 multipart 验收限制
+
+缓存模式 `off` 不保证提供商兼容性。已测 KS3 配置下，CSI rclone v0.2.0（内嵌 rclone v1.71.2）的 multipart 完成后对象 ETag 是不同于内容 MD5 的 32 位十六进制值；即使独立下载核对字节一致，流式 close 仍可能返回 EIO（`corrupted on transfer`）。不要通过关闭完整性检查验收此挂载；用于归档前必须验证驱动与提供商组合。未知长度流还需要合适的 multipart 分片大小：默认 5 MiB 和 10,000 个分片只允许约 48.8 GiB。当前存储表单不暴露分片大小配置，大 checkpoint 验收需要兼容的驱动/配置和真实故障恢复测试。各挂载有独立目录缓存，close 成功本身也不承诺另一挂载立即可见。
+
+
+## 每个 S3 存储的挂载配置
+
+创建/更新接受 `mount_profile`（`default`、`read`、`archive`）和 `mount_options`（`key=value` 字符串数组）。列表返回这两项及 `effective_mount_options`、`effective_backend_options`。更新时省略字段保留原值；空选项数组清除覆盖项。default 保留现有设置；read 强制只读挂载、目录缓存五分钟；archive 强制关闭写缓存、目录缓存五秒、S3 分片 32 MiB、分片并发 4。这是配置 profile，不代表已通过 KS3 归档验收。
+
+显式选项覆盖 profile 默认值。重复/未知选项、与 `vfs_cache_mode` 或 profile 强制设置矛盾的配置被拒绝。支持：`vfs-cache-mode`、`read-only`、`fast-list`、`dir-cache-time`、`attr-timeout`、`poll-interval`、`vfs-write-back`、`vfs-cache-max-age`、`buffer-size`、`transfers`、`checkers`、`low-level-retries`、`tpslimit`、`tpslimit-burst`、`s3-chunk-size`、`s3-upload-concurrency`。后端参数写入 remote 配置中的 `chunk_size` / `upload_concurrency`。不能通过这里注入凭证、路径、控制接口或 `ignore-checksum`。SMB 不接受 S3 profile 或覆盖项。
+
+每个生成的 S3 StorageClass 都使用稳定且按存储类隔离的 rclone remote 别名（`s3-<storage-class-id>`），并同时写入 `remote` 和 `configData`。这样同一节点插件上的读类和归档类不会共享可变的 rclone 配置。它只隔离配置，不修复提供商的校验语义。
+
+profile 不提供账号级总请求预算。设置限速前应确认 429 的来源和作用域，并统筹 Fleet、DataTools 和镜像仓库；CSI 与 Gateway 是不同请求路径。缩短目录缓存不代表原子发布或即时可见。修改仅对新挂载生效，应在维护窗口停止、更新、启动相关 Job；存储变更不会自动重启活动 Job。

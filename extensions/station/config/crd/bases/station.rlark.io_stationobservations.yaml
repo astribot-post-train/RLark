@@ -156,6 +156,11 @@ spec:
                     x-kubernetes-list-map-keys:
                     - name
                     x-kubernetes-list-type: map
+                  publicKey:
+                    description: PublicKey is the public key of the observed interface;
+                      private keys are never reported.
+                    maxLength: 64
+                    type: string
                 required:
                 - interface
                 type: object

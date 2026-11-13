@@ -1,0 +1,243 @@
+# RLark 控制面在管理机上的启动定义（scale-audit 会话，2026-11-12 22:55，从 `docker inspect` 逐个容器抄出）。
+#
+# 目的：取代 15 个手工 `docker run` 的容器和 `rlark-gateway.next-run.sh` 这类脚本；进分叉的合并树
+# （建议路径 deploy/control-plane/docker-compose.yaml），之后改控制面只改这个文件并 `docker compose up -d`。
+# 现状核对：线上只有 kcp 带 compose 标签，而它标签里的 /tmp/fleet-rlark-env/docker-compose.yml 已不存在；
+# `$R/docker-compose.yaml` 是 10 月底的旧版，和在跑的容器对不上。
+#
+# 这里没有任何密钥的值：数据库口令从 $R 下已有的文件读，其余凭据按路径挂载。
+# 镜像必须用 digest（合并树一次构建出的那一批），不接受人起的标签：
+#   RLARK_IMAGE          server 和 controller-manager 共用的镜像
+#   RLARK_GATEWAY_IMAGE  gateway
+# 切换（控制面重启，全站 agent 断开几秒到几十秒，要在窗口里做）：
+#   1. 现有容器逐个 `docker stop && docker rename <name> <name>-pre-compose`（不删，回滚用）。
+#   2. `docker compose -p rlark-control-plane --env-file $R/control-plane.env up -d`。
+#   3. 核对：`curl http://127.0.0.1:19000/api/v1/clusters` 返回 401；kcp 里三个 Cluster 回到 Online；
+#      两个仓库 `/v2/` 应答；station-api 能连 15432。
+#   回滚：`docker compose down`（卷都是 external，不会被删），把 -pre-compose 的容器改回原名并启动。
+# 不在这里的：预览/测试网关（rlark-gateway-nodeops-*、-station-preview、-password-preview）是临时的，
+# 不进定义；wg-service-gateway 的镜像是本机构建的 `:local`，它的 Dockerfile 进了分叉之后再把它加进来
+# （下面先按现状写上，镜像名用变量）。
+#
+# R 默认 /home/cailiang/.local/share/rlark-runtime，G 默认 /home/cailiang/.config/rlark-registry。
+
+name: rlark-control-plane
+
+x-runtime: &runtime
+  restart: unless-stopped
+
+services:
+  kcp:
+    <<: *runtime
+    image: ghcr.io/kcp-dev/kcp:v0.30.0
+    container_name: kcp
+    user: "65532:65532"
+    entrypoint: ["/kcp"]
+    command: ["start"]
+    environment:
+      KCP_LOG_LEVEL: "2"
+      SSL_CERT_FILE: /etc/ssl/certs/ca-certificates.crt
+      KUBECONFIG: /etc/kcp/config/admin.kubeconfig
+    ports: ["6443:6443"]
+    volumes: ["kcp-data:/.kcp"]
+    networks: {rlark: {aliases: [kcp]}}
+    healthcheck: {test: ["CMD", "test", "-f", "/.kcp/admin.kubeconfig"]}
+
+  postgresql:
+    <<: *runtime
+    image: postgres:15
+    container_name: postgresql
+    env_file: ["${R}/postgres.env"]   # POSTGRES_DB / POSTGRES_USER / POSTGRES_PASSWORD，已在管理机上
+    ports: ["5432:5432"]
+    volumes: ["postgres-data:/var/lib/postgresql/data"]
+    networks: [rlark]
+    healthcheck: {test: ["CMD-SHELL", "pg_isready -U postgres"]}
+
+  rlark-server:
+    <<: *runtime
+    image: ${RLARK_IMAGE:?digest of the merged-tree build}
+    container_name: rlark-server
+    command:
+      - /usr/local/bin/server
+      - --kubeconfig=/etc/rlark/kubeconfig.yaml
+      - --https-port=8443
+      - --ssh-port=2222
+      - --auto-sign-tls-ca-cert
+      - --tls-domains=localhost,rlark-server
+      - --db-config=/etc/rlark/db-config.yaml
+    ports: ["2222:2222", "8443:8443"]
+    volumes: &rlark-config
+      - ${R}/kcp-admin.kubeconfig:/etc/rlark/kubeconfig.yaml:ro
+      - ${R}/db-config.yaml:/etc/rlark/db-config.yaml:ro
+    networks: [rlark]
+    depends_on: {kcp: {condition: service_healthy}, postgresql: {condition: service_healthy}}
+
+  rlark-controller-manager:
+    <<: *runtime
+    image: ${RLARK_IMAGE:?digest of the merged-tree build}
+    container_name: rlark-controller-manager
+    command:
+      - /usr/local/bin/controller-manager
+      - --kubeconfig=/etc/rlark/kubeconfig.yaml
+      - --server-address=https://rlark-server:8443
+      - --leader-election=false
+      - --metrics-bind-address=:0
+      - --health-probe-bind-address=:0
+      - --db-config=/etc/rlark/db-config.yaml
+    volumes: *rlark-config
+    networks: [rlark]
+    depends_on: [rlark-server]
+
+  rlark-gateway:
+    <<: *runtime
+    image: ${RLARK_GATEWAY_IMAGE:?digest of the merged-tree build}
+    container_name: rlark-gateway
+    user: "0"
+    environment:
+      SSL_CERT_FILE: /etc/rlark/registry-ca.crt
+    command:
+      - /usr/local/bin/gateway
+      - --kubeconfig=/etc/rlark/kubeconfig.yaml
+      - --addr=:8080
+      - --server-address=https://rlark-server:8443
+      - --db-config=/etc/rlark/db-config.yaml
+      # 线上现在还带着搬网段前的 192.168.31.2:5443，已被 192.168.0.0/16 覆盖，这里去掉。
+      - --registry-browse-allowed-hosts=10.0.0.0/8,192.168.0.0/16
+      - --station-api-address=https://10.254.240.1:18443
+      - --station-api-ca-file=/etc/rlark/station-ca.crt
+      - --station-gateway-credential-file=/etc/rlark/station-service/token
+    ports: ["19000:8080"]
+    volumes:
+      - ${R}/registry-ca.crt:/etc/rlark/registry-ca.crt:ro
+      - ${R}/station-network-summary/station-ca.crt:/etc/rlark/station-ca.crt:ro
+      - ${R}/station-service-credential:/etc/rlark/station-service:ro
+      - ${R}/kcp-admin.kubeconfig:/etc/rlark/kubeconfig.yaml:ro
+      - ${R}/db-config.yaml:/etc/rlark/db-config.yaml:ro
+    networks: [rlark]
+    depends_on: [rlark-server]
+
+  # 引导仓库（HTTP，:5555），数据在一个匿名卷里；卷名见 control-plane.env 的 LOCAL_REGISTRY_VOLUME。
+  local-registry:
+    image: registry:2
+    container_name: local-registry
+    restart: always
+    ports: ["5555:5000"]
+    volumes: ["local-registry-data:/var/lib/registry"]
+    networks: [default, kind]
+
+  # 同一份 KS3 存储的两个入口：办公室（TLS + 认证）和隧道（HTTP，只读写由配置定）。
+  rlark-ks3-registry-migrated:
+    <<: *runtime
+    image: registry@sha256:d4032d4cc323c1731c707931ecada07a53076eac38e3b61ae57533f170f2c6c3
+    container_name: rlark-ks3-registry-migrated
+    command: ["/etc/distribution/config.yml"]
+    environment: {OTEL_TRACES_EXPORTER: none}
+    ports: ["10.11.14.128:5443:5000"]
+    volumes:
+      - ${G}/config.yml:/etc/distribution/config.yml:ro
+      - ${G}/htpasswd:/run/rlark-registry/htpasswd:ro
+      - ${G}/server-10.11.14.128.crt:/run/rlark-registry/server.crt:ro
+      - ${G}/server-10.11.14.128.key:/run/rlark-registry/server.key:ro
+
+  rlark-ks3-registry-wg:
+    <<: *runtime
+    image: registry@sha256:d4032d4cc323c1731c707931ecada07a53076eac38e3b61ae57533f170f2c6c3
+    container_name: rlark-ks3-registry-wg
+    command: ["/etc/distribution/config.yml"]
+    environment: {OTEL_TRACES_EXPORTER: none}
+    ports: ["10.254.240.1:5443:5000"]
+    volumes:
+      - ${G}/config-wg-open.yml:/etc/distribution/config.yml:ro
+
+  station-postgresql-v2:
+    <<: *runtime
+    image: postgres:15
+    container_name: station-postgresql-v2
+    command: ["-c", "ssl=on", "-c", "ssl_cert_file=/run/station/server.crt", "-c", "ssl_key_file=/run/station/server.key"]
+    env_file: ["${R}/station-postgres.env"]   # 切换时从在跑的容器导出一次（见文末），之后只在这个文件里
+    environment:
+      POSTGRES_INITDB_ARGS: --auth-local=scram-sha-256 --auth-host=scram-sha-256
+      POSTGRES_USER: station_admin
+      POSTGRES_DB: station_api
+    ports: ["127.0.0.1:15432:5432"]
+    volumes:
+      - station-postgres-data-v2:/var/lib/postgresql/data
+      - station-postgres-tls-v2:/run/station:ro
+
+  fleet-data-postgres:
+    <<: *runtime
+    image: postgres@sha256:baa22e6286bf832cb147b8bb5aa9d8bc999846d69c21d11bf63f58fbeed1fa48
+    container_name: fleet-data-postgres
+    command:
+      - -c
+      - ssl=on
+      - -c
+      - ssl_cert_file=/run/fleet-data/server.crt
+      - -c
+      - ssl_key_file=/run/fleet-data/server.key
+      - -c
+      - hba_file=/run/fleet-data/pg_hba.conf
+      - -c
+      - password_encryption=scram-sha-256
+      - -c
+      - fsync=on
+      - -c
+      - synchronous_commit=on
+      - -c
+      - full_page_writes=on
+    environment:
+      POSTGRES_PASSWORD_FILE: /run/fleet-data/admin-password
+      POSTGRES_INITDB_ARGS: --data-checksums
+    ports: ["10.254.240.1:25432:5432"]
+    volumes:
+      - fleet-data-postgres-data:/var/lib/postgresql/data
+      - fleet-data-postgres-bootstrap:/run/fleet-data:ro
+      - fleet-data-postgres-bootstrap:/docker-entrypoint-initdb.d:ro
+    healthcheck: {test: ["CMD-SHELL", "pg_isready -U postgres -d postgres"]}
+
+  wg-service-gateway:
+    <<: *runtime
+    image: ${WG_SERVICE_GATEWAY_IMAGE:-wg-service-gateway:local}
+    container_name: wg-service-gateway
+    network_mode: host
+    command: ["python", "-m", "gateway"]
+    env_file: ["${R}/wg-service-gateway.env"]   # GATEWAY_TOKEN，切换时导出一次
+    environment:
+      GATEWAY_BIND_IP: 10.11.14.128
+      GATEWAY_PORT: "20000"
+      GATEWAY_API_PORT: "20001"
+      GATEWAY_CONTROL_PORT: "20002"
+      GATEWAY_ALLOWED_NETWORKS: 10.254.240.0/24,172.27.0.0/24,172.27.1.0/24
+    volumes: ["/home/cailiang/workspace/dev/nginx_server/data:/data"]
+    healthcheck: {test: ["CMD-SHELL", "python -m gateway.healthcheck"]}
+
+networks:
+  rlark: {external: true, name: fleet-rlark-env_rlark-network}
+  kind: {external: true, name: kind}
+
+volumes:
+  kcp-data: {external: true, name: fleet-rlark-env_kcp-data}
+  postgres-data: {external: true, name: fleet-rlark-env_postgres-data}
+  station-postgres-data-v2: {external: true, name: station-postgres-data-v2}
+  station-postgres-tls-v2: {external: true, name: station-postgres-tls-v2}
+  fleet-data-postgres-data: {external: true, name: fleet-data-postgres-data}
+  fleet-data-postgres-bootstrap: {external: true, name: fleet-data-postgres-bootstrap}
+  local-registry-data: {external: true, name: "${LOCAL_REGISTRY_VOLUME:?anonymous volume of the running local-registry}"}
+
+# control-plane.env（在管理机上，600，不入库）要有：
+#   R=/home/cailiang/.local/share/rlark-runtime
+#   G=/home/cailiang/.config/rlark-registry
+#   RLARK_IMAGE=<registry>/rlark@sha256:…
+#   RLARK_GATEWAY_IMAGE=<registry>/rlark-gateway@sha256:…
+#   LOCAL_REGISTRY_VOLUME=55293f7096b8fb1d2531ff7ca50c67db516083d544fde1708c2724181825f7d0
+# 两个口令文件在切换时从在跑的容器导出一次，值不经过任何会话的输出：
+#   sudo sh -c 'umask 077; docker inspect station-postgresql-v2 -f "{{range .Config.Env}}{{println .}}{{end}}" \
+#     | grep "^POSTGRES_PASSWORD=" > $R/station-postgres.env'
+#   sudo sh -c 'umask 077; docker inspect wg-service-gateway -f "{{range .Config.Env}}{{println .}}{{end}}" \
+#     | grep "^GATEWAY_TOKEN=" > $R/wg-service-gateway.env'
+#
+# 没抄进来、要合并树的人确认的两点：
+#   - rlark-ks3-registry-wg / -migrated 各有一个匿名卷挂在 /var/lib/registry；它们的存储后端是 KS3，
+#     按配置这个卷应是空的，这里没有保留。切换前 `docker exec <c> du -sh /var/lib/registry` 看一眼。
+#   - 正式前端：服务 rlark-ui 定义在 rlark.compose.yaml（镜像由 apps/rlark-ui/Dockerfile 从同一提交构建，
+#     :80，/api/ 转给 rlark-gateway）。两份文件在控制面迁移时合成一份。

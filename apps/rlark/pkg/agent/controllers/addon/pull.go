@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -18,6 +19,7 @@ import (
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/yaml"
@@ -27,6 +29,7 @@ import (
 
 	rlarkv1alpha1 "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
 	"github.com/rlinf/rlark/apps/rlark/pkg/addons"
+	raykubernetes "github.com/rlinf/rlark/apps/rlark/pkg/agent/controllers/task/workload/ray/kubernetes"
 	"github.com/rlinf/rlark/apps/rlark/pkg/apis"
 )
 
@@ -34,8 +37,11 @@ import (
 const (
 	AddonRequeueInterval = 10 * time.Second
 
-	// AddonResourceVersionAnnotation annotates local resources linking back to the management Addon CR.
-	AddonResourceVersionAnnotation = "rlark.io/addon-resource-version"
+	// AddonGenerationAnnotation records the management Addon's generation (its spec revision) a local
+	// resource was rendered from. Its resourceVersion is not used: every status write changes it, and an
+	// update of a Deployment's annotations moves the Deployment's generation, so the two kept each other
+	// moving and the Addon never read as ready.
+	AddonGenerationAnnotation = "rlark.io/addon-generation"
 )
 
 var errAddonCleanupPending = errors.New("addon resource deletion pending")
@@ -148,7 +154,7 @@ func (r *pullReconciler) Reconcile(ctx context.Context, req reconcile.Request) (
 		for _, obj := range objs {
 			injectLabels(obj, mgmtAddon.Name, string(mgmtAddon.UID))
 			obj.SetAnnotations(mergeMaps(obj.GetAnnotations(), map[string]string{
-				AddonResourceVersionAnnotation: mgmtAddon.ResourceVersion,
+				AddonGenerationAnnotation: strconv.FormatInt(mgmtAddon.Generation, 10),
 			}))
 			if err := r.applyObject(ctx, obj, &mgmtAddon); err != nil {
 				r.updateStatus(ctx, &mgmtAddon, rlarkv1alpha1.AddonPhaseFailed, fmt.Sprintf("apply %s/%s: %v", obj.GetKind(), obj.GetName(), err))
@@ -190,6 +196,10 @@ func (r *pullReconciler) applyObject(ctx context.Context, obj *unstructured.Unst
 		obj.SetNamespace(apis.Namespace)
 	}
 
+	if err := r.injectImagePullSecrets(ctx, obj); err != nil {
+		return err
+	}
+
 	key := types.NamespacedName{Name: obj.GetName(), Namespace: obj.GetNamespace()}
 
 	existing := &unstructured.Unstructured{}
@@ -217,14 +227,14 @@ func (r *pullReconciler) applyObject(ctx context.Context, obj *unstructured.Unst
 	// The annotation identifies the rendered revision, but does not prove that
 	// the live fields still match it. Check desired fields on each reconciliation.
 	existingAnnotations := existing.GetAnnotations()
-	if existingAnnotations != nil && existingAnnotations[AddonResourceVersionAnnotation] == mgmtAddon.ResourceVersion && desiredFieldsMatch(obj, existing) {
+	if existingAnnotations != nil && existingAnnotations[AddonGenerationAnnotation] == strconv.FormatInt(mgmtAddon.Generation, 10) && desiredFieldsMatch(obj, existing) {
 		return nil
 	}
 
 	logger.Info("updating resource")
 	mergedLabels := mergeMaps(existing.GetLabels(), obj.GetLabels())
 	mergedAnnotations := mergeMaps(existing.GetAnnotations(), obj.GetAnnotations())
-	mergedAnnotations[AddonResourceVersionAnnotation] = mgmtAddon.ResourceVersion
+	mergedAnnotations[AddonGenerationAnnotation] = strconv.FormatInt(mgmtAddon.Generation, 10)
 
 	existing.SetLabels(mergedLabels)
 	existing.SetAnnotations(mergedAnnotations)
@@ -243,6 +253,32 @@ func (r *pullReconciler) applyObject(ctx context.Context, obj *unstructured.Unst
 		return fmt.Errorf("update %s/%s: %w", gvk.Kind, key, err)
 	}
 	return nil
+}
+
+// injectImagePullSecrets gives the Pods of an Addon workload the image registry
+// credentials distributed to this cluster, matched by image name exactly as for
+// a Task's Pods, so an Addon needs no pull-secret parameter of its own.
+func (r *pullReconciler) injectImagePullSecrets(ctx context.Context, obj *unstructured.Unstructured) error {
+	raw, found, err := unstructured.NestedMap(obj.Object, "spec", "template")
+	if err != nil || !found {
+		return err
+	}
+	template := &corev1.PodTemplateSpec{}
+	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(raw, template); err != nil {
+		return fmt.Errorf("%s/%s pod template: %w", obj.GetKind(), obj.GetName(), err)
+	}
+	before := len(template.Spec.ImagePullSecrets)
+	if err := raykubernetes.EnsureImagePullSecrets(ctx, r.c.LocalKubeClient, template, obj.GetNamespace()); err != nil {
+		return err
+	}
+	if len(template.Spec.ImagePullSecrets) == before {
+		return nil
+	}
+	secrets := make([]interface{}, 0, len(template.Spec.ImagePullSecrets))
+	for _, secret := range template.Spec.ImagePullSecrets {
+		secrets = append(secrets, map[string]interface{}{"name": secret.Name})
+	}
+	return unstructured.SetNestedSlice(obj.Object, secrets, "spec", "template", "spec", "imagePullSecrets")
 }
 
 // desiredFieldsMatch ignores server-defaulted fields absent from the rendered
@@ -397,8 +433,9 @@ func (r *pullReconciler) checkReady(ctx context.Context, mgmtAddon *rlarkv1alpha
 	logger.Info("checkReady: deployments found", "count", len(depList.Items))
 	for _, d := range depList.Items {
 		foundWorkloads = true
-		if d.Status.ReadyReplicas < *d.Spec.Replicas {
-			return false, fmt.Sprintf("Deployment %s: %d/%d ready", d.Name, d.Status.ReadyReplicas, *d.Spec.Replicas), nil
+		// Pods of an older template (a rollout stuck on an image pull, say) do not count.
+		if d.Status.ObservedGeneration < d.Generation || d.Status.UpdatedReplicas < *d.Spec.Replicas || d.Status.Replicas > d.Status.UpdatedReplicas || d.Status.ReadyReplicas < *d.Spec.Replicas {
+			return false, fmt.Sprintf("Deployment %s: %d/%d updated, %d ready", d.Name, d.Status.UpdatedReplicas, *d.Spec.Replicas, d.Status.ReadyReplicas), nil
 		}
 	}
 
@@ -410,10 +447,16 @@ func (r *pullReconciler) checkReady(ctx context.Context, mgmtAddon *rlarkv1alpha
 	logger.Info("checkReady: daemonsets found", "count", len(dsList.Items), "labels", labels)
 	for _, ds := range dsList.Items {
 		foundWorkloads = true
-		if ds.Status.DesiredNumberScheduled == 0 {
+		if ds.Status.ObservedGeneration < ds.Generation {
+			return false, fmt.Sprintf("DaemonSet %s: not yet observed", ds.Name), nil
+		}
+		// A DaemonSet meant for one class of nodes (a robot's, say) is fine on a
+		// cluster without such nodes; one meant for every node is not.
+		pod := ds.Spec.Template.Spec
+		if ds.Status.DesiredNumberScheduled == 0 && len(pod.NodeSelector) == 0 && (pod.Affinity == nil || pod.Affinity.NodeAffinity == nil) {
 			return false, fmt.Sprintf("DaemonSet %s: no nodes scheduled", ds.Name), nil
 		}
-		if ds.Status.NumberReady < ds.Status.DesiredNumberScheduled {
+		if ds.Status.UpdatedNumberScheduled < ds.Status.DesiredNumberScheduled || ds.Status.NumberReady < ds.Status.DesiredNumberScheduled {
 			return false, fmt.Sprintf("DaemonSet %s: %d/%d ready", ds.Name, ds.Status.NumberReady, ds.Status.DesiredNumberScheduled), nil
 		}
 	}
@@ -426,7 +469,7 @@ func (r *pullReconciler) checkReady(ctx context.Context, mgmtAddon *rlarkv1alpha
 	logger.Info("checkReady: statefulsets found", "count", len(ssList.Items))
 	for _, ss := range ssList.Items {
 		foundWorkloads = true
-		if ss.Status.ReadyReplicas < *ss.Spec.Replicas {
+		if ss.Status.ObservedGeneration < ss.Generation || ss.Status.UpdatedReplicas < *ss.Spec.Replicas || ss.Status.ReadyReplicas < *ss.Spec.Replicas {
 			return false, fmt.Sprintf("StatefulSet %s: %d/%d ready", ss.Name, ss.Status.ReadyReplicas, *ss.Spec.Replicas), nil
 		}
 	}

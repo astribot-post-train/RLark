@@ -15,6 +15,7 @@ import (
 
 	"github.com/rlinf/rlark/api/kubeclients/clientset/versioned"
 	rlarkv1alpha1 "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
+	"github.com/rlinf/rlark/apps/rlark/pkg/agent/controllers/node"
 	"github.com/rlinf/rlark/apps/rlark/pkg/common"
 	"github.com/rlinf/rlark/apps/rlark/pkg/server"
 	"github.com/rlinf/rlark/apps/rlark/pkg/utils"
@@ -65,6 +66,9 @@ func (a *Agent) init(ctx context.Context) error {
 	_ = ctx
 	var err error
 	if err := validateTaskRuntimeResyncPeriod(a.config.Mode, a.config.TaskRuntimeResyncPeriod); err != nil {
+		return err
+	}
+	if err := node.SetManagementOwnedLabels(a.config.ManagementNodeLabels); err != nil {
 		return err
 	}
 	if err := a.config.ControllerConcurrency.Validate(); err != nil {

@@ -65,6 +65,8 @@ Job 编辑器可创建两种存储：主机目录和 PVC 存储挂载。通过 A
 - 已有 `persistentVolumeClaim`：RLark 不创建、收养、修改或删除引用的 PVC；其生命周期和数据保留不属于 Task 管理范围
 - Pod 级 `ephemeral.volumeClaimTemplate`：删除 Worker Pod 时删除对应临时 PVC，新 Pod 获得新 PVC
 - hostPath：生命周期操作不删除节点数据
+- 存储类的卷（对象存储、SMB）：PersistentVolume 随它的 PVC 一起删除（`reclaimPolicy: Delete`）。远端不受影响：驱动的删卷操作不改动桶或共享里的内容。存储类改为 `Delete` 之前建的卷仍是 `Retain`，会停在 `Released`，需要管理员删除 PersistentVolume 对象
+- Gateway 升级后的存储类：Gateway 启动时按已存字段把每个存储重新渲染一遍，StorageClass 或远端配置有变化的会被重写。不可变字段变化时集群 agent 会替换 StorageClass；已绑定的卷不受影响，因为存储类只在创建卷时读取
 - 其他 Kubernetes 原生卷：Job 编辑器无法创建或修改；编辑或复制任务时会原样写回其原始定义，因此生命周期仍由该卷类型本身决定
 
 已有 PVC 引用必须填写 `claimName`，且该 claim 必须已存在于 workload namespace。挂载或绑定失败由 Kubernetes 通过 workload 和 Pod 状态报告。删除被引用的 PVC 属于外部管理操作；删除前应确认没有 workload 使用它，并考虑绑定 PV 的 reclaim policy。
@@ -74,3 +76,23 @@ Job 编辑器可创建两种存储：主机目录和 PVC 存储挂载。通过 A
 ## API 等效操作
 
 使用 StorageClass、provider 和对象文件接口，详见 [Storage API](../storage-api.md)。
+
+## 挂载 Endpoint
+
+创建 S3 存储类时可填写“挂载 Endpoint（可选）”。留空沿用 Endpoint；填写后仅影响目标集群的 CSI 挂载，Gateway 校验和文件浏览仍使用原 Endpoint。适用于 Gateway 通过公网、云端 Job 通过云内网络访问同一个 bucket。地址格式校验不代表云端可达，需提交只读测试 Job 验证。所有目标共用此地址；不同网络环境应使用独立存储类。编辑时清空该字段会恢复沿用 Endpoint。SMB 不提供此选项。
+
+S3 存储类还可限定 bucket 内对象 `prefix`，并选择 rclone VFS 缓存模式（`writes` 或 `off`）。现有类缺省仍为 `writes`。需要无缓存写入的任务应使用独立存储类，并在生产使用前验证实际集群上的关闭错误传播和失败重传。生成的 `remotePath` 规则见 [Storage API](../storage-api.md)。
+
+
+### KS3 multipart 验收限制
+
+缓存模式 `off` 不保证提供商兼容性。已测 KS3 配置下，CSI rclone v0.2.0（内嵌 rclone v1.71.2）的 multipart 完成后对象 ETag 是不同于内容 MD5 的 32 位十六进制值；即使独立下载核对字节一致，流式 close 仍可能返回 EIO（`corrupted on transfer`）。不要通过关闭完整性检查验收此挂载；用于归档前必须验证驱动与提供商组合。未知长度流还需要合适的 multipart 分片大小：默认 5 MiB 和 10,000 个分片只允许约 48.8 GiB。当前存储表单不暴露分片大小配置，大 checkpoint 验收需要兼容的驱动/配置和真实故障恢复测试。各挂载有独立目录缓存，close 成功本身也不承诺另一挂载立即可见。
+
+
+## 每个 S3 存储的挂载配置
+
+创建/更新接受 `mount_profile`（`default`、`read`、`archive`）和 `mount_options`（`key=value` 字符串数组）。列表返回这两项及 `effective_mount_options`、`effective_backend_options`。更新时省略字段保留原值；空选项数组清除覆盖项。default 保留现有设置；read 强制只读挂载、目录缓存五分钟；archive 强制关闭写缓存、目录缓存五秒、S3 分片 32 MiB、分片并发 4。这是配置 profile，不代表已通过 KS3 归档验收。
+
+显式选项覆盖 profile 默认值。重复/未知选项、与 `vfs_cache_mode` 或 profile 强制设置矛盾的配置被拒绝。支持：`vfs-cache-mode`、`read-only`、`fast-list`、`dir-cache-time`、`attr-timeout`、`poll-interval`、`vfs-write-back`、`vfs-cache-max-age`、`buffer-size`、`transfers`、`checkers`、`low-level-retries`、`tpslimit`、`tpslimit-burst`、`s3-chunk-size`、`s3-upload-concurrency`。后端参数写入 remote 配置中的 `chunk_size` / `upload_concurrency`。不能通过这里注入凭证、路径、控制接口或 `ignore-checksum`。SMB 不接受 S3 profile 或覆盖项。
+
+profile 不提供账号级总请求预算。设置限速前应确认 429 的来源和作用域，并统筹 Fleet、DataTools 和镜像仓库；CSI 与 Gateway 是不同请求路径。缩短目录缓存不代表原子发布或即时可见。修改仅对新挂载生效，应在维护窗口停止、更新、启动相关 Job；存储变更不会自动重启活动 Job。

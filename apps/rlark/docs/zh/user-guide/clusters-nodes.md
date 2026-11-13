@@ -6,7 +6,9 @@
 
 节点表格分别显示 Kubernetes 节点地址和 **WG** 行。每个有效地址均可独立复制，复制结果只包含 IP，不含标签或 CIDR 前缀；搜索支持节点地址和已提供的 WG 地址。多个 WG 地址逐项显示，悬停可查看接口及原始 CIDR。复制失败会在单元格提示，地址仍可手动选择。
 
-配置可选 Station 集成后，节点列表查询经验证的 WireGuard 观测并显示该节点的接口地址。**未上报**不代表没有部署 WireGuard。服务端接收时间超过 90 秒的观测显示为**上次上报**；验证不可用时隐藏 WG 地址，保留 Kubernetes 节点地址。界面不推测网关接入，也不把网关 IP 当作节点地址。本功能为预览，需要 Station API、Gateway 凭证及更新后的 Agent；前提条件见 Station 网关 README。
+配置可选 Station 集成后，节点列表查询经验证的 WireGuard 观测并显示该节点的接口地址。没有 Station 绑定或观测的节点显示**未上报**，不代表没有部署 WireGuard。服务端接收时间超过 90 秒的观测显示为**上次上报**，历史地址不提供复制按钮；验证不可用时隐藏 WG 地址，保留 Kubernetes 节点地址。界面不推测网关接入，也不把网关 IP 当作节点地址。本功能为预览，需要 Station API、Gateway 凭证及更新后的 Agent；前提条件见 Station 网关 README。
+
+网络摘要提示服务认证失败时，管理员须检查 Gateway 与 Station API 的凭证是否一致。部署可通过 `docs/design/station-deploy/sync-gateway-credential.sh` 从 Station Secret 同步专用凭证目录；应挂载整个目录而非单个文件，使替换后的凭证对 Gateway 可见。不要复用用户登录 token 文件。当前不支持自动轮换。安装 NodeOperation CRD 并显式启用试验控制器后，Stations 页面提供接入和剔除操作。接入前须为成员集群安装匹配的 node-agent DaemonSet profile。Join 支持标准 containerd 和 Fleet containerd，会检查所选 socket，并仅在核验新 Node UID 后设置 runtime 标签。Join 默认拒绝旧 kubeadm 状态；只有单独勾选确认后才请求 reset，且要求主机名匹配、目标集群中没有同名 Node 和相同 systemUUID、目标不是控制面且 sudo 可用；此检查不访问其他集群。Join 还要求 IPv4 转发 `net.ipv4.ip_forward=1`。如果该节点名的 Station 仍绑定旧 UID，kubeadm 可先加入，但 RLark readiness 会等待；新鲜观测报告新 UID 后，管理员须提交显式 Rebind，控制器核验绑定后会继续 Join。Offline 或冲突 Station 详情均可打开 Rebind 审查。剔除会扫描所有登记集群的 WireGuard 配置，因此所有成员 kubeconfig 和 ConfigMap 都必须可访问；Peer 归属不明会在排空前阻止。未标记的旧配置可由匹配的已验证 Station 观测提供归属证据。操作被接受不代表已完成，详见 Station API 参考。
 
 1. 在业务平台打开**集群**。
 2. 按集群名称或 ID 搜索，或使用列表提供的元数据筛选。

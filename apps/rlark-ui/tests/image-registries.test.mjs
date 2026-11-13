@@ -32,19 +32,31 @@ test("mock backend implements ID-based image registry CRUD", () => {
 
 test("registry detail exposes image table, states and push/pull guidance", () => {
   assert.match(page, /<RegistryBrowser/);
-  assert.match(browser, /镜像名称[\s\S]*"标签"[\s\S]*操作/);
-  assert.match(browser, /loadRegistryTagPreviews/);
+  assert.match(page, /registry-info-strip/);
+  assert.match(browser, /"镜像"[\s\S]*"最新版本"[\s\S]*"更新时间"[\s\S]*"大小"[\s\S]*"平台"[\s\S]*"操作"/);
+  assert.match(browser, /loadRegistryTagPreviews<RegistryTagDetailPage>/);
+  assert.match(browser, /\(name, signal\) => fetchDetails\(name, "", signal\)/);
+  assert.match(browser, /error instanceof ApiError && error\.status === 404/);
+  assert.match(browser, /legacyTagDetails\(await imageRegistriesApi\.tags\(registryID/);
+  assert.match(browser, /当前 Gateway 版本不支持读取镜像构建时间/);
+  assert.match(browser, /groupRegistryVersions/);
   assert.match(browser, /registry-tag-chip/);
-  assert.match(browser, /registry-expanded-row[\s\S]*<RegistryTags/);
-  assert.match(browser, /registry-tag-row-main[\s\S]*registry-tag-actions/);
-  assert.match(browser, /aria-expanded=\{selectedTag === tag\}/);
-  assert.match(browser, /className=\{compact \? "table-action-button"/);
+  assert.match(browser, /className="addon-drawer registry-drawer"[\s\S]*role="dialog"/);
+  assert.match(browser, /event\.key === "Escape"\) onClose\(\)/);
+  assert.doesNotMatch(browser, /registry-expanded-row/);
+  assert.match(browser, /className=\{iconOnly \? "icon-button" : compact \? "table-action-button"/);
   assert.match(browser, /复制成功[\s\S]*复制失败/);
-  assert.match(browserStyles, /\.registry-tag-actions[\s\S]*?flex-wrap: wrap/);
+  assert.match(browser, /按 digest Pull/);
+  assert.match(browserStyles, /\.registry-version-actions[\s\S]*?flex-wrap: wrap/);
   assert.match(browser, /标签加载失败/);
-  assert.match(browser, /查看摘要/);
+  assert.match(browser, /无法读取镜像信息/);
   assert.match(browser, /role="alert"/);
   assert.match(browser, /当前页没有匹配的镜像/);
   assert.match(browser, /Push \/ Pull 操作指南/);
   assert.match(browser, /registryCommands\(item\.registry, item\.username\)/);
+});
+
+test("registry tag details API targets the Gateway tag-details route", () => {
+  assert.match(backend, /tagDetails\(id: string, repository: string, last = "", signal\?: AbortSignal\)/);
+  assert.match(backend, /\/tag-details\?\$\{query\}/);
 });

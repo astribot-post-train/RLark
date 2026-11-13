@@ -159,7 +159,7 @@ func TestApplyObjectRetriesAfterUpdateFailure(t *testing.T) {
 	makeConfig := func(value string) *unstructured.Unstructured {
 		return &unstructured.Unstructured{Object: map[string]interface{}{
 			"apiVersion": "v1", "kind": "ConfigMap",
-			"metadata": map[string]interface{}{"name": "test", "namespace": "rlark-system", "labels": map[string]interface{}{"rlark.io/addon-name": "a", "rlark.io/addon-uid": "uid"}, "annotations": map[string]interface{}{AddonResourceVersionAnnotation: "1"}},
+			"metadata": map[string]interface{}{"name": "test", "namespace": "rlark-system", "labels": map[string]interface{}{"rlark.io/addon-name": "a", "rlark.io/addon-uid": "uid"}, "annotations": map[string]interface{}{AddonGenerationAnnotation: "1"}},
 			"data":     map[string]interface{}{"key": value},
 		}}
 	}
@@ -265,11 +265,11 @@ func findAddonCondition(conditions []metav1.Condition, conditionType string) *me
 
 func TestApplyObjectRepairsOwnedDriftAndRejectsForeignObjects(t *testing.T) {
 	ctx := context.Background()
-	addon := &rlarkv1alpha1.Addon{ObjectMeta: metav1.ObjectMeta{Name: "csi", UID: types.UID("addon-uid"), ResourceVersion: "42"}}
+	addon := &rlarkv1alpha1.Addon{ObjectMeta: metav1.ObjectMeta{Name: "csi", UID: types.UID("addon-uid"), Generation: 42}}
 	makeObject := func(uid string) *unstructured.Unstructured {
 		return &unstructured.Unstructured{Object: map[string]interface{}{
 			"apiVersion": "apps/v1", "kind": "Deployment",
-			"metadata": map[string]interface{}{"name": "driver", "namespace": "rlark-system", "labels": map[string]interface{}{"rlark.io/addon-name": "csi", "rlark.io/addon-uid": uid}, "annotations": map[string]interface{}{AddonResourceVersionAnnotation: "42"}},
+			"metadata": map[string]interface{}{"name": "driver", "namespace": "rlark-system", "labels": map[string]interface{}{"rlark.io/addon-name": "csi", "rlark.io/addon-uid": uid}, "annotations": map[string]interface{}{AddonGenerationAnnotation: "42"}},
 			"spec":     map[string]interface{}{"template": map[string]interface{}{"spec": map[string]interface{}{"nodeSelector": map[string]interface{}{"kubernetes.io/hostname": "worker"}}}},
 		}}
 	}
@@ -353,7 +353,7 @@ func TestReadyAddonSchedulesDriftReconciliation(t *testing.T) {
 	}
 	mgmt := fake.NewClientBuilder().WithScheme(scheme).WithObjects(a).WithStatusSubresource(&rlarkv1alpha1.Addon{}).Build()
 	replicas := int32(1)
-	local := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(&appsv1.Deployment{}, &appsv1.DaemonSet{}).WithObjects(&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "ready", Namespace: "rlark-system", Labels: map[string]string{"rlark.io/addon-name": "csi"}}, Spec: appsv1.DeploymentSpec{Replicas: &replicas}, Status: appsv1.DeploymentStatus{ReadyReplicas: 1}}).Build()
+	local := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(&appsv1.Deployment{}, &appsv1.DaemonSet{}).WithObjects(&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "ready", Namespace: "rlark-system", Labels: map[string]string{"rlark.io/addon-name": "csi"}}, Spec: appsv1.DeploymentSpec{Replicas: &replicas}, Status: appsv1.DeploymentStatus{Replicas: 1, UpdatedReplicas: 1, ReadyReplicas: 1}}).Build()
 	r := &pullReconciler{c: &Controller{Controller: base.Controller{ManagementClient: mgmt, LocalKubeClient: local, AgentType: string(rlarkv1alpha1.AgentTypeKubernetes)}}}
 	req := reconcile.Request{NamespacedName: types.NamespacedName{Name: "csi", Namespace: "test"}}
 	if _, err := r.Reconcile(ctx, req); err != nil {
@@ -363,7 +363,8 @@ func TestReadyAddonSchedulesDriftReconciliation(t *testing.T) {
 	if err := local.Get(ctx, types.NamespacedName{Name: "csi-driver-rclone-controller", Namespace: "rlark-system"}, &dep); err != nil {
 		t.Fatal(err)
 	}
-	dep.Status.ReadyReplicas = *dep.Spec.Replicas
+	dep.Status.ObservedGeneration = dep.Generation
+	dep.Status.Replicas, dep.Status.UpdatedReplicas, dep.Status.ReadyReplicas = *dep.Spec.Replicas, *dep.Spec.Replicas, *dep.Spec.Replicas
 	if err := local.Status().Update(ctx, &dep); err != nil {
 		t.Fatal(err)
 	}
@@ -371,8 +372,8 @@ func TestReadyAddonSchedulesDriftReconciliation(t *testing.T) {
 	if err := local.Get(ctx, types.NamespacedName{Name: "csi-driver-rclone-node", Namespace: "rlark-system"}, &ds); err != nil {
 		t.Fatal(err)
 	}
-	ds.Status.DesiredNumberScheduled = 1
-	ds.Status.NumberReady = 1
+	ds.Status.ObservedGeneration = ds.Generation
+	ds.Status.DesiredNumberScheduled, ds.Status.UpdatedNumberScheduled, ds.Status.NumberReady = 1, 1, 1
 	if err := local.Status().Update(ctx, &ds); err != nil {
 		t.Fatal(err)
 	}
@@ -408,5 +409,123 @@ func TestReadyAddonSchedulesDriftReconciliation(t *testing.T) {
 	}
 	if _, exists := config.Data["unexpected"]; exists {
 		t.Fatal("scheduled reconciliation left drifted config")
+	}
+}
+
+func TestApplyObjectInjectsDistributedImagePullSecrets(t *testing.T) {
+	ctx := context.Background()
+	credential := func(name, registry string) *corev1.Secret {
+		return &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "rlark-system", Labels: map[string]string{"rlark.io/image-registry-credential": "true"}, Annotations: map[string]string{"rlark.io/registry": registry}},
+			Type:       corev1.SecretTypeDockerConfigJson,
+			Data:       map[string][]byte{corev1.DockerConfigJsonKey: []byte("{}")},
+		}
+	}
+	cl := fake.NewClientBuilder().WithScheme(clientgoscheme.Scheme).WithObjects(credential("ir-site", "registry.rlark.internal:5443"), credential("ir-other", "other.example:5000")).Build()
+	r := &pullReconciler{c: &Controller{Controller: base.Controller{LocalKubeClient: cl}}}
+	addon := &rlarkv1alpha1.Addon{ObjectMeta: metav1.ObjectMeta{Name: "a", UID: "u", ResourceVersion: "1"}}
+	objs, err := parseManifest([]byte(`apiVersion: apps/v1
+kind: DaemonSet
+metadata: {name: d, namespace: rlark-system}
+spec:
+  selector: {matchLabels: {app: d}}
+  template:
+    metadata: {labels: {app: d}}
+    spec:
+      containers: [{name: c, image: "registry.rlark.internal:5443/fleet/robot@sha256:0000000000000000000000000000000000000000000000000000000000000000"}]
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	injectLabels(objs[0], addon.Name, string(addon.UID))
+	if err := r.applyObject(ctx, objs[0], addon); err != nil {
+		t.Fatal(err)
+	}
+	var got appsv1.DaemonSet
+	if err := cl.Get(ctx, types.NamespacedName{Name: "d", Namespace: "rlark-system"}, &got); err != nil {
+		t.Fatal(err)
+	}
+	if secrets := got.Spec.Template.Spec.ImagePullSecrets; len(secrets) != 1 || secrets[0].Name != "ir-site" {
+		t.Fatalf("imagePullSecrets = %v, want [ir-site]", secrets)
+	}
+}
+
+func TestCheckReadyDaemonSetForAClassOfNodesMayHaveNone(t *testing.T) {
+	ctx := context.Background()
+	addon := &rlarkv1alpha1.Addon{ObjectMeta: metav1.ObjectMeta{Name: "a", UID: "u"}}
+	daemonSet := func(name string, affinity *corev1.Affinity, observed int64) *appsv1.DaemonSet {
+		return &appsv1.DaemonSet{
+			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "rlark-system", Generation: 1, Labels: map[string]string{"rlark.io/addon-name": "a"}},
+			Spec:       appsv1.DaemonSetSpec{Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{Affinity: affinity}}},
+			Status:     appsv1.DaemonSetStatus{ObservedGeneration: observed},
+		}
+	}
+	robots := &corev1.Affinity{NodeAffinity: &corev1.NodeAffinity{}}
+	for _, tt := range []struct {
+		name  string
+		ds    *appsv1.DaemonSet
+		ready bool
+	}{
+		{"every node, none scheduled", daemonSet("all", nil, 1), false},
+		{"robot nodes, none in cluster", daemonSet("robot", robots, 1), true},
+		{"robot nodes, not yet observed", daemonSet("robot", robots, 0), false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			cl := fake.NewClientBuilder().WithScheme(clientgoscheme.Scheme).WithObjects(tt.ds).WithStatusSubresource(tt.ds).Build()
+			r := &pullReconciler{c: &Controller{Controller: base.Controller{LocalKubeClient: cl}}}
+			ready, msg, err := r.checkReady(ctx, addon)
+			if err != nil || ready != tt.ready {
+				t.Fatalf("checkReady = %v %q %v, want %v", ready, msg, err, tt.ready)
+			}
+		})
+	}
+}
+
+func TestCheckReadyDeploymentStuckRolloutIsNotReady(t *testing.T) {
+	ctx := context.Background()
+	addon := &rlarkv1alpha1.Addon{ObjectMeta: metav1.ObjectMeta{Name: "a", UID: "u"}}
+	one := int32(1)
+	// The old ReplicaSet's Pod is ready, the new one cannot pull its image.
+	d := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{Name: "c", Namespace: "rlark-system", Generation: 2, Labels: map[string]string{"rlark.io/addon-name": "a"}},
+		Spec:       appsv1.DeploymentSpec{Replicas: &one},
+		Status:     appsv1.DeploymentStatus{ObservedGeneration: 2, Replicas: 2, UpdatedReplicas: 1, ReadyReplicas: 1},
+	}
+	cl := fake.NewClientBuilder().WithScheme(clientgoscheme.Scheme).WithObjects(d).WithStatusSubresource(d).Build()
+	r := &pullReconciler{c: &Controller{Controller: base.Controller{LocalKubeClient: cl}}}
+	if ready, msg, err := r.checkReady(ctx, addon); err != nil || ready {
+		t.Fatalf("checkReady = %v %q %v, want not ready", ready, msg, err)
+	}
+}
+
+// A status write changes the management Addon's resourceVersion but not its generation. The local object,
+// already rendered from that generation and unchanged, must not be written again: an annotation update
+// moves a Deployment's generation, and the Addon would read as not ready on every reconciliation.
+func TestApplyObjectLeavesAnUnchangedObjectAloneAcrossStatusWrites(t *testing.T) {
+	ctx := context.Background()
+	addon := &rlarkv1alpha1.Addon{ObjectMeta: metav1.ObjectMeta{Name: "site-registry", UID: types.UID("addon-uid"), Generation: 3, ResourceVersion: "1001"}}
+	makeObject := func() *unstructured.Unstructured {
+		return &unstructured.Unstructured{Object: map[string]interface{}{
+			"apiVersion": "apps/v1", "kind": "Deployment",
+			"metadata": map[string]interface{}{"name": "site-registry", "namespace": "rlark-system", "labels": map[string]interface{}{"rlark.io/addon-name": "site-registry", "rlark.io/addon-uid": "addon-uid"}, "annotations": map[string]interface{}{AddonGenerationAnnotation: "3"}},
+			"spec":     map[string]interface{}{"template": map[string]interface{}{"spec": map[string]interface{}{"hostNetwork": true}}},
+		}}
+	}
+	cl := fake.NewClientBuilder().WithObjects(makeObject()).Build()
+	r := &pullReconciler{c: &Controller{Controller: base.Controller{LocalKubeClient: cl}}}
+	before := makeObject()
+	if err := cl.Get(ctx, types.NamespacedName{Name: "site-registry", Namespace: "rlark-system"}, before); err != nil {
+		t.Fatal(err)
+	}
+	addon.ResourceVersion = "1002"
+	if err := r.applyObject(ctx, makeObject(), addon); err != nil {
+		t.Fatal(err)
+	}
+	after := makeObject()
+	if err := cl.Get(ctx, types.NamespacedName{Name: "site-registry", Namespace: "rlark-system"}, after); err != nil {
+		t.Fatal(err)
+	}
+	if after.GetResourceVersion() != before.GetResourceVersion() {
+		t.Fatalf("object written again after a status-only change: resourceVersion %s -> %s", before.GetResourceVersion(), after.GetResourceVersion())
 	}
 }

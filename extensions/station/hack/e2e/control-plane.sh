@@ -145,7 +145,8 @@ tunnels() {
 }
 # first_tunnel NODE: what an administrator gives a machine that is to become a
 # control plane and is in no cluster: its key is made and declared, and the
-# machine gets a document of its own (admit-member.sh bootstrap does this on a site).
+# machine gets a document of its own (a site has no tool for this: there, a
+# machine gets its tunnel by joining a cluster as a node, admit-node.sh).
 first_tunnel() {
   local node=$1
   on "$node" sh -c 'mkdir -p /opt/rlark/bin /etc/rlark/station && cat > /opt/rlark/bin/station-gateway && chmod 755 /opt/rlark/bin/station-gateway' < "$D/bin/station-gateway"
@@ -342,10 +343,10 @@ UNIT
 # is ws: the Job of migrate-node.sh, in the old cluster, runs the installer on
 # the node. BREAK=yes gives it a join token that is none: the join fails and
 # the node must be back in the old cluster by itself.
-move() { # NODE [FROM [TO [API]]]; MIGRATE=control-plane for the old cluster's last node
+move() { # NODE [FROM [TO [API]]]
   local node=$1 from=${2:-robot1} to=${3:-ws} api=${4:-$ROBOT:6443} code t0 runtime
   runtime=$(on "$node" sed -n 's/.*--container-runtime-endpoint=unix:\/\/\([^ "]*\).*/\1/p' /var/lib/kubelet/kubeadm-flags.env)
-  on "$node" ctr -a "$runtime" -n k8s.io images import - < "$D/installer.tar" >/dev/null
+  on "$node" sh -c "\$(command -v ctr || echo /opt/rlark-containerd/bin/ctr) -a $runtime -n k8s.io images import -" < "$D/installer.tar" >/dev/null
   code=$(LABELS=rlark.io/node-category=robot,rlark.io/robot-id=$node TAINTS=rlark.io/node-category=robot:NoSchedule \
     BAD_TOKEN=${BREAK:+abcdef.0123456789abcdef} admit "$node" "$to" "$api")
   k "$from" -n kube-system delete job "node-migrate-$node" --ignore-not-found >/dev/null
@@ -372,7 +373,7 @@ spec:
         env:
         - {name: RLARK_SERVER, value: "https://$P-station-api:18443"}
         - {name: RLARK_CODE, value: "$code"}
-        - {name: RLARK_MIGRATE, value: "${MIGRATE:-node}"}
+        - {name: RLARK_MIGRATE, value: "node"}
         - name: RLARK_CA
           value: |
 $(sed 's/^/            /' "$D/pki/ca.crt")
@@ -389,6 +390,77 @@ JOB
 # here an interface with that address, the default route with it as source,
 # and the translation on the way out. Set again on every boot, as a machine's
 # network configuration is.
+# reinstall NODE [CONTROL_PLANE [API]]: the old cluster's control plane, once
+# its other nodes have moved. A control plane does not move into another
+# cluster: its cluster is ended on it by hand, and the machine joins as any
+# machine that was never a node does.
+reinstall() {
+  local node=$1
+  on "$node" sh -c 'systemctl stop kubelet; PATH=/opt/robot-kubernetes/bin:$PATH kubeadm reset --force >/dev/null 2>&1; rm -rf /etc/kubernetes /var/lib/kubelet /var/lib/etcd /etc/cni/net.d/* /etc/systemd/system/kubelet.service /etc/systemd/system/kubelet.service.d; systemctl daemon-reload'
+  LABELS=rlark.io/node-category=robot,rlark.io/robot-id=$node TAINTS=rlark.io/node-category=robot:NoSchedule worker "$node" "${2:-ws}" "${3:-$ROBOT:6443}"
+}
+# robot_real NODE: a worker of the old cluster as the site's second robot is
+# one (11-13): containerd and ctr outside the PATH, a kubelet set up by hand
+# with no kubeadm beside it and no --config-dir, and the robots' node profile:
+# a drop-in that repeats the start line with --config-dir and runs the profile
+# before every start, the static CPU manager, and a profile program whose
+# "install" reads the running kubelet (so it fails while there is none).
+robot_real() {
+  local node=$1
+  on "$node" sh -c 'cat > /opt/robot-kubernetes-kubelet' < "$KUBE_DIR/$VERSION/kubelet"
+  on "$node" bash -ec '
+    mkdir -p /opt/rlark-containerd/bin /opt/robot-kubernetes/bin /usr/local/sbin /etc/kubernetes/kubelet.conf.d
+    install -m 755 /opt/robot-kubernetes-kubelet /opt/robot-kubernetes/bin/kubelet && rm /opt/robot-kubernetes-kubelet
+    systemctl stop kubelet
+    systemctl disable --now containerd >/dev/null 2>&1
+    for binary in containerd ctr; do mv "$(command -v $binary)" /opt/rlark-containerd/bin/; done
+    sed -i "s#^ExecStart=.*containerd #ExecStart=/opt/rlark-containerd/bin/containerd #" /etc/systemd/system/containerd-fleet.service
+    rm -f /opt/rlark/bin/kubeadm /opt/rlark/bin/kubelet /etc/systemd/system/kubelet.service.d/zz-rlark.conf /etc/kubernetes/kubelet.conf.d/*
+    cat > /etc/systemd/system/kubelet.service <<UNIT
+[Unit]
+Description=Robot Kubernetes kubelet
+After=network-online.target containerd-fleet.service
+[Service]
+Environment="KUBELET_KUBECONFIG_ARGS=--bootstrap-kubeconfig=/etc/kubernetes/bootstrap-kubelet.conf --kubeconfig=/etc/kubernetes/kubelet.conf"
+Environment="KUBELET_CONFIG_ARGS=--config=/var/lib/kubelet/config.yaml"
+EnvironmentFile=-/var/lib/kubelet/kubeadm-flags.env
+ExecStart=/opt/robot-kubernetes/bin/kubelet \$KUBELET_KUBECONFIG_ARGS \$KUBELET_CONFIG_ARGS \$KUBELET_KUBEADM_ARGS
+Restart=always
+RestartSec=10
+[Install]
+WantedBy=multi-user.target
+UNIT
+    cat > /etc/systemd/system/kubelet.service.d/fleet-cpu.conf <<UNIT
+[Service]
+ExecStartPre=/usr/local/sbin/fleet-node-profile kubelet
+ExecStart=
+ExecStart=/opt/robot-kubernetes/bin/kubelet \$KUBELET_KUBECONFIG_ARGS \$KUBELET_CONFIG_ARGS \$KUBELET_KUBEADM_ARGS --config-dir=/etc/kubernetes/kubelet.conf.d
+UNIT
+    printf "apiVersion: kubelet.config.k8s.io/v1beta1\nkind: KubeletConfiguration\nfailSwapOn: false\ncpuManagerPolicy: static\nreservedSystemCPUs: \"0-1\"\ncpuManagerPolicyOptions:\n  strict-cpu-reservation: \"true\"\n" > /etc/kubernetes/kubelet.conf.d/50-fleet-node-profile.conf
+    cat > /usr/local/sbin/fleet-node-profile <<"PROFILE"
+#!/bin/bash
+set -Eeuo pipefail
+state=/var/lib/kubelet/cpu_manager_state
+configured() { sha256sum < /etc/kubernetes/kubelet.conf.d/50-fleet-node-profile.conf; }
+case $1 in
+  install) tr "\0" "\n" < "/proc/$(systemctl show -p MainPID --value kubelet)/cmdline" > /dev/null ;;
+  kubelet)
+    if ! grep -q "\"policyName\":\"static\"" $state 2>/dev/null || [[ $(configured) != "$(cat $state.profile 2>/dev/null)" ]]; then rm -f $state; fi
+    configured > $state.profile ;;
+esac
+PROFILE
+    chmod 755 /usr/local/sbin/fleet-node-profile
+    systemctl daemon-reload; systemctl restart containerd-fleet; systemctl start kubelet'
+  sleep 20
+  robot_real_state "$node"
+}
+robot_real_state() {
+  on "$1" sh -c 'echo "kubelet: $(tr "\0" " " < /proc/$(systemctl show -p MainPID --value kubelet)/cmdline)"
+    echo "CPU manager: $(cat /var/lib/kubelet/cpu_manager_state)"
+    echo "drop-ins: $(ls /etc/systemd/system/kubelet.service.d /etc/kubernetes/kubelet.conf.d | xargs)"
+    echo "in the PATH: containerd $(command -v containerd || echo no), kubeadm $(command -v kubeadm || echo no)"
+    echo "modules at boot: $(cat /etc/modules-load.d/rlark.conf 2>/dev/null | xargs)"'
+}
 robot_shape() {
   on "$1" sh -c 'cat > /usr/local/sbin/robot-network && chmod 755 /usr/local/sbin/robot-network' <<SHAPE
 #!/bin/sh

@@ -145,6 +145,86 @@ func TestObservationBindingVersionReplacesPreviousSnapshot(t *testing.T) {
 	}
 }
 
+func TestKubernetesObservationSinkTransfersObservationAfterVerifiedStationRebind(t *testing.T) {
+	previous := &unstructured.Unstructured{Object: map[string]interface{}{
+		"apiVersion": "station.rlark.io/v1alpha1", "kind": "StationObservation",
+		"metadata": map[string]interface{}{
+			"name": "node-a", "namespace": "agent-a", "resourceVersion": "1",
+			"annotations": map[string]interface{}{
+				observationClusterIDKey: "cluster-a", observationNodeUIDKey: "old-node-uid",
+				observationStationUIDKey: "station-uid-a", observationBindingVersionKey: "1",
+			},
+		},
+		"spec": map[string]interface{}{},
+		"status": map[string]interface{}{
+			"reportedAt": "2026-11-12T10:00:00Z", "nodeUID": "old-node-uid",
+			"wireguard": map[string]interface{}{"interface": "st-wg0"},
+		},
+	}}
+	client := testDynamicClient(previous)
+	client.PrependReactor("patch", stationObservationResource, func(action ktesting.Action) (bool, runtime.Object, error) {
+		patchAction, ok := action.(ktesting.PatchAction)
+		if !ok || patchAction.GetSubresource() != "status" {
+			return false, nil, nil
+		}
+		var body struct {
+			Status map[string]interface{} `json:"status"`
+		}
+		if err := json.Unmarshal(patchAction.GetPatch(), &body); err != nil {
+			return true, nil, err
+		}
+		// Mirror the live CRD's required status.nodeUID and status.reportedAt fields.
+		for _, field := range []string{"nodeUID", "reportedAt"} {
+			if value, present := body.Status[field]; present && value == nil {
+				return true, nil, errors.New("StationObservation required status field cannot be cleared")
+			}
+		}
+		return false, nil, nil
+	})
+	sink := &KubernetesObservationSink{Client: client, Namespaces: observationNamespaceMap{"cluster-a": "agent-a"}}
+	evidence := validEvidence()
+	evidence.ClusterID, evidence.RegisteredClusterID = "cluster-a", "cluster-a"
+	evidence.NodeName, evidence.PodNodeName = "node-a", "node-a"
+	evidence.NodeUID = "new-node-uid"
+	evidence.RegisteredNodeUID = evidence.NodeUID
+	evidence.StationUID, evidence.RegisteredStationUID = "station-uid-a", "station-uid-a"
+	evidence.Generation, evidence.RegisteredGeneration = 2, 2
+	if err := sink.Store(context.Background(), evidence, Observation{Roles: []string{"worker"}}); err != nil {
+		t.Fatalf("store after verified rebind: %v", err)
+	}
+	stored, err := client.Resource(stationObservationGVR).Namespace("agent-a").Get(context.Background(), "node-a", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.GetAnnotations()[observationNodeUIDKey] != "new-node-uid" || stored.GetAnnotations()[observationBindingVersionKey] != "2" {
+		t.Fatalf("ownership annotations did not follow rebind: %#v", stored.GetAnnotations())
+	}
+	if got, _, _ := unstructured.NestedString(stored.Object, "status", "nodeUID"); got != "new-node-uid" {
+		t.Fatalf("observation status node UID = %q", got)
+	}
+	if _, found, _ := unstructured.NestedFieldNoCopy(stored.Object, "status", "wireguard"); found {
+		t.Fatal("old Node WireGuard data survived identity transfer")
+	}
+}
+
+func TestKubernetesObservationSinkRejectsNodeUIDChangeWithoutStationRebind(t *testing.T) {
+	previous := &unstructured.Unstructured{Object: map[string]interface{}{
+		"apiVersion": "station.rlark.io/v1alpha1", "kind": "StationObservation",
+		"metadata": map[string]interface{}{"name": "node", "namespace": "agent", "annotations": map[string]interface{}{
+			observationClusterIDKey: "cluster", observationNodeUIDKey: "old", observationStationUIDKey: "station", observationBindingVersionKey: "1",
+		}}, "spec": map[string]interface{}{},
+	}}
+	sink := &KubernetesObservationSink{Client: testDynamicClient(previous), Namespaces: observationNamespaceMap{"cluster": "agent"}}
+	evidence := validEvidence()
+	evidence.ClusterID, evidence.RegisteredClusterID = "cluster", "cluster"
+	evidence.NodeUID, evidence.RegisteredNodeUID = "new", "new"
+	evidence.StationUID, evidence.RegisteredStationUID = "station", "station"
+	evidence.Generation, evidence.RegisteredGeneration = 1, 1
+	if err := sink.Store(context.Background(), evidence, Observation{}); !errors.Is(err, ErrObservationOwnershipConflict) {
+		t.Fatalf("unapproved Node UID change error = %v", err)
+	}
+}
+
 func TestKubernetesObservationSinkRejectsForeignOwnershipAndUnverifiedEvidence(t *testing.T) {
 	foreign := &unstructured.Unstructured{Object: map[string]interface{}{
 		"apiVersion": "station.rlark.io/v1alpha1", "kind": "StationObservation",

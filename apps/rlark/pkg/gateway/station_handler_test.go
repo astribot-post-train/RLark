@@ -19,6 +19,7 @@ func stationHandlerClient(objects ...runtime.Object) *dynamicfake.FakeDynamicCli
 		stationRecordGVR:      "StationList",
 		stationObservationGVR: "StationObservationList",
 		stationRebindGVR:      "StationRebindList",
+		nodeOperationGVR:      "NodeOperationList",
 	}, objects...)
 }
 

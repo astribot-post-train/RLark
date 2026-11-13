@@ -8,6 +8,8 @@
 
 首次启动时各节点在 `/var/lib/station/wg/private.key` 生成权限为 0600 的私钥，Pod 日志显示公钥。先分别用空 peers 启动，再通过受信任渠道交换并核验公钥，然后更新双方 ConfigMap；不要复制私钥。限制宿主机、Kubernetes 管理权限、ConfigMap 写权限和私钥目录访问。各节点必须使用自己的 hostPath 和密钥，ConfigMap 不保存私钥。
 
+由节点操作管理的条目可在顶层包含 `nodeUID`、`publicKey`，并在 peer 项中包含 `nodeUID`。这些是非敏感归属元数据；网关会校验但不将其作为认证凭证。自动剔除只会删除 UID 与当前 Kubernetes Node 实例匹配，或公钥/地址与 Node UID 绑定的最新 Station 观测完全匹配的配置。旧条目无法验证归属时保持不动，并阻止自动剔除。
+
 出站端点需要指定源地址时，可用 `uplinkRoutes` 声明 IPv4 主机路由，例如 `{"destination":"10.11.14.128/32","gateway":"192.168.0.11","source":"192.168.31.250","interface":"enp2s0"}`。源地址必须已属于该接口。仅当不存在完全相同目标的路由时添加；已有路由须与保留协议号、metric 和配置完全一致，否则报冲突。配置更改或 Pod 停止时均不会删除上联路由，须通过独立管理通道人工清理；中途失败可能保留已添加路由。使用前必须验证选源和回程。
 
 程序每 10 秒协调一次，并检测 ConfigMap 的变化；对于没有 `rlark-station-gateway/v1` 别名的已有接口会拒绝接管。它管理该接口的 WireGuard peers，并为路由使用私有协议号 242 和 metric 49321。这两个标记不足以证明路由归属，因此程序不会删除任何路由；从 ConfigMap 移除路由前，管理员须通过独立管理通道手动删除对应路由，否则协调会在修改 Peer 前停止。参与节点应预留这两个值并检查冲突。程序不安装默认路由；路由冲突时报错，不覆盖现有路由。接口已有不同 IPv4 地址时，协调会在更新 Peer 或上联路由之前拒绝变更，不会删除地址。迁移地址须使用新接口及独立验证的管理路径。当前四个网络节点已部署包含该检查的私有仓库 WireGuard 镜像；其他安装须重新构建镜像并使用双容器 Station Pod 模板。不要让其他网络管理器同时操作同一接口。无效配置会记录错误并重试，保留上次成功的内核状态；但执行中途失败可能造成部分更新。当前没有自动回滚或连通性验证。必须保留独立 SSH/Kubernetes 管理通道，必要时恢复上一个 ConfigMap；节点、K8s API、镜像或 ConfigMap 不可用时不保证能自动恢复。退出或卸载不会删除接口。如果程序在接口创建后、写入别名前崩溃，会拒绝接管未标记接口；管理员须经独立通道确认并删除该接口后再重试。
@@ -26,7 +28,7 @@
 
 `extensions/station/deploy/station-agent.yaml` 提供两个互斥的 DaemonSet。没有 `station.rlark.io/network=enabled` 标签的节点只运行身份容器；带标签的节点在同一个 host-network Pod 中运行身份和 WireGuard 容器。两个容器分别使用私有仓库镜像，只有 WireGuard 容器获得 `NET_ADMIN`。变更标签会替换 Pod，可能中断服务；切换不会删除接口或路由。
 
-源码支持通过 `STATION_GATEWAY_OBSERVATION_FILE` 将快照写入共享 `emptyDir`。协调成功后写入所管理接口的内核地址、采集时间，以及每个 Peer 的公钥、最近一次握手时间和收发字节数：Leaf 掉线后，Hub 上的这些计数是唯一的旁证。不包含私钥、预共享密钥、Endpoint 或 AllowedIPs。身份容器使用 `--wireguard-observation-file` 读取；快照缺失、无效或超过 30 秒时清除 WireGuard 观测，身份心跳继续。共享卷不含私钥。Station 的上报时间是服务端接收时间，不是快照采集时间。该链路需要重新构建镜像并更新 DaemonSet，本身不提供面向用户的地址 API 或界面。
+源码支持通过 `STATION_GATEWAY_OBSERVATION_FILE` 将快照写入共享 `emptyDir`。协调成功后写入所管理接口的公钥、内核地址、采集时间，以及每个 Peer 的公钥、最近一次握手时间和收发字节数：Leaf 掉线后，Hub 上的这些计数是唯一的旁证。不包含私钥、预共享密钥、Endpoint 或 AllowedIPs。身份容器使用 `--wireguard-observation-file` 读取；快照缺失、无效或超过 30 秒时清除 WireGuard 观测，身份心跳继续。共享卷不含私钥。Station 的上报时间是服务端接收时间，不是快照采集时间。该链路需要重新构建镜像并更新 DaemonSet，本身不提供面向用户的地址 API 或界面。
 
 Station 身份服务源码还包含内部网络摘要读取器：查询时重新核对成员集群当前 Node UID 与有效 Station 绑定，要求观测的集群、Node、Station 和绑定版本归属一致，服务端接收时间超过 90 秒时标记为过期。旧观测缺少绑定版本时会被拒绝，直到新的上报写入。内部接口 `POST /v1/internal/node-network` 默认关闭；通过 `station-api --gateway-credential-file=PATH` 启用，使用每次请求从文件读取的独立 Bearer 凭证，长度为 32 至 4096 个非空白字符。Gateway 需配置 `--station-api-address`、`--station-api-ca-file` 和 `--station-gateway-credential-file`，凭证文件内容与 Station API 一致。凭证文件应按 Secret 保护，并使用独立随机凭证及经过校验的 TLS。示例不负责凭证创建或现场部署；未配置集成时界面显示网络数据不可用。
 

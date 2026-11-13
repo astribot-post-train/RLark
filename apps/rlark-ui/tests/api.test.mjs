@@ -48,6 +48,32 @@ test("Station APIs encode Cluster IDs, names, and pagination parameters", async 
     reason: "approved replacement",
   });
   await stationsApi.getRebind("rebind/a", "cluster/a", controller.signal);
+  await stationsApi.createNodeOperation({
+    cluster_id: "cluster/a",
+    request_id: "request-join",
+    action: "Join",
+    node_name: "worker-a",
+    reset_existing_kubeadm: true,
+    ssh_address: "10.11.0.20",
+    ssh_port: 22,
+    ssh_user: "operator",
+    host_key_fingerprint: `SHA256:${"a".repeat(43)}`,
+    ssh_password: "short-lived-secret",
+  });
+  await stationsApi.listNodeOperations("cluster/a", controller.signal);
+  await stationsApi.getNodeOperation("node-op/a", "cluster/a", controller.signal);
+  await stationsApi.createNodeOperation({
+    cluster_id: "cluster/a",
+    request_id: "request-remove",
+    action: "Remove",
+    node_name: "worker-a",
+    node_uid: "node-uid-a",
+    ssh_address: "10.11.0.20",
+    ssh_port: 22,
+    ssh_user: "operator",
+    host_key_fingerprint: `SHA256:${"b".repeat(43)}`,
+    ssh_private_key: "short-lived-private-key",
+  });
   assert.equal(calls[0].input, "/api/v1/station/stations?cluster_id=cluster%2Fa&limit=200&continue=token+%2B%2F%3D");
   assert.equal(calls[1].input, "/api/v1/station/stations/station%2Fa?cluster_id=cluster%2Fa");
   assert.equal(calls[2].input, "/api/v1/station/observations?cluster_id=cluster%2Fa&limit=500");
@@ -63,6 +89,34 @@ test("Station APIs encode Cluster IDs, names, and pagination parameters", async 
     reason: "approved replacement",
   });
   assert.equal(calls[4].input, "/api/v1/station/rebinds/rebind%2Fa?cluster_id=cluster%2Fa");
+  assert.equal(calls[5].input, "/api/v1/station/node-operations");
+  assert.deepEqual(JSON.parse(calls[5].init.body), {
+    cluster_id: "cluster/a",
+    request_id: "request-join",
+    action: "Join",
+    node_name: "worker-a",
+    reset_existing_kubeadm: true,
+    ssh_address: "10.11.0.20",
+    ssh_port: 22,
+    ssh_user: "operator",
+    host_key_fingerprint: `SHA256:${"a".repeat(43)}`,
+    ssh_password: "short-lived-secret",
+  });
+  assert.equal(calls[6].input, "/api/v1/station/node-operations?cluster_id=cluster%2Fa&limit=100");
+  assert.equal(calls[7].input, "/api/v1/station/node-operations/node-op%2Fa?cluster_id=cluster%2Fa");
+  assert.equal(calls[8].input, "/api/v1/station/node-operations");
+  assert.deepEqual(JSON.parse(calls[8].init.body), {
+    cluster_id: "cluster/a",
+    request_id: "request-remove",
+    action: "Remove",
+    node_name: "worker-a",
+    node_uid: "node-uid-a",
+    ssh_address: "10.11.0.20",
+    ssh_port: 22,
+    ssh_user: "operator",
+    host_key_fingerprint: `SHA256:${"b".repeat(43)}`,
+    ssh_private_key: "short-lived-private-key",
+  });
   assert.ok(calls.filter((call) => call.init.signal).every((call) => call.init.signal === controller.signal));
 });
 

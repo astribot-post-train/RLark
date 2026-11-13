@@ -91,13 +91,22 @@ UNIT
   changed=tunnel
 }
 
-# kernel: the modules and settings a node's pod network needs, now and at
-# every boot, whatever container runtime the node has.
+# kernel: the modules and settings a node's pod network and its pods need,
+# now and at every boot, whatever container runtime the node has.
 kernel() {
-  modprobe overlay
-  modprobe br_netfilter
+  for module in overlay br_netfilter; do modprobe $module || fail "the kernel has no $module module"; done
   printf '%s\n' overlay br_netfilter wireguard > /etc/modules-load.d/rlark.conf
-  printf '%s\n' 'net.ipv4.ip_forward = 1' 'net.bridge.bridge-nf-call-iptables = 1' > /etc/sysctl.d/90-rlark.conf
+  # inotify instances and watches are counted for the whole machine, all its
+  # pods together: the kernel's 128 instances are used up by some tens of
+  # pods ("too many open files"). A machine's higher limit is kept.
+  {
+    printf '%s\n' 'net.ipv4.ip_forward = 1' 'net.bridge.bridge-nf-call-iptables = 1'
+    for limit in max_user_instances=1024 max_user_watches=524288; do
+      held=$(sysctl -n "fs.inotify.${limit%=*}")
+      [ "$held" -gt "${limit#*=}" ] || held=${limit#*=}
+      echo "fs.inotify.${limit%=*} = $held"
+    done
+  } > /etc/sysctl.d/90-rlark.conf
   sysctl -q -p /etc/sysctl.d/90-rlark.conf
 }
 
@@ -105,7 +114,6 @@ kernel() {
 # and its containerd are not touched, nor restarted.
 own_runtime() {
   SOCKET=/run/containerd-fleet/containerd.sock
-  kernel
   [ ! -S $SOCKET ] || ! systemctl is-enabled containerd-fleet >/dev/null 2>&1 || return 0
   install -d /etc/containerd-fleet
   containerd config default | sed -e 's#/var/lib/containerd#/var/lib/containerd-fleet#g' -e 's#/run/containerd#/run/containerd-fleet#g' \
@@ -195,9 +203,6 @@ UNIT
     changed=kubelet
   fi
   systemctl enable kubelet >/dev/null 2>&1
-  # A node class's own profile (a robot's CPU partition) derives its drop-in
-  # from the kubelet's unit, which has just changed.
-  [ ! -x /usr/local/sbin/fleet-node-profile ] || /usr/local/sbin/fleet-node-profile install >> "$B"/node-profile.log 2>&1 || fail "the node profile did not accept the new kubelet unit: $B/node-profile.log"
 }
 
 # node_install SETTINGS STATE: the node's pair of annotations. The spec is

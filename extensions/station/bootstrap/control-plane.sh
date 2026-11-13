@@ -286,7 +286,8 @@ done
 [ ! -d "$B/cni" ] || cp -n "$B"/cni/* /opt/cni/bin/
 tunnel_service
 [ "$(ip -4 -o addr show dev "$TUNNEL_INTERFACE" | awk '{print $4}' | cut -d/ -f1)" = "$ADDRESS" ] || fail "the tunnel service is running, but $TUNNEL_INTERFACE does not hold $ADDRESS: journalctl -u rlark-station-gateway"
-if [ -e "$S/socket" ]; then kernel; else own_runtime; echo "$SOCKET" > "$S/socket"; fi
+kernel
+[ -e "$S/socket" ] || { own_runtime; echo "$SOCKET" > "$S/socket"; }
 if [ "$(cat "$S/images" 2>/dev/null)" != "$(cat "$B/tag")" ]; then
   import_images "$B/images"
   import_images "$B/images/control-plane"
@@ -500,6 +501,13 @@ spec=$(cat "$B/tag").$(printf '%s' "$SETTINGS" | sha256sum | cut -c1-12)
 if [ "$(kubectl --kubeconfig $K/kubelet.conf get node "$NODE_NAME" -o jsonpath='{.metadata.annotations.rlark\.io/node-install-spec} {.metadata.annotations.rlark\.io/node-install-state}')" != "$spec ok" ]; then
   node_install "$SETTINGS" ok
   changed=annotations
+fi
+# The cluster's agent registers with the management plane the nodes that
+# carry this label; a control plane is one of them. Not its category: a
+# node class's addons choose their nodes by that.
+if [ "$(adm get node "$NODE_NAME" -o jsonpath='{.metadata.labels.rlark\.io/enabled}')" != true ]; then
+  adm label node "$NODE_NAME" --overwrite rlark.io/enabled=true >/dev/null
+  changed=label
 fi
 rm -rf "$B/images"
 if [ -z "$changed" ]; then
