@@ -733,6 +733,11 @@ func TestNetworkPutsANodeInTheSiteItNames(t *testing.T) {
 			Spec: stationv1alpha1.NodeAdmissionSpec{ClusterID: "robot-01", Site: "lab", ExpiresAt: metav1.NewTime(time.Unix(1_800_003_600, 0))}},
 		&stationv1alpha1.NodeAdmission{ObjectMeta: metav1.ObjectMeta{Namespace: "ns-robot-01", Name: "by-admission"},
 			Spec: stationv1alpha1.NodeAdmissionSpec{ClusterID: "robot-01", Site: "office", ExpiresAt: metav1.NewTime(time.Unix(1_800_003_600, 0))}},
+		// A machine not yet a node, admitted into a site nothing declares, before and after it redeemed its code.
+		&stationv1alpha1.NodeAdmission{ObjectMeta: metav1.ObjectMeta{Namespace: "ns-robot-01", Name: "new-astray"},
+			Spec: stationv1alpha1.NodeAdmissionSpec{ClusterID: "robot-01", Site: "nowhere", ExpiresAt: metav1.NewTime(time.Unix(1_800_003_600, 0))}},
+		&stationv1alpha1.NodeAdmission{ObjectMeta: metav1.ObjectMeta{Namespace: "ns-robot-01", Name: "new-astray-redeemed"},
+			Spec: stationv1alpha1.NodeAdmissionSpec{ClusterID: "robot-01", Site: "nowhere", PublicKey: "key-new-astray", ExpiresAt: metav1.NewTime(time.Unix(1_800_003_600, 0))}},
 	}
 	objects = append(objects, testMember("dev", "cailiang", "key-dev", "10.11.14.128")...)
 	for _, node := range []string{"at-home", "by-entry", "by-admission", "astray"} {
@@ -751,6 +756,15 @@ func TestNetworkPutsANodeInTheSiteItNames(t *testing.T) {
 	astray := enrollmentStatus(t, c, "robot-01", "astray")
 	if astray.Phase != stationv1alpha1.NetworkEnrollmentRejected || !strings.Contains(astray.Reason, "nowhere") {
 		t.Fatalf("a node of a site nothing declares: %+v", astray)
+	}
+	for name, phase := range map[string]stationv1alpha1.NodeAdmissionPhase{"new-astray": stationv1alpha1.NodeAdmissionPending, "new-astray-redeemed": stationv1alpha1.NodeAdmissionRedeemed} {
+		var admission stationv1alpha1.NodeAdmission
+		if err := c.Get(context.Background(), types.NamespacedName{Namespace: "ns-robot-01", Name: name}, &admission); err != nil {
+			t.Fatal(err)
+		}
+		if admission.Status.Phase != phase || !strings.Contains(admission.Status.Reason, "nowhere") || admission.Status.Config != "" {
+			t.Fatalf("the admission %s into a site nothing declares: %+v", name, admission.Status)
+		}
 	}
 }
 

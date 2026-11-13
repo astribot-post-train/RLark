@@ -624,6 +624,11 @@ func (r *NetworkReconciler) reconcile(ctx context.Context) (reconcile.Result, er
 		default:
 			answer.Phase = stationv1alpha1.NodeAdmissionPending
 		}
+		// A machine admitted into a site nothing declares never gets as far
+		// as an enrollment that could be rejected: its admission says it.
+		if site := siteOf(admission.Spec.ClusterID, admission.Name); site != "" && !siteDeclared[site] && answer.Phase != stationv1alpha1.NodeAdmissionJoined {
+			answer.Reason = "the node names the site " + site + ", which the SiteNetwork does not have"
+		}
 		if reflect.DeepEqual(answer, admission.Status) {
 			continue
 		}
