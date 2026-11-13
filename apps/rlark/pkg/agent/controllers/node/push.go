@@ -27,14 +27,44 @@ const (
 
 	nodeCategoryLabel       = "rlark.io/node-category"
 	nodeCategoryLabelPrefix = "rlark.io/node-category-"
+	nodeRobotLabelPrefix    = "rlark.io/robot-"
 	nodeCityAnnotation      = "rlark.io/city"
 	nodeGPUModelAnnotation  = "rlark.io/gpu-model"
 	nodeDeviceAnnotation    = "rlark.io/device-model"
 	nodeLegacyModel         = "rlark.io/model"
 )
 
+// siteOwnedLabels are the labels a site declares on the management Node
+// besides RLark's own: SetManagementOwnedLabels.
+var siteOwnedLabels []string
+
+// SetManagementOwnedLabels names further labels whose value is the
+// management Node's (--management-node-labels): a key, or all keys that begin
+// with an entry ending in "/" or "-". A label a node gives itself must not be
+// among them: the agent removes from the node what the management Node lacks.
+func SetManagementOwnedLabels(entries []string) error {
+	for _, entry := range entries {
+		domain, _, named := strings.Cut(entry, "/")
+		if !named || domain == "" || domain == "kubernetes.io" || domain == "k8s.io" || strings.HasSuffix(domain, ".kubernetes.io") || strings.HasSuffix(domain, ".k8s.io") {
+			return fmt.Errorf("management node label %q: a label of a domain other than Kubernetes' own, as domain/name or domain/ for all of them", entry)
+		}
+	}
+	siteOwnedLabels = entries
+	return nil
+}
+
+// A robot's identity (rlark.io/robot-model, -body, -id) is declared on its
+// management Node like the node's category.
 func isManagementOwnedNodeLabel(key string) bool {
-	return key == nodeCategoryLabel || strings.HasPrefix(key, nodeCategoryLabelPrefix)
+	if key == nodeCategoryLabel || strings.HasPrefix(key, nodeCategoryLabelPrefix) || strings.HasPrefix(key, nodeRobotLabelPrefix) {
+		return true
+	}
+	for _, entry := range siteOwnedLabels {
+		if key == entry || (strings.HasSuffix(entry, "/") || strings.HasSuffix(entry, "-")) && strings.HasPrefix(key, entry) {
+			return true
+		}
+	}
+	return false
 }
 
 func isManagementOwnedNodeAnnotation(key string) bool {

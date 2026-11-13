@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"net/http"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -43,8 +44,14 @@ func TestBootstrapRedeemsACodeOnceForOneKey(t *testing.T) {
 			"taints":    []interface{}{"rlark.io/node-category=robot:NoSchedule"},
 		},
 	}}
+	// The machine is installed anew: the management plane knows a node of its name.
+	known := &unstructured.Unstructured{Object: map[string]interface{}{
+		"apiVersion": "rlinf.io/v1alpha1", "kind": "Node",
+		"metadata": map[string]interface{}{"name": "s1u-01-x86", "namespace": "rlark-local-dev-gpu",
+			"labels": map[string]interface{}{"rlark.io/robot-id": "before", "rlark.io/robot-model": "s1u"}},
+	}}
 	management := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(),
-		map[schema.GroupVersionResource]string{nodeAdmissionGVR: "NodeAdmissionList"}, admission)
+		map[schema.GroupVersionResource]string{nodeAdmissionGVR: "NodeAdmissionList"}, admission, known)
 	member := kubefake.NewSimpleClientset(&corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{Namespace: "kube-public", Name: "cluster-info"}, Data: map[string]string{"kubeconfig": testClusterInfo}})
 	b := &Bootstrap{Management: management, Now: func() time.Time { return now },
@@ -78,6 +85,10 @@ func TestBootstrapRedeemsACodeOnceForOneKey(t *testing.T) {
 		answer.Join.APIServer != "10.11.14.128:16443" || len(answer.Join.Token) != 23 || !strings.HasPrefix(answer.Join.CACertHash, "sha256:") ||
 		answer.Labels != "rlark.io/node-category=robot,rlark.io/robot-id=s1u-01" || answer.Taints != "rlark.io/node-category=robot:NoSchedule" {
 		t.Fatalf("ready answer: %+v %d %v", answer, status, err)
+	}
+	node, err := management.Resource(rlarkNodeGVR).Namespace("rlark-local-dev-gpu").Get(ctx, "s1u-01-x86", metav1.GetOptions{})
+	if want := map[string]string{"rlark.io/robot-id": "s1u-01", "rlark.io/node-category": "robot", "rlark.io/robot-model": "s1u"}; err != nil || !reflect.DeepEqual(node.GetLabels(), want) {
+		t.Fatalf("labels of the management Node after the admission: %v %v", node.GetLabels(), err)
 	}
 	secrets, err := member.CoreV1().Secrets("kube-system").List(ctx, metav1.ListOptions{})
 	if err != nil || len(secrets.Items) != 1 || secrets.Items[0].Type != corev1.SecretTypeBootstrapToken ||
