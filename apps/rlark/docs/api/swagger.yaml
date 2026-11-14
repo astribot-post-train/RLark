@@ -741,6 +741,41 @@ paths:
         '200': {description: Cluster restored}
         '404': {description: Cluster not found}
 
+  /api/v1/clusters/{cluster_id}/node-agents:
+    put:
+      tags: [Cluster]
+      summary: Declare a cluster's node Agents
+      description: >-
+        Administrator-only. Replaces the Cluster's spec.nodeAgents. While enabled, the cluster Agent keeps one
+        node Agent DaemonSet (rlark-agent-node) on the Kubernetes Nodes matching nodeSelector, so a Node that
+        joins later gets its node Agent without further action; enabled false makes it delete that DaemonSet.
+      operationId: setClusterNodeAgents
+      parameters:
+        - name: cluster_id
+          in: path
+          required: true
+          schema: {type: string}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ClusterNodeAgents'
+            example: {enabled: true}
+      responses:
+        '200':
+          description: Declaration stored; the response is the updated cluster
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, success]
+                properties:
+                  data: {$ref: '#/components/schemas/ClusterInfo'}
+                  success: {type: boolean}
+        '400': {description: enabled missing, empty nodeSelector, or an invalid label key or value}
+        '404': {description: Cluster not found}
+
   # ─── Job Collection ───────────────────────────────────────────────
   /api/v1/rlinf.io/v1alpha1/jobs:
     get:
@@ -1674,6 +1709,19 @@ components:
         robotUsage: {type: integer}
         runningJobs: {type: integer}
         description: {type: string}
+        nodeAgents:
+          $ref: '#/components/schemas/ClusterNodeAgents'
+
+    ClusterNodeAgents:
+      type: object
+      required: [enabled]
+      properties:
+        enabled: {type: boolean, description: Keep (true) or remove (false) the node Agent DaemonSet.}
+        nodeSelector:
+          type: object
+          additionalProperties: {type: string}
+          minProperties: 1
+          description: Kubernetes Node labels that select the Nodes running a node Agent. Defaults to rlark.io/enabled=true.
 
     ClusterInfoListResponse:
       type: object
