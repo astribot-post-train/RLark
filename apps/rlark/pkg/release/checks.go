@@ -37,9 +37,8 @@ type Allow struct {
 // office node that is off and Addons that sit in Installing on a good day.
 type Check func(baseline, current Snapshot, allow Allow) Result
 
-// Checks is every check a stage can name. A condition that needs a fact the
-// plane does not hold yet (a node's component versions) is not here; a stage
-// states it as manual.
+// Checks is every check a stage can name by itself. A condition that needs a
+// fact the plane does not hold is not here; a stage states it as manual.
 var Checks = map[string]Check{
 	"enrollments-enrolled": enrollmentsEnrolled,
 	"documents-unchanged":  documentsUnchanged,
@@ -49,6 +48,22 @@ var Checks = map[string]Check{
 	"nodes-ready":          nodesReady,
 	"addons-ready":         addonsReady,
 	"observations-fresh":   observationsFresh,
+	"nodes-unpressured":    nodesUnpressured,
+}
+
+// LevelChecks are the checks a stage names with a level, "<name>: <level>".
+// They read the plane as it is: what a batch needs of a node does not depend
+// on what the node was before it.
+var LevelChecks = map[string]func(current Snapshot, level int32) Result{
+	"gateways-understand": gatewaysUnderstand,
+}
+
+// Verify runs the check a condition names. A manual condition has none.
+func (c Condition) Verify(baseline, current Snapshot, allow Allow) Result {
+	if c.Level > 0 {
+		return LevelChecks[c.Check](current, c.Level)
+	}
+	return Checks[c.Check](baseline, current, allow)
 }
 
 func result(faults []string, healthy string) Result {
@@ -211,4 +226,51 @@ func observationsFresh(baseline, current Snapshot, _ Allow) Result {
 		}
 	}
 	return result(faults, fmt.Sprintf("%d of %d nodes reported in the last %s as before", fresh, len(baseline.Observations), ObservationFresh))
+}
+
+func nodesUnpressured(baseline, current Snapshot, _ Allow) Result {
+	var faults []string
+	reporting := 0
+	for id, now := range current.Observations {
+		// A report that is not fresh says what the Node was under then.
+		if !now.Fresh || now.Pressures == nil {
+			continue
+		}
+		reporting++
+		was := baseline.Observations[id].Pressures
+		for _, pressure := range now.Pressures {
+			switch {
+			case slices.Contains(was, pressure):
+			case was == nil:
+				// Not known to be new, and not known to be old.
+				faults = append(faults, fmt.Sprintf("%s is under %s; the baseline has no reading of it", id, pressure))
+			default:
+				faults = append(faults, fmt.Sprintf("%s is under %s, was not", id, pressure))
+			}
+		}
+	}
+	return result(faults, fmt.Sprintf("%d nodes under no pressure they were not under before; %d not read: their last fresh report has none", reporting, len(current.Observations)-reporting))
+}
+
+// gatewaysUnderstand holds when every member that is given a document runs a
+// gateway that states a level of at least the one asked for. A gateway that
+// states none is one from before levels, or one that is not reconciling:
+// neither is known to understand anything. The last report counts however
+// old it is, because a node that is off comes back with the gateway it had.
+func gatewaysUnderstand(current Snapshot, level int32) Result {
+	var faults []string
+	members := 0
+	for id, enrollment := range current.Enrollments {
+		if enrollment.ConfigHash == "" {
+			continue
+		}
+		members++
+		switch has := current.Observations[id].GatewayLevel; {
+		case has == 0:
+			faults = append(faults, id+" gateway states no level")
+		case has < level:
+			faults = append(faults, fmt.Sprintf("%s gateway understands level %d", id, has))
+		}
+	}
+	return result(faults, fmt.Sprintf("the gateways of all %d members with a document understand level %d", members, level))
 }

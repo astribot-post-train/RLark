@@ -73,6 +73,15 @@ type Observation struct {
 	// Fresh is ReportedAt against the snapshot's own time, so that a
 	// baseline says what was fresh when it was taken.
 	Fresh bool `json:"fresh"`
+	// GatewayLevel is the newest document the node's station-gateway
+	// understands, 0 when it states none. The digests are the sha256 of the
+	// gateway's and of the station-agent's file.
+	GatewayLevel  int32  `json:"gatewayLevel,omitempty"`
+	GatewayDigest string `json:"gatewayDigest,omitempty"`
+	AgentDigest   string `json:"agentDigest,omitempty"`
+	// Pressures are the pressure conditions of the member Node: empty for a
+	// Node under none, null when the report was stored without them.
+	Pressures []string `json:"pressures"`
 }
 
 // The objects as far as they are read. Station's API types are in a module
@@ -116,6 +125,14 @@ type (
 	observationObject struct {
 		Status struct {
 			ReportedAt metav1.Time `json:"reportedAt"`
+			Gateway    struct {
+				DocumentLevel int32  `json:"documentLevel"`
+				Digest        string `json:"digest"`
+			} `json:"gateway"`
+			Agent struct {
+				Digest string `json:"digest"`
+			} `json:"agent"`
+			Pressures []string `json:"pressures"`
 		} `json:"status"`
 	}
 )
@@ -194,8 +211,13 @@ func Read(ctx context.Context, client dynamic.Interface, now time.Time) (Snapsho
 			return Snapshot{}, err
 		}
 		for name, observation := range observations {
-			reported := observation.Status.ReportedAt.Time
-			snapshot.Observations[clusterID+"/"+name] = Observation{ReportedAt: reported.UTC(), Fresh: now.Sub(reported) <= ObservationFresh}
+			status := observation.Status
+			slices.Sort(status.Pressures)
+			snapshot.Observations[clusterID+"/"+name] = Observation{
+				ReportedAt: status.ReportedAt.UTC(), Fresh: now.Sub(status.ReportedAt.Time) <= ObservationFresh,
+				GatewayLevel: status.Gateway.DocumentLevel, GatewayDigest: status.Gateway.Digest, AgentDigest: status.Agent.Digest,
+				Pressures: status.Pressures,
+			}
 		}
 	}
 	return snapshot, nil

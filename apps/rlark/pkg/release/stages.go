@@ -1,7 +1,6 @@
 package release
 
 import (
-	"bytes"
 	_ "embed"
 	"encoding/json"
 	"errors"
@@ -28,10 +27,12 @@ type Stage struct {
 	Note     string      `json:"note,omitempty"`
 }
 
-// Condition is a check of Checks by name, or what a person confirms while
-// the plane cannot say it.
+// Condition is a check of Checks by name, a check of LevelChecks with the
+// level it is asked for, or what a person confirms while the plane cannot
+// say it.
 type Condition struct {
 	Check  string
+	Level  int32
 	Manual string
 }
 
@@ -39,16 +40,31 @@ func (c *Condition) UnmarshalJSON(data []byte) error {
 	if json.Unmarshal(data, &c.Check) == nil {
 		return nil
 	}
-	var manual struct {
-		Manual string `json:"manual"`
-	}
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&manual); err != nil {
+	var entry map[string]json.RawMessage
+	if err := json.Unmarshal(data, &entry); err != nil {
 		return err
 	}
-	c.Manual = manual.Manual
+	if len(entry) != 1 {
+		return fmt.Errorf("%s is not one check with its level, nor manual", data)
+	}
+	for name, value := range entry {
+		if name == "manual" {
+			return json.Unmarshal(value, &c.Manual)
+		}
+		c.Check = name
+		return json.Unmarshal(value, &c.Level)
+	}
 	return nil
+}
+
+func (c Condition) String() string {
+	switch {
+	case c.Manual != "":
+		return "manual: " + c.Manual
+	case c.Level > 0:
+		return fmt.Sprintf("%s: %d", c.Check, c.Level)
+	}
+	return c.Check
 }
 
 // LoadStages reads a stages file and returns its stages in an order that
@@ -74,8 +90,10 @@ func LoadStages(data []byte) ([]Stage, error) {
 			}
 		}
 		for _, condition := range slices.Concat(stage.Gate, stage.Check) {
-			if _, known := Checks[condition.Check]; !known && condition.Manual == "" {
-				return nil, fmt.Errorf("stage %s names %q, which is neither a check nor manual", stage.Name, condition.Check)
+			_, plain := Checks[condition.Check]
+			_, levelled := LevelChecks[condition.Check]
+			if condition.Manual == "" && !(plain && condition.Level == 0) && !(levelled && condition.Level > 0) {
+				return nil, fmt.Errorf("stage %s names %q, which is neither a check, a check with its level nor manual", stage.Name, condition.Check)
 			}
 		}
 	}

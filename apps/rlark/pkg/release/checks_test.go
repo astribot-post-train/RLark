@@ -9,8 +9,8 @@ import (
 var taken = time.Date(2026, 11, 13, 20, 0, 0, 0, time.UTC)
 
 // site is a site on an ordinary day: the cloud cluster is fine, the office
-// has a node that is off, an Addon that never finished installing and a
-// link that was already Silent.
+// has a node that is off, an Addon that never finished installing, a link
+// that was already Silent and a robot whose disk was already full.
 func site() Snapshot {
 	return Snapshot{
 		TakenAt:     taken,
@@ -27,9 +27,9 @@ func site() Snapshot {
 			"office/station": {Phase: "Installing", Version: "0.4.0"},
 		},
 		Observations: map[string]Observation{
-			"cloud/gpu-1":   {ReportedAt: taken.Add(-20 * time.Second), Fresh: true},
-			"office/s1u-01": {ReportedAt: taken.Add(-40 * time.Second), Fresh: true},
-			"office/desk-2": {ReportedAt: taken.Add(-9 * time.Hour)},
+			"cloud/gpu-1":   {ReportedAt: taken.Add(-20 * time.Second), Fresh: true, GatewayLevel: 2, GatewayDigest: "1111111111111111", AgentDigest: "9999999999999999", Pressures: []string{}},
+			"office/s1u-01": {ReportedAt: taken.Add(-40 * time.Second), Fresh: true, GatewayLevel: 2, GatewayDigest: "2222222222222222", AgentDigest: "9999999999999999", Pressures: []string{"DiskPressure"}},
+			"office/desk-2": {ReportedAt: taken.Add(-9 * time.Hour), GatewayLevel: 2, GatewayDigest: "1111111111111111", Pressures: []string{}},
 		},
 	}
 }
@@ -39,6 +39,11 @@ func TestChecks(t *testing.T) {
 		entry := s.Enrollments[id]
 		change(&entry)
 		s.Enrollments[id] = entry
+	}
+	observation := func(s *Snapshot, id string, change func(*Observation)) {
+		entry := s.Observations[id]
+		change(&entry)
+		s.Observations[id] = entry
 	}
 	cases := []struct {
 		name, check string
@@ -124,6 +129,21 @@ func TestChecks(t *testing.T) {
 		{name: "a fresh node without an observation", check: "observations-fresh", fault: "cloud/gpu-1 has no observation", change: func(s *Snapshot) {
 			delete(s.Observations, "cloud/gpu-1")
 		}},
+
+		{name: "a full disk that was full", check: "nodes-unpressured"},
+		{name: "a pressure gone", check: "nodes-unpressured", change: func(s *Snapshot) { observation(s, "office/s1u-01", func(o *Observation) { o.Pressures = []string{} }) }},
+		{name: "a new pressure", check: "nodes-unpressured", fault: "cloud/gpu-1 is under DiskPressure, was not", change: func(s *Snapshot) {
+			observation(s, "cloud/gpu-1", func(o *Observation) { o.Pressures = []string{"DiskPressure"} })
+		}},
+		{name: "another pressure than the old one", check: "nodes-unpressured", fault: "office/s1u-01 is under MemoryPressure, was not", change: func(s *Snapshot) {
+			observation(s, "office/s1u-01", func(o *Observation) { o.Pressures = []string{"DiskPressure", "MemoryPressure"} })
+		}},
+		{name: "a pressure in a report that is not fresh", check: "nodes-unpressured", change: func(s *Snapshot) {
+			observation(s, "office/desk-2", func(o *Observation) { o.Pressures = []string{"PIDPressure"} })
+		}},
+		{name: "a report without pressures", check: "nodes-unpressured", change: func(s *Snapshot) {
+			observation(s, "cloud/gpu-1", func(o *Observation) { o.Pressures = nil })
+		}},
 	}
 	covered := map[string]bool{}
 	for _, c := range cases {
@@ -143,5 +163,58 @@ func TestChecks(t *testing.T) {
 		if !covered[name] {
 			t.Errorf("check %s has no case", name)
 		}
+	}
+}
+
+func TestNodesUnpressuredSaysWhatItDidNotRead(t *testing.T) {
+	// The baseline of the batch that brings pressures: no report has them.
+	baseline := site()
+	for id, observation := range baseline.Observations {
+		observation.Pressures = nil
+		baseline.Observations[id] = observation
+	}
+	if result := nodesUnpressured(baseline, baseline, Allow{}); !result.OK || !strings.Contains(result.Reading, "0 nodes under no pressure they were not under before; 3 not read") {
+		t.Fatalf("nothing reported: %+v", result)
+	}
+	if result := nodesUnpressured(baseline, site(), Allow{}); result.OK || result.Reading != "office/s1u-01 is under DiskPressure; the baseline has no reading of it" {
+		t.Fatalf("a pressure the baseline could not have: %+v", result)
+	}
+	if result := nodesUnpressured(site(), site(), Allow{}); !result.OK || !strings.Contains(result.Reading, "2 nodes under no pressure they were not under before; 1 not read") {
+		t.Fatalf("a stale node: %+v", result)
+	}
+}
+
+func TestGatewaysUnderstand(t *testing.T) {
+	for name, c := range map[string]struct {
+		level  int32
+		change func(*Snapshot)
+		fault  string
+	}{
+		"every gateway at the level, the node that is off by its last report": {level: 2},
+		"a higher level than any has":                                         {level: 3, fault: "cloud/gpu-1 gateway understands level 2; office/desk-2 gateway understands level 2; office/s1u-01 gateway understands level 2"},
+		"one gateway behind": {level: 2, fault: "office/s1u-01 gateway understands level 1", change: func(s *Snapshot) {
+			s.Observations["office/s1u-01"] = Observation{Fresh: true, GatewayLevel: 1}
+		}},
+		"a gateway from before levels": {level: 1, fault: "office/s1u-01 gateway states no level", change: func(s *Snapshot) {
+			s.Observations["office/s1u-01"] = Observation{Fresh: true}
+		}},
+		"a member that never reported": {level: 1, fault: "cloud/gpu-1 gateway states no level", change: func(s *Snapshot) {
+			delete(s.Observations, "cloud/gpu-1")
+		}},
+		"a member without a document": {level: 2, change: func(s *Snapshot) {
+			s.Enrollments["office/desk-3"] = Enrollment{Phase: "Pending"}
+		}},
+	} {
+		current := site()
+		if c.change != nil {
+			c.change(&current)
+		}
+		result := Condition{Check: "gateways-understand", Level: c.level}.Verify(Snapshot{}, current, Allow{})
+		if result.OK != (c.fault == "") || c.fault != "" && result.Reading != c.fault {
+			t.Errorf("%s: ok=%t reading=%q", name, result.OK, result.Reading)
+		}
+	}
+	if result := gatewaysUnderstand(site(), 2); result.Reading != "the gateways of all 3 members with a document understand level 2" {
+		t.Errorf("reading %q", result.Reading)
 	}
 }

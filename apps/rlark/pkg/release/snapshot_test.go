@@ -44,7 +44,13 @@ func TestReadSnapshot(t *testing.T) {
 			"problems": []any{"z", "a"},
 			"links":    []any{map[string]any{"hub": "cloud/gpu-1", "state": "Connected", "since": "2026-11-13T19:00:00Z"}},
 		}),
-		object("station.rlark.io/v1alpha1", "StationObservation", "rlark-office", "s1u-01", map[string]any{"reportedAt": "2026-11-13T19:59:00Z", "nodeUID": "u1"}),
+		object("station.rlark.io/v1alpha1", "StationObservation", "rlark-office", "s1u-01", map[string]any{
+			"reportedAt": "2026-11-13T19:59:00Z", "nodeUID": "u1",
+			"gateway": map[string]any{"documentLevel": int64(2), "digest": "aa11"}, "agent": map[string]any{"digest": "bb22"},
+			"pressures": []any{"PIDPressure", "DiskPressure"},
+		}),
+		// Stored by a station-api that reads pressures, of a Node under none, with a gateway and an agent that state nothing.
+		object("station.rlark.io/v1alpha1", "StationObservation", "rlark-office", "desk-1", map[string]any{"reportedAt": "2026-11-13T19:59:30Z", "nodeUID": "u3", "pressures": []any{}}),
 		object("station.rlark.io/v1alpha1", "StationObservation", "rlark-office", "desk-2", map[string]any{"reportedAt": "2026-11-13T19:57:59Z", "nodeUID": "u2"}),
 	)
 
@@ -59,7 +65,13 @@ func TestReadSnapshot(t *testing.T) {
 		`"nodes":{"office/s1u-01":"Online"},` +
 		`"enrollments":{"office/s1u-01":{"phase":"Enrolled","configHash":"abc","problems":["a","z"],"links":{"cloud/gpu-1":"Connected"},"relay":"cloud/gpu-1"}},` +
 		`"addons":{"office/station":{"phase":"Ready","version":"0.4.0"}},` +
-		`"observations":{"office/desk-2":{"reportedAt":"2026-11-13T19:57:59Z","fresh":false},"office/s1u-01":{"reportedAt":"2026-11-13T19:59:00Z","fresh":true}}}`
+		`"observations":{"office/desk-1":{"reportedAt":"2026-11-13T19:59:30Z","fresh":true,"pressures":[]},` +
+		`"office/desk-2":{"reportedAt":"2026-11-13T19:57:59Z","fresh":false,"pressures":null},` +
+		`"office/s1u-01":{"reportedAt":"2026-11-13T19:59:00Z","fresh":true,"gatewayLevel":2,"gatewayDigest":"aa11","agentDigest":"bb22","pressures":["DiskPressure","PIDPressure"]}}}`
+	var again Snapshot
+	if err := json.Unmarshal(got, &again); err != nil || again.Observations["office/desk-1"].Pressures == nil || again.Observations["office/desk-2"].Pressures != nil {
+		t.Fatalf("a baseline read back does not tell no pressure from no reading: %v %+v", err, again.Observations)
+	}
 	if string(got) != want {
 		t.Fatalf("snapshot\n got %s\nwant %s", got, want)
 	}

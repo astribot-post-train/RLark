@@ -1,12 +1,17 @@
 package rlarkctl
 
 import (
+	"cmp"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
+	"text/tabwriter"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -44,10 +49,10 @@ func ReleaseCommand() *cobra.Command {
 					_, _ = fmt.Fprintf(out, "     changes  %s\n", change)
 				}
 				for _, gate := range stage.Gate {
-					_, _ = fmt.Fprintf(out, "     gate     %s\n", describe(gate))
+					_, _ = fmt.Fprintf(out, "     gate     %s\n", gate)
 				}
 				for _, check := range stage.Check {
-					_, _ = fmt.Fprintf(out, "     check    %s\n", describe(check))
+					_, _ = fmt.Fprintf(out, "     check    %s\n", check)
 				}
 				if stage.Note != "" {
 					_, _ = fmt.Fprintf(out, "     note     %s\n", stage.Note)
@@ -74,12 +79,26 @@ func ReleaseCommand() *cobra.Command {
 		},
 	})
 
+	cmd.AddCommand(&cobra.Command{
+		Use:   "versions",
+		Short: "Print which station-gateway and station-agent every node runs, and the pressures it is under.",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			snapshot, err := readSnapshot(cmd)
+			if err != nil {
+				return err
+			}
+			return printVersions(cmd.OutOrStdout(), snapshot)
+		},
+	})
+
 	var baselinePath, stageName string
+	var gate bool
 	var checkNames []string
 	var allow release.Allow
 	verify := &cobra.Command{
 		Use:   "verify",
-		Short: "Run checks against a baseline: those of a stage, the named ones, or all of them.",
+		Short: "Run checks against a baseline: those of a stage (or its gate), the named ones, or all that need no level.",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			var conditions []release.Condition
@@ -94,6 +113,11 @@ func ReleaseCommand() *cobra.Command {
 					return fmt.Errorf("%s is not a stage", stageName)
 				}
 				conditions = stages[at].Check
+				if gate {
+					conditions = stages[at].Gate
+				}
+			case gate:
+				return errors.New("--gate is the gate of a --stage")
 			case len(checkNames) > 0:
 				for _, name := range checkNames {
 					if _, known := release.Checks[name]; !known {
@@ -127,6 +151,7 @@ func ReleaseCommand() *cobra.Command {
 	}
 	verify.Flags().StringVar(&baselinePath, "baseline", "", "The snapshot taken before the batch")
 	verify.Flags().StringVar(&stageName, "stage", "", "Run the checks of this stage")
+	verify.Flags().BoolVar(&gate, "gate", false, "Run what holds before the stage starts, in place of its checks")
 	verify.Flags().StringSliceVar(&checkNames, "checks", nil, "Run these checks")
 	verify.Flags().StringArrayVar(&allow.Documents.IDs, "allow-document", nil, "A member (<clusterID>/<node>) whose document the stage changes")
 	verify.Flags().BoolVar(&allow.Documents.All, "allow-all-documents", false, "The stage changes every member's document")
@@ -137,13 +162,6 @@ func ReleaseCommand() *cobra.Command {
 	cmd.AddCommand(verify)
 
 	return cmd
-}
-
-func describe(condition release.Condition) string {
-	if condition.Manual != "" {
-		return "manual: " + condition.Manual
-	}
-	return condition.Check
 }
 
 func readSnapshot(cmd *cobra.Command) (release.Snapshot, error) {
@@ -167,16 +185,37 @@ func verifyConditions(out io.Writer, conditions []release.Condition, baseline, c
 			_, _ = fmt.Fprintf(out, "manual  %s\n", condition.Manual)
 			continue
 		}
-		result := release.Checks[condition.Check](baseline, current, allow)
+		result := condition.Verify(baseline, current, allow)
 		verdict := "ok"
 		if !result.OK {
 			verdict = "FAILED"
 			failed++
 		}
-		_, _ = fmt.Fprintf(out, "%-6s  %-20s  %s\n", verdict, condition.Check, result.Reading)
+		_, _ = fmt.Fprintf(out, "%-6s  %-20s  %s\n", verdict, condition, result.Reading)
 	}
 	if failed > 0 {
 		return fmt.Errorf("%d checks failed against the baseline of %s", failed, baseline.TakenAt.Format(time.RFC3339))
 	}
 	return nil
+}
+
+// printVersions is how far a rollout is: a node whose digest is still the
+// old one has not taken the new program. "-" is what a program from before
+// it stated itself looks like, "?" a report stored without pressures.
+func printVersions(out io.Writer, snapshot release.Snapshot) error {
+	short := func(digest string) string { return cmp.Or(digest[:min(12, len(digest))], "-") }
+	table := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+	_, _ = fmt.Fprintln(table, "NODE\tGATEWAY\tLEVEL\tAGENT\tPRESSURES\tREPORTED")
+	for _, id := range slices.Sorted(maps.Keys(snapshot.Observations)) {
+		observation := snapshot.Observations[id]
+		level, pressures := "-", "?"
+		if observation.GatewayLevel > 0 {
+			level = strconv.Itoa(int(observation.GatewayLevel))
+		}
+		if observation.Pressures != nil {
+			pressures = cmp.Or(strings.Join(observation.Pressures, ","), "none")
+		}
+		_, _ = fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%s\t%s ago\n", id, short(observation.GatewayDigest), level, short(observation.AgentDigest), pressures, snapshot.TakenAt.Sub(observation.ReportedAt).Round(time.Second))
+	}
+	return table.Flush()
 }
