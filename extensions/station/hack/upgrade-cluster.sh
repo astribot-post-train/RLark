@@ -11,7 +11,9 @@
 # Order, as kubeadm prescribes: each control-plane node, then every other node,
 # one at a time, after the certificates of each control-plane node have been
 # completed for the node's present addresses: etcd snapshot (control plane) -> kubeadm upgrade -> drain ->
-# kubelet -> confirm -> back to its previous scheduling state. The kubelet
+# kubelet -> confirm -> back to its previous scheduling state (a node whose
+# kubelet is at VERSION already is not drained: at the cluster's own version
+# the run brings the bundle's images and node settings and moves no pod). The kubelet
 # phase leaves a watchdog on the node that puts the old kubelet back after
 # WATCHDOG_SECONDS (600) unless this script, having seen the node Ready at
 # VERSION, confirms: a node whose new kubelet does not start, or whose upgrade
@@ -147,10 +149,15 @@ stamp "images of $VERSION on every Ready node"
 
 for item in $nodes; do
   node=${item#node/}
+  # A node whose kubelet runs VERSION already keeps it: its pods are not moved
+  # off it (a run at the cluster's own version, which brings a bundle's node
+  # settings, drains nothing). The kubelet phase does nothing there, and a
+  # restart of the kubelet for its settings stops no container.
+  [[ $(k get node "$node" -o jsonpath='{.status.nodeInfo.kubeletVersion}') != "$VERSION" ]] && drain=yes || drain=
   # The scheduling state to return to is kept on the node: a run that goes on
   # after a failed one finds the node cordoned by that one's drain.
   cordoned=$(k get node "$node" -o jsonpath='{.metadata.annotations.rlark\.io/unschedulable-before-upgrade}')
-  if [[ -z $cordoned ]]; then
+  if [[ -z $cordoned && -n $drain ]]; then
     cordoned=$(k get node "$node" -o jsonpath='{.spec.unschedulable}'); cordoned=${cordoned:-false}
     k annotate node "$node" "rlark.io/unschedulable-before-upgrade=$cordoned" >/dev/null
   fi
@@ -164,7 +171,7 @@ for item in $nodes; do
   job "$node" control
   until k get --raw /readyz >/dev/null 2>&1; do sleep 1; done
   stamp "$node: kubeadm phase done in $(( $(date +%s) - t0 )) s"
-  k drain "$node" --ignore-daemonsets --delete-emptydir-data --force --pod-selector='app!=rlark-kube-upgrade' --timeout=180s >/dev/null
+  [[ -z $drain ]] || k drain "$node" --ignore-daemonsets --delete-emptydir-data --force --pod-selector='app!=rlark-kube-upgrade' --timeout=180s >/dev/null
   t0=$(date +%s)
   job "$node" kubelet
   until [[ $(k get node "$node" -o jsonpath='{.status.nodeInfo.kubeletVersion} {.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null) == "$VERSION True" ]]; do
@@ -193,7 +200,8 @@ print(" ".join("%s %s/%s" % (r, s["allocatable"].get(r), c) for r, c in s["capac
     (( $(date +%s) - t1 < 180 )) || { echo "$node: 180 s after its device plugins were made anew they are not all Ready or the node offers fewer devices than it has: ${less:-}" >&2; exit 1; }
     sleep 3
   done
-  if [[ $cordoned != true ]]; then
+  # A node that was not drained, by this run or a failed one, keeps its state.
+  if [[ -n $cordoned && $cordoned != true ]]; then
     # Under an RLark agent a node's scheduling state is its management Node's:
     # the agent takes a cordon up to it and puts an uncordon made here back.
     # Both are set: the agent itself may be a pod the drain took off this
