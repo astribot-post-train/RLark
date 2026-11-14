@@ -8,3 +8,4 @@ RUN apt-get update && apt-get install -y --no-install-recommends python3 openssh
 COPY extensions/s1u/tuner /s1u/tuner
 COPY extensions/s1u/orin /s1u/orin
 COPY extensions/s1u/clock /s1u/clock
+COPY extensions/s1u/device /s1u/device

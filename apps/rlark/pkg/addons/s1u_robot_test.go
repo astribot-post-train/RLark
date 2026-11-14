@@ -50,7 +50,7 @@ func TestS1URobotRendersItsContainersOnS1UNodesAndStaysThroughWhatKeepsOthersOff
 			t.Fatalf("%s image = %s", container.Name, container.Image)
 		}
 	}
-	if strings.Join(names, ",") != "tuner,orin,clock" {
+	if strings.Join(names, ",") != "tuner,orin,power,clock" {
 		t.Fatalf("containers = %v", names)
 	}
 	env := map[string]string{}
@@ -67,6 +67,14 @@ func TestS1URobotRendersItsContainersOnS1UNodesAndStaysThroughWhatKeepsOthersOff
 		if toleration.Key == "" || toleration.Key == "node.kubernetes.io/out-of-service" || toleration.TolerationSeconds != nil {
 			t.Fatalf("toleration %+v", toleration)
 		}
+	}
+	power := map[string]string{}
+	for _, variable := range pod.Containers[2].Env {
+		power[variable.Name] = variable.Value
+	}
+	// The driver starts by itself after a power-on, the motors are powered by a person: the defaults.
+	if power["S1U_AUTO_DRIVER"] != "1" || power["S1U_AUTO_POWER"] != "0" || power["S1U_SERVICE_SOCKET"] != "/services/s1u-power.sock" {
+		t.Fatalf("power env = %v", power)
 	}
 	if pod.Volumes[0].Secret.SecretName != "s1u-orin-access" || pod.Volumes[0].Secret.Optional == nil || !*pod.Volumes[0].Secret.Optional {
 		t.Fatalf("orin access volume = %+v", pod.Volumes[0])

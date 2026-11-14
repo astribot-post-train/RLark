@@ -66,6 +66,8 @@ install_profile() {
   [[ -f $source ]] || source=$PROFILE
   mkdir -p "$BACKUP" "$STATE"
   write "$PROFILE" 644 < "$source"
+  # Each body's cameras, for the robot's device layer and video (the one list both read).
+  write "${PROFILE%/*}/bodies.json" 644 < "$(dirname "$source")/bodies.json"
   [[ $(realpath "$0") == "$SELF" ]] || write "$SELF" 755 < "$0"
   source "$PROFILE"
   local isolated="$S1U_VENDOR_REALTIME_CPUS,$S1U_SDK_CPUS"
@@ -255,7 +257,7 @@ uninstall() {
   rm -f "$IN_USE"
   rmdir /var/lib/rlark/s1u 2>/dev/null || true  # the Orin's container emptied it
   local path original
-  for path in "$PROFILE" /etc/systemd/system.conf.d/rlark-s1u.conf \
+  for path in "$PROFILE" "${PROFILE%/*}/bodies.json" /etc/systemd/system.conf.d/rlark-s1u.conf \
       /etc/systemd/system/*.service.d/rlark-s1u-cpu.conf /etc/systemd/system/*.slice.d/rlark-s1u-cpu.conf \
       /etc/kubernetes/kubelet.conf.d/50-rlark-s1u.conf \
       $PORTS /etc/systemd/system/rlark-s1u-profile.service /etc/systemd/system/rlark-s1u-boot-report.service \

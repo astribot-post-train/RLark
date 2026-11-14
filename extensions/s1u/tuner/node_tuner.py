@@ -270,7 +270,7 @@ def follow(profile, source, busy):
         publish(value, report, conforms, **identity, **{REQUESTED: json.dumps(dict(requested, said=said[-300:]))})
 
 def main():
-    for name in ("node_profile.sh", "node_profile.env", "boot_report.py"):
+    for name in ("node_profile.sh", "node_profile.env", "boot_report.py", "bodies.json"):
         shutil.copy(f"{SOURCE}/{name}", f"{HOST}/{name}")
     if node()[0].get(CATEGORY) != "robot":
         # The profile rewrites a host's kernel command line, CPU affinities and kubelet: only a robot's (11-13: the

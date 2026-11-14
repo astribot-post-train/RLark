@@ -8,6 +8,7 @@ robot gets it when it joins; nobody logs in to the robot or its Orin.
 |---|---|---|
 | `tuner` | `tuner/node_tuner.py`, `node_profile.sh`, `node_profile.env`, `node_spec.py`, `boot_report.py` | The host follows the node profile: kernel CPU isolation, systemd's default affinity, CPU shares, kubelet's CPU manager, reserved memory and image collection, the governor, the scheduler's tunables (re-applied at every boot by `rlark-s1u-profile.service`), the default route through the Orin. Restarts the robot or kubelet when the profile needs it, only while the robot is idle and its rollout wave allows. Publishes conformance to the S1U specification. |
 | `orin` | `orin/orin.py`, `orin/s1u-orin-uplink.service` | The Orin over the robot's internal network: the x86's uplink unit, the cameras' USB rule and USB resets on request, the site's adb key, and the declared payloads (`orinPayloads`). Trusts the Orin's ssh host key on first use. |
+| `power` | `device/power.py` | The vendor control centre's power / driver / restart buttons, through the vendor's ROS on the host, with the vendor page's rules; power off and restart wait while the robot is in use unless forced with a reason. Listens on the Unix socket `/run/rlark/services/s1u-power.sock` only (`GET /power`, `POST /power {action, force, reason}`); RLark reaches it on the node and records who pressed. `autoDriver` / `autoPower` parameters. |
 | `clock` | `clock/clock.py` | Trims the rate of the NIC clock at the root of the vendor's time chain so the x86 and the Orin follow the site's time source (`timeSource`). |
 
 ## Interfaces with other components
@@ -20,6 +21,8 @@ robot gets it when it joins; nobody logs in to the robot or its Orin.
   node agent reports it on the Node (annotation `rlark.io/in-use`) for what decides in the cluster.
 - **Node profile** — `/etc/rlark/s1u/node_profile.env` on the host (`S1U_*` variables): the device layer reads its
   CPUs and the robot's addresses from it, read-only.
+- **Bodies** — `/etc/rlark/s1u/bodies.json` on the host: each body's cameras (`{"s1u": ["head", "wrist_left",
+  "wrist_right"], "s1u_observer": ["head"]}`), the one list the device layer and the video read.
 - **Camera reset** — the device layer writes `/run/rlark/s1u/camera-reset-request` (`{"id", "cameras"}`) when it may
   (it knows whether a Station is attached); each id is done once, the result in `/run/rlark/s1u/camera-reset-result` (`{"id", "ok", "detail", "finished_at"}`)
   and a Node Event.

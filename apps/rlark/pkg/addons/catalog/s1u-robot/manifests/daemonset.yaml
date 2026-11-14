@@ -1,4 +1,4 @@
-# The S1U robot x86's model configuration (extensions/s1u): the node tuner, the Orin and the clock, one Pod on every
+# The S1U robot x86's model configuration (extensions/s1u): the node tuner, the Orin, the power and the clock, one Pod on every
 # S1U robot. Privileged in the host's PID namespace (tuner, clock): it writes the host's /etc, /boot/grub and sysfs.
 apiVersion: apps/v1
 kind: DaemonSet
@@ -112,6 +112,25 @@ spec:
             - {name: state, mountPath: /state}
             - {name: in-use, mountPath: /in-use, readOnly: true}
             - {name: payloads, mountPath: /payloads, readOnly: true}
+        # The robot's power, driver start and restart (device/power.py): the vendor's buttons through its ROS on the
+        # host (nsenter, so privileged), on a Unix socket only, which RLark reaches on the node.
+        - name: power
+          image: {{ .Values.image }}
+          imagePullPolicy: IfNotPresent
+          command: [/usr/bin/python3, /s1u/device/power.py]
+          env:
+            - {name: S1U_NODE_PROFILE, value: /s1u/tuner/node_profile.env}
+            - {name: S1U_SERVICE_SOCKET, value: /services/s1u-power.sock}
+            - {name: S1U_AUTO_DRIVER, value: "{{ if eq .Values.autoDriver "true" }}1{{ else }}0{{ end }}"}
+            - {name: S1U_AUTO_POWER, value: "{{ if eq .Values.autoPower "true" }}1{{ else }}0{{ end }}"}
+          securityContext:
+            privileged: true
+          resources:
+            requests: {cpu: 10m, memory: 32Mi}
+            limits: {memory: 128Mi}
+          volumeMounts:
+            - {name: services, mountPath: /services}
+            - {name: in-use, mountPath: /in-use, readOnly: true}
         # The robot's clock held to the site's time (clock/clock.py): it trims the frequency of the NIC hardware clock
         # at the root of the vendor's own time chain. Privileged for that clock's device (/dev/ptpN).
         - name: clock
@@ -147,6 +166,9 @@ spec:
         # What must outlast a boot and is root's (the Orin's record).
         - name: state
           hostPath: {path: /var/lib/rlark/s1u, type: DirectoryOrCreate}
+        # The node-local services RLark reaches on this node (their Unix sockets).
+        - name: services
+          hostPath: {path: /run/rlark/services, type: DirectoryOrCreate}
         # What each component of the host marks in use (a Station attached to the device layer, the vendor driver).
         - name: in-use
           hostPath: {path: /run/rlark/in-use, type: DirectoryOrCreate}
