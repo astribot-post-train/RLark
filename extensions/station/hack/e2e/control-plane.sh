@@ -184,7 +184,7 @@ admit() {
     cat > "$D/stub/answers/$code.json.part" <<ANSWER
 {"state":"ready","cluster_id":"cpr","node_name":"$node","tunnel_address":"${TUN[$node]}","config":$(cat "$D/tunnel-$node.json"),
  "join":{"api_server":"$api","token":"$token","ca_cert_hash":"$hash"},
- "labels":"${LABELS:-}","taints":"${TAINTS:-}"}
+ "labels":"${LABELS:-}","taints":"${TAINTS:-}","volumes":"${VOLUMES:-}"}
 ANSWER
     mv "$D/stub/answers/$code.json.part" "$D/stub/answers/$code.json"
   ) >>"$D/admit.log" 2>&1 &

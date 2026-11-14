@@ -41,7 +41,7 @@ if [[ -n ${REGISTRY_CA:-} ]]; then
   printf '%s\n' 'server = "https://registry.rlark.internal:5443"' '' '[host."https://registry.rlark.internal:5443"]' '  capabilities = ["pull", "resolve"]' '  ca = "ca.crt"' \
     > "$W/bundle/certs.d/registry.rlark.internal:5443/hosts.toml"
 fi
-for script in lib.sh install.sh upgrade.sh control-plane.sh; do install -m 755 "$HERE/$script" "$W/bundle/$script"; done
+for script in lib.sh install.sh upgrade.sh control-plane.sh volumes.sh; do install -m 755 "$HERE/$script" "$W/bundle/$script"; done
 cat > "$W/Dockerfile" <<'DOCKERFILE'
 FROM scratch
 COPY bundle /bundle

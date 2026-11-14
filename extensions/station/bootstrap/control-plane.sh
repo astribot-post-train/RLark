@@ -67,6 +67,7 @@
 #   SYSTEM_RESERVED_MEMORY  what Kubernetes may never take (Gi or Mi; all but 8 Gi)
 #   SYSTEM_RESERVED_CPU     likewise, in CPUs (all but 4)
 #   ETCD_SNAPSHOT_DIR       /var/backups/rlark-etcd; ETCD_SNAPSHOT_KEEP 14
+#   NODE_VOLUMES            the machine's volumes, "NAME=SIZE:PATH,..." (lib.sh, volumes), made before its runtime
 #   FROM_CONTROL_PLANE      the tunnel address of the control plane that was
 #                           handed over to this node: its snapshot is taken from it
 #   FROM_SNAPSHOT           a directory written by another control plane's
@@ -422,6 +423,7 @@ while unanswered; do
 done
 [ "$(ip -4 -o addr show dev "$TUNNEL_INTERFACE" | awk '{print $4}' | cut -d/ -f1)" = "$ADDRESS" ] || fail "the tunnel service is running, but $TUNNEL_INTERFACE does not hold $ADDRESS: journalctl -u rlark-station-gateway"
 kernel
+volumes
 [ -e "$S/socket" ] || { own_runtime; echo "$SOCKET" > "$S/socket"; }
 registry
 if [ "$(cat "$S/images" 2>/dev/null)" != "$(cat "$B/tag")" ]; then
