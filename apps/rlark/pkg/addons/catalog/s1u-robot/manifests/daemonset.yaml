@@ -134,7 +134,7 @@ spec:
             - {name: services, mountPath: /services}
             - {name: in-use, mountPath: /in-use, readOnly: true}
         # The robot's camera video (device/video_server.py): the body's cameras from the vendor's ROS topics to MediaMTX
-        # (WebRTC :8889, a viewing session's token checked on a loopback port), the camera wall's strip from the device
+        # (WebRTC :18889, a viewing session's token checked on a loopback port), the camera wall's strip from the device
         # layer's thumbnails (/run/rlark/s1u/preview.bin); its control a Unix socket only, which RLark reaches on the node.
         - name: video
           image: {{ .Values.image }}

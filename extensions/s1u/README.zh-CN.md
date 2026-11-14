@@ -8,7 +8,7 @@ DaemonSet 下发到带 `rlark.io/robot-model=s1u` 标签的节点。新机器入
 | `tuner` | `tuner/node_tuner.py`、`node_profile.sh`、`node_profile.env`、`node_spec.py`、`boot_report.py` | 宿主机符合节点规格：内核隔离核、systemd 默认亲和、CPU 份额、kubelet 的 CPU 管理、内存预留和镜像回收、调频策略、调度器参数（每次开机由 `rlark-s1u-profile.service` 重新套上）、经 Orin 的默认路由。规格需要时重启整机或 kubelet，只在机器人空闲且轮到它那一批时做。发布对 S1U 规格的符合情况。 |
 | `orin` | `orin/orin.py`、`orin/s1u-orin-uplink.service` | 经机器人内网保持 Orin：x86 上网的单元、相机的 USB 规则和按请求的 USB 复位、站点的 adb 密钥、声明的载荷（`orinPayloads`）。Orin 的 ssh 主机密钥首次使用时信任。 |
 | `power` | `device/power.py` | 厂商控制中心的电源 / 启动 / 重启三个按钮，经厂商的 ROS master（rospy）执行，规则同厂商页面；机器人在用时不下电、不重启，除非强制并写明原因。只监听本机 Unix socket `/run/rlark/services/s1u-power.sock`（`GET /power`、`POST /power {action, force, reason}`），由 RLark 在节点上转发并记录是谁按的。参数 `autoDriver` / `autoPower`。 |
-| `video` | `device/video_server.py`、`video.py`、`camera.py`、`preview.py` | 机体的相机（`bodies.json`）从厂商的压缩 ROS 话题推到 MediaMTX（WebRTC :8889；唯一的入口是观看会话的令牌，在本机回环端口上核对），相机墙的缩略条取设备层写的 `/run/rlark/s1u/preview.bin`。控制只在本机 Unix socket `/run/rlark/services/s1u-video.sock` 上（`GET /status`、`POST /viewers`、`PUT`/`DELETE /viewers/<id>`、`GET /preview[/<camera>]`）。 |
+| `video` | `device/video_server.py`、`video.py`、`camera.py`、`preview.py` | 机体的相机（`bodies.json`）从厂商的压缩 ROS 话题推到 MediaMTX（WebRTC :18889；唯一的入口是观看会话的令牌，在本机回环端口上核对），相机墙的缩略条取设备层写的 `/run/rlark/s1u/preview.bin`。控制只在本机 Unix socket `/run/rlark/services/s1u-video.sock` 上（`GET /status`、`POST /viewers`、`PUT`/`DELETE /viewers/<id>`、`GET /preview[/<camera>]`）。 |
 | `clock` | `clock/clock.py` | 微调厂商时间链源头那块网卡时钟的速率，让 x86 和 Orin 跟上站点时间源（`timeSource`）。 |
 
 ## 和其他组件的接口
@@ -30,6 +30,20 @@ DaemonSet 下发到带 `rlark.io/robot-model=s1u` 标签的节点。新机器入
 - **节点标签和注解**：通用的放在 `rlark.io/` 下（`node-profile-state`、`node-conformance`、`rollout-wave`、`rollout-state`、
   `restart-request`、`clock-state`、`boot-report` 等），只有 S1U 才有的放在 `s1u.rlark.io/` 下（`orin-state`、`orin-host-key`、
   `body-parameters` 等）。
+
+## 端口
+
+s1u-robot 在机器人 x86 的主机网络上监听的端口（容器都在主机网络上）。避开了 MediaMTX 的默认端口（8889、8189、8554、9997）和 8890，机器人上的其他软件可能占着它们。
+
+| 端口 | 绑定 | 谁 | 做什么 |
+|---|---|---|---|
+| 18889/tcp | 所有地址 | video（MediaMTX） | 给浏览器的 WebRTC（WHEP），地址随观看会话下发 |
+| 18189/udp、18189/tcp | 所有地址 | video（MediaMTX） | WebRTC ICE |
+| 18890/tcp | 127.0.0.1 | video（video_server.py） | MediaMTX 的鉴权回调（观看会话的令牌） |
+| 18554/tcp | 127.0.0.1 | video（MediaMTX） | RTSP，相机推流方用 |
+| 19997/tcp | 127.0.0.1 | video（MediaMTX） | MediaMTX 的 API |
+
+电源和视频的控制只走 Unix 套接字（`/run/rlark/services/s1u-{power,video}.sock`），不占 TCP 端口。
 
 ## 构建和测试
 

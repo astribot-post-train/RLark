@@ -9,7 +9,7 @@ robot gets it when it joins; nobody logs in to the robot or its Orin.
 | `tuner` | `tuner/node_tuner.py`, `node_profile.sh`, `node_profile.env`, `node_spec.py`, `boot_report.py` | The host follows the node profile: kernel CPU isolation, systemd's default affinity, CPU shares, kubelet's CPU manager, reserved memory and image collection, the governor, the scheduler's tunables (re-applied at every boot by `rlark-s1u-profile.service`), the default route through the Orin. Restarts the robot or kubelet when the profile needs it, only while the robot is idle and its rollout wave allows. Publishes conformance to the S1U specification. |
 | `orin` | `orin/orin.py`, `orin/s1u-orin-uplink.service` | The Orin over the robot's internal network: the x86's uplink unit, the cameras' USB rule and USB resets on request, the site's adb key, and the declared payloads (`orinPayloads`). Trusts the Orin's ssh host key on first use. |
 | `power` | `device/power.py` | The vendor control centre's power / driver / restart buttons, through the vendor's ROS master (rospy), with the vendor page's rules; power off and restart wait while the robot is in use unless forced with a reason. Listens on the Unix socket `/run/rlark/services/s1u-power.sock` only (`GET /power`, `POST /power {action, force, reason}`); RLark reaches it on the node and records who pressed. `autoDriver` / `autoPower` parameters. |
-| `video` | `device/video_server.py`, `video.py`, `camera.py`, `preview.py` | The body's cameras (`bodies.json`) from the vendor's compressed ROS topics to MediaMTX (WebRTC on :8889; a viewing session's token, checked on a loopback port, is the only access), and the camera wall's strip from the device layer's thumbnails (`/run/rlark/s1u/preview.bin`). Control on the Unix socket `/run/rlark/services/s1u-video.sock` only (`GET /status`, `POST /viewers`, `PUT`/`DELETE /viewers/<id>`, `GET /preview[/<camera>]`). |
+| `video` | `device/video_server.py`, `video.py`, `camera.py`, `preview.py` | The body's cameras (`bodies.json`) from the vendor's compressed ROS topics to MediaMTX (WebRTC on :18889; a viewing session's token, checked on a loopback port, is the only access), and the camera wall's strip from the device layer's thumbnails (`/run/rlark/s1u/preview.bin`). Control on the Unix socket `/run/rlark/services/s1u-video.sock` only (`GET /status`, `POST /viewers`, `PUT`/`DELETE /viewers/<id>`, `GET /preview[/<camera>]`). |
 | `clock` | `clock/clock.py` | Trims the rate of the NIC clock at the root of the vendor's time chain so the x86 and the Orin follow the site's time source (`timeSource`). |
 
 ## Interfaces with other components
@@ -37,6 +37,21 @@ robot gets it when it joins; nobody logs in to the robot or its Orin.
 - **Node labels and annotations** — generic ones under `rlark.io/` (`node-profile-state`, `node-conformance`,
   `rollout-wave`, `rollout-state`, `restart-request`, `clock-state`, `boot-report`, …), S1U-only ones under
   `s1u.rlark.io/` (`orin-state`, `orin-host-key`, `body-parameters`, …).
+
+## Ports
+
+What s1u-robot listens on in the host's network of a robot x86 (the containers are on the host's network). Apart from
+MediaMTX's defaults (8889, 8189, 8554, 9997) and 8890, which other software on a robot may hold.
+
+| Port | Bound to | Who | For |
+|---|---|---|---|
+| 18889/tcp | all addresses | video (MediaMTX) | WebRTC (WHEP) for the browser; the address comes with a viewing session |
+| 18189/udp, 18189/tcp | all addresses | video (MediaMTX) | WebRTC ICE |
+| 18890/tcp | 127.0.0.1 | video (video_server.py) | MediaMTX's authorization callback (a viewing session's token) |
+| 18554/tcp | 127.0.0.1 | video (MediaMTX) | RTSP, the camera publishers' |
+| 19997/tcp | 127.0.0.1 | video (MediaMTX) | MediaMTX's API |
+
+Power and video's control are Unix sockets only (`/run/rlark/services/s1u-{power,video}.sock`), no TCP port.
 
 ## Build and test
 

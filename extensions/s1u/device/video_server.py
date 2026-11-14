@@ -9,7 +9,7 @@ Its control is a Unix socket only (S1U_SERVICE_SOCKET); RLark reaches it on the 
                               address: the WHEP URL of the robot's MediaMTX}]}
     PUT    /viewers/<id>      renewed; DELETE /viewers/<id> closed
     GET    /preview           the camera wall's strip; GET /preview/<camera> a camera's full frames
-The browser then talks WebRTC to the robot's MediaMTX (:8889) with the session's token, which MediaMTX checks with this
+The browser then talks WebRTC to the robot's MediaMTX (:18889, video.MEDIA_PORT) with the session's token, which MediaMTX checks with this
 service on a loopback-only port; no origin is trusted for itself (a stream is the token's, short-lived).
 
 The cameras are the robot's body's (its Node's label rlark.io/robot-body, the Addon's /etc/rlark/s1u/bodies.json), each
@@ -31,7 +31,8 @@ from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
 from preview import Previews
-from video import CAMERAS, CONTROL_PORT, VideoPublishers, ViewingSessions, stop_processes
+from video import (CAMERAS, CONNECTION_PORT, CONTROL_PORT, MEDIA_CONTROL_PORT, MEDIA_PORT, PUBLISH_PORT,
+                   VideoPublishers, ViewingSessions, stop_processes)
 
 # Each camera of the S1U by its vendor driver's name, as the SDK knows it, and the view it is.
 TOPICS = {"head": "head_rgbd", "wrist_left": "left_wrist_rgbd", "wrist_right": "right_wrist_rgbd"}
@@ -54,14 +55,14 @@ def body_of(node):
 def robot_config(node, address, views):
     """The service on a robot: its node, the address a viewer's media reaches it at, its body's cameras."""
     return read_config(dict(
-        robot_identifier=node, source="ros", public_media_address="http://%s:8889" % address,
+        robot_identifier=node, source="ros", public_media_address="http://%s:%d" % (address, MEDIA_PORT),
         cameras={view: {"topic": "/astribot_camera/%s/color_compress/compressed" % TOPICS[view], "compressed": True}
                  for view in views}))
 
 
 def read_config(config):
-    defaults = dict(control_port=CONTROL_PORT, publish_port=8554,
-                    media_control_port=9997, media_port=8889, connection_port=8189,
+    defaults = dict(control_port=CONTROL_PORT, publish_port=PUBLISH_PORT,
+                    media_control_port=MEDIA_CONTROL_PORT, media_port=MEDIA_PORT, connection_port=CONNECTION_PORT,
                     width=640, height=360, frame_rate=15, bitrate="1500k",
                     viewer_timeout_seconds=45, idle_grace_seconds=5, maximum_viewers=8,
                     maximum_restarts=3, camera_timeout_seconds=10,

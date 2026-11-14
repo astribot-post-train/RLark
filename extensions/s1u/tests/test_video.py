@@ -92,7 +92,7 @@ def test_a_bodys_cameras_are_the_only_ones_published_and_served(viewing):
     assert observer["cameras"]["head"]["topic"] == "/astribot_camera/head_rgbd/color_compress/compressed"
     media = video_server.media_config(observer)
     assert list(media["paths"]) == ["s1u-02-x86/head"] and media["webrtcAdditionalHosts"] == ["10.254.240.7"]
-    assert media["authHTTPAddress"] == "http://127.0.0.1:8890/media/authorize" and media["apiAddress"].startswith("127.0.0.1:")
+    assert media["authHTTPAddress"] == "http://127.0.0.1:18890/media/authorize" and media["apiAddress"].startswith("127.0.0.1:")
     full = video_server.robot_config("s1u-01-x86", "10.254.240.3", ["head", "wrist_left", "wrist_right"])
     assert full["cameras"]["wrist_left"]["topic"] == "/astribot_camera/left_wrist_rgbd/color_compress/compressed"
     with pytest.raises(ValueError, match="cameras"):

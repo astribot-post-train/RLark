@@ -15,8 +15,11 @@ from urllib.request import Request, urlopen
 
 # Every camera an S1U body may have, in the preview strip's order; a body's own are config["cameras"].
 CAMERAS = ("head", "wrist_left", "wrist_right")
-# The loopback port of MediaMTX's authorization callback (video_server).
-CONTROL_PORT = 8890
+# The robot video's ports on the host's network (README, "Ports"): the authorization callback MediaMTX calls
+# (loopback), MediaMTX's WebRTC (the browser's, its address handed out with a viewing session), its ICE (UDP and
+# TCP), its RTSP (the camera publishers', loopback) and its API (loopback). Apart from MediaMTX's defaults, which
+# other software on a robot may hold.
+CONTROL_PORT, MEDIA_PORT, CONNECTION_PORT, PUBLISH_PORT, MEDIA_CONTROL_PORT = 18890, 18889, 18189, 18554, 19997
 
 
 def stop_processes(*processes, timeout=5):
