@@ -449,3 +449,27 @@ func TestASiteNamesItsRelay(t *testing.T) {
 		}
 	}
 }
+
+// The fields of NodeConfig at each level. A field that is added goes in a new
+// line here, with DocumentLevel raised in the same commit.
+func TestDocumentLevelNamesTheDocument(t *testing.T) {
+	levels := []string{
+		1: "address dns interface listenPort mtu names names.address names.name peers peers.allowedIPs peers.endpoint peers.keepaliveSeconds peers.publicKey routes uplinkRoutes uplinkRoutes.destination uplinkRoutes.gateway",
+	}
+	var fields []string
+	var walk func(prefix string, of reflect.Type)
+	walk = func(prefix string, of reflect.Type) {
+		for i := range of.NumField() {
+			name, _, _ := strings.Cut(of.Field(i).Tag.Get("json"), ",")
+			fields = append(fields, prefix+name)
+			if element := of.Field(i).Type; element.Kind() == reflect.Slice && element.Elem().Kind() == reflect.Struct {
+				walk(prefix+name+".", element.Elem())
+			}
+		}
+	}
+	walk("", reflect.TypeOf(NodeConfig{}))
+	sort.Strings(fields)
+	if len(levels)-1 != DocumentLevel || strings.Join(fields, " ") != levels[DocumentLevel] {
+		t.Fatalf("DocumentLevel %d does not name the document: %s", DocumentLevel, strings.Join(fields, " "))
+	}
+}

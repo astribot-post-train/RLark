@@ -97,6 +97,14 @@ type Member struct {
 	Uplink     *Uplink
 }
 
+// DocumentLevel is the level of NodeConfig as it is written here: a gateway
+// takes the document when its own documentLevel (extensions/station-gateway)
+// is at least this. A gateway refuses a field it does not know, so the commit
+// that gives NodeConfig a field raises this, the gateway's level and the gate
+// of stage controller in apps/rlark/pkg/release/stages.yaml together, and the
+// gateways are rolled out before the controller that writes the field.
+const DocumentLevel = 1
+
 // NodeConfig is the document station-gateway reconciles. Field names match
 // extensions/station-gateway.
 type NodeConfig struct {

@@ -67,7 +67,10 @@ func TestKubernetesObservationSinkCreatesAndRefreshesOwnedSnapshot(t *testing.T)
 		Roles:      []string{"worker"},
 		Wireguard:  json.RawMessage(`{"interface":"st-wg0","addresses":["10.254.240.10/32"]}`),
 		Probes:     []Probe{{Target: "nas:445", OK: true}},
+		Gateway:    &GatewayProgram{DocumentLevel: 2, Digest: strings.Repeat("ab", 32)},
+		Agent:      &AgentProgram{Digest: strings.Repeat("cd", 32)},
 	}
+	evidence.NodePressures = []string{"DiskPressure"}
 	if err := sink.Store(context.Background(), evidence, observation); err != nil {
 		t.Fatal(err)
 	}
@@ -102,6 +105,12 @@ func TestKubernetesObservationSinkCreatesAndRefreshesOwnedSnapshot(t *testing.T)
 	if got, _, _ := unstructured.NestedString(stored.Object, "status", "wireguard", "interface"); got != "st-wg0" {
 		t.Fatalf("wireguard interface = %q", got)
 	}
+	programs, _ := json.Marshal(map[string]any{"gateway": stored.Object["status"].(map[string]any)["gateway"], "agent": stored.Object["status"].(map[string]any)["agent"], "pressures": stored.Object["status"].(map[string]any)["pressures"]})
+	if want := `{"agent":{"digest":"` + strings.Repeat("cd", 32) + `"},"gateway":{"digest":"` + strings.Repeat("ab", 32) + `","documentLevel":2},"pressures":["DiskPressure"]}`; string(programs) != want {
+		t.Fatalf("programs and pressures = %s", programs)
+	}
+	// What an old agent and gateway send, of a Node under no pressure.
+	evidence.NodePressures = []string{}
 	if err := sink.Store(context.Background(), evidence, Observation{}); err != nil {
 		t.Fatal(err)
 	}
@@ -114,6 +123,11 @@ func TestKubernetesObservationSinkCreatesAndRefreshesOwnedSnapshot(t *testing.T)
 	}
 	if _, found, _ := unstructured.NestedFieldNoCopy(stored.Object, "status", "bootTime"); found {
 		t.Fatal("empty latest snapshot retained old boot time")
+	}
+	_, gateway, _ := unstructured.NestedFieldNoCopy(stored.Object, "status", "gateway")
+	_, agent, _ := unstructured.NestedFieldNoCopy(stored.Object, "status", "agent")
+	if pressures, found, _ := unstructured.NestedSlice(stored.Object, "status", "pressures"); gateway || agent || !found || len(pressures) != 0 {
+		t.Fatalf("a report without programs kept the old ones, or its pressures are not an empty list: %v", stored.Object["status"])
 	}
 }
 

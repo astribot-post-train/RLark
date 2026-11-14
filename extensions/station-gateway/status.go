@@ -36,11 +36,27 @@ func observedPeers(device *wgtypes.Device) []peerObservation {
 	return peers
 }
 
-// publishObservation writes the interface, its public key, its addresses and, for every peer,
+// observation is the file station-agent forwards. Gateway is this program:
+// the sha256 of its file, which is what the keeper and an image digest tell
+// builds apart by, and the document level it was compiled with.
+type observation struct {
+	ObservedAt time.Time `json:"observedAt"`
+	Gateway    struct {
+		DocumentLevel int    `json:"documentLevel"`
+		Digest        string `json:"digest"`
+	} `json:"gateway"`
+	Interface string            `json:"interface"`
+	PublicKey string            `json:"publicKey"`
+	Addresses []string          `json:"addresses"`
+	Peers     []peerObservation `json:"peers"`
+}
+
+// publishObservation writes this program's digest and document level, the
+// interface, its public key, its addresses and, for every peer,
 // its public key, the time of its last handshake and the bytes received from
 // and sent to it. It never includes the device's keys, a preshared key, an
 // endpoint or allowed addresses.
-func publishObservation(path string, data []byte, now time.Time) error {
+func publishObservation(path string, data []byte, now time.Time, program string) error {
 	d, err := parse(data)
 	if err != nil {
 		return err
@@ -75,13 +91,9 @@ func publishObservation(path string, data []byte, now time.Time) error {
 		}
 	}
 	sort.Strings(values)
-	content, err := json.Marshal(struct {
-		ObservedAt time.Time         `json:"observedAt"`
-		Interface  string            `json:"interface"`
-		PublicKey  string            `json:"publicKey"`
-		Addresses  []string          `json:"addresses"`
-		Peers      []peerObservation `json:"peers"`
-	}{now.UTC(), d.Interface, device.PublicKey.String(), values, observedPeers(device)})
+	observed := observation{ObservedAt: now.UTC(), Interface: d.Interface, PublicKey: device.PublicKey.String(), Addresses: values, Peers: observedPeers(device)}
+	observed.Gateway.DocumentLevel, observed.Gateway.Digest = documentLevel, program
+	content, err := json.Marshal(observed)
 	if err != nil {
 		return err
 	}

@@ -219,7 +219,7 @@ func (s *KubernetesObservationSink) Store(ctx context.Context, evidence Evidence
 			}
 			hasOldSnapshot := false
 			if found {
-				for _, field := range []string{"systemUUID", "bootTime", "roles", "probes", "wireguard"} {
+				for _, field := range []string{"systemUUID", "bootTime", "roles", "probes", "wireguard", "gateway", "agent", "pressures"} {
 					if _, exists := oldStatus[field]; exists {
 						hasOldSnapshot = true
 						break
@@ -231,7 +231,7 @@ func (s *KubernetesObservationSink) Store(ctx context.Context, evidence Evidence
 					"metadata": map[string]interface{}{"resourceVersion": current.GetResourceVersion()},
 					// nodeUID and reportedAt are required by the CRD schema. Keep
 					// their old values until the fresh snapshot replaces them.
-					"status": map[string]interface{}{"systemUUID": nil, "bootTime": nil, "roles": nil, "probes": nil, "wireguard": nil},
+					"status": map[string]interface{}{"systemUUID": nil, "bootTime": nil, "roles": nil, "probes": nil, "wireguard": nil, "gateway": nil, "agent": nil, "pressures": nil},
 				})
 				if marshalErr != nil {
 					return marshalErr
@@ -311,6 +311,12 @@ func (s *KubernetesObservationSink) now() time.Time {
 }
 
 func observationStatus(evidence Evidence, observation Observation, members map[string]string, receivedAt time.Time) (map[string]interface{}, error) {
+	// Written as a list even when empty: that is what tells a Node under no
+	// pressure from a report stored before pressures were.
+	pressures := make([]interface{}, 0, len(evidence.NodePressures))
+	for _, pressure := range evidence.NodePressures {
+		pressures = append(pressures, pressure)
+	}
 	status := map[string]interface{}{
 		"reportedAt": receivedAt.UTC().Format(time.RFC3339Nano),
 		"nodeUID":    evidence.NodeUID,
@@ -319,6 +325,15 @@ func observationStatus(evidence Evidence, observation Observation, members map[s
 		"wireguard":  nil,
 		"roles":      []interface{}{},
 		"probes":     []interface{}{},
+		"gateway":    nil,
+		"agent":      nil,
+		"pressures":  pressures,
+	}
+	if observation.Gateway != nil {
+		status["gateway"] = map[string]interface{}{"documentLevel": int64(observation.Gateway.DocumentLevel), "digest": observation.Gateway.Digest}
+	}
+	if observation.Agent != nil {
+		status["agent"] = map[string]interface{}{"digest": observation.Agent.Digest}
 	}
 	if observation.BootTime != nil {
 		status["bootTime"] = observation.BootTime.UTC().Format(time.RFC3339Nano)

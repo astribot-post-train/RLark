@@ -19,6 +19,7 @@ func main() {
 	cmd.AddCommand(rlarkctl.SignCommand())
 	cmd.AddCommand(rlarkctl.RevokeCommand())
 	cmd.AddCommand(rlarkctl.ProxyCurlCommand())
+	cmd.AddCommand(rlarkctl.ReleaseCommand())
 	rlarkctl.SetupPersistentFlags(cmd.PersistentFlags())
 
 	if err := cmd.Execute(); err != nil {

@@ -27,6 +27,13 @@ const owner = "rlark-station-gateway/v1"
 const routeProtocol = 242
 const routePriority = 49321
 
+// documentLevel is the newest document this program understands, and it
+// understands every one before it. parse refuses a field it does not know,
+// so the commit that gives config a field raises this by one, and a
+// controller that writes that field is rolled out once every gateway reports
+// this level (the gate of stage controller in apps/rlark/pkg/release).
+const documentLevel = 1
+
 type config struct {
 	Interface    string        `json:"interface"`
 	NodeUID      string        `json:"nodeUID,omitempty"`
@@ -608,6 +615,11 @@ func main() {
 			log.Fatalf("publish identity: %v", err)
 		}
 	}
+	// The file this process was started from, whatever stands at its path by now.
+	program, err := digest("/proc/self/exe")
+	if err != nil {
+		log.Fatalf("read this program: %v", err)
+	}
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGTERM, syscall.SIGINT)
 	ticker := time.NewTicker(10 * time.Second)
@@ -657,7 +669,7 @@ func main() {
 				if err := os.Remove(*snapshotPath); err != nil && !errors.Is(err, os.ErrNotExist) {
 					log.Printf("clear interface observation: %v", err)
 				}
-			} else if err := publishObservation(*snapshotPath, data, time.Now()); err != nil {
+			} else if err := publishObservation(*snapshotPath, data, time.Now(), program); err != nil {
 				log.Printf("publish interface observation: %v", err)
 				if removeErr := os.Remove(*snapshotPath); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
 					log.Printf("clear interface observation: %v", removeErr)

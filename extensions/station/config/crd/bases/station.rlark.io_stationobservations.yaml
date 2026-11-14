@@ -58,13 +58,60 @@ spec:
             type: object
           status:
             properties:
+              agent:
+                description: Agent is the station-agent that sent this report.
+                properties:
+                  digest:
+                    description: Digest is the sha256 of the program's file.
+                    pattern: ^[0-9a-f]{64}$
+                    type: string
+                required:
+                - digest
+                type: object
               bootTime:
                 format: date-time
                 type: string
+              gateway:
+                description: |-
+                  Gateway is the station-gateway of the node, as that program states it
+                  with every good pass. A node without it runs a gateway from before the
+                  field, or one that is not reconciling.
+                properties:
+                  digest:
+                    description: Digest is the sha256 of the program's file.
+                    pattern: ^[0-9a-f]{64}$
+                    type: string
+                  documentLevel:
+                    description: |-
+                      DocumentLevel is the newest configuration document the program
+                      understands; it understands every one before it.
+                    format: int32
+                    minimum: 1
+                    type: integer
+                required:
+                - digest
+                - documentLevel
+                type: object
               nodeUID:
                 maxLength: 128
                 minLength: 1
                 type: string
+              pressures:
+                description: |-
+                  Pressures are the DiskPressure, MemoryPressure and PIDPressure
+                  conditions that are True on the member Node, read by station-api when
+                  it verified the report. The list is written with every report, so an
+                  empty one says the Node is under none and a missing one that the report
+                  was stored by a station-api from before the field.
+                items:
+                  enum:
+                  - DiskPressure
+                  - MemoryPressure
+                  - PIDPressure
+                  type: string
+                maxItems: 3
+                type: array
+                x-kubernetes-list-type: set
               probes:
                 items:
                   properties:

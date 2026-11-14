@@ -1,0 +1,81 @@
+# The stages of one release batch, in the order a batch is rolled out. The
+# order is data kept with the code: whoever changes what a component needs of
+# another changes a line here in the same commit.
+#
+# A stage has:
+#   name      unique.
+#   requires  stages that are complete before this one starts.
+#   changes   what the stage touches, as text.
+#   gate      what holds before the stage starts.
+#   check     what holds once the stage is done.
+#   note      why the stage is where it is.
+#
+# An entry of gate or check is one of:
+#   <check>           compares the management plane with a baseline taken
+#                     before the batch.
+#   <check>: <level>  reads the plane as it is, for what this build needs of
+#                     it. gateways-understand: N holds when the gateway of
+#                     every member with a document states document level N or
+#                     more; one that states none does not understand.
+#   manual: <text>    what a person confirms, for what the plane cannot say.
+stages:
+  - name: prewarm
+    changes:
+      - every site's registry or cache holds the batch's four images (rlark, station-controller, station-agent, station-wireguard)
+      - every node has pulled the images it runs
+    check:
+      - manual: every site's registry or cache and every node already has this batch's images
+      - nodes-unpressured
+
+  - name: crds-rbac
+    requires: [prewarm]
+    changes:
+      - CustomResourceDefinitions of rlinf.io and station.rlark.io
+      - management RBAC of station-api and station-controller
+    note: A new station-api lists objects the old RBAC forbids, so the RBAC is there before it starts.
+
+  - name: station-api
+    requires: [crds-rbac]
+    changes:
+      - Deployment station-api
+    check: [enrollments-enrolled, observations-fresh]
+
+  - name: controller
+    requires: [crds-rbac]
+    changes:
+      - Deployment station-controller
+    gate:
+      - gateways-understand: 1
+    check: [documents-unchanged, enrollments-enrolled, network-connected]
+    note: A gateway refuses a document with a field it does not know. The level is that of the document this build's controller writes, DocumentLevel in extensions/station/network, and the commit that raises that raises it here. In a batch that raises it, and in the first one whose gateways state a level at all, the gate holds only once stage gateway is done.
+
+  - name: cluster-agents
+    requires: [station-api]
+    changes:
+      - every cluster's RLark agent
+    check: [clusters-online, addons-ready, nodes-ready, nodes-unpressured]
+    note: Rolling the office cluster's agent recreates the site-registry Pod, which is why prewarm comes first.
+
+  - name: station-agent
+    requires: [station-api]
+    changes:
+      - DaemonSet station-agent of every cluster
+    check: [observations-fresh, enrollments-enrolled, nodes-unpressured]
+
+  - name: gateway
+    requires: [station-agent]
+    changes:
+      - station-gateway of every node (station-wireguard)
+    check: [links-connected, documents-unchanged, network-connected, nodes-unpressured]
+    note: Hubs one at a time. A gateway that is a host service (a robot's) is replaced by the keeper when the robot is idle and put back by it if the new one is bad.
+
+  - name: gateway-api
+    requires: [cluster-agents]
+    changes:
+      - the RLark gateway container
+    check: [clusters-online]
+
+  - name: console
+    requires: [gateway-api]
+    changes:
+      - the console
