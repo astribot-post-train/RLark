@@ -529,12 +529,16 @@ func main() {
 	holdPath := flag.String("hold-directory", "", "a directory of the machine; while it holds a file the machine is in use and its program is not replaced")
 	dropIn := flag.String("unit-drop-in-directory", "", "with --keep-host-program: the drop-in directory of the machine's unit, as the container sees it")
 	settled := flag.Bool("host-program-settled", false, "with --keep-host-program: exit 0 unless a new program is on trial, this version was rejected, or the machine has this version and does not run it")
+	apiDirectory := flag.String("station-api-directory", "", "with --keep-host-program: the directory of the machine's service configuration, as the container sees it, in which to keep station-api.json and the CA")
+	apiURL := flag.String("station-api-url", "", "with --station-api-directory: Station API's address, as the machine reaches it")
+	apiCA := flag.String("station-api-ca", "", "with --station-api-directory: the file that holds the CA of Station API's certificate")
 	flag.Parse()
 	if *keepPath != "" {
 		k, err := newKeeper(*keepPath, *keepName, *holdPath, *snapshotPath, *dropIn)
 		if err != nil {
 			log.Fatalf("keep host program: %v", err)
 		}
+		k.apiDirectory, k.apiURL, k.apiCA = *apiDirectory, *apiURL, *apiCA
 		if *settled {
 			if err := k.settledState(); err != nil {
 				log.Print(err)
@@ -619,6 +623,20 @@ func main() {
 	program, err := digest("/proc/self/exe")
 	if err != nil {
 		log.Fatalf("read this program: %v", err)
+	}
+	// Apart from the passes below, which take the document up as they take
+	// the agent's: asking must not wait for a pass, nor a pass for an answer.
+	if *computedPath != "" {
+		go func() {
+			for said := ""; ; time.Sleep(30 * time.Second) {
+				if state := ownDocument(filepath.Dir(*configPath), key, *computedPath); state != said {
+					if said = state; state == "" {
+						state = stationAPIFile + " is gone: not asking"
+					}
+					log.Printf("own document: %s", state)
+				}
+			}
+		}()
 	}
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGTERM, syscall.SIGINT)

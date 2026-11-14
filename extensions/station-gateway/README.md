@@ -49,3 +49,15 @@ With `STATION_GATEWAY_COMPUTED_CONFIG` set, the gateway takes the first document
 - `STATION_GATEWAY_PRUNE_ROUTES=true` (off by default): routes the configuration drops are removed by the gateway, limited to routes on the interface it created and marked, with protocol 242 and metric 49321. When off the previous behaviour holds: such a route stops reconciliation until removed by hand. Uplink routes, which are on another interface, are never removed.
 
 The document format is produced by `extensions/station/network`; both sides share `testdata/computed-s1u-01-x86.json` as a contract test.
+
+## The gateway asks for its own document (2026-11-14)
+
+A gateway that runs as the machine's service (`rlark-station-gateway.service`) no longer depends on the agent's pod for its document. When `station-api.json` stands beside its `--config` file (`/etc/rlark/station/station-api.json`: `{"url": "https://host:port", "ca": "ca.crt"}`, the CA being a file in the same directory), it asks Station API itself, at start and every 30 s, and stores the answer in the `--computed-config` file when it is another document than the one there; the reconcile pass takes it up as it takes the agent's. The agent container goes on writing the same file with the same bytes.
+
+Why: the document holds the names the gateway keeps in `/etc/hosts`, the control plane's among them. The agent's pod needs the kubelet, and the kubelet needs that name. A node whose pod was not running while its control plane moved to another machine kept the old address and could never start the pod that would have fetched the new one (seen 2026-11-13 and 2026-11-14).
+
+The node's identity for this is its WireGuard key, and nothing is stored for it on either side: `POST /v1/network/document` with `{"public_key"}` is answered `401` with `{"challenge", "server_key"}`; the second request adds `challenge` and `proof` = HMAC-SHA256 over `"rlark station network document v1" || challenge` under the X25519 secret of the node's private key and `server_key`, and is answered `200` with `{"config", "config_hash"}`, or `404` when no enrolled node and no redeemed admission holds the key (the node then goes on with the document it has). The connection is TLS, verified with the CA.
+
+The two files are laid by the installer (`extensions/station/bootstrap`, before any pod of the node exists) and kept by the keeper (`--station-api-directory`, `--station-api-url`, `--station-api-ca` of the `gateway-program` container), so a node installed earlier gets them when its DaemonSet is rolled. The file is read every round: a running gateway starts asking when it appears. Without the file the gateway asks no one, which is the case of a gateway that runs in a pod.
+
+A node that is already cut off from its control plane and still runs a gateway from before this, or has no `station-api.json`, is not reached by the DaemonSet: someone has to put the three files on it (the program, `station-api.json`, `ca.crt`) or correct the line in `/etc/hosts`. Roll this out before a control plane moves.

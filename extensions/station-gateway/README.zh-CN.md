@@ -49,3 +49,15 @@ Station 身份服务源码还包含内部网络摘要读取器：查询时重新
 - `STATION_GATEWAY_PRUNE_ROUTES=true`（默认关）：配置里去掉的路由由网关删除，范围只限它自己创建并打了别名的接口上、协议号 242、metric 49321 的路由。不开时仍是原来的行为：遇到这种路由就停止协调，等人工删除。上联路由（在别的接口上）任何时候都不删。
 
 文档格式由 `extensions/station/network` 产出，两边共用 `testdata/computed-s1u-01-x86.json` 做契约测试。
+
+## 网关自己取自己的文档（2026-11-14）
+
+作为主机服务运行的网关（`rlark-station-gateway.service`）不再依赖 agent 的 Pod 取文档。`--config` 文件旁边有 `station-api.json` 时（`/etc/rlark/station/station-api.json`：`{"url": "https://host:port", "ca": "ca.crt"}`，CA 是同目录下的文件），网关启动时和之后每 30 s 自己向 Station API 取一次，取回的文档和 `--computed-config` 文件里的不一样就替换它；协调循环像对待 agent 写的文件一样接着用。agent 容器照旧写同一个文件，字节相同。
+
+原因：文档里有网关写进 `/etc/hosts` 的名字，包括控制面的名字。agent 的 Pod 要靠 kubelet 启动，kubelet 要靠这个名字找控制面。控制面搬到另一台机器的时候，Pod 恰好没在跑的节点留着旧地址，再也起不了那个能取回新地址的 Pod（2026-11-13、2026-11-14 各见过一次）。
+
+节点在这里的身份就是它的 WireGuard 密钥，两边都不新存任何东西：`POST /v1/network/document` 带 `{"public_key"}`，回 `401` 和 `{"challenge", "server_key"}`；第二次请求加上 `challenge` 和 `proof`（以节点私钥与 `server_key` 的 X25519 共享密钥为键，对 `"rlark station network document v1" || challenge` 做 HMAC-SHA256），回 `200` 和 `{"config", "config_hash"}`；没有任何已入网节点或已兑换的准入持有这把公钥时回 `404`，节点继续用手里的文档。连接是 TLS，用那份 CA 校验。
+
+这两个文件由安装器放（`extensions/station/bootstrap`，节点还没有任何 Pod 的时候），由 keeper 保持（`gateway-program` 容器的 `--station-api-directory`、`--station-api-url`、`--station-api-ca`），所以早先装好的节点滚动一次 DaemonSet 就有了。文件每轮都重新读：正在运行的网关在文件出现后就开始取。没有这个文件，网关不向任何人取，Pod 里的网关就是这种情况。
+
+已经和控制面断开、而网关还是旧版本或者没有 `station-api.json` 的节点，DaemonSet 到不了它：只能有人把三个文件（程序、`station-api.json`、`ca.crt`）放上去，或者改 `/etc/hosts` 里那一行。所以要在下一次搬控制面之前发布。

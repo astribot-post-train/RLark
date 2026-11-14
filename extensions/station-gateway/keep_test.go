@@ -249,3 +249,36 @@ func TestKeeperLeavesAContainersProgramOfTheSamePathAlone(t *testing.T) {
 		t.Fatalf("state %q err %v", state, err)
 	}
 }
+
+func TestKeeperLaysWhereTheServiceAsksForItsDocument(t *testing.T) {
+	m := newMachine(t, "v2", "v2")
+	directory := t.TempDir()
+	m.k.apiDirectory, m.k.apiURL, m.k.apiCA = directory, "https://station-api.rlark.internal:18443", filepath.Join(directory, "mounted-ca.crt")
+	// Without the CA nothing is laid: the file never names a CA that is not there.
+	if err := m.k.lay(); err == nil {
+		t.Fatal("laid without a CA")
+	}
+	if _, err := os.Stat(filepath.Join(directory, stationAPIFile)); err == nil {
+		t.Fatalf("%s without its CA", stationAPIFile)
+	}
+	os.WriteFile(m.k.apiCA, []byte("the CA\n"), 0600)
+	if err := m.k.lay(); err != nil {
+		t.Fatal(err)
+	}
+	// Byte for byte what the installer writes (extensions/station/bootstrap).
+	pointer, _ := os.ReadFile(filepath.Join(directory, stationAPIFile))
+	ca, _ := os.ReadFile(filepath.Join(directory, "ca.crt"))
+	if string(pointer) != `{"url":"https://station-api.rlark.internal:18443","ca":"ca.crt"}`+"\n" || string(ca) != "the CA\n" {
+		t.Fatalf("laid %q and %q", pointer, ca)
+	}
+	// What is there already is left as it is; what differs is replaced.
+	before, _ := os.Stat(filepath.Join(directory, stationAPIFile))
+	os.WriteFile(m.k.apiCA, []byte("another CA\n"), 0600)
+	if err := m.k.lay(); err != nil {
+		t.Fatal(err)
+	}
+	after, _ := os.Stat(filepath.Join(directory, stationAPIFile))
+	if ca, _ := os.ReadFile(filepath.Join(directory, "ca.crt")); !os.SameFile(before, after) || string(ca) != "another CA\n" || after.Mode().Perm() != 0644 {
+		t.Fatalf("second pass: CA %q, the file written again: %v", ca, !os.SameFile(before, after))
+	}
+}
