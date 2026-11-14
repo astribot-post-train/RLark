@@ -13,6 +13,7 @@ import (
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/selection"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	rlarkv1alpha1 "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
@@ -24,6 +25,36 @@ import (
 func (r *Reconciler) resolveTaskNamespace(ctx context.Context, t *rlarkv1alpha1.JobTaskTemplate) (string, error) {
 	if len(t.Placement.NodeSelector) == 0 {
 		return "default", nil
+	}
+	if t.Placement.PerNode {
+		// A per-node Task is one DaemonSet in one cluster, so it goes to the
+		// cluster its class of nodes is in. Every matching Node counts, whatever
+		// its phase or its cluster's state: a node that is offline or cordoned is
+		// still in the class, and its going away must not move the Task.
+		selector := labels.NewSelector()
+		for key, value := range t.Placement.NodeSelector {
+			requirement, err := labels.NewRequirement(key, selection.In, strings.Split(value, ","))
+			if err != nil {
+				return "", fmt.Errorf("nodeSelector of per-node Task template %q: %w", t.Name, err)
+			}
+			selector = selector.Add(*requirement)
+		}
+		var nodeList rlarkv1alpha1.NodeList
+		if err := r.List(ctx, &nodeList, &client.ListOptions{LabelSelector: selector}); err != nil {
+			return "", fmt.Errorf("list Nodes matching selector for Task template %q: %w", t.Name, err)
+		}
+		namespaces := map[string]struct{}{}
+		for _, node := range nodeList.Items {
+			namespaces[node.Namespace] = struct{}{}
+		}
+		switch len(namespaces) {
+		case 0:
+			return "", fmt.Errorf("no Nodes match selector for per-node Task template %q", t.Name)
+		case 1:
+			return nodeList.Items[0].Namespace, nil
+		default:
+			return "", fmt.Errorf("selector of per-node Task template %q matches Nodes of %d clusters; a per-node Task runs in one cluster, so narrow its nodeSelector to one", t.Name, len(namespaces))
+		}
 	}
 
 	simpleSelector := make(map[string]string)
@@ -254,7 +285,12 @@ func findHeadTaskName(job *rlarkv1alpha1.Job) string {
 }
 
 // taskReplicas 返回任务模板的副本数（pod 数量），未显式设置时默认为 1。
+// 按节点放置的 Task 计 0：它的实例数随节点类别的成员变化，Ray 头节点不能等待
+// 一个会变的数，按节点的实例也没有稳定的 rank。
 func taskReplicas(t rlarkv1alpha1.JobTaskTemplate) int32 {
+	if t.Placement.PerNode {
+		return 0
+	}
 	if t.Workload.Carrier.Type != taskapi.CarrierTypeKubernetesDeployment && t.Workload.Carrier.Type != taskapi.CarrierTypeKubernetesStatefulSet {
 		return 1
 	}
@@ -297,6 +333,26 @@ func validateTaskTemplates(job *rlarkv1alpha1.Job) error {
 		}
 		if strings.TrimSpace(template.Workload.Carrier.Version) == "" {
 			return fmt.Errorf("%s.workload.carrier.version must not be empty", path)
+		}
+
+		perNode := template.Placement.PerNode
+		daemonSet := template.Workload.Carrier.Type == taskapi.CarrierTypeKubernetesDaemonSet
+		switch {
+		case perNode && len(template.Placement.NodeSelector) == 0:
+			return fmt.Errorf("%s.placement.perNode requires placement.nodeSelector to name the class of nodes", path)
+		case perNode && template.Head:
+			// The head is the one instance the Job's other Tasks reach; a
+			// per-node Task has one instance per node.
+			return fmt.Errorf("%s.head must be false for a per-node Task", path)
+		case perNode && template.Runtime.Kind == rlarkv1alpha1.RuntimeKindKubernetes && (!daemonSet || template.Workload.Carrier.Version != taskapi.CarrierVersionKubernetesV1):
+			return fmt.Errorf("%s.workload.carrier must be %s %s for a per-node Task", path, taskapi.CarrierTypeKubernetesDaemonSet, taskapi.CarrierVersionKubernetesV1)
+		case daemonSet && !perNode:
+			return fmt.Errorf("%s.workload.carrier %s requires placement.perNode", path, taskapi.CarrierTypeKubernetesDaemonSet)
+		}
+		if daemonSet {
+			if _, err := taskapi.DecodeKubernetesDaemonSetCarrierParameters(template.Workload.Carrier.Parameters); err != nil {
+				return fmt.Errorf("%s.workload.carrier.parameters: %w", path, err)
+			}
 		}
 
 		if template.Workload.Template == nil {

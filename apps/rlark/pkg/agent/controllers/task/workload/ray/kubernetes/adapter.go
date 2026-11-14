@@ -174,7 +174,7 @@ func (a *Adapter) Compile(_ context.Context, request workload.CompileRequest) (e
 	if err != nil {
 		return executionplan.Plan{}, err
 	}
-	kind, replicas, err := decodeKubernetesCarrier(request.Task.Configuration.Carrier)
+	carrier, err := decodeKubernetesCarrier(request.Task.Configuration.Carrier)
 	if err != nil {
 		return executionplan.Plan{}, err
 	}
@@ -233,13 +233,13 @@ func (a *Adapter) Compile(_ context.Context, request workload.CompileRequest) (e
 	// 4. Render the selected primary workload as the instance-discovery root. It
 	// depends on required Ray helpers and is deleted on Task cleanup.
 	var primary runtime.Object
-	switch kind {
+	switch carrier.kind {
 	case CarrierDeployment:
-		primary = BuildDeployment(task, namespace, spec, replicas)
+		primary = BuildDeployment(task, namespace, spec, carrier.replicas)
 	case CarrierStatefulSet:
-		primary = BuildStatefulSet(task, namespace, spec, replicas)
-	default:
-		return executionplan.Plan{}, fault.New(fault.InvalidArgument, "unsupported builtin Kubernetes carrier kind")
+		primary = BuildStatefulSet(task, namespace, spec, carrier.replicas)
+	case CarrierDaemonSet:
+		primary = BuildDaemonSet(task, namespace, spec, carrier.maxUnavailable)
 	}
 	main, err := desiredObject("workload", "workload", primary, request.Task.Identity, agentruntime.IdentityTaskIncarnation, agentruntime.LifecycleDeleteOnTaskCleanup)
 	if err != nil {
@@ -492,27 +492,39 @@ func kubernetesCarrierKind(carrier coordination.VersionedConfiguration) (string,
 		return CarrierDeployment, nil
 	case taskapi.CarrierTypeKubernetesStatefulSet:
 		return CarrierStatefulSet, nil
+	case taskapi.CarrierTypeKubernetesDaemonSet:
+		return CarrierDaemonSet, nil
 	default:
 		return "", fault.New(fault.InvalidArgument, "unsupported Kubernetes carrier type")
 	}
 }
 
-func decodeKubernetesCarrier(carrier coordination.VersionedConfiguration) (string, *int32, error) {
+// kubernetesCarrier is a Task's decoded Kubernetes carrier: the workload kind
+// it renders and that kind's parameters.
+type kubernetesCarrier struct {
+	kind           string
+	replicas       *int32
+	maxUnavailable *intstr.IntOrString
+}
+
+func decodeKubernetesCarrier(carrier coordination.VersionedConfiguration) (kubernetesCarrier, error) {
 	kind, err := kubernetesCarrierKind(carrier)
 	if err != nil {
-		return "", nil, err
+		return kubernetesCarrier{}, err
 	}
 	parameters := apiextensionsv1.JSON{Raw: append([]byte(nil), carrier.Parameters...)}
-	switch kind {
-	case CarrierDeployment, CarrierStatefulSet:
-		decoded, err := taskapi.DecodeParametersStrict[taskapi.KubernetesReplicatedCarrierParametersV1](parameters)
+	if kind == CarrierDaemonSet {
+		decoded, err := taskapi.DecodeKubernetesDaemonSetCarrierParameters(parameters)
 		if err != nil {
-			return "", nil, fault.Wrap(fault.InvalidArgument, "decode replicated Kubernetes carrier parameters", err)
+			return kubernetesCarrier{}, fault.Wrap(fault.InvalidArgument, "decode DaemonSet Kubernetes carrier parameters", err)
 		}
-		return kind, decoded.Replicas, nil
-	default:
-		return "", nil, fault.New(fault.InvalidArgument, "unsupported Kubernetes carrier type")
+		return kubernetesCarrier{kind: kind, maxUnavailable: decoded.MaxUnavailable}, nil
 	}
+	decoded, err := taskapi.DecodeParametersStrict[taskapi.KubernetesReplicatedCarrierParametersV1](parameters)
+	if err != nil {
+		return kubernetesCarrier{}, fault.Wrap(fault.InvalidArgument, "decode replicated Kubernetes carrier parameters", err)
+	}
+	return kubernetesCarrier{kind: kind, replicas: decoded.Replicas}, nil
 }
 
 func desiredObject(logicalName, role string, object runtime.Object, task agentruntime.TaskIdentity, scope agentruntime.IdentityScope, lifecycle agentruntime.ResourceLifecycle) (agentruntime.DesiredObject, error) {
@@ -548,6 +560,8 @@ func gvkFor(object runtime.Object) schema.GroupVersionKind {
 		return appsv1.SchemeGroupVersion.WithKind("Deployment")
 	case *appsv1.StatefulSet:
 		return appsv1.SchemeGroupVersion.WithKind("StatefulSet")
+	case *appsv1.DaemonSet:
+		return appsv1.SchemeGroupVersion.WithKind("DaemonSet")
 	case *corev1.ConfigMap:
 		return corev1.SchemeGroupVersion.WithKind("ConfigMap")
 	case *corev1.Service:
@@ -599,6 +613,18 @@ func ObserveObject(kind string, manifest []byte, instances agentruntime.Instance
 			return "", "", err
 		}
 		phase = StatefulSetStatusPhase(&object)
+	case CarrierDaemonSet:
+		var object appsv1.DaemonSet
+		if err := json.Unmarshal(manifest, &object); err != nil {
+			return "", "", err
+		}
+		phase, message = DaemonSetStatusPhase(&object)
+		// A failing instance holds the Task in Pending and names the failure,
+		// but does not fail the Task as it would a replicated carrier.
+		if failure, found := InstanceFailureMessage(instances); found {
+			return rlarkv1alpha1.TaskPhasePending, failure, nil
+		}
+		return phase, message, nil
 	default:
 		return "", "", fmt.Errorf("unsupported workload kind %q", kind)
 	}

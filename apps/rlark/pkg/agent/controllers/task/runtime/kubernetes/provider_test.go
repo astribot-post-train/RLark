@@ -402,6 +402,30 @@ func TestProviderListInstancesProjectsContainerFailuresAndSchedulingEvents(t *te
 	}
 }
 
+func TestProviderListInstancesProjectsDaemonSetPodNodeReadinessAndImages(t *testing.T) {
+	scheme := testScheme(t)
+	daemonSet := &appsv1.DaemonSet{ObjectMeta: metav1.ObjectMeta{Name: "task", Namespace: "runtime", UID: "daemonset-uid", Annotations: managementAnnotations("task-uid")}, Spec: appsv1.DaemonSetSpec{Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": "task"}}}}
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "task-x1", Namespace: "runtime", UID: "pod-uid", Labels: map[string]string{"app": "task"}, OwnerReferences: []metav1.OwnerReference{{Kind: "DaemonSet", Name: daemonSet.Name, UID: daemonSet.UID, Controller: ptr(true)}}},
+		Spec:       corev1.PodSpec{NodeName: "robot-a", Containers: []corev1.Container{{Name: "main", Image: "station:v2"}, {Name: "sshd", Image: "tools:v1"}}},
+		Status:     corev1.PodStatus{Phase: corev1.PodRunning, Conditions: []corev1.PodCondition{{Type: corev1.PodScheduled, Status: corev1.ConditionTrue}, {Type: corev1.PodReady, Status: corev1.ConditionTrue}}},
+	}
+	provider := testProvider(scheme, daemonSet, pod)
+	snapshot, err := provider.ListInstances(context.Background(), agentruntime.InstanceQuery{Task: taskIdentity(), Workloads: []agentruntime.ObjectRef{objectRefFor(daemonSet, "apps/v1, Kind=DaemonSet")}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []agentruntime.InstanceCondition{
+		{Source: "kubernetes", Scope: "image", Subject: "main", Message: "station:v2"},
+		{Source: "kubernetes", Scope: "image", Subject: "sshd", Message: "tools:v1"},
+		{Source: "kubernetes", Scope: "instance", Subject: "task-x1", Reason: "Ready"},
+		{Source: "kubernetes", Scope: "node", Subject: "robot-a"},
+	}
+	if len(snapshot.Instances) != 1 || !reflect.DeepEqual(snapshot.Instances[0].Conditions, want) {
+		t.Fatalf("instances=%#v", snapshot.Instances)
+	}
+}
+
 func TestProviderListInstancesUsesPodUIDEventQueries(t *testing.T) {
 	scheme := testScheme(t)
 	deployment := managedDeployment()

@@ -93,6 +93,9 @@ func (w KubernetesStatusWriter) WriteStatus(ctx context.Context, task *rlarkv1al
 	if intent.ObservedNodesSet {
 		desired.Status.ObservedNodes = slices.Clone(intent.ObservedNodes)
 	}
+	if intent.InstancesSet {
+		desired.Status.Instances = slices.Clone(intent.Instances)
+	}
 	if desired.Status.Phase == rlarkv1alpha1.TaskPhaseStopped {
 		desired.Status.PullProgress = nil
 		desired.Status.Events = nil
@@ -764,9 +767,11 @@ func validatedClaimedCarrierSelector(task *rlarkv1alpha1.Task) (coordination.Car
 	return selector, nil
 }
 
-// IntentForTask returns a fenced compatibility status intent.
+// IntentForTask returns a fenced compatibility status intent. It clears the
+// per-node instances along with the nodes; an observation of a per-node Task
+// sets them on the returned intent.
 func IntentForTask(task *rlarkv1alpha1.Task, phase rlarkv1alpha1.TaskPhase, message string, nodes []string, priority StatusPriority) StatusIntent {
-	return StatusIntent{TaskUID: string(task.UID), Generation: task.Generation, Phase: string(phase), MessageSet: true, Message: message, ObservedNodesSet: true, ObservedNodes: slices.Clone(nodes), Priority: priority}
+	return StatusIntent{TaskUID: string(task.UID), Generation: task.Generation, Phase: string(phase), MessageSet: true, Message: message, ObservedNodesSet: true, ObservedNodes: slices.Clone(nodes), InstancesSet: true, Priority: priority}
 }
 
 // ConditionIntent returns a fenced condition mutation intent.

@@ -2,11 +2,14 @@
 // parameter contracts.
 package api
 
+import "k8s.io/apimachinery/pkg/util/intstr"
+
 const (
 	WorkloadTypeRay                  = "rlinf.io/ray"
 	WorkloadVersionRayV1             = "v1"
 	CarrierTypeKubernetesDeployment  = "rlinf.io/kubernetes-deployment"
 	CarrierTypeKubernetesStatefulSet = "rlinf.io/kubernetes-statefulset"
+	CarrierTypeKubernetesDaemonSet   = "rlinf.io/kubernetes-daemonset"
 	CarrierVersionKubernetesV1       = "v1"
 	EnvironmentTypeSSH               = "rlinf.io/ssh"
 	EnvironmentVersionSSHV1          = "v1"
@@ -54,6 +57,16 @@ type ExposedPort struct {
 // carriers such as Deployment and StatefulSet.
 type KubernetesReplicatedCarrierParametersV1 struct {
 	Replicas *int32 `json:"replicas,omitempty"`
+}
+
+// KubernetesDaemonSetCarrierParametersV1 configures the DaemonSet carrier of a
+// per-node Task. MaxUnavailable bounds how many nodes' instances an update
+// replaces at once: an integer, or a percentage of the class rounded up.
+// Absent, one node at a time. An update never starts a second instance on a
+// node before the old one is gone, because per-node instances commonly hold
+// the node's own ports, devices and directories.
+type KubernetesDaemonSetCarrierParametersV1 struct {
+	MaxUnavailable *intstr.IntOrString `json:"maxUnavailable,omitempty"`
 }
 
 // SSHEnvironmentParametersV1 是 rlinf.io/ssh/v1 的参数合同。

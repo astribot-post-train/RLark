@@ -36,6 +36,15 @@ export interface ITask {
       "nodeSelector"?: {
         [key: string]: string;
       };
+      /**
+       * PerNode runs one instance of the Task on every node that NodeSelector
+       * matches, like a Kubernetes DaemonSet or a cloud daemon service: a node
+       * that joins the class gets an instance, a node that leaves takes its
+       * instance with it, and neither changes the Task's spec. The class of nodes
+       * must lie in one cluster. On Kubernetes the carrier is
+       * rlinf.io/kubernetes-daemonset; a per-node Task cannot be a Job's head.
+       */
+      "perNode"?: boolean;
     };
     /**
      * TaskRole 描述 Task 在业务编排中的角色，用于前端分组与展示。
@@ -7129,6 +7138,35 @@ export interface ITask {
       "reason": string;
       "source"?: string;
       "type": string;
+    }>;
+    /**
+     * Instances lists a per-node Task's instances, sorted by node, as the
+     * data-plane Agent last observed them. It is empty for other Tasks and
+     * while the Task is stopped. A per-node Task is Running when every instance
+     * is Running; an instance that is Pending or Failed keeps the Task Pending
+     * and never fails it, so nodes joining, leaving or going down never fail
+     * the Job.
+     */
+    "instances"?: Array<{
+      /**
+       * Image is the image of the instance's main container: the version the
+       * instance runs, which differs between nodes while an update rolls out.
+       */
+      "image"?: string;
+      "message"?: string;
+      /**
+       * Name is the instance's name in its runtime (the Pod name on Kubernetes).
+       */
+      "name": string;
+      /**
+       * Node is the name of the node the instance runs on, empty until the
+       * instance is placed.
+       */
+      "node"?: string;
+      /**
+       * TaskInstancePhase is the state of one instance of a per-node Task.
+       */
+      "phase": "Pending" | "Running" | "Failed";
     }>;
     "message"?: string;
     /**

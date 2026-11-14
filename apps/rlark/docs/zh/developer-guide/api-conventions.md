@@ -51,7 +51,7 @@
 
 `Task` 是 status 归属被拆分的资源，也是引入新拆分时应遵循的范式：
 
-- 数据面集群 Agent 拥有 `status.phase`、`status.message` 和 `status.observedNodes`。它依据实际工作负载把这些字段收集为 `StatusIntent`——Kubernetes 运行时在 `apps/rlark/pkg/agent/controllers/task/push_deployment.go` 与 `lifecycle_kubernetes.go` 中产出 Intent——再由 `apps/rlark/pkg/agent/execution/host/host.go` 中与运行时无关的 task host 按优先级合并，并执行唯一一次 status 写入。运行时 Provider 绝不能自行 patch Task status。数据面也是 `status.observedGeneration` 的归属方，并在每次被接受的写入中推进它——包括观测值恰好未发生变化的写入，否则仅修改 Spec 会让上报的 status 悄然陈旧（见 [4.3](#43-observedgeneration)）。
+- 数据面集群 Agent 拥有 `status.phase`、`status.message`、`status.observedNodes`，以及按节点放置的 Task 的 `status.instances`。它依据实际工作负载把这些字段收集为 `StatusIntent`——Kubernetes 运行时在 `apps/rlark/pkg/agent/controllers/task/push_deployment.go` 与 `lifecycle_kubernetes.go` 中产出 Intent——再由 `apps/rlark/pkg/agent/execution/host/host.go` 中与运行时无关的 task host 按优先级合并，并执行唯一一次 status 写入。运行时 Provider 绝不能自行 patch Task status。数据面也是 `status.observedGeneration` 的归属方，并在每次被接受的写入中推进它——包括观测值恰好未发生变化的写入，否则仅修改 Spec 会让上报的 status 悄然陈旧（见 [4.3](#43-observedgeneration)）。
 - 控制面 Task 控制器拥有 `status.pullProgress` 和 `status.events`，在 `apps/rlark/pkg/controllermanager/task/task_controller.go` 中聚合。
 
 两个写入方都使用 `client.MergeFrom(original)` 进行 status patch，从而只发送自己的字段。任一方改用整体 `Status().Update` 都会在每次调谐时抹掉对方的字段。task host 还会用它观测到的 Task UID 与 generation 对写入做围栏，因此为陈旧 Task 实例计算出的 status intent 会被丢弃而不是被应用。

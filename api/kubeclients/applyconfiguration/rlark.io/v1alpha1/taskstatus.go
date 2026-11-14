@@ -33,13 +33,20 @@ type TaskStatusApplyConfiguration struct {
 	// 以识别过期状态。
 	ObservedGeneration *int64 `json:"observedGeneration,omitempty"`
 	// ObservedNodes 是当前承载该 Task 工作负载的节点名，由数据面 Agent 排序去重后上报。
-	ObservedNodes    []string                         `json:"observedNodes,omitempty"`
-	Conditions       []v1.ConditionApplyConfiguration `json:"conditions,omitempty"`
-	StartTime        *metav1.Time                     `json:"startTime,omitempty"`
-	CompletionTime   *metav1.Time                     `json:"completionTime,omitempty"`
-	Message          *string                          `json:"message,omitempty"`
-	RetryCount       *int32                           `json:"retryCount,omitempty"`
-	TensorBoardProxy *string                          `json:"tensorBoardProxy,omitempty"`
+	ObservedNodes []string `json:"observedNodes,omitempty"`
+	// Instances lists a per-node Task's instances, sorted by node, as the
+	// data-plane Agent last observed them. It is empty for other Tasks and
+	// while the Task is stopped. A per-node Task is Running when every instance
+	// is Running; an instance that is Pending or Failed keeps the Task Pending
+	// and never fails it, so nodes joining, leaving or going down never fail
+	// the Job.
+	Instances        []TaskInstanceStatusApplyConfiguration `json:"instances,omitempty"`
+	Conditions       []v1.ConditionApplyConfiguration       `json:"conditions,omitempty"`
+	StartTime        *metav1.Time                           `json:"startTime,omitempty"`
+	CompletionTime   *metav1.Time                           `json:"completionTime,omitempty"`
+	Message          *string                                `json:"message,omitempty"`
+	RetryCount       *int32                                 `json:"retryCount,omitempty"`
+	TensorBoardProxy *string                                `json:"tensorBoardProxy,omitempty"`
 	// PullProgress 由数据面节点上的 image pull monitor 上报，仅在 Pod 处于
 	// ContainerCreating（尚未 Running）期间由 cluster-agent 聚合写入。Pod 进入
 	// Running 后被清空。供前端展示镜像拉取进度/速度。
@@ -78,6 +85,19 @@ func (b *TaskStatusApplyConfiguration) WithObservedGeneration(value int64) *Task
 func (b *TaskStatusApplyConfiguration) WithObservedNodes(values ...string) *TaskStatusApplyConfiguration {
 	for i := range values {
 		b.ObservedNodes = append(b.ObservedNodes, values[i])
+	}
+	return b
+}
+
+// WithInstances adds the given value to the Instances field in the declarative configuration
+// and returns the receiver, so that objects can be build by chaining "With" function invocations.
+// If called multiple times, values provided by each call will be appended to the Instances field.
+func (b *TaskStatusApplyConfiguration) WithInstances(values ...*TaskInstanceStatusApplyConfiguration) *TaskStatusApplyConfiguration {
+	for i := range values {
+		if values[i] == nil {
+			panic("nil value passed to WithInstances")
+		}
+		b.Instances = append(b.Instances, *values[i])
 	}
 	return b
 }

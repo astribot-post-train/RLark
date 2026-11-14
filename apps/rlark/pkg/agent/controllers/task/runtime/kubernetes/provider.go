@@ -781,8 +781,10 @@ func applyWorkload(current, desired client.Object, task agentruntime.TaskIdentit
 	case *appsv1.DaemonSet:
 		want := desired.(*appsv1.DaemonSet)
 		kubernetesobjects.MergeWorkloadAnnotations(existing, compatTask)
-		specChanged = !reflect.DeepEqual(existing.Spec.Template, want.Spec.Template)
-		existing.Spec.Template = want.Spec.Template
+		// The update strategy is the Task's (its carrier's maxUnavailable), so a
+		// change to it is applied like a template change.
+		specChanged = !reflect.DeepEqual(existing.Spec.UpdateStrategy, want.Spec.UpdateStrategy) || !reflect.DeepEqual(existing.Spec.Template, want.Spec.Template)
+		existing.Spec.UpdateStrategy, existing.Spec.Template = want.Spec.UpdateStrategy, want.Spec.Template
 	case *appsv1.StatefulSet:
 		want := desired.(*appsv1.StatefulSet)
 		kubernetesobjects.MergeWorkloadAnnotations(existing, compatTask)
@@ -1357,6 +1359,17 @@ func podInstance(runtimeID agentruntime.ID, task agentruntime.TaskIdentity, pare
 	}
 	for _, event := range events {
 		conditions = append(conditions, agentruntime.InstanceCondition{Source: "kubernetes", Scope: "instance", Subject: pod.Name, Reason: event.Reason, Message: event.Message})
+	}
+	// Readiness and the containers' images are what a per-node Task reports for
+	// each instance. Like the node above, they travel as conditions, so the
+	// runtime-neutral Instance and its transport need no Kubernetes fields.
+	for _, condition := range pod.Status.Conditions {
+		if condition.Type == corev1.PodReady && condition.Status == corev1.ConditionTrue {
+			conditions = append(conditions, agentruntime.InstanceCondition{Source: "kubernetes", Scope: "instance", Subject: pod.Name, Reason: "Ready"})
+		}
+	}
+	for _, container := range pod.Spec.Containers {
+		conditions = append(conditions, agentruntime.InstanceCondition{Source: "kubernetes", Scope: "image", Subject: container.Name, Message: container.Image})
 	}
 	sort.SliceStable(conditions, func(i, j int) bool {
 		left, right := conditions[i], conditions[j]

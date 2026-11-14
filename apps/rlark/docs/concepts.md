@@ -352,6 +352,49 @@ status:
       reason: PodRunning
 ```
 
+### Per-node Tasks
+
+A Task can run one instance on every node of a class instead of a fixed number of replicas, like a Kubernetes DaemonSet or a cloud provider's daemon service. Use it for workloads that belong to a kind of machine, such as an agent on every robot: a node that joins the class gets an instance without the Job being edited, and a node that leaves takes its instance with it.
+
+```yaml
+tasks:
+  - name: station
+    role: Env
+    placement:
+      perNode: true                        # one instance on every matching node
+      nodeSelector:
+        rlark.io/node-category: robot      # the class of nodes
+    runtime:
+      kind: Kubernetes
+    workload:
+      kind: rlinf.io/ray
+      version: v1
+      parameters:
+        prepare:
+          inline: exec my-agent            # the instance's process; it should not return
+      carrier:
+        type: rlinf.io/kubernetes-daemonset
+        version: v1
+        parameters:
+          maxUnavailable: 1                # nodes updated at once; an integer or "N%"; default 1
+      template:
+        spec:
+          hostNetwork: true
+          priorityClassName: my-node-agent
+          tolerations:                     # only the taints of the class's nodes; none are added
+            - {key: rlark.io/robot, operator: Exists, effect: NoSchedule}
+          containers:
+            - name: main
+              image: registry.example.com/agent@sha256:...
+```
+
+- **Contract.** `placement.perNode: true` requires a non-empty `placement.nodeSelector` and, on Kubernetes, the `rlinf.io/kubernetes-daemonset` `v1` carrier; that carrier is accepted only for per-node Tasks. Its parameters accept only `maxUnavailable` (a positive integer or a percentage from 1% to 100%); `replicas` is rejected. A per-node Task cannot be the Job's `head`. The Job Controller rejects a violation before dispatching any Task and reports `Validated=False`.
+- **One cluster.** A per-node Task is placed in the cluster whose Nodes its selector matches. Every matching Node counts, whatever its phase, so nodes going offline do not move the Task; a selector that matches Nodes of several clusters is rejected until it is narrowed to one.
+- **Rendering.** The Agent renders a DaemonSet with the same Pod template handling, identity labels, image pull Secrets, SSH and network environments as the other carriers. Updates roll node by node with `maxUnavailable` and never surge: the old instance on a node is gone before the new one starts, because per-node instances commonly hold the node's ports, devices and directories. Kubernetes adds its standard DaemonSet tolerations (not-ready, unreachable and node-pressure taints); RLark adds none.
+- **Ray topology.** A per-node Task runs as a Ray worker of the Job's head, if the Job has one. It does not count in the head's expected node total or in node ranks, because its instance count changes with the class.
+- **Status.** `status.instances` lists each instance with its `node`, Pod `name`, `phase` (`Running` when its Pod runs and is ready, `Failed` when a container cannot start or keeps crashing, `Pending` otherwise, including a Pod on a node that stopped reporting), the main container's `image`, and a `message`. The Task is `Running` when every node the DaemonSet places an instance on runs an updated, available instance, including when no node matches; otherwise it is `Pending` with a message such as `3 of 4 instances updated, 3 available` or the first failing instance. It is never `Failed` because of an instance, so nodes joining, leaving or failing never fail the Job. A node that joins or stops reporting holds the Task, and so the Job, in `Pending` until its instance is ready or the node leaves the class.
+- **Current limits.** Updates use the DaemonSet's rolling update; updating an instance only when the workload reports itself idle is not implemented yet.
+
 ### Task Roles
 
 | Role | Description | Typical Use |
@@ -364,7 +407,7 @@ status:
 
 | Type | Description | Use Case |
 |------|-------------|----------|
-| `Kubernetes` | Run RLark/Ray Tasks using Deployment or StatefulSet as the Kubernetes carrier | GPU clusters for large-scale training |
+| `Kubernetes` | Run RLark/Ray Tasks using Deployment, StatefulSet, or (for per-node Tasks) DaemonSet as the Kubernetes carrier | GPU clusters for large-scale training |
 | `Docker` | Planned provider that lowers the common Pod template to Docker containers; not implemented or advertised | Edge devices (robot arm, sensor, camera) |
 | `Raw` | Planned provider that lowers the common Pod template to host processes; not implemented or advertised | Bare metal servers, embedded devices |
 
@@ -407,7 +450,7 @@ When a Pod is created in the data plane cluster, the Agent's Pod Push controller
 ```mermaid
 graph TD
     job -->|"1:N"| task["Task<br/>(Namespaced: agent-{id})<br/>Exec Unit"]
-    task -->|"1:1 (K8s workload)"| workload["Deployment /<br/>StatefulSet<br/>(Local k8s cluster)"]
+    task -->|"1:1 (K8s workload)"| workload["Deployment /<br/>StatefulSet /<br/>DaemonSet<br/>(Local k8s cluster)"]
     workload -->|"1:N"| pod["Pod + Sidecar<br/>Agent Push reports → Pod CR"]
     domain["Domain<br/>(Cluster scoped)<br/>Network Isolation"] -->|"1:N (one per cluster)"| dp["DomainPeer<br/>(Namespaced: agent-{id})<br/>Pod Routing Table"]
     node["Node<br/>(Namespaced)<br/>Compute Node"]

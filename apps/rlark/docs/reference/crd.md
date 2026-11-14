@@ -1626,6 +1626,7 @@ Responses:
       - `version`: `string`, required
   - `placement`: `object`, required - TaskPlacementSpec describes scheduling constraints for the workload.
     - `nodeSelector`: `object`, optional
+    - `perNode`: `boolean`, optional - PerNode runs one instance of the Task on every node that NodeSelector matches, like a Kubernetes DaemonSet or a cloud...
   - `role`: `string`, required - TaskRole 描述 Task 在业务编排中的角色，用于前端分组与展示。 该字段当前不在 CRD 层做枚举校验：它可能承载上层编排框架的自定义角色名， 收窄取值会阻止合法的既有数据写入。请勿据此推断取值的封闭集合。
   - `runtime`: `object`, required - TaskRuntimeSpec selects the runtime implementation and instance that lowers the common Pod template. Name is a stable...
     - `kind`: `string`, required - RuntimeKind 表示负责执行 Task 工作负载的 Runtime 类型。 CRD 有意不限制该字符串的枚举值，使 Docker、Raw 等 Runtime 可以在不修改 Task Schema 的情况下扩展。Agent 必须...
@@ -1664,6 +1665,13 @@ Responses:
       - `reason`: `string`, required
       - `source`: `string`, optional
       - `type`: `string`, required
+  - `instances`: `array`, optional - Instances lists a per-node Task's instances, sorted by node, as the data-plane Agent last observed them. It is empty ...
+    - `items`: `object`, optional - TaskInstanceStatus is one instance of a per-node Task as the data-plane Agent observed it.
+      - `image`: `string`, optional - Image is the image of the instance's main container: the version the instance runs, which differs between nodes while...
+      - `message`: `string`, optional
+      - `name`: `string`, required - Name is the instance's name in its runtime (the Pod name on Kubernetes).
+      - `node`: `string`, optional - Node is the name of the node the instance runs on, empty until the instance is placed.
+      - `phase`: `string`, required, enum=Pending,Running,Failed - TaskInstancePhase is the state of one instance of a per-node Task.
   - `message`: `string`, optional
   - `observedGeneration`: `integer`, optional - ObservedGeneration 是数据面 Agent 最近一次完成本地工作负载调谐时所观测到的 metadata.generation。它是控制器契约而非 API Server 保证：消费者在读取 phase / message...
   - `observedNodes`: `array`, optional - ObservedNodes 是当前承载该 Task 工作负载的节点名，由数据面 Agent 排序去重后上报。

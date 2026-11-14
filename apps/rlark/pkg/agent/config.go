@@ -21,6 +21,7 @@ type ControllerConcurrencyConfig struct {
 	AddonPull       int
 	TaskDeployment  int
 	TaskStatefulSet int
+	TaskDaemonSet   int
 	NodePush        int
 	PodPush         int
 }
@@ -31,6 +32,7 @@ func defaultControllerConcurrencyConfig() ControllerConcurrencyConfig {
 		AddonPull:       defaultControllerMaxConcurrentReconciles,
 		TaskDeployment:  defaultControllerMaxConcurrentReconciles,
 		TaskStatefulSet: defaultControllerMaxConcurrentReconciles,
+		TaskDaemonSet:   defaultControllerMaxConcurrentReconciles,
 		NodePush:        defaultControllerMaxConcurrentReconciles,
 		PodPush:         defaultControllerMaxConcurrentReconciles,
 	}
@@ -41,6 +43,7 @@ func (c *ControllerConcurrencyConfig) SetupFlags(fs *pflag.FlagSet) {
 	fs.IntVar(&c.AddonPull, "addon-pull-controller-workers", c.AddonPull, "Maximum concurrent Addon pull reconciles")
 	fs.IntVar(&c.TaskDeployment, "task-deployment-push-controller-workers", c.TaskDeployment, "Maximum concurrent Task Deployment push reconciles")
 	fs.IntVar(&c.TaskStatefulSet, "task-statefulset-push-controller-workers", c.TaskStatefulSet, "Maximum concurrent Task StatefulSet push reconciles")
+	fs.IntVar(&c.TaskDaemonSet, "task-daemonset-push-controller-workers", c.TaskDaemonSet, "Maximum concurrent Task DaemonSet push reconciles")
 	fs.IntVar(&c.NodePush, "node-push-controller-workers", c.NodePush, "Maximum concurrent Node push reconciles")
 	fs.IntVar(&c.PodPush, "pod-push-controller-workers", c.PodPush, "Maximum concurrent Pod push reconciles")
 }
@@ -51,6 +54,7 @@ func (c ControllerConcurrencyConfig) Validate() error {
 		"addon-pull":            c.AddonPull,
 		"task-deployment-push":  c.TaskDeployment,
 		"task-statefulset-push": c.TaskStatefulSet,
+		"task-daemonset-push":   c.TaskDaemonSet,
 		"node-push":             c.NodePush,
 		"pod-push":              c.PodPush,
 	} {

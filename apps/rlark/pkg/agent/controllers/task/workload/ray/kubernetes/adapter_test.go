@@ -11,6 +11,7 @@ import (
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/intstr"
 
 	rlarkv1alpha1 "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
 	taskapi "github.com/rlinf/rlark/apps/rlark/pkg/agent/controllers/task/api"
@@ -32,6 +33,9 @@ func TestRayKubernetesAdaptersCompileLegacyWorkloadWithoutResourceDrift(t *testi
 			return kubernetesworkload.NewAdapter(workload.TypeID(taskapi.WorkloadTypeRay), namespace)
 		}},
 		{name: "statefulset", kind: kubernetesworkload.CarrierStatefulSet, new: func() workload.Adapter {
+			return kubernetesworkload.NewAdapter(workload.TypeID(taskapi.WorkloadTypeRay), namespace)
+		}},
+		{name: "daemonset", kind: kubernetesworkload.CarrierDaemonSet, new: func() workload.Adapter {
 			return kubernetesworkload.NewAdapter(workload.TypeID(taskapi.WorkloadTypeRay), namespace)
 		}},
 	} {
@@ -82,6 +86,9 @@ func TestRayKubernetesAdaptersCompileLegacyWorkloadWithoutResourceDrift(t *testi
 				expected = kubernetesworkload.BuildDeployment(task, "runtime", spec, carrierReplicas(task))
 			case kubernetesworkload.CarrierStatefulSet:
 				expected = kubernetesworkload.BuildStatefulSet(task, "runtime", spec, carrierReplicas(task))
+			case kubernetesworkload.CarrierDaemonSet:
+				one := intstr.FromInt32(1)
+				expected = kubernetesworkload.BuildDaemonSet(task, "runtime", spec, &one)
 			}
 			expectedJSON, _ := json.Marshal(expected)
 			if !jsonEqual(primary.Manifest.Object, expectedJSON) {
@@ -169,6 +176,21 @@ func TestRayKubernetesAdapterRejectsInvalidCarrierParameters(t *testing.T) {
 			kind:       kubernetesworkload.CarrierStatefulSet,
 			parameters: `{"replicas":1,"unknown":true}`,
 		},
+		{
+			name:       "daemonset replicas",
+			kind:       kubernetesworkload.CarrierDaemonSet,
+			parameters: `{"replicas":1}`,
+		},
+		{
+			name:       "daemonset zero maxUnavailable",
+			kind:       kubernetesworkload.CarrierDaemonSet,
+			parameters: `{"maxUnavailable":0}`,
+		},
+		{
+			name:       "daemonset maxUnavailable over 100%",
+			kind:       kubernetesworkload.CarrierDaemonSet,
+			parameters: `{"maxUnavailable":"150%"}`,
+		},
 	}
 
 	for _, test := range tests {
@@ -198,23 +220,54 @@ func TestRayKubernetesAdapterRejectsInvalidCarrierParameters(t *testing.T) {
 	}
 }
 
-func TestRayKubernetesAdapterRejectsDaemonSetCarrier(t *testing.T) {
-	task := compileTask(kubernetesworkload.CarrierDeployment)
-	task.Spec.Workload.Carrier.Type = "rlinf.io/kubernetes-daemonset"
-	task.Spec.Workload.Carrier.Parameters = apiextensionsv1.JSON{Raw: []byte(`{}`)}
-	snapshot, err := compatibility.DecodeTask(task)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = kubernetesworkload.NewAdapter(
-		workload.TypeID(taskapi.WorkloadTypeRay),
-		namespace,
-	).Compile(context.Background(), workload.CompileRequest{
-		Task:    snapshot,
-		Runtime: agentruntime.Info{Kind: compatibility.RuntimeKindKubernetes},
-	})
-	if err == nil {
-		t.Fatal("DaemonSet carrier was accepted")
+func TestRayKubernetesAdapterRendersPerNodeTaskAsDaemonSet(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		parameters string
+		want       intstr.IntOrString
+	}{
+		{name: "default", want: intstr.FromInt32(1)},
+		{name: "percentage", parameters: `{"maxUnavailable":"25%"}`, want: intstr.FromString("25%")},
+		{name: "count", parameters: `{"maxUnavailable":3}`, want: intstr.FromInt32(3)},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			task := compileTask(kubernetesworkload.CarrierDaemonSet)
+			task.Spec.Workload.Carrier.Parameters = apiextensionsv1.JSON{Raw: []byte(test.parameters)}
+			plan, err := kubernetesworkload.NewAdapter(workload.TypeID(taskapi.WorkloadTypeRay), namespace).Compile(context.Background(), workload.CompileRequest{
+				Task:    mustSnapshot(t, task),
+				Runtime: agentruntime.Info{Kind: compatibility.RuntimeKindKubernetes},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			primary := findObject(t, plan.Objects, "workload")
+			if primary.Kind != (agentruntime.ObjectKind{Group: "apps", Version: "v1", Kind: "DaemonSet"}) || plan.Units[0].Locator.Type != primary.Kind {
+				t.Fatalf("primary kind=%#v unit=%#v", primary.Kind, plan.Units[0])
+			}
+			var daemonSet appsv1.DaemonSet
+			if err := json.Unmarshal(primary.Manifest.Object, &daemonSet); err != nil {
+				t.Fatal(err)
+			}
+			strategy := daemonSet.Spec.UpdateStrategy
+			if strategy.Type != appsv1.RollingUpdateDaemonSetStrategyType || *strategy.RollingUpdate.MaxUnavailable != test.want || *strategy.RollingUpdate.MaxSurge != intstr.FromInt32(0) {
+				t.Fatalf("update strategy=%#v", strategy)
+			}
+			// The class of nodes is the Task's node selector; the Pods carry the
+			// Task incarnation the selector and the instance projection rely on.
+			pod := daemonSet.Spec.Template
+			if pod.Spec.NodeSelector["zone"] != "edge" || pod.Spec.NodeSelector["rlark.io/enabled"] != "true" {
+				t.Fatalf("node selector=%#v", pod.Spec.NodeSelector)
+			}
+			if daemonSet.Spec.Selector.MatchLabels[kubernetesworkload.ManagementTaskUIDLabel] != "task-uid" || pod.Labels[kubernetesworkload.ManagementTaskUIDLabel] != "task-uid" {
+				t.Fatalf("selector=%#v labels=%#v", daemonSet.Spec.Selector, pod.Labels)
+			}
+			if daemonSet.Annotations[kubernetesworkload.ManagementTaskUIDAnnotation] != "task-uid" || daemonSet.Name != "task" || daemonSet.Namespace != "runtime" {
+				t.Fatalf("metadata=%#v", daemonSet.ObjectMeta)
+			}
+			if len(pod.Spec.Tolerations) != 0 {
+				t.Fatalf("tolerations were added: %#v", pod.Spec.Tolerations)
+			}
+		})
 	}
 }
 
@@ -500,6 +553,22 @@ func TestRayKubernetesAdapterObserveUsesProjectedContainerNameAndFailedSchedulin
 	}
 }
 
+func TestObservePerNodeTaskFailingInstanceKeepsTaskPending(t *testing.T) {
+	object := &appsv1.DaemonSet{ObjectMeta: metav1.ObjectMeta{Generation: 2}, Status: appsv1.DaemonSetStatus{ObservedGeneration: 2, DesiredNumberScheduled: 3, UpdatedNumberScheduled: 3, NumberReady: 2, NumberAvailable: 2, NumberUnavailable: 1}}
+	manifest, _ := json.Marshal(object)
+	instances := agentruntime.InstanceSnapshot{Instances: []agentruntime.Instance{
+		{Name: "task-a", Phase: "Running", Conditions: []agentruntime.InstanceCondition{{Scope: "node", Subject: "robot-a"}, {Scope: "instance", Subject: "task-a", Reason: "Ready"}}},
+		{Name: "task-b", Phase: "Running", Conditions: []agentruntime.InstanceCondition{{Scope: "container", Subject: "main", Reason: "CrashLoopBackOff"}, {Scope: "node", Subject: "robot-b"}}},
+	}}
+	phase, message, err := kubernetesworkload.ObserveObject(kubernetesworkload.CarrierDaemonSet, manifest, instances)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if phase != rlarkv1alpha1.TaskPhasePending || message != "pod task-b container main: CrashLoopBackOff" {
+		t.Fatalf("got (%q,%q)", phase, message)
+	}
+}
+
 func TestObserveStatusMatrixMatchesLegacyReducers(t *testing.T) {
 	one, zero := int32(1), int32(0)
 	tests := []struct {
@@ -515,6 +584,12 @@ func TestObserveStatusMatrixMatchesLegacyReducers(t *testing.T) {
 		{name: "deployment replica failure", kind: kubernetesworkload.CarrierDeployment, object: &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Generation: 2}, Spec: appsv1.DeploymentSpec{Replicas: &one}, Status: appsv1.DeploymentStatus{ObservedGeneration: 2, Conditions: []appsv1.DeploymentCondition{{Type: appsv1.DeploymentReplicaFailure, Status: corev1.ConditionTrue, Message: "replica"}}}}, phase: rlarkv1alpha1.TaskPhaseFailed, message: "replica"},
 		{name: "statefulset stopped", kind: kubernetesworkload.CarrierStatefulSet, object: &appsv1.StatefulSet{Spec: appsv1.StatefulSetSpec{Replicas: &zero}}, phase: rlarkv1alpha1.TaskPhaseStopped},
 		{name: "statefulset revision pending", kind: kubernetesworkload.CarrierStatefulSet, object: &appsv1.StatefulSet{ObjectMeta: metav1.ObjectMeta{Generation: 2}, Spec: appsv1.StatefulSetSpec{Replicas: &one}, Status: appsv1.StatefulSetStatus{ObservedGeneration: 2, UpdatedReplicas: 1, ReadyReplicas: 1, CurrentReplicas: 1, CurrentRevision: "old", UpdateRevision: "new"}}, phase: rlarkv1alpha1.TaskPhasePending},
+		{name: "daemonset unobserved", kind: kubernetesworkload.CarrierDaemonSet, object: &appsv1.DaemonSet{ObjectMeta: metav1.ObjectMeta{Generation: 2}, Status: appsv1.DaemonSetStatus{ObservedGeneration: 1, DesiredNumberScheduled: 2, UpdatedNumberScheduled: 2, NumberAvailable: 2}}, phase: rlarkv1alpha1.TaskPhasePending},
+		{name: "daemonset no node in the class", kind: kubernetesworkload.CarrierDaemonSet, object: &appsv1.DaemonSet{ObjectMeta: metav1.ObjectMeta{Generation: 2}, Status: appsv1.DaemonSetStatus{ObservedGeneration: 2}}, phase: rlarkv1alpha1.TaskPhaseRunning, message: "no node matches the Task's node selector"},
+		{name: "daemonset every node runs", kind: kubernetesworkload.CarrierDaemonSet, object: &appsv1.DaemonSet{ObjectMeta: metav1.ObjectMeta{Generation: 2}, Status: appsv1.DaemonSetStatus{ObservedGeneration: 2, DesiredNumberScheduled: 3, CurrentNumberScheduled: 3, UpdatedNumberScheduled: 3, NumberReady: 3, NumberAvailable: 3}}, phase: rlarkv1alpha1.TaskPhaseRunning},
+		{name: "daemonset node joined", kind: kubernetesworkload.CarrierDaemonSet, object: &appsv1.DaemonSet{ObjectMeta: metav1.ObjectMeta{Generation: 2}, Status: appsv1.DaemonSetStatus{ObservedGeneration: 2, DesiredNumberScheduled: 4, CurrentNumberScheduled: 4, UpdatedNumberScheduled: 4, NumberReady: 3, NumberAvailable: 3, NumberUnavailable: 1}}, phase: rlarkv1alpha1.TaskPhasePending, message: "4 of 4 instances updated, 3 available"},
+		{name: "daemonset update rolling", kind: kubernetesworkload.CarrierDaemonSet, object: &appsv1.DaemonSet{ObjectMeta: metav1.ObjectMeta{Generation: 3}, Status: appsv1.DaemonSetStatus{ObservedGeneration: 3, DesiredNumberScheduled: 3, CurrentNumberScheduled: 3, UpdatedNumberScheduled: 1, NumberReady: 3, NumberAvailable: 3}}, phase: rlarkv1alpha1.TaskPhasePending, message: "1 of 3 instances updated, 3 available"},
+		{name: "daemonset node left", kind: kubernetesworkload.CarrierDaemonSet, object: &appsv1.DaemonSet{ObjectMeta: metav1.ObjectMeta{Generation: 2}, Status: appsv1.DaemonSetStatus{ObservedGeneration: 2, DesiredNumberScheduled: 2, CurrentNumberScheduled: 2, UpdatedNumberScheduled: 2, NumberReady: 2, NumberAvailable: 2}}, phase: rlarkv1alpha1.TaskPhaseRunning},
 		{name: "statefulset ready", kind: kubernetesworkload.CarrierStatefulSet, object: &appsv1.StatefulSet{ObjectMeta: metav1.ObjectMeta{Generation: 2}, Spec: appsv1.StatefulSetSpec{Replicas: &one}, Status: appsv1.StatefulSetStatus{ObservedGeneration: 2, UpdatedReplicas: 1, ReadyReplicas: 1, CurrentReplicas: 1, CurrentRevision: "new", UpdateRevision: "new"}}, phase: rlarkv1alpha1.TaskPhaseRunning},
 	}
 	for _, test := range tests {
@@ -539,11 +614,15 @@ func compileTask(kind string) *rlarkv1alpha1.Task {
 	replicas := int32(2)
 	carrierParameters, _ := json.Marshal(taskapi.KubernetesReplicatedCarrierParametersV1{Replicas: &replicas})
 	carrierType := taskapi.CarrierTypeKubernetesDeployment
-	if kind == kubernetesworkload.CarrierStatefulSet {
+	perNode := false
+	switch kind {
+	case kubernetesworkload.CarrierStatefulSet:
 		carrierType = taskapi.CarrierTypeKubernetesStatefulSet
+	case kubernetesworkload.CarrierDaemonSet:
+		carrierType, perNode, carrierParameters = taskapi.CarrierTypeKubernetesDaemonSet, true, nil
 	}
 	return &rlarkv1alpha1.Task{ObjectMeta: metav1.ObjectMeta{Name: "task", Namespace: "management", UID: types.UID("task-uid"), Generation: 3}, Spec: rlarkv1alpha1.TaskSpec{
-		Placement: rlarkv1alpha1.TaskPlacementSpec{NodeSelector: map[string]string{"zone": "edge"}},
+		Placement: rlarkv1alpha1.TaskPlacementSpec{NodeSelector: map[string]string{"zone": "edge"}, PerNode: perNode},
 		Runtime:   rlarkv1alpha1.TaskRuntimeSpec{Kind: rlarkv1alpha1.RuntimeKindKubernetes},
 		Workload: rlarkv1alpha1.TaskWorkloadSpec{
 			Kind:       taskapi.WorkloadTypeRay,

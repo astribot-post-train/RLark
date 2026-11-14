@@ -8,6 +8,7 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
+	rlarkv1alpha1 "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
 	"github.com/rlinf/rlark/apps/rlark/pkg/agent/execution/coordination"
 	"github.com/rlinf/rlark/apps/rlark/pkg/agent/execution/coordination/coordinator"
 	"github.com/rlinf/rlark/apps/rlark/pkg/agent/execution/observability"
@@ -142,6 +143,8 @@ type StatusIntent struct {
 	Message          string
 	ObservedNodesSet bool
 	ObservedNodes    []string
+	InstancesSet     bool
+	Instances        []rlarkv1alpha1.TaskInstanceStatus
 	Conditions       []ConditionMutation
 	Priority         StatusPriority
 	ReasonCode       string

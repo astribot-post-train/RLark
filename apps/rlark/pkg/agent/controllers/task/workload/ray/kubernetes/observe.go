@@ -45,6 +45,26 @@ func StatefulSetStatusPhase(statefulSet *appsv1.StatefulSet) rlarkv1alpha1.TaskP
 	return rlarkv1alpha1.TaskPhasePending
 }
 
+// DaemonSetStatusPhase projects a per-node Task's DaemonSet. The Task is
+// Running when every node the DaemonSet places an instance on runs an updated,
+// available one, which holds when no node matches as well; it is Pending
+// otherwise. It is never Failed: a node joining, leaving or going down changes
+// only which instances should exist, and one node's failing instance is that
+// node's, which the DaemonSet keeps restarting.
+func DaemonSetStatusPhase(daemonSet *appsv1.DaemonSet) (rlarkv1alpha1.TaskPhase, string) {
+	if daemonSet.Status.ObservedGeneration < daemonSet.Generation {
+		return rlarkv1alpha1.TaskPhasePending, ""
+	}
+	desired := daemonSet.Status.DesiredNumberScheduled
+	if desired == 0 {
+		return rlarkv1alpha1.TaskPhaseRunning, "no node matches the Task's node selector"
+	}
+	if daemonSet.Status.UpdatedNumberScheduled == desired && daemonSet.Status.NumberAvailable == desired {
+		return rlarkv1alpha1.TaskPhaseRunning, ""
+	}
+	return rlarkv1alpha1.TaskPhasePending, fmt.Sprintf("%d of %d instances updated, %d available", daemonSet.Status.UpdatedNumberScheduled, desired, daemonSet.Status.NumberAvailable)
+}
+
 var abnormalReasons = map[string]struct{}{"ImagePullBackOff": {}, "ErrImagePull": {}, "InvalidImageName": {}, "CreateContainerConfigError": {}, "CreateContainerError": {}, "CrashLoopBackOff": {}, "OOMKilled": {}, "ContainerCannotRun": {}, "DeadlineExceeded": {}}
 
 // InstanceFailureMessage returns the first recognized terminal container failure.
