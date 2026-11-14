@@ -32,6 +32,9 @@ type ClusterSpecApplyConfiguration struct {
 	Draining              *bool   `json:"draining,omitempty"`
 	Delisted              *bool   `json:"delisted,omitempty"`
 	DrainPreviousCordoned *bool   `json:"drainPreviousCordoned,omitempty"`
+	// NodeAgents declares the cluster's node Agents. The cluster Agent keeps them as one DaemonSet,
+	// so a Kubernetes Node that joins and matches the selector gets its node Agent without further action.
+	NodeAgents *ClusterNodeAgentsApplyConfiguration `json:"nodeAgents,omitempty"`
 }
 
 // ClusterSpecApplyConfiguration constructs a declarative configuration of the ClusterSpec type for use with
@@ -93,5 +96,13 @@ func (b *ClusterSpecApplyConfiguration) WithDelisted(value bool) *ClusterSpecApp
 // If called multiple times, the DrainPreviousCordoned field is set to the value of the last call.
 func (b *ClusterSpecApplyConfiguration) WithDrainPreviousCordoned(value bool) *ClusterSpecApplyConfiguration {
 	b.DrainPreviousCordoned = &value
+	return b
+}
+
+// WithNodeAgents sets the NodeAgents field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the NodeAgents field is set to the value of the last call.
+func (b *ClusterSpecApplyConfiguration) WithNodeAgents(value *ClusterNodeAgentsApplyConfiguration) *ClusterSpecApplyConfiguration {
+	b.NodeAgents = value
 	return b
 }

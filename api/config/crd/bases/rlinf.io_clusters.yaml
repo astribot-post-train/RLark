@@ -71,6 +71,28 @@ spec:
                 type: boolean
               draining:
                 type: boolean
+              nodeAgents:
+                description: |-
+                  NodeAgents declares the cluster's node Agents. The cluster Agent keeps them as one DaemonSet,
+                  so a Kubernetes Node that joins and matches the selector gets its node Agent without further action.
+                properties:
+                  enabled:
+                    description: Enabled makes the cluster Agent keep the node Agent
+                      DaemonSet; false makes it remove the DaemonSet.
+                    type: boolean
+                  nodeSelector:
+                    additionalProperties:
+                      type: string
+                    default:
+                      rlark.io/enabled: "true"
+                    description: |-
+                      NodeSelector selects the Kubernetes Nodes that run a node Agent. It defaults to rlark.io/enabled=true,
+                      the label that makes RLark manage a Kubernetes Node.
+                    minProperties: 1
+                    type: object
+                required:
+                - enabled
+                type: object
               region:
                 description: Region is administrator-managed location metadata, independent
                   of node placement.

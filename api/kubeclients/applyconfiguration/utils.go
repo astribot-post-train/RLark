@@ -39,6 +39,8 @@ func ForKind(kind schema.GroupVersionKind) interface{} {
 		return &rlarkiov1alpha1.AddonStatusApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("Cluster"):
 		return &rlarkiov1alpha1.ClusterApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("ClusterNodeAgents"):
+		return &rlarkiov1alpha1.ClusterNodeAgentsApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("ClusterSpec"):
 		return &rlarkiov1alpha1.ClusterSpecApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("ClusterStatus"):
