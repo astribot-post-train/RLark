@@ -23,7 +23,7 @@ import {
 } from "../dist/test/backend.js";
 
 test("Station APIs encode Cluster IDs, names, and pagination parameters", async () => {
-  globalThis.sessionStorage = storage();
+  globalThis.localStorage = storage();
   globalThis.window = { dispatchEvent() {} };
   const calls = [];
   globalThis.fetch = async (input, init) => {
@@ -121,7 +121,7 @@ test("Station APIs encode Cluster IDs, names, and pagination parameters", async 
 });
 
 test("registry browse API encodes parameters and forwards cancellation", async () => {
-  globalThis.sessionStorage = storage();
+  globalThis.localStorage = storage();
   globalThis.window = { dispatchEvent() {} };
   const calls = [];
   globalThis.fetch = async (input, init) => {
@@ -158,7 +158,7 @@ test("registry browse API encodes parameters and forwards cancellation", async (
 });
 
 test("registry browsing propagates authorization and upstream failures and can recover", async () => {
-  globalThis.sessionStorage = storage();
+  globalThis.localStorage = storage();
   globalThis.window = { dispatchEvent() {} };
   let status = 403;
   globalThis.fetch = async () =>
@@ -196,9 +196,9 @@ function storage() {
 }
 
 test("request attaches the JWT and preserves headers", async () => {
-  globalThis.sessionStorage = storage();
+  globalThis.localStorage = storage();
   globalThis.window = { dispatchEvent() {} };
-  storeAuthSession("jwt-token", "admin");
+  storeAuthSession("jwt-token", "admin", new Date(Date.now() + 3600e3).toISOString(), "root");
   globalThis.fetch = async (_input, init) => {
     assert.equal(init.headers.get("Authorization"), "Bearer jwt-token");
     assert.equal(init.headers.get("Content-Type"), "application/json");
@@ -213,21 +213,21 @@ test("request attaches the JWT and preserves headers", async () => {
 });
 
 test("request clears the session after a 401", async () => {
-  globalThis.sessionStorage = storage();
+  globalThis.localStorage = storage();
   let eventType = "";
   globalThis.window = { dispatchEvent: (event) => (eventType = event.type) };
-  sessionStorage.setItem(AUTH_TOKEN_KEY, "expired");
-  sessionStorage.setItem(AUTH_ROLE_KEY, "user");
+  localStorage.setItem(AUTH_TOKEN_KEY, "expired");
+  localStorage.setItem(AUTH_ROLE_KEY, "user");
   globalThis.fetch = async () => new Response(null, { status: 401 });
 
   await assert.rejects(() => request("/api/v1/clusters"));
-  assert.equal(sessionStorage.getItem(AUTH_TOKEN_KEY), null);
+  assert.equal(localStorage.getItem(AUTH_TOKEN_KEY), null);
   assert.equal(eventType, UNAUTHORIZED_EVENT);
   clearAuthSession();
 });
 
 test("request reports the detail of canonical and legacy error bodies", async () => {
-  globalThis.sessionStorage = storage();
+  globalThis.localStorage = storage();
   globalThis.window = { dispatchEvent() {} };
   const bodies = [
     { code: "RESOURCE_ALREADY_EXISTS", message: "public key already exists" },
@@ -255,7 +255,7 @@ test("request reports the detail of canonical and legacy error bodies", async ()
 });
 
 test("request falls back to the raw body when it carries no detail", async () => {
-  globalThis.sessionStorage = storage();
+  globalThis.localStorage = storage();
   globalThis.window = { dispatchEvent() {} };
   globalThis.fetch = async () =>
     new Response("upstream failure", { status: 502 });
@@ -269,7 +269,7 @@ test("request falls back to the raw body when it carries no detail", async () =>
 });
 
 test("cluster lifecycle actions use the gateway lifecycle route", async () => {
-  globalThis.sessionStorage = storage();
+  globalThis.localStorage = storage();
   globalThis.window = { dispatchEvent() {} };
   const calls = [];
   globalThis.fetch = async (input, init) => {
@@ -287,7 +287,7 @@ test("cluster lifecycle actions use the gateway lifecycle route", async () => {
 });
 
 test("resource APIs encode paths, query values, and JSON bodies", async () => {
-  globalThis.sessionStorage = storage();
+  globalThis.localStorage = storage();
   globalThis.window = { dispatchEvent() {} };
   const calls = [];
   globalThis.fetch = async (input, init) => {
@@ -311,7 +311,7 @@ test("resource APIs encode paths, query values, and JSON bodies", async () => {
 });
 
 test("system config API shares reads and refreshes its cache after update", async () => {
-  globalThis.sessionStorage = storage();
+  globalThis.localStorage = storage();
   globalThis.window = { dispatchEvent() {} };
   let calls = 0;
   globalThis.fetch = async (_input, init) => {
@@ -341,7 +341,7 @@ test("system config API shares reads and refreshes its cache after update", asyn
 });
 
 test("API reference is loaded from Gateway", async () => {
-  globalThis.sessionStorage = storage();
+  globalThis.localStorage = storage();
   globalThis.window = { dispatchEvent() {} };
   globalThis.fetch = async (input) => {
     assert.equal(String(input), "/api/v1/api-reference");

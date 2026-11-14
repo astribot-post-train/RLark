@@ -49,10 +49,6 @@ export function filesPath(storageClass: string, admin = false) {
   return `${prefix}/${encodeURIComponent(storageClass)}`;
 }
 
-export function hasTerminalSession(storage: Pick<Storage, "getItem">) {
-  return Boolean(storage.getItem("rlark-auth-token"));
-}
-
 export function useIsAdminPath() {
   const [isAdmin, setIsAdmin] = useState(() => {
     if (typeof window === "undefined") return false;

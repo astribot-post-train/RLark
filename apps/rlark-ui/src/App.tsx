@@ -4,7 +4,7 @@ import type { Job } from "./data";
 import { copy, type Lang, type Theme } from "./i18n";
 import { navItems } from "./constants";
 import type { Page } from "./types";
-import { hasTerminalSession, parseRoute, useIsAdminPath } from "./utils/route";
+import { parseRoute, useIsAdminPath } from "./utils/route";
 import { Logo, Header, PlatformFooter } from "./components/shared";
 import { TerminalPage } from "./components/terminal";
 import { Overview } from "./pages/Overview";
@@ -22,7 +22,7 @@ import { UserLogin } from "./pages/Login";
 import { SSHKeysPage } from "./pages/SSHKeys";
 import { AdminApp } from "./admin/AdminApp";
 import { useBackendMode, usePersistentState } from "./hooks";
-import { clearAuthSession, hasAuthSession, UNAUTHORIZED_EVENT } from "./api";
+import { authUserName, clearAuthSession, hasAuthSession, UNAUTHORIZED_EVENT } from "./api";
 
 type NavigateOptions = {
   replace?: boolean;
@@ -53,15 +53,12 @@ export default function App() {
   const [userLoggedIn, setUserLoggedIn] = useState(
     () =>
       import.meta.env.DEV ||
-      (typeof sessionStorage !== "undefined" && hasAuthSession()),
+      (typeof localStorage !== "undefined" && hasAuthSession()),
   );
   const terminalLoggedIn =
     import.meta.env.DEV ||
-    (typeof sessionStorage !== "undefined" &&
-      hasTerminalSession(sessionStorage));
-  const [userName, setUserName] = useState(
-    () => sessionStorage.getItem("rlark-user-name") || "user",
-  );
+    (typeof localStorage !== "undefined" && hasAuthSession());
+  const [userName, setUserName] = useState(() => authUserName("user"));
   const { isMockMode } = useBackendMode();
   const c = copy[lang];
   const pageTitle = useMemo(() => c.nav[page], [c, page]);

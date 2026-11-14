@@ -38,9 +38,7 @@ export function UserLogin({
         if (!result.token || result.role !== "user") {
           throw new Error(zh ? "登录响应无效" : "Invalid login response");
         }
-        storeAuthSession(result.token, result.role);
-        sessionStorage.setItem("rlark-user-auth", "1");
-        sessionStorage.setItem("rlark-user-name", username.trim());
+        storeAuthSession(result.token, result.role, result.expiresAt, username.trim());
         onLogin(username.trim());
       })
       .catch((err) => {

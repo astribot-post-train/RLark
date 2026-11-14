@@ -30,6 +30,7 @@ import { SystemConfigPage } from "../pages/SystemConfig";
 import { JobsPage } from "../pages/Jobs";
 import { parseAdminRoute } from "../utils/route";
 import {
+  authUserName,
   clearAuthSession,
   hasAuthSession,
   storeAuthSession,
@@ -78,9 +79,7 @@ export function AdminLogin({
             zh ? "该账号没有管理员权限" : "Administrator access required",
           );
         }
-        storeAuthSession(result.token, result.role);
-        sessionStorage.setItem("rlark-admin-auth", "1");
-        sessionStorage.setItem("rlark-admin-user-name", username.trim());
+        storeAuthSession(result.token, result.role, result.expiresAt, username.trim());
         onLogin(username.trim());
       })
       .catch((err) => {
@@ -210,10 +209,10 @@ export function AdminApp() {
   const [loggedIn, setLoggedIn] = useState(
     () =>
       import.meta.env.DEV ||
-      (typeof sessionStorage !== "undefined" && hasAuthSession("admin")),
+      (typeof localStorage !== "undefined" && hasAuthSession("admin")),
   );
   const [userName, setUserName] = useState(
-    () => sessionStorage.getItem("rlark-admin-user-name") || "admin",
+    () => authUserName("admin"),
   );
   const { isMockMode } = useBackendMode();
   const [collapsed, setCollapsed] = usePersistentState(

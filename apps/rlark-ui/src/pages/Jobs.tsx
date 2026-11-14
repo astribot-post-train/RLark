@@ -5371,9 +5371,8 @@ function WorkerTableRow({
                     worker: pod.name,
                     status: worker.phase,
                   });
-                  // Keep the same-origin opener just long enough for the browser
-                  // to clone sessionStorage into the new tab, then sever it so
-                  // the terminal cannot navigate or control the parent page.
+                  // The new tab shares the login (localStorage); sever the opener
+                  // so the terminal cannot navigate or control the parent page.
                   const terminalWindow = window.open(
                     `/terminal?${params.toString()}`,
                     "_blank",

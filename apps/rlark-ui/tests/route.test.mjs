@@ -3,7 +3,6 @@ import test from "node:test";
 
 import {
   filesPath,
-  hasTerminalSession,
   isAdminPath,
   parseAdminRoute,
 } from "../dist/test/utils/route.js";
@@ -21,14 +20,4 @@ test("admin path matching observes a route boundary", () => {
   assert.equal(isAdminPath("/admin"), true);
   assert.equal(isAdminPath("/admin/jobs"), true);
   assert.equal(isAdminPath("/administrator"), false);
-});
-
-test("terminal requires an access token", () => {
-  const storage = (values) => ({ getItem: (key) => values[key] ?? null });
-  assert.equal(
-    hasTerminalSession(storage({ "rlark-auth-token": "token" })),
-    true,
-  );
-  assert.equal(hasTerminalSession(storage({ "rlark-user-auth": "1" })), false);
-  assert.equal(hasTerminalSession(storage({})), false);
 });

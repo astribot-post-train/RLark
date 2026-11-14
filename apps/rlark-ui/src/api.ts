@@ -1,5 +1,7 @@
 export const AUTH_TOKEN_KEY = "rlark-auth-token";
 export const AUTH_ROLE_KEY = "rlark-auth-role";
+export const AUTH_EXPIRES_KEY = "rlark-auth-expires";
+export const AUTH_USER_KEY = "rlark-auth-user";
 export const UNAUTHORIZED_EVENT = "rlark:unauthorized";
 
 export type AuthRole = "admin" | "user";
@@ -22,24 +24,29 @@ export class ApiError extends Error {
   }
 }
 
-export function storeAuthSession(token: string, role: AuthRole) {
-  sessionStorage.setItem(AUTH_TOKEN_KEY, token);
-  sessionStorage.setItem(AUTH_ROLE_KEY, role);
+// A login lasts as long as its token (the Gateway's --jwt-token-ttl): it is
+// kept in localStorage with the token's expiry, so it outlives the tab and is
+// shared by every tab of the console, and it is gone once the token expires.
+export function storeAuthSession(token: string, role: AuthRole, expiresAt: string, userName: string) {
+  localStorage.setItem(AUTH_TOKEN_KEY, token);
+  localStorage.setItem(AUTH_ROLE_KEY, role);
+  localStorage.setItem(AUTH_EXPIRES_KEY, expiresAt);
+  localStorage.setItem(AUTH_USER_KEY, userName);
 }
 
 export function clearAuthSession() {
-  sessionStorage.removeItem(AUTH_TOKEN_KEY);
-  sessionStorage.removeItem(AUTH_ROLE_KEY);
-  sessionStorage.removeItem("rlark-user-auth");
-  sessionStorage.removeItem("rlark-user-name");
-  sessionStorage.removeItem("rlark-admin-auth");
-  sessionStorage.removeItem("rlark-admin-user-name");
+  for (const key of [AUTH_TOKEN_KEY, AUTH_ROLE_KEY, AUTH_EXPIRES_KEY, AUTH_USER_KEY]) localStorage.removeItem(key);
 }
 
 export function hasAuthSession(role?: AuthRole) {
-  const token = sessionStorage.getItem(AUTH_TOKEN_KEY);
-  const storedRole = sessionStorage.getItem(AUTH_ROLE_KEY);
-  return Boolean(token && (!role || storedRole === role));
+  const token = localStorage.getItem(AUTH_TOKEN_KEY);
+  const storedRole = localStorage.getItem(AUTH_ROLE_KEY);
+  const expiresAt = Date.parse(localStorage.getItem(AUTH_EXPIRES_KEY) ?? "");
+  return Boolean(token && expiresAt > Date.now() && (!role || storedRole === role));
+}
+
+export function authUserName(fallback: string) {
+  return localStorage.getItem(AUTH_USER_KEY) || fallback;
 }
 
 async function authenticatedFetch(
@@ -47,7 +54,7 @@ async function authenticatedFetch(
   init: RequestInit = {},
 ) {
   const headers = new Headers(init.headers);
-  const token = sessionStorage.getItem(AUTH_TOKEN_KEY);
+  const token = localStorage.getItem(AUTH_TOKEN_KEY);
   if (token && !headers.has("Authorization")) {
     headers.set("Authorization", `Bearer ${token}`);
   }
