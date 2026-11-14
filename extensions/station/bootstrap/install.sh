@@ -122,7 +122,8 @@ JOIN
   done
 } > "$B"/join.yaml
 [ -n "$NODE_TAINTS" ] || sed -i 's/^  taints:$/  taints: []/' "$B"/join.yaml
-kubeadm join --config "$B"/join.yaml > "$B"/join.log 2>&1 || { tail -20 "$B"/join.log >&2; fail "kubeadm join"; }
+# A join that fails half-way leaves files that make the next try fail before it starts: they go with it.
+kubeadm join --config "$B"/join.yaml > "$B"/join.log 2>&1 || { tail -20 "$B"/join.log >&2; kubeadm reset -f --cri-socket unix://$SOCKET >/dev/null 2>&1; fail "kubeadm join"; }
 stamp "joined $JOIN_API_SERVER as $NODE_NAME"
 tries=0
 until kubectl --kubeconfig /etc/kubernetes/kubelet.conf get node "$NODE_NAME" -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null | grep -q True; do

@@ -376,14 +376,19 @@ func (b *Bootstrap) Redeem(ctx context.Context, code, publicKey string) (Bootstr
 	}
 	join.APIServer = text("spec", "apiServer")
 	labels, _, _ := unstructured.NestedStringMap(admission.Object, "spec", "labels")
+	// A machine that joins by a code is one RLark manages, like a machine
+	// joined by a node operation: the cluster's agents report only such nodes.
+	if labels == nil {
+		labels = map[string]string{}
+	}
+	labels["rlark.io/enabled"], labels["rlark.io/cluster-id"] = "true", clusterID
 	// A machine installed anew under a name the management plane knows has a
 	// management Node already, with the labels declared for it before: the
 	// agent would put those back over what this admission declares.
-	if len(labels) > 0 {
-		patch, _ := json.Marshal(map[string]any{"metadata": map[string]any{"labels": labels}})
-		if _, err := b.Management.Resource(rlarkNodeGVR).Namespace(clusterID).Patch(ctx, admission.GetName(), types.MergePatchType, patch, metav1.PatchOptions{}); err != nil && !apierrors.IsNotFound(err) {
-			return BootstrapAnswer{}, 0, fmt.Errorf("declare the labels on management Node %s/%s: %w", clusterID, admission.GetName(), err)
-		}
+	patch, _ := json.Marshal(map[string]any{"metadata": map[string]any{"labels": labels}})
+	// The admission stands in the cluster's agent namespace, where its management Nodes are.
+	if _, err := b.Management.Resource(rlarkNodeGVR).Namespace(admission.GetNamespace()).Patch(ctx, admission.GetName(), types.MergePatchType, patch, metav1.PatchOptions{}); err != nil && !apierrors.IsNotFound(err) {
+		return BootstrapAnswer{}, 0, fmt.Errorf("declare the labels on management Node %s/%s: %w", admission.GetNamespace(), admission.GetName(), err)
 	}
 	pairs := make([]string, 0, len(labels))
 	for key, value := range labels {
