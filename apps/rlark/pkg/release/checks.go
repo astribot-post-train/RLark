@@ -30,6 +30,9 @@ type Allow struct {
 	Documents Exceptions
 	// AddonVersions are the Addons ("<clusterID>/<addon>") a stage upgrades.
 	AddonVersions Exceptions
+	// HeldLabels are the label keys the site sets on management Nodes for
+	// the agents to carry to the Nodes (their --management-node-labels).
+	HeldLabels []string
 }
 
 // Check compares the plane with the baseline taken before the batch. It
@@ -49,6 +52,7 @@ var Checks = map[string]Check{
 	"addons-ready":         addonsReady,
 	"observations-fresh":   observationsFresh,
 	"nodes-unpressured":    nodesUnpressured,
+	"labels-held":          labelsHeld,
 }
 
 // LevelChecks are the checks a stage names with a level, "<name>: <level>".
@@ -273,4 +277,25 @@ func gatewaysUnderstand(current Snapshot, level int32) Result {
 		}
 	}
 	return result(faults, fmt.Sprintf("the gateways of all %d members with a document understand level %d", members, level))
+}
+
+// labelsHeld finds a label the site set on a management Node gone or changed:
+// the cluster's agent no longer carries it, and the Node's own labels took
+// its place.
+func labelsHeld(baseline, current Snapshot, allow Allow) Result {
+	var faults []string
+	held := 0
+	for id, labels := range baseline.NodeLabels {
+		for _, key := range allow.HeldLabels {
+			was, set := labels[key]
+			if !set {
+				continue
+			}
+			held++
+			if now, still := current.NodeLabels[id][key]; !still || now != was {
+				faults = append(faults, fmt.Sprintf("node %s label %s was %q, is %q", id, key, was, now))
+			}
+		}
+	}
+	return result(faults, fmt.Sprintf("%d labels of %s held on the management Nodes", held, strings.Join(allow.HeldLabels, ",")))
 }

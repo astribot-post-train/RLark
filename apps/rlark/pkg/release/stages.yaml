@@ -53,7 +53,7 @@ stages:
     requires: [station-api]
     changes:
       - every cluster's RLark agent
-    check: [clusters-online, addons-ready, nodes-ready, nodes-unpressured]
+    check: [clusters-online, addons-ready, nodes-ready, nodes-unpressured, labels-held]
     note: Rolling the office cluster's agent recreates the site-registry Pod, which is why prewarm comes first.
 
   - name: station-agent

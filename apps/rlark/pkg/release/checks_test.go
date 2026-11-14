@@ -17,6 +17,10 @@ func site() Snapshot {
 		SiteNetwork: SiteNetwork{Ready: true, Members: 3, Unreachable: []string{"cloud/gpu-1 -> office/desk-2"}},
 		Clusters:    map[string]string{"cloud": "Online", "office": "Downgraded"},
 		Nodes:       map[string]string{"cloud/gpu-1": "Online", "office/s1u-01": "Online", "office/desk-2": "Offline"},
+		NodeLabels: map[string]map[string]string{
+			"office/s1u-01": {"site.example/wave": "0", "site.example/state": "done"},
+			"office/desk-2": {},
+		},
 		Enrollments: map[string]Enrollment{
 			"cloud/gpu-1":   {Phase: "Enrolled", ConfigHash: "aaaaaaaaaaaaaaaa"},
 			"office/s1u-01": {Phase: "Enrolled", ConfigHash: "bbbbbbbbbbbbbbbb", Links: map[string]string{"cloud/gpu-1": "Connected"}},
@@ -128,6 +132,14 @@ func TestChecks(t *testing.T) {
 		}},
 		{name: "a fresh node without an observation", check: "observations-fresh", fault: "cloud/gpu-1 has no observation", change: func(s *Snapshot) {
 			delete(s.Observations, "cloud/gpu-1")
+		}},
+
+		{name: "no label named", check: "labels-held", change: func(s *Snapshot) { s.NodeLabels["office/s1u-01"] = map[string]string{} }},
+		{name: "a label the site set stays", check: "labels-held", allow: Allow{HeldLabels: []string{"site.example/wave", "site.example/request"}}, change: func(s *Snapshot) {
+			s.NodeLabels["office/s1u-01"] = map[string]string{"site.example/wave": "0", "site.example/state": "acting"}
+		}},
+		{name: "a label the site set is gone", check: "labels-held", allow: Allow{HeldLabels: []string{"site.example/wave"}}, fault: `node office/s1u-01 label site.example/wave was "0", is ""`, change: func(s *Snapshot) {
+			s.NodeLabels["office/s1u-01"] = map[string]string{"site.example/state": "done"}
 		}},
 
 		{name: "a full disk that was full", check: "nodes-unpressured"},
