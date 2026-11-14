@@ -158,7 +158,9 @@ func (a *Agent) Run(ctx context.Context) error {
 		cancel()
 	}()
 
-	var eg errgroup.Group
+	// A component that fails stops the others, so the agent exits and its Pod restarts instead of
+	// running on (tunnel and lease alive, so the Node shows Online) without that component.
+	eg, ctx := errgroup.WithContext(ctx)
 
 	// Run tunnel for all modes
 	eg.Go(func() error {

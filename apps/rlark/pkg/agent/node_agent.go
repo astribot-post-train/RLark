@@ -8,8 +8,10 @@ import (
 	"time"
 
 	"golang.org/x/sync/errgroup"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/tools/cache"
 
 	"github.com/rlinf/rlark/api/kubeclients/clientset/versioned"
@@ -126,10 +128,20 @@ func (n *nodeAgent) Run(ctx context.Context) error {
 	if pull && runtime == imagepull.RuntimeContainerd && socket == "" {
 		// One DaemonSet serves Nodes of different runtimes: each node Agent takes the socket its own
 		// Node records, reached through the host /run the DaemonSet mounts.
-		node, err := n.a.localKubeClient.CoreV1().Nodes().Get(ctx, n.a.config.NodeName, metav1.GetOptions{})
-		if err != nil {
+		// On a Node that has just joined the agent can start before the Pod network reaches the
+		// API server, so the first reads may fail.
+		var node *corev1.Node
+		if err := wait.PollUntilContextCancel(ctx, 2*time.Second, true, func(ctx context.Context) (bool, error) {
+			var err error
+			node, err = n.a.localKubeClient.CoreV1().Nodes().Get(ctx, n.a.config.NodeName, metav1.GetOptions{})
+			if err != nil {
+				logger.Error(err, "get own Node for its runtime socket; retrying", "node", n.a.config.NodeName)
+			}
+			return err == nil, nil
+		}); err != nil {
 			return fmt.Errorf("get Node %s for its runtime socket: %w", n.a.config.NodeName, err)
 		}
+		var err error
 		if socket, err = nodeagent.HostRunSocket(node); err != nil {
 			logger.Error(err, "image pre-pull disabled")
 			pull = false
