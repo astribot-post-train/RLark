@@ -192,6 +192,8 @@ func TestReconcileCreatesUpdatesAndRemoves(t *testing.T) {
 	// defaults the rendering leaves out.
 	ds.Spec.RevisionHistoryLimit = new(int32(10))
 	ds.Spec.Template.Spec.RestartPolicy = corev1.RestartPolicyAlways
+	ds.Spec.Template.Spec.Containers[0].ReadinessProbe.SuccessThreshold = 1
+	ds.Spec.Template.Spec.Containers[0].ReadinessProbe.HTTPGet.Scheme = corev1.URISchemeHTTP
 	if err := r.Local.Update(ctx, &ds); err != nil {
 		t.Fatal(err)
 	}

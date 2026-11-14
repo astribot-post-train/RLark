@@ -332,9 +332,12 @@ func (r *Reconciler) Render(declared *rlarkv1alpha1.ClusterNodeAgents, self *cor
 						},
 						Ports: []corev1.ContainerPort{{ContainerPort: 8081, Protocol: corev1.ProtocolTCP}},
 						ReadinessProbe: &corev1.Probe{
-							ProbeHandler:     corev1.ProbeHandler{HTTPGet: &corev1.HTTPGetAction{Path: "/readyz", Port: intstr.FromInt32(8081)}},
-							PeriodSeconds:    5,
-							TimeoutSeconds:   3,
+							ProbeHandler:   corev1.ProbeHandler{HTTPGet: &corev1.HTTPGetAction{Path: "/readyz", Port: intstr.FromInt32(8081)}},
+							PeriodSeconds:  5,
+							TimeoutSeconds: 3,
+							// Spelled out although it is the API default: a defaulted integer would always
+							// differ from an unset one, and every reconcile would rewrite the DaemonSet.
+							SuccessThreshold: 1,
 							FailureThreshold: 3,
 						},
 						SecurityContext: &corev1.SecurityContext{Privileged: utils.Ptr(true)},
