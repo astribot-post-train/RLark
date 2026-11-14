@@ -352,6 +352,50 @@ status:
       reason: PodRunning
 ```
 
+### 按节点放置的 Task
+
+Task 可以不按固定副本数运行，而是在一类节点的每一台上运行一个实例，对应 Kubernetes 的 DaemonSet 或云平台的守护型服务。适用于属于某类机器的工作负载，例如每台机器人上的代理：节点加入这一类就有实例，不用修改 Job；节点离开，它的实例也随之消失。
+
+```yaml
+tasks:
+  - name: station
+    role: Env
+    placement:
+      perNode: true                        # 每台匹配的节点一个实例
+      nodeSelector:
+        rlark.io/node-category: robot      # 节点类别
+    runtime:
+      kind: Kubernetes
+    workload:
+      kind: rlinf.io/ray
+      version: v1
+      parameters:
+        prepare:
+          inline: exec my-agent            # 实例的进程，不应返回
+      carrier:
+        type: rlinf.io/kubernetes-daemonset
+        version: v1
+        parameters:
+          maxUnavailable: 1                # 同时更新的节点数；整数或 "N%"；默认 1
+      template:
+        spec:
+          hostNetwork: true
+          priorityClassName: my-node-agent
+          tolerations:                     # 只写该类节点的污点；平台不额外添加
+            - {key: rlark.io/robot, operator: Exists, effect: NoSchedule}
+          containers:
+            - name: main
+              image: registry.example.com/agent@sha256:...
+```
+
+- **约定**：`placement.perNode: true` 要求非空的 `placement.nodeSelector`，在 Kubernetes 上要求 `rlinf.io/kubernetes-daemonset` `v1` carrier；该 carrier 也只用于按节点放置的 Task。它的参数只接受 `maxUnavailable`（正整数，或 1% 到 100% 的百分比），`replicas` 会被拒绝。按节点放置的 Task 不能是 Job 的 `head`。Job Controller 在下发任何 Task 之前拒绝违反约定的模板，并报告 `Validated=False`。
+- **一个集群**：按节点放置的 Task 放在其 selector 所匹配 Node 所在的集群。所有匹配的 Node 都计入，不论其阶段，因此节点离线不会让 Task 换集群；selector 匹配到多个集群的 Node 时会被拒绝，直到收窄到一个集群。
+- **渲染**：Agent 渲染一个 DaemonSet，Pod template 处理、身份标签、镜像拉取 Secret、SSH 和网络环境与其他 carrier 相同。更新按 `maxUnavailable` 逐台滚动，且不超量：一台节点上旧实例退出后新实例才启动，因为按节点的实例通常占用节点的端口、设备和目录。Kubernetes 会为 DaemonSet 加上其标准容忍（not-ready、unreachable 和节点压力污点）；RLark 不额外添加。
+- **Ray 拓扑**：按节点放置的 Task 作为 Job 头节点（若有）的 Ray worker 运行。它不计入头节点等待的节点总数，也不参与节点 rank，因为它的实例数随节点类别变化。
+- **状态**：`status.instances` 列出每个实例的 `node`、Pod `name`、`phase`（Pod 运行且就绪为 `Running`；容器无法启动或反复崩溃为 `Failed`；其余为 `Pending`）、main 容器的 `image` 和 `message`；所在节点不是 Ready 的实例，message 为 `node not ready`。
+- **阶段**：只计 Ready 节点上的实例。它们都运行当前版本且就绪时（包括一个都没有时），Task 为 `Running`；其中有实例正在更新、正在启动（例如新节点在拉镜像）或反复失败时为 `Pending`，message 例如 `2 of 3 instances on ready nodes updated and available`，或失败实例的原因。关机的节点、已加入但尚未 Ready 的节点会列出，但不改变阶段，所以机器人关机时 Job 不会变成 `Pending`；此时 message 写明有几个实例所在节点不是 Ready。任何实例都不会让 Task 变为 `Failed`，所以节点加入、离开或故障都不会让 Job 失败。
+- **当前限制**：更新使用 DaemonSet 的滚动更新；只在工作负载报告空闲时才更新实例的能力尚未实现。
+
 ### 任务角色
 
 | 角色 | 说明 | 典型用途 |
@@ -364,7 +408,7 @@ status:
 
 | 形态 | 说明 | 适用场景 |
 |------|------|----------|
-| `Kubernetes` | 使用 Deployment 或 StatefulSet 作为 Kubernetes carrier 运行 RLark/Ray Task | GPU 集群大规模训练 |
+| `Kubernetes` | 使用 Deployment、StatefulSet 或（按节点放置的 Task）DaemonSet 作为 Kubernetes carrier 运行 RLark/Ray Task | GPU 集群大规模训练 |
 | `Docker` | 计划中的 Provider，把统一 Pod template lowering 为 Docker 容器；当前未实现、未广告 | 端侧设备（机械臂、传感器、摄像头） |
 | `Raw` | 计划中的 Provider，把统一 Pod template lowering 为宿主机进程；当前未实现、未广告 | 裸金属服务器、嵌入式设备 |
 
@@ -407,7 +451,7 @@ Pod CR 是数据面 Pod 的**控制面镜像**，由 Agent 的 Push 控制器上
 ```mermaid
 graph TD
     job -->|"1:N"| task["Task<br/>(Namespaced: agent-{id})<br/>任务执行单元"]
-    task -->|"1:1 (K8s workload)"| workload["Deployment /<br/>StatefulSet<br/>(本地 k8s 集群)"]
+    task -->|"1:1 (K8s workload)"| workload["Deployment /<br/>StatefulSet /<br/>DaemonSet<br/>(本地 k8s 集群)"]
     workload -->|"1:N"| pod["Pod + Sidecar<br/>Agent Push 上报 → Pod CR"]
     domain["Domain<br/>(Cluster scoped)<br/>网络隔离"] -->|"1:N (每个集群一个)"| dp["DomainPeer<br/>(Namespaced: agent-{id})<br/>Pod 路由表"]
     node["Node<br/>(Namespaced)<br/>计算节点信息"]

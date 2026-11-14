@@ -18,6 +18,7 @@ func MergeStatusIntents(taskUID string, generation int64, intents ...StatusInten
 		if merged == nil || intent.Priority > merged.Priority {
 			copy := intent
 			copy.ObservedNodes = slices.Clone(intent.ObservedNodes)
+			copy.Instances = slices.Clone(intent.Instances)
 			copy.Conditions = slices.Clone(intent.Conditions)
 			merged = &copy
 			continue
@@ -35,6 +36,10 @@ func MergeStatusIntents(taskUID string, generation int64, intents ...StatusInten
 		if intent.ObservedNodesSet {
 			merged.ObservedNodesSet = true
 			merged.ObservedNodes = slices.Clone(intent.ObservedNodes)
+		}
+		if intent.InstancesSet {
+			merged.InstancesSet = true
+			merged.Instances = slices.Clone(intent.Instances)
 		}
 		merged.Conditions = append(merged.Conditions, intent.Conditions...)
 		if intent.ReasonCode != "" {

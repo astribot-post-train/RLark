@@ -68,6 +68,8 @@ func pushOwnsTask(task *rlarkv1alpha1.Task, agentType string, workload client.Ob
 	switch kind {
 	case raykubernetes.CarrierStatefulSet:
 		carrierType = taskapi.CarrierTypeKubernetesStatefulSet
+	case raykubernetes.CarrierDaemonSet:
+		carrierType = taskapi.CarrierTypeKubernetesDaemonSet
 	}
 	return string(task.Spec.Runtime.Kind) == agentType && kubernetesobjects.OwnershipForTask(workload, task) != kubernetesobjects.OwnershipConflict &&
 		task.Spec.Workload.Carrier.Type == carrierType

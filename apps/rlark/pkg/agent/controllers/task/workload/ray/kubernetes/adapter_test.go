@@ -11,6 +11,7 @@ import (
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/intstr"
 
 	rlarkv1alpha1 "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
 	taskapi "github.com/rlinf/rlark/apps/rlark/pkg/agent/controllers/task/api"
@@ -32,6 +33,9 @@ func TestRayKubernetesAdaptersCompileLegacyWorkloadWithoutResourceDrift(t *testi
 			return kubernetesworkload.NewAdapter(workload.TypeID(taskapi.WorkloadTypeRay), namespace)
 		}},
 		{name: "statefulset", kind: kubernetesworkload.CarrierStatefulSet, new: func() workload.Adapter {
+			return kubernetesworkload.NewAdapter(workload.TypeID(taskapi.WorkloadTypeRay), namespace)
+		}},
+		{name: "daemonset", kind: kubernetesworkload.CarrierDaemonSet, new: func() workload.Adapter {
 			return kubernetesworkload.NewAdapter(workload.TypeID(taskapi.WorkloadTypeRay), namespace)
 		}},
 	} {
@@ -82,6 +86,9 @@ func TestRayKubernetesAdaptersCompileLegacyWorkloadWithoutResourceDrift(t *testi
 				expected = kubernetesworkload.BuildDeployment(task, "runtime", spec, carrierReplicas(task))
 			case kubernetesworkload.CarrierStatefulSet:
 				expected = kubernetesworkload.BuildStatefulSet(task, "runtime", spec, carrierReplicas(task))
+			case kubernetesworkload.CarrierDaemonSet:
+				one := intstr.FromInt32(1)
+				expected = kubernetesworkload.BuildDaemonSet(task, "runtime", spec, &one)
 			}
 			expectedJSON, _ := json.Marshal(expected)
 			if !jsonEqual(primary.Manifest.Object, expectedJSON) {
@@ -169,6 +176,21 @@ func TestRayKubernetesAdapterRejectsInvalidCarrierParameters(t *testing.T) {
 			kind:       kubernetesworkload.CarrierStatefulSet,
 			parameters: `{"replicas":1,"unknown":true}`,
 		},
+		{
+			name:       "daemonset replicas",
+			kind:       kubernetesworkload.CarrierDaemonSet,
+			parameters: `{"replicas":1}`,
+		},
+		{
+			name:       "daemonset zero maxUnavailable",
+			kind:       kubernetesworkload.CarrierDaemonSet,
+			parameters: `{"maxUnavailable":0}`,
+		},
+		{
+			name:       "daemonset maxUnavailable over 100%",
+			kind:       kubernetesworkload.CarrierDaemonSet,
+			parameters: `{"maxUnavailable":"150%"}`,
+		},
 	}
 
 	for _, test := range tests {
@@ -198,23 +220,54 @@ func TestRayKubernetesAdapterRejectsInvalidCarrierParameters(t *testing.T) {
 	}
 }
 
-func TestRayKubernetesAdapterRejectsDaemonSetCarrier(t *testing.T) {
-	task := compileTask(kubernetesworkload.CarrierDeployment)
-	task.Spec.Workload.Carrier.Type = "rlinf.io/kubernetes-daemonset"
-	task.Spec.Workload.Carrier.Parameters = apiextensionsv1.JSON{Raw: []byte(`{}`)}
-	snapshot, err := compatibility.DecodeTask(task)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = kubernetesworkload.NewAdapter(
-		workload.TypeID(taskapi.WorkloadTypeRay),
-		namespace,
-	).Compile(context.Background(), workload.CompileRequest{
-		Task:    snapshot,
-		Runtime: agentruntime.Info{Kind: compatibility.RuntimeKindKubernetes},
-	})
-	if err == nil {
-		t.Fatal("DaemonSet carrier was accepted")
+func TestRayKubernetesAdapterRendersPerNodeTaskAsDaemonSet(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		parameters string
+		want       intstr.IntOrString
+	}{
+		{name: "default", want: intstr.FromInt32(1)},
+		{name: "percentage", parameters: `{"maxUnavailable":"25%"}`, want: intstr.FromString("25%")},
+		{name: "count", parameters: `{"maxUnavailable":3}`, want: intstr.FromInt32(3)},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			task := compileTask(kubernetesworkload.CarrierDaemonSet)
+			task.Spec.Workload.Carrier.Parameters = apiextensionsv1.JSON{Raw: []byte(test.parameters)}
+			plan, err := kubernetesworkload.NewAdapter(workload.TypeID(taskapi.WorkloadTypeRay), namespace).Compile(context.Background(), workload.CompileRequest{
+				Task:    mustSnapshot(t, task),
+				Runtime: agentruntime.Info{Kind: compatibility.RuntimeKindKubernetes},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			primary := findObject(t, plan.Objects, "workload")
+			if primary.Kind != (agentruntime.ObjectKind{Group: "apps", Version: "v1", Kind: "DaemonSet"}) || plan.Units[0].Locator.Type != primary.Kind {
+				t.Fatalf("primary kind=%#v unit=%#v", primary.Kind, plan.Units[0])
+			}
+			var daemonSet appsv1.DaemonSet
+			if err := json.Unmarshal(primary.Manifest.Object, &daemonSet); err != nil {
+				t.Fatal(err)
+			}
+			strategy := daemonSet.Spec.UpdateStrategy
+			if strategy.Type != appsv1.RollingUpdateDaemonSetStrategyType || *strategy.RollingUpdate.MaxUnavailable != test.want || *strategy.RollingUpdate.MaxSurge != intstr.FromInt32(0) {
+				t.Fatalf("update strategy=%#v", strategy)
+			}
+			// The class of nodes is the Task's node selector; the Pods carry the
+			// Task incarnation the selector and the instance projection rely on.
+			pod := daemonSet.Spec.Template
+			if pod.Spec.NodeSelector["zone"] != "edge" || pod.Spec.NodeSelector["rlark.io/enabled"] != "true" {
+				t.Fatalf("node selector=%#v", pod.Spec.NodeSelector)
+			}
+			if daemonSet.Spec.Selector.MatchLabels[kubernetesworkload.ManagementTaskUIDLabel] != "task-uid" || pod.Labels[kubernetesworkload.ManagementTaskUIDLabel] != "task-uid" {
+				t.Fatalf("selector=%#v labels=%#v", daemonSet.Spec.Selector, pod.Labels)
+			}
+			if daemonSet.Annotations[kubernetesworkload.ManagementTaskUIDAnnotation] != "task-uid" || daemonSet.Name != "task" || daemonSet.Namespace != "runtime" {
+				t.Fatalf("metadata=%#v", daemonSet.ObjectMeta)
+			}
+			if len(pod.Spec.Tolerations) != 0 {
+				t.Fatalf("tolerations were added: %#v", pod.Spec.Tolerations)
+			}
+		})
 	}
 }
 
@@ -500,6 +553,69 @@ func TestRayKubernetesAdapterObserveUsesProjectedContainerNameAndFailedSchedulin
 	}
 }
 
+// daemonSetInstance is a per-node instance as the Kubernetes provider reports
+// it: its node, whether that node is Ready, the template generation its Pod was
+// made from, whether it is ready, and a container waiting reason.
+func daemonSetInstance(node string, nodeReady bool, generation string, ready bool, waiting string) agentruntime.Instance {
+	name := "task-" + node
+	conditions := []agentruntime.InstanceCondition{{Scope: "node", Subject: node}, {Scope: "revision", Subject: name, Message: generation}}
+	if !nodeReady {
+		conditions = append(conditions, agentruntime.InstanceCondition{Scope: "node", Subject: node, Reason: "NotReady"})
+	}
+	if ready {
+		conditions = append(conditions, agentruntime.InstanceCondition{Scope: "instance", Subject: name, Reason: "Ready"})
+	}
+	if waiting != "" {
+		conditions = append(conditions, agentruntime.InstanceCondition{Scope: "container", Subject: "main", Reason: waiting})
+	}
+	return agentruntime.Instance{Name: name, Phase: "Running", Conditions: conditions}
+}
+
+func TestObservePerNodeTaskCountsOnlyInstancesOnReadyNodes(t *testing.T) {
+	current := func(node string) agentruntime.Instance { return daemonSetInstance(node, true, "2", true, "") }
+	tests := []struct {
+		name       string
+		generation int64
+		instances  []agentruntime.Instance
+		phase      rlarkv1alpha1.TaskPhase
+		message    string
+	}{
+		{name: "every ready node runs the current version", instances: []agentruntime.Instance{current("a"), current("b")}, phase: rlarkv1alpha1.TaskPhaseRunning},
+		{name: "spec change not yet seen by the DaemonSet", generation: 3, instances: []agentruntime.Instance{current("a")}, phase: rlarkv1alpha1.TaskPhasePending},
+		{name: "node switched off", instances: []agentruntime.Instance{current("a"), daemonSetInstance("b", false, "2", false, "")},
+			phase: rlarkv1alpha1.TaskPhaseRunning, message: "1 of 2 instances on nodes that are not ready"},
+		{name: "ready node crash-looping", instances: []agentruntime.Instance{current("a"), daemonSetInstance("b", true, "2", false, "CrashLoopBackOff")},
+			phase: rlarkv1alpha1.TaskPhasePending, message: "pod task-b container main: CrashLoopBackOff"},
+		{name: "joining node not yet ready", instances: []agentruntime.Instance{current("a"), daemonSetInstance("c", false, "2", false, "ContainerCreating")},
+			phase: rlarkv1alpha1.TaskPhaseRunning, message: "1 of 2 instances on nodes that are not ready"},
+		{name: "joining ready node pulling its image", instances: []agentruntime.Instance{current("a"), current("b"), daemonSetInstance("c", true, "2", false, "ContainerCreating")},
+			phase: rlarkv1alpha1.TaskPhasePending, message: "2 of 3 instances on ready nodes updated and available"},
+		{name: "update rolling out", instances: []agentruntime.Instance{current("a"), daemonSetInstance("b", true, "1", true, "")},
+			phase: rlarkv1alpha1.TaskPhasePending, message: "1 of 2 instances on ready nodes updated and available"},
+		{name: "crash-looping instance on a node switched off", instances: []agentruntime.Instance{current("a"), daemonSetInstance("b", false, "2", false, "CrashLoopBackOff")},
+			phase: rlarkv1alpha1.TaskPhaseRunning, message: "1 of 2 instances on nodes that are not ready"},
+		{name: "no node in the class", phase: rlarkv1alpha1.TaskPhaseRunning, message: "no node matches the Task's node selector"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			generation := test.generation
+			if generation == 0 {
+				generation = 2
+			}
+			object := &appsv1.DaemonSet{ObjectMeta: metav1.ObjectMeta{Generation: generation, Annotations: map[string]string{appsv1.DeprecatedTemplateGeneration: "2"}},
+				Status: appsv1.DaemonSetStatus{ObservedGeneration: 2, DesiredNumberScheduled: int32(len(test.instances))}}
+			manifest, _ := json.Marshal(object)
+			phase, message, err := kubernetesworkload.ObserveObject(kubernetesworkload.CarrierDaemonSet, manifest, agentruntime.InstanceSnapshot{Instances: test.instances})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if phase != test.phase || message != test.message {
+				t.Fatalf("got (%q,%q), want (%q,%q)", phase, message, test.phase, test.message)
+			}
+		})
+	}
+}
+
 func TestObserveStatusMatrixMatchesLegacyReducers(t *testing.T) {
 	one, zero := int32(1), int32(0)
 	tests := []struct {
@@ -539,11 +655,15 @@ func compileTask(kind string) *rlarkv1alpha1.Task {
 	replicas := int32(2)
 	carrierParameters, _ := json.Marshal(taskapi.KubernetesReplicatedCarrierParametersV1{Replicas: &replicas})
 	carrierType := taskapi.CarrierTypeKubernetesDeployment
-	if kind == kubernetesworkload.CarrierStatefulSet {
+	perNode := false
+	switch kind {
+	case kubernetesworkload.CarrierStatefulSet:
 		carrierType = taskapi.CarrierTypeKubernetesStatefulSet
+	case kubernetesworkload.CarrierDaemonSet:
+		carrierType, perNode, carrierParameters = taskapi.CarrierTypeKubernetesDaemonSet, true, nil
 	}
 	return &rlarkv1alpha1.Task{ObjectMeta: metav1.ObjectMeta{Name: "task", Namespace: "management", UID: types.UID("task-uid"), Generation: 3}, Spec: rlarkv1alpha1.TaskSpec{
-		Placement: rlarkv1alpha1.TaskPlacementSpec{NodeSelector: map[string]string{"zone": "edge"}},
+		Placement: rlarkv1alpha1.TaskPlacementSpec{NodeSelector: map[string]string{"zone": "edge"}, PerNode: perNode},
 		Runtime:   rlarkv1alpha1.TaskRuntimeSpec{Kind: rlarkv1alpha1.RuntimeKindKubernetes},
 		Workload: rlarkv1alpha1.TaskWorkloadSpec{
 			Kind:       taskapi.WorkloadTypeRay,

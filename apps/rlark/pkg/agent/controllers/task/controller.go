@@ -196,6 +196,10 @@ func (c *Controller) AsKubePushReconcilers() map[base.KubernetesResource]base.Ku
 			Name: "task-statefulset",
 			Type: &appsv1.StatefulSet{},
 		}: &pushStatefulSetReconciler{c: c},
+		{
+			Name: "task-daemonset",
+			Type: &appsv1.DaemonSet{},
+		}: &pushDaemonSetReconciler{c: c},
 	}
 }
 

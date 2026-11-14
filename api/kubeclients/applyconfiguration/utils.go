@@ -93,6 +93,8 @@ func ForKind(kind schema.GroupVersionKind) interface{} {
 		return &rlarkiov1alpha1.TaskApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("TaskEnvironment"):
 		return &rlarkiov1alpha1.TaskEnvironmentApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("TaskInstanceStatus"):
+		return &rlarkiov1alpha1.TaskInstanceStatusApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("TaskPlacementSpec"):
 		return &rlarkiov1alpha1.TaskPlacementSpecApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("TaskRuntimeSpec"):

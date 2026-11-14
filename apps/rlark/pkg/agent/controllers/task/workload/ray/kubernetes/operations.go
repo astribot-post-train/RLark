@@ -12,6 +12,7 @@ import (
 const (
 	CarrierDeployment  = "Deployment"
 	CarrierStatefulSet = "StatefulSet"
+	CarrierDaemonSet   = "DaemonSet"
 )
 
 // Operations is the compatibility port used by the current Kubernetes

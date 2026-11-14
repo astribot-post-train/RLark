@@ -164,6 +164,7 @@ Data plane agent. Deployed on each cluster or node. Manages node registration, T
 | `--addon-pull-controller-workers` | int | `8` | Maximum concurrent Addon pull reconciles |
 | `--task-deployment-push-controller-workers` | int | `8` | Maximum concurrent Task Deployment push reconciles |
 | `--task-statefulset-push-controller-workers` | int | `8` | Maximum concurrent Task StatefulSet push reconciles |
+| `--task-daemonset-push-controller-workers` | int | `8` | Maximum concurrent Task DaemonSet push reconciles |
 | `--node-push-controller-workers` | int | `8` | Maximum concurrent Node push reconciles |
 | `--pod-push-controller-workers` | int | `8` | Maximum concurrent Pod push reconciles |
 | `--pod-orphan-sweep-interval` | duration | `5m` | Interval between agent-scoped management Pod orphan sweeps |

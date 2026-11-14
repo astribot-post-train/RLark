@@ -61,7 +61,8 @@ rejected at startup when it is duplicated, its Adapter metadata does not match,
 or its Runtime kind is not declared by the Adapter. Kubernetes currently
 registers one `(rlinf.io/ray, v1, Kubernetes)` implementation. The Ray Adapter
 independently decodes `workload.carrier` and supports the
-`rlinf.io/kubernetes-deployment` and `rlinf.io/kubernetes-statefulset` carriers
+`rlinf.io/kubernetes-deployment`, `rlinf.io/kubernetes-statefulset` and, for
+per-node Tasks (`placement.perNode`), `rlinf.io/kubernetes-daemonset` carriers
 at version `v1`. These carriers are
 not general-purpose native Kubernetes workload implementations.
 
@@ -78,7 +79,7 @@ keeping those workflows recoverable after a downgrade or partially migrated
 update. A complete per-Runtime Bundle/Factory remains a separate assembly step;
 this document does not claim that it is already present.
 
-Deployment and StatefulSet are carrier choices within the single Ray
+Deployment, StatefulSet and DaemonSet are carrier choices within the single Ray
 Adapter registration, not Workload selection entries.
 
 This compatibility tree is deliberately controller-owned rather than part of
@@ -164,7 +165,7 @@ The built-in Ray-on-Kubernetes Workload Adapter owns rendering, desired-object l
 - Workload-owned template mutations and workload identity, applied once during Workload compilation before rendering the desired Kubernetes objects; cross-domain network injection is instead performed by Environment binding;
 - image pull secrets, PVCs, and Ray resources;
 - declarative workload SSH requirements; the Environment layer owns Secret delivery and Pod-template mounting;
-- rendering the selected Deployment or StatefulSet workload for the Coordinator and Runtime Provider to apply.
+- rendering the selected Deployment, StatefulSet or DaemonSet workload for the Coordinator and Runtime Provider to apply.
 
 The legacy `Operations` adapter remains only as a tested compatibility port; production assembly uses the Ray-on-Kubernetes Adapter and does not call its `ApplyWorkload` method.
 
@@ -180,7 +181,7 @@ Process declarations are a portable-plan contract, are deep-copied, and are incl
 
 After the optional user prepare-script boundary and before any Ray stop or start command, `ray-launcher` verifies that the configured Ray CLI can be resolved and is executable. A missing or non-executable CLI fails the primary. On the head, the embedded Ray SDK cluster check remains non-fatal for compatibility, but the following `ray status` command is fatal. On a worker, failure to start `ray start --block` and any later non-zero Ray exit both fail the primary; an ordinary process exit preserves the Ray exit code through the launcher and supervisor.
 
-Workload semantics are selected by `spec.workload.kind` and `spec.workload.version`; arbitrary JSON `spec.workload.parameters` is strictly decoded by the selected Adapter. `spec.workload.carrier` independently contains the Runtime-specific carrier `type`, `version`, and arbitrary JSON `parameters`. Deployment and StatefulSet carriers accept only `{replicas}`. Environment declarations use the same type/version/parameters envelope in an ordered list and may repeat. Each selected Environment resolver owns any uniqueness rule for its contract. Unknown types, versions, malformed parameters, and unsupported Runtime capabilities fail before Provider effects.
+Workload semantics are selected by `spec.workload.kind` and `spec.workload.version`; arbitrary JSON `spec.workload.parameters` is strictly decoded by the selected Adapter. `spec.workload.carrier` independently contains the Runtime-specific carrier `type`, `version`, and arbitrary JSON `parameters`. Deployment and StatefulSet carriers accept only `{replicas}`; the DaemonSet carrier accepts only `{maxUnavailable}` and may omit its parameters. Environment declarations use the same type/version/parameters envelope in an ordered list and may repeat. Each selected Environment resolver owns any uniqueness rule for its contract. Unknown types, versions, malformed parameters, and unsupported Runtime capabilities fail before Provider effects.
 
 The Task decoder maps every Environment envelope generically without enumerating built-in types: it checks only common required fields, preserves ordering and duplicates, deep-copies parameters, and leaves type-specific uniqueness, version, and parameter validation to the selected Runtime resolver. Kubernetes Environment resolvers are installed through an immutable type-to-resolver registry; empty types, nil resolvers, and duplicate type registrations fail during construction. The composed resolver groups declarations by type in first-appearance order and passes every declaration of one type to that type's resolver in original order. Network, SSH, and TensorBoard currently reject multiple declarations themselves; future Environment contracts may register a resolver that accepts and resolves multiple declarations. Unknown types decode successfully but fail closed during resolution before Provider observation or effects. The portable execution plan preserves this same Environment envelope instead of splitting requirements into network, secret, tool, service, storage, device, or config fields. Each plan requirement contains `name`, open-string `type` and `version`, copied parameters, and its consumer selectors. SSH authorized public keys are retained only in the local execution declaration and omitted from portable requirement parameters and workload transport; the SSH handler acquires them through the material boundary.
 
@@ -275,7 +276,7 @@ Runtime `ListCandidateObjects`, legacy `ListManaged`, and `ListInstances` are at
 
 The selected Workload Adapter derives a bounded inventory from the frozen Task and implementation identity. Candidates are declared in creation order. Identity cleanup uses `LifecycleDeleteOnTaskCleanup` as the deletion authorization and removes the last currently present exact-name cleanup candidate per reconciliation, reversing that order; it does not maintain a Kubernetes-kind allow-list. The Ray-on-Kubernetes Adapter declares the SSH Secret before its workload consumers so workload objects disappear before the Secret. It does not declare PVC candidates: referenced external PVCs are outside RLark ownership, and generic ephemeral PVCs follow their Pod lifecycle. The Kubernetes Provider executes only Adapter declarations; it does not compute Ray names or infer Ray roles. Candidate names and labels locate objects but never prove ownership: the Provider verifies canonical Task identity and object UID where applicable before returning an object. Query failure fails the complete snapshot atomically. Instance observation UID-fences the workload root, lists only Pods selected by that workload, and queries Pod Events with the `involvedObject.uid` field selector.
 
-Each desired Kubernetes object selects a typed reconcile profile instead of asking the Provider to infer update policy from its manifest kind. The current Ray Adapter selects workload projection for Deployment and StatefulSet carriers, Service projection for the head Service, and shared-field projection for bootstrap ConfigMaps.
+Each desired Kubernetes object selects a typed reconcile profile instead of asking the Provider to infer update policy from its manifest kind. The current Ray Adapter selects workload projection for Deployment, StatefulSet and DaemonSet carriers, Service projection for the head Service, and shared-field projection for bootstrap ConfigMaps.
 
 The immutable Runtime-owned registry dispatches the explicitly selected versioned executor and verifies that the typed manifest matches that profile. A missing, unknown, duplicate, or mismatched profile is rejected. Each executor implements validation, comparison, and update preparation for one bounded Kubernetes mechanism, such as comparing a Service-owned projection. The Adapter remains responsible for selecting the mechanism that represents its Workload contract.
 
@@ -349,6 +350,7 @@ Normal pull reconciliation does not stop merely because a Task is already `Runni
 | Task claim and finalizer | Supported | Not implemented | Not implemented |
 | Deployment | Supported | Not applicable | Not applicable |
 | StatefulSet | Supported | Not applicable | Not applicable |
+| DaemonSet (per-node Tasks) | Supported, rolling update | Not applicable | Not applicable |
 | Container/process execution | Kubernetes Pods | Spec scaffolding only | Spec scaffolding only |
 | Status observation | Supported | Not implemented | Not implemented |
 | Runtime logs | Kubernetes Pod fallback | Not implemented | Not implemented |

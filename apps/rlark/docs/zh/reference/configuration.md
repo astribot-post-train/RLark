@@ -164,6 +164,7 @@ rlark-controller-manager \
 | `--addon-pull-controller-workers` | int | `8` | Addon pull 控制器最大并发调和数 |
 | `--task-deployment-push-controller-workers` | int | `8` | Task Deployment push 控制器最大并发调和数 |
 | `--task-statefulset-push-controller-workers` | int | `8` | Task StatefulSet push 控制器最大并发调和数 |
+| `--task-daemonset-push-controller-workers` | int | `8` | Task DaemonSet push 控制器最大并发调和数 |
 | `--node-push-controller-workers` | int | `8` | Node push 控制器最大并发调和数 |
 | `--pod-push-controller-workers` | int | `8` | Pod push 控制器最大并发调和数 |
 | `--pod-orphan-sweep-interval` | duration | `5m` | Agent 范围内管理 Pod 孤儿扫描间隔 |

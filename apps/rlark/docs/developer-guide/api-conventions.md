@@ -71,8 +71,8 @@ after a restart.
 `Task` is the resource with a split status owner, and it is the pattern to
 follow whenever a new split is introduced:
 
-- The data-plane cluster agent owns `status.phase`, `status.message`, and
-  `status.observedNodes`. It collects them
+- The data-plane cluster agent owns `status.phase`, `status.message`,
+  `status.observedNodes`, and a per-node Task's `status.instances`. It collects them
   from the live workload as a `StatusIntent` — the Kubernetes runtime produces
   one in `apps/rlark/pkg/agent/controllers/task/push_deployment.go` and
   `lifecycle_kubernetes.go` — and the runtime-neutral task host in

@@ -8,6 +8,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/intstr"
 
 	rlarkv1alpha1 "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
 	kubernetesobjects "github.com/rlinf/rlark/apps/rlark/pkg/agent/controllers/task/compatibility/kubernetes/kubernetesobjects"
@@ -120,6 +121,31 @@ func BuildStatefulSet(task *rlarkv1alpha1.Task, namespace string, spec *rlarkv1a
 			Selector:            WorkloadSelector(task),
 			Template:            *spec.Template.DeepCopy(),
 			PodManagementPolicy: appsv1.ParallelPodManagement,
+		},
+	}
+	tenant.Inherit(task, result)
+	return result
+}
+
+// BuildDaemonSet compiles a per-node Task spec into a DaemonSet: one Pod on
+// every node its template's node selector matches. Updates roll node by node
+// within maxUnavailable and never surge, so a node never runs two instances of
+// the Task at once.
+func BuildDaemonSet(task *rlarkv1alpha1.Task, namespace string, spec *rlarkv1alpha1.TaskWorkloadSpec, maxUnavailable *intstr.IntOrString) *appsv1.DaemonSet {
+	surge := intstr.FromInt32(0)
+	result := &appsv1.DaemonSet{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:        task.Name,
+			Namespace:   namespace,
+			Annotations: WorkloadAnnotations(task),
+		},
+		Spec: appsv1.DaemonSetSpec{
+			Selector: WorkloadSelector(task),
+			Template: *spec.Template.DeepCopy(),
+			UpdateStrategy: appsv1.DaemonSetUpdateStrategy{
+				Type:          appsv1.RollingUpdateDaemonSetStrategyType,
+				RollingUpdate: &appsv1.RollingUpdateDaemonSet{MaxUnavailable: maxUnavailable, MaxSurge: &surge},
+			},
 		},
 	}
 	tenant.Inherit(task, result)

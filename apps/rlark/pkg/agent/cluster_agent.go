@@ -121,6 +121,7 @@ func (c *clusterAgent) Run(ctx context.Context) error {
 	taskController.PushMaxConcurrentReconciles = map[string]int{
 		"task-deployment":  c.a.config.ControllerConcurrency.TaskDeployment,
 		"task-statefulset": c.a.config.ControllerConcurrency.TaskStatefulSet,
+		"task-daemonset":   c.a.config.ControllerConcurrency.TaskDaemonSet,
 	}
 	tc := task.NewTaskController(taskController)
 	execution, err := task.NewKubernetesExecutionCoordinator(taskController.LocalKubeClient, taskController.Image)

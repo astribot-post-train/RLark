@@ -2,7 +2,7 @@
 
 import { formats } from "@kubernetes-models/validate";
 export const validate = validate267;
-const schema78 = {"type":"object","properties":{"apiVersion":{"$ref":"rgSv5V2hoWAdXQ_XErlwxUiy6phhz4ZEBCjtqeXtVec"},"kind":{"$ref":"kpIYBKaxdhMecWzUEUmlVKT-85FnmyWwTZ_mmgTihVg"},"metadata":{"$ref":"P3srTZpWadQH4s4N9KfJR0iCqydQo9YAz7xMB2qf0GQ"},"spec":{"$ref":"Gk6s26L643b2hP0jfGEx8o2OQKnqVhfmGtWU0_38eD0"},"status":{"$ref":"AB8zOlAYygIBoJ9DuWMhRQsPG82lGwEXlXtsZf6yGxg"}},"required":["apiVersion","kind"],"$id":"rlinf.io.v1alpha1.Task"};
+const schema78 = {"type":"object","properties":{"apiVersion":{"$ref":"rgSv5V2hoWAdXQ_XErlwxUiy6phhz4ZEBCjtqeXtVec"},"kind":{"$ref":"kpIYBKaxdhMecWzUEUmlVKT-85FnmyWwTZ_mmgTihVg"},"metadata":{"$ref":"P3srTZpWadQH4s4N9KfJR0iCqydQo9YAz7xMB2qf0GQ"},"spec":{"$ref":"RjIv24zk_s8qkoMzkQwXktsA6am-j7BgJvZTT67B7_g"},"status":{"$ref":"D0uT9Ak-MJLwnFz-XldVmH_v1KjGYygKH6YB35_e5gE"}},"required":["apiVersion","kind"],"$id":"rlinf.io.v1alpha1.Task"};
 const schema79 = {"type":"string","enum":["rlinf.io/v1alpha1"]};
 
 function validate268(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
@@ -86,7 +86,7 @@ validate272.errors = vErrors;
 return errors === 0;
 }
 
-const schema83 = {"properties":{"downstreamName":{"$ref":"ldoCEsh0ARg8F2aeji6S38NFl7aLPSuz1hGlgX2tjuQ"},"environments":{"$ref":"ER8EfLI4tSlEHvLQ8_Z43cyggmMtWivyTo46m-KzNZE"},"placement":{"$ref":"KUhfmrayW79_k19wFilmt4-fZzov5TFSde5mJCEwwZY"},"role":{"$ref":"sLlNkWhANXZ15lvmcujppy1mXxqn6f-GaeQpWRYm_dw"},"runtime":{"$ref":"GpIVJdoOsXHFetByy5WgIi3GHmwWTCpFhj_OcVo99fg"},"suspended":{"$ref":"CTX4WtafS9K1Gv7k2X1H0J3M9LziUVVRBMOR0rDDzTk"},"tags":{"$ref":"AZUBfZk2hZ5WZyE5h97-9eYFBx85ELOoaLL9epVNPfg"},"workload":{"$ref":"8viUqQ1oh4U-mS7-fVETX0nTT-7IJNuBfApiHkLWISg"}},"required":["placement","role","runtime","workload"],"type":"object","nullable":true};
+const schema83 = {"properties":{"downstreamName":{"$ref":"ldoCEsh0ARg8F2aeji6S38NFl7aLPSuz1hGlgX2tjuQ"},"environments":{"$ref":"ER8EfLI4tSlEHvLQ8_Z43cyggmMtWivyTo46m-KzNZE"},"placement":{"$ref":"g-ComiVVY9HTvpx9vDLqakDDBYyHKjeJ72C4zzoCRSk"},"role":{"$ref":"sLlNkWhANXZ15lvmcujppy1mXxqn6f-GaeQpWRYm_dw"},"runtime":{"$ref":"GpIVJdoOsXHFetByy5WgIi3GHmwWTCpFhj_OcVo99fg"},"suspended":{"$ref":"CTX4WtafS9K1Gv7k2X1H0J3M9LziUVVRBMOR0rDDzTk"},"tags":{"$ref":"AZUBfZk2hZ5WZyE5h97-9eYFBx85ELOoaLL9epVNPfg"},"workload":{"$ref":"8viUqQ1oh4U-mS7-fVETX0nTT-7IJNuBfApiHkLWISg"}},"required":["placement","role","runtime","workload"],"type":"object","nullable":true};
 const schema1 = {"type":"string","nullable":true};
 
 function validate1(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
@@ -109,11 +109,11 @@ return errors === 0;
 }
 
 const schema84 = {"items":{"$ref":"EBBQtu2Gx9J6fkKNZQZN30EEJK6IhvRmiXH6HGsPPik"},"type":"array","nullable":true};
-const schema2 = {"properties":{"parameters":{"$ref":"RBNvo1WzZ4oRRq0W9-hknpT7T8If536DEMBg9hyq_4o"},"type":{"$ref":"sLlNkWhANXZ15lvmcujppy1mXxqn6f-GaeQpWRYm_dw"},"version":{"$ref":"sLlNkWhANXZ15lvmcujppy1mXxqn6f-GaeQpWRYm_dw"}},"required":["type","version"],"type":"object"};
-const schema3 = {};
+const schema3 = {"properties":{"parameters":{"$ref":"RBNvo1WzZ4oRRq0W9-hknpT7T8If536DEMBg9hyq_4o"},"type":{"$ref":"sLlNkWhANXZ15lvmcujppy1mXxqn6f-GaeQpWRYm_dw"},"version":{"$ref":"sLlNkWhANXZ15lvmcujppy1mXxqn6f-GaeQpWRYm_dw"}},"required":["type","version"],"type":"object"};
+const schema4 = {};
 
-function validate3(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
-validate3.errors = null;
+function validate4(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+validate4.errors = null;
 return true;
 }
 
@@ -138,7 +138,7 @@ return errors === 0;
 }
 
 
-function validate2(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+function validate3(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
 let errors = 0;
 const _errs0 = errors;
@@ -166,8 +166,8 @@ errors++;
 if(data.parameters !== undefined){
 let data0 = data.parameters;
 const _errs1 = errors;
-if(!(validate3(data0, {instancePath:instancePath+"/parameters",parentData:data,parentDataProperty:"parameters",rootData}))){
-vErrors = vErrors === null ? validate3.errors : vErrors.concat(validate3.errors);
+if(!(validate4(data0, {instancePath:instancePath+"/parameters",parentData:data,parentDataProperty:"parameters",rootData}))){
+vErrors = vErrors === null ? validate4.errors : vErrors.concat(validate4.errors);
 errors = vErrors.length;
 }
 else {
@@ -207,7 +207,7 @@ vErrors.push(err2);
 }
 errors++;
 }
-validate2.errors = vErrors;
+validate3.errors = vErrors;
 return errors === 0;
 }
 
@@ -233,8 +233,8 @@ const len0 = data.length;
 for(let i0=0; i0<len0; i0++){
 let data0 = data[i0];
 const _errs2 = errors;
-if(!(validate2(data0, {instancePath:instancePath+"/" + i0,parentData:data,parentDataProperty:i0,rootData}))){
-vErrors = vErrors === null ? validate2.errors : vErrors.concat(validate2.errors);
+if(!(validate3(data0, {instancePath:instancePath+"/" + i0,parentData:data,parentDataProperty:i0,rootData}))){
+vErrors = vErrors === null ? validate3.errors : vErrors.concat(validate3.errors);
 errors = vErrors.length;
 }
 else {
@@ -249,10 +249,10 @@ validate278.errors = vErrors;
 return errors === 0;
 }
 
-const schema85 = {"properties":{"nodeSelector":{"$ref":"HJJzIHbiJa8GGL2u2CTOVy-Hry2MGWIvSIk30RN75wI"}},"type":"object"};
-const schema4 = {"additionalProperties":{"$ref":"sLlNkWhANXZ15lvmcujppy1mXxqn6f-GaeQpWRYm_dw"},"type":"object","properties":{},"nullable":true};
+const schema85 = {"properties":{"nodeSelector":{"$ref":"HJJzIHbiJa8GGL2u2CTOVy-Hry2MGWIvSIk30RN75wI"},"perNode":{"$ref":"CTX4WtafS9K1Gv7k2X1H0J3M9LziUVVRBMOR0rDDzTk"}},"type":"object"};
+const schema5 = {"additionalProperties":{"$ref":"sLlNkWhANXZ15lvmcujppy1mXxqn6f-GaeQpWRYm_dw"},"type":"object","properties":{},"nullable":true};
 
-function validate7(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+function validate8(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
 let errors = 0;
 if((!(data && typeof data == "object" && !Array.isArray(data))) && (data !== null)){
@@ -281,7 +281,28 @@ else {
 var valid0 = _errs3 === errors;
 }
 }
-validate7.errors = vErrors;
+validate8.errors = vErrors;
+return errors === 0;
+}
+
+const schema2 = {"type":"boolean","nullable":true};
+
+function validate2(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+let vErrors = null;
+let errors = 0;
+if((typeof data !== "boolean") && (data !== null)){
+const err0 = {instancePath,schemaPath:"#/type",keyword:"type",params:{type: "boolean"}};
+if(vErrors === null){
+vErrors = [err0];
+}
+else {
+vErrors.push(err0);
+}
+errors++;
+}
+const _errs0 = errors;
+const _errs1 = errors;
+validate2.errors = vErrors;
 return errors === 0;
 }
 
@@ -294,13 +315,24 @@ if(data && typeof data == "object" && !Array.isArray(data)){
 if(data.nodeSelector !== undefined){
 let data0 = data.nodeSelector;
 const _errs1 = errors;
-if(!(validate7(data0, {instancePath:instancePath+"/nodeSelector",parentData:data,parentDataProperty:"nodeSelector",rootData}))){
-vErrors = vErrors === null ? validate7.errors : vErrors.concat(validate7.errors);
+if(!(validate8(data0, {instancePath:instancePath+"/nodeSelector",parentData:data,parentDataProperty:"nodeSelector",rootData}))){
+vErrors = vErrors === null ? validate8.errors : vErrors.concat(validate8.errors);
 errors = vErrors.length;
 }
 else {
 }
 var valid0 = _errs1 === errors;
+}
+if(data.perNode !== undefined){
+let data1 = data.perNode;
+const _errs2 = errors;
+if(!(validate2(data1, {instancePath:instancePath+"/perNode",parentData:data,parentDataProperty:"perNode",rootData}))){
+vErrors = vErrors === null ? validate2.errors : vErrors.concat(validate2.errors);
+errors = vErrors.length;
+}
+else {
+}
+var valid0 = _errs2 === errors;
 }
 }
 else {
@@ -319,7 +351,7 @@ return errors === 0;
 
 const schema86 = {"properties":{"kind":{"$ref":"sLlNkWhANXZ15lvmcujppy1mXxqn6f-GaeQpWRYm_dw"},"name":{"$ref":"ldoCEsh0ARg8F2aeji6S38NFl7aLPSuz1hGlgX2tjuQ"}},"required":["kind"],"type":"object"};
 
-function validate285(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+function validate286(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
 let errors = 0;
 const _errs0 = errors;
@@ -367,28 +399,7 @@ vErrors.push(err1);
 }
 errors++;
 }
-validate285.errors = vErrors;
-return errors === 0;
-}
-
-const schema16 = {"type":"boolean","nullable":true};
-
-function validate41(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
-let vErrors = null;
-let errors = 0;
-if((typeof data !== "boolean") && (data !== null)){
-const err0 = {instancePath,schemaPath:"#/type",keyword:"type",params:{type: "boolean"}};
-if(vErrors === null){
-vErrors = [err0];
-}
-else {
-vErrors.push(err0);
-}
-errors++;
-}
-const _errs0 = errors;
-const _errs1 = errors;
-validate41.errors = vErrors;
+validate286.errors = vErrors;
 return errors === 0;
 }
 
@@ -433,7 +444,7 @@ return errors === 0;
 }
 
 
-function validate291(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+function validate292(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
 let errors = 0;
 const _errs0 = errors;
@@ -491,12 +502,12 @@ vErrors.push(err2);
 }
 errors++;
 }
-validate291.errors = vErrors;
+validate292.errors = vErrors;
 return errors === 0;
 }
 
 
-function validate290(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+function validate291(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
 let errors = 0;
 if((!(Array.isArray(data))) && (data !== null)){
@@ -517,8 +528,8 @@ const len0 = data.length;
 for(let i0=0; i0<len0; i0++){
 let data0 = data[i0];
 const _errs2 = errors;
-if(!(validate291(data0, {instancePath:instancePath+"/" + i0,parentData:data,parentDataProperty:i0,rootData}))){
-vErrors = vErrors === null ? validate291.errors : vErrors.concat(validate291.errors);
+if(!(validate292(data0, {instancePath:instancePath+"/" + i0,parentData:data,parentDataProperty:i0,rootData}))){
+vErrors = vErrors === null ? validate292.errors : vErrors.concat(validate292.errors);
 errors = vErrors.length;
 }
 else {
@@ -529,16 +540,16 @@ valid1 = false;
 }
 }
 }
-validate290.errors = vErrors;
+validate291.errors = vErrors;
 return errors === 0;
 }
 
 const schema89 = {"properties":{"carrier":{"$ref":"EBBQtu2Gx9J6fkKNZQZN30EEJK6IhvRmiXH6HGsPPik"},"kind":{"$ref":"ldoCEsh0ARg8F2aeji6S38NFl7aLPSuz1hGlgX2tjuQ"},"parameters":{"$ref":"RBNvo1WzZ4oRRq0W9-hknpT7T8If536DEMBg9hyq_4o"},"template":{"$ref":"xcL4NGh_zPZzHwtqXxR_gWzuA1WPWoXAZzpBvyzgDsw"},"version":{"$ref":"sLlNkWhANXZ15lvmcujppy1mXxqn6f-GaeQpWRYm_dw"}},"required":["carrier","version"],"type":"object"};
 const schema90 = {"properties":{"metadata":{"$ref":"9xOEryzozGanNCCz7goq0K4hzMvoOusQQ4iDJ494Bhw"},"spec":{"$ref":"9ELI21-RY5S8b2WTyT-3A4ABzk4xYvXNgu9N8BXlru8"}},"type":"object","nullable":true};
 const schema70 = {"properties":{"annotations":{"$ref":"HJJzIHbiJa8GGL2u2CTOVy-Hry2MGWIvSIk30RN75wI"},"finalizers":{"$ref":"uqi-NWpwJAtCtKg340P2GU85hOwdccNKh8Eansj5IGE"},"labels":{"$ref":"HJJzIHbiJa8GGL2u2CTOVy-Hry2MGWIvSIk30RN75wI"},"name":{"$ref":"ldoCEsh0ARg8F2aeji6S38NFl7aLPSuz1hGlgX2tjuQ"},"namespace":{"$ref":"ldoCEsh0ARg8F2aeji6S38NFl7aLPSuz1hGlgX2tjuQ"}},"type":"object","nullable":true};
-const schema5 = {"items":{"$ref":"sLlNkWhANXZ15lvmcujppy1mXxqn6f-GaeQpWRYm_dw"},"type":"array","nullable":true};
+const schema6 = {"items":{"$ref":"sLlNkWhANXZ15lvmcujppy1mXxqn6f-GaeQpWRYm_dw"},"type":"array","nullable":true};
 
-function validate9(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+function validate10(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
 let errors = 0;
 if((!(Array.isArray(data))) && (data !== null)){
@@ -571,7 +582,7 @@ valid1 = false;
 }
 }
 }
-validate9.errors = vErrors;
+validate10.errors = vErrors;
 return errors === 0;
 }
 
@@ -595,8 +606,8 @@ if(data && typeof data == "object" && !Array.isArray(data)){
 if(data.annotations !== undefined){
 let data0 = data.annotations;
 const _errs2 = errors;
-if(!(validate7(data0, {instancePath:instancePath+"/annotations",parentData:data,parentDataProperty:"annotations",rootData}))){
-vErrors = vErrors === null ? validate7.errors : vErrors.concat(validate7.errors);
+if(!(validate8(data0, {instancePath:instancePath+"/annotations",parentData:data,parentDataProperty:"annotations",rootData}))){
+vErrors = vErrors === null ? validate8.errors : vErrors.concat(validate8.errors);
 errors = vErrors.length;
 }
 else {
@@ -606,8 +617,8 @@ var valid0 = _errs2 === errors;
 if(data.finalizers !== undefined){
 let data1 = data.finalizers;
 const _errs3 = errors;
-if(!(validate9(data1, {instancePath:instancePath+"/finalizers",parentData:data,parentDataProperty:"finalizers",rootData}))){
-vErrors = vErrors === null ? validate9.errors : vErrors.concat(validate9.errors);
+if(!(validate10(data1, {instancePath:instancePath+"/finalizers",parentData:data,parentDataProperty:"finalizers",rootData}))){
+vErrors = vErrors === null ? validate10.errors : vErrors.concat(validate10.errors);
 errors = vErrors.length;
 }
 else {
@@ -617,8 +628,8 @@ var valid0 = _errs3 === errors;
 if(data.labels !== undefined){
 let data2 = data.labels;
 const _errs4 = errors;
-if(!(validate7(data2, {instancePath:instancePath+"/labels",parentData:data,parentDataProperty:"labels",rootData}))){
-vErrors = vErrors === null ? validate7.errors : vErrors.concat(validate7.errors);
+if(!(validate8(data2, {instancePath:instancePath+"/labels",parentData:data,parentDataProperty:"labels",rootData}))){
+vErrors = vErrors === null ? validate8.errors : vErrors.concat(validate8.errors);
 errors = vErrors.length;
 }
 else {
@@ -693,11 +704,11 @@ const schema92 = {"properties":{"nodeAffinity":{"$ref":"IM3S0i8cVDyz5lYunR5j9kbh
 const schema93 = {"properties":{"preferredDuringSchedulingIgnoredDuringExecution":{"$ref":"6e5xkVuknB576DQB84VZ02uf6mAhcmFIEb0YZ5ZeoME"},"requiredDuringSchedulingIgnoredDuringExecution":{"$ref":"dsUswhQImzOLseDnHGq7bSBqTb8SnnotFBkumLi5HQQ"}},"type":"object","nullable":true};
 const schema94 = {"items":{"$ref":"0GU7bbB8-3A4umzJ_Vhsp6Y__EiDmpASVQZgVjw3dmQ"},"type":"array","nullable":true};
 const schema95 = {"properties":{"preference":{"$ref":"bPs4NJDgemKZPXkEsB4N2vMyTIvZBXESTOmRdaBhgzY"},"weight":{"$ref":"6VbGrbfqnPJ4dMmNewHbRn4M59VZOmu0uhV1edBN8qE"}},"required":["preference","weight"],"type":"object"};
-const schema8 = {"properties":{"matchExpressions":{"$ref":"ayKrb4PFrKLMYqvjiutPxrbz750hbVgxft904f5rFtQ"},"matchFields":{"$ref":"ayKrb4PFrKLMYqvjiutPxrbz750hbVgxft904f5rFtQ"}},"type":"object"};
-const schema6 = {"items":{"$ref":"9NBsm8QGHPFL3UnZD7QzZl0zjxatAalAe2kAVgrnyrc"},"type":"array","nullable":true};
-const schema7 = {"properties":{"key":{"$ref":"sLlNkWhANXZ15lvmcujppy1mXxqn6f-GaeQpWRYm_dw"},"operator":{"$ref":"sLlNkWhANXZ15lvmcujppy1mXxqn6f-GaeQpWRYm_dw"},"values":{"$ref":"uqi-NWpwJAtCtKg340P2GU85hOwdccNKh8Eansj5IGE"}},"required":["key","operator"],"type":"object"};
+const schema9 = {"properties":{"matchExpressions":{"$ref":"ayKrb4PFrKLMYqvjiutPxrbz750hbVgxft904f5rFtQ"},"matchFields":{"$ref":"ayKrb4PFrKLMYqvjiutPxrbz750hbVgxft904f5rFtQ"}},"type":"object"};
+const schema7 = {"items":{"$ref":"9NBsm8QGHPFL3UnZD7QzZl0zjxatAalAe2kAVgrnyrc"},"type":"array","nullable":true};
+const schema8 = {"properties":{"key":{"$ref":"sLlNkWhANXZ15lvmcujppy1mXxqn6f-GaeQpWRYm_dw"},"operator":{"$ref":"sLlNkWhANXZ15lvmcujppy1mXxqn6f-GaeQpWRYm_dw"},"values":{"$ref":"uqi-NWpwJAtCtKg340P2GU85hOwdccNKh8Eansj5IGE"}},"required":["key","operator"],"type":"object"};
 
-function validate12(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+function validate13(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
 let errors = 0;
 const _errs0 = errors;
@@ -747,8 +758,8 @@ var valid0 = _errs2 === errors;
 if(data.values !== undefined){
 let data2 = data.values;
 const _errs3 = errors;
-if(!(validate9(data2, {instancePath:instancePath+"/values",parentData:data,parentDataProperty:"values",rootData}))){
-vErrors = vErrors === null ? validate9.errors : vErrors.concat(validate9.errors);
+if(!(validate10(data2, {instancePath:instancePath+"/values",parentData:data,parentDataProperty:"values",rootData}))){
+vErrors = vErrors === null ? validate10.errors : vErrors.concat(validate10.errors);
 errors = vErrors.length;
 }
 else {
@@ -766,12 +777,12 @@ vErrors.push(err2);
 }
 errors++;
 }
-validate12.errors = vErrors;
+validate13.errors = vErrors;
 return errors === 0;
 }
 
 
-function validate11(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+function validate12(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
 let errors = 0;
 if((!(Array.isArray(data))) && (data !== null)){
@@ -792,8 +803,8 @@ const len0 = data.length;
 for(let i0=0; i0<len0; i0++){
 let data0 = data[i0];
 const _errs2 = errors;
-if(!(validate12(data0, {instancePath:instancePath+"/" + i0,parentData:data,parentDataProperty:i0,rootData}))){
-vErrors = vErrors === null ? validate12.errors : vErrors.concat(validate12.errors);
+if(!(validate13(data0, {instancePath:instancePath+"/" + i0,parentData:data,parentDataProperty:i0,rootData}))){
+vErrors = vErrors === null ? validate13.errors : vErrors.concat(validate13.errors);
 errors = vErrors.length;
 }
 else {
@@ -804,12 +815,12 @@ valid1 = false;
 }
 }
 }
-validate11.errors = vErrors;
+validate12.errors = vErrors;
 return errors === 0;
 }
 
 
-function validate17(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+function validate18(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
 let errors = 0;
 const _errs0 = errors;
@@ -817,8 +828,8 @@ if(data && typeof data == "object" && !Array.isArray(data)){
 if(data.matchExpressions !== undefined){
 let data0 = data.matchExpressions;
 const _errs1 = errors;
-if(!(validate11(data0, {instancePath:instancePath+"/matchExpressions",parentData:data,parentDataProperty:"matchExpressions",rootData}))){
-vErrors = vErrors === null ? validate11.errors : vErrors.concat(validate11.errors);
+if(!(validate12(data0, {instancePath:instancePath+"/matchExpressions",parentData:data,parentDataProperty:"matchExpressions",rootData}))){
+vErrors = vErrors === null ? validate12.errors : vErrors.concat(validate12.errors);
 errors = vErrors.length;
 }
 else {
@@ -828,8 +839,8 @@ var valid0 = _errs1 === errors;
 if(data.matchFields !== undefined){
 let data1 = data.matchFields;
 const _errs2 = errors;
-if(!(validate11(data1, {instancePath:instancePath+"/matchFields",parentData:data,parentDataProperty:"matchFields",rootData}))){
-vErrors = vErrors === null ? validate11.errors : vErrors.concat(validate11.errors);
+if(!(validate12(data1, {instancePath:instancePath+"/matchFields",parentData:data,parentDataProperty:"matchFields",rootData}))){
+vErrors = vErrors === null ? validate12.errors : vErrors.concat(validate12.errors);
 errors = vErrors.length;
 }
 else {
@@ -847,14 +858,14 @@ vErrors.push(err0);
 }
 errors++;
 }
-validate17.errors = vErrors;
+validate18.errors = vErrors;
 return errors === 0;
 }
 
-const schema10 = {"format":"int32","type":"integer"};
+const schema11 = {"format":"int32","type":"integer"};
 const formats0 = formats.int32;
 
-function validate23(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+function validate24(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
 let errors = 0;
 if(!(((typeof data == "number") && (!(data % 1) && !isNaN(data))) && (isFinite(data)))){
@@ -882,12 +893,12 @@ errors++;
 }
 if(typeof data === "string"){
 }
-validate23.errors = vErrors;
+validate24.errors = vErrors;
 return errors === 0;
 }
 
 
-function validate307(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+function validate308(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
 let errors = 0;
 const _errs0 = errors;
@@ -915,8 +926,8 @@ errors++;
 if(data.preference !== undefined){
 let data0 = data.preference;
 const _errs1 = errors;
-if(!(validate17(data0, {instancePath:instancePath+"/preference",parentData:data,parentDataProperty:"preference",rootData}))){
-vErrors = vErrors === null ? validate17.errors : vErrors.concat(validate17.errors);
+if(!(validate18(data0, {instancePath:instancePath+"/preference",parentData:data,parentDataProperty:"preference",rootData}))){
+vErrors = vErrors === null ? validate18.errors : vErrors.concat(validate18.errors);
 errors = vErrors.length;
 }
 else {
@@ -926,8 +937,8 @@ var valid0 = _errs1 === errors;
 if(data.weight !== undefined){
 let data1 = data.weight;
 const _errs2 = errors;
-if(!(validate23(data1, {instancePath:instancePath+"/weight",parentData:data,parentDataProperty:"weight",rootData}))){
-vErrors = vErrors === null ? validate23.errors : vErrors.concat(validate23.errors);
+if(!(validate24(data1, {instancePath:instancePath+"/weight",parentData:data,parentDataProperty:"weight",rootData}))){
+vErrors = vErrors === null ? validate24.errors : vErrors.concat(validate24.errors);
 errors = vErrors.length;
 }
 else {
@@ -945,12 +956,12 @@ vErrors.push(err2);
 }
 errors++;
 }
-validate307.errors = vErrors;
+validate308.errors = vErrors;
 return errors === 0;
 }
 
 
-function validate306(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+function validate307(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
 let errors = 0;
 if((!(Array.isArray(data))) && (data !== null)){
@@ -971,8 +982,8 @@ const len0 = data.length;
 for(let i0=0; i0<len0; i0++){
 let data0 = data[i0];
 const _errs2 = errors;
-if(!(validate307(data0, {instancePath:instancePath+"/" + i0,parentData:data,parentDataProperty:i0,rootData}))){
-vErrors = vErrors === null ? validate307.errors : vErrors.concat(validate307.errors);
+if(!(validate308(data0, {instancePath:instancePath+"/" + i0,parentData:data,parentDataProperty:i0,rootData}))){
+vErrors = vErrors === null ? validate308.errors : vErrors.concat(validate308.errors);
 errors = vErrors.length;
 }
 else {
@@ -983,14 +994,14 @@ valid1 = false;
 }
 }
 }
-validate306.errors = vErrors;
+validate307.errors = vErrors;
 return errors === 0;
 }
 
 const schema96 = {"properties":{"nodeSelectorTerms":{"$ref":"WceES8jSl1b6JeqUZQ18OOMpo-zexwPEiCeLvTA69Xg"}},"required":["nodeSelectorTerms"],"type":"object","nullable":true};
 const schema97 = {"items":{"$ref":"bPs4NJDgemKZPXkEsB4N2vMyTIvZBXESTOmRdaBhgzY"},"type":"array"};
 
-function validate313(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+function validate314(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
 let errors = 0;
 const _errs0 = errors;
@@ -1000,8 +1011,8 @@ const len0 = data.length;
 for(let i0=0; i0<len0; i0++){
 let data0 = data[i0];
 const _errs1 = errors;
-if(!(validate17(data0, {instancePath:instancePath+"/" + i0,parentData:data,parentDataProperty:i0,rootData}))){
-vErrors = vErrors === null ? validate17.errors : vErrors.concat(validate17.errors);
+if(!(validate18(data0, {instancePath:instancePath+"/" + i0,parentData:data,parentDataProperty:i0,rootData}))){
+vErrors = vErrors === null ? validate18.errors : vErrors.concat(validate18.errors);
 errors = vErrors.length;
 }
 else {
@@ -1022,12 +1033,12 @@ vErrors.push(err0);
 }
 errors++;
 }
-validate313.errors = vErrors;
+validate314.errors = vErrors;
 return errors === 0;
 }
 
 
-function validate312(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+function validate313(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
 let errors = 0;
 if((!(data && typeof data == "object" && !Array.isArray(data))) && (data !== null)){
@@ -1056,8 +1067,8 @@ errors++;
 if(data.nodeSelectorTerms !== undefined){
 let data0 = data.nodeSelectorTerms;
 const _errs2 = errors;
-if(!(validate313(data0, {instancePath:instancePath+"/nodeSelectorTerms",parentData:data,parentDataProperty:"nodeSelectorTerms",rootData}))){
-vErrors = vErrors === null ? validate313.errors : vErrors.concat(validate313.errors);
+if(!(validate314(data0, {instancePath:instancePath+"/nodeSelectorTerms",parentData:data,parentDataProperty:"nodeSelectorTerms",rootData}))){
+vErrors = vErrors === null ? validate314.errors : vErrors.concat(validate314.errors);
 errors = vErrors.length;
 }
 else {
@@ -1065,12 +1076,12 @@ else {
 var valid0 = _errs2 === errors;
 }
 }
-validate312.errors = vErrors;
+validate313.errors = vErrors;
 return errors === 0;
 }
 
 
-function validate305(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+function validate306(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
 let errors = 0;
 if((!(data && typeof data == "object" && !Array.isArray(data))) && (data !== null)){
@@ -1089,8 +1100,8 @@ if(data && typeof data == "object" && !Array.isArray(data)){
 if(data.preferredDuringSchedulingIgnoredDuringExecution !== undefined){
 let data0 = data.preferredDuringSchedulingIgnoredDuringExecution;
 const _errs2 = errors;
-if(!(validate306(data0, {instancePath:instancePath+"/preferredDuringSchedulingIgnoredDuringExecution",parentData:data,parentDataProperty:"preferredDuringSchedulingIgnoredDuringExecution",rootData}))){
-vErrors = vErrors === null ? validate306.errors : vErrors.concat(validate306.errors);
+if(!(validate307(data0, {instancePath:instancePath+"/preferredDuringSchedulingIgnoredDuringExecution",parentData:data,parentDataProperty:"preferredDuringSchedulingIgnoredDuringExecution",rootData}))){
+vErrors = vErrors === null ? validate307.errors : vErrors.concat(validate307.errors);
 errors = vErrors.length;
 }
 else {
@@ -1100,8 +1111,8 @@ var valid0 = _errs2 === errors;
 if(data.requiredDuringSchedulingIgnoredDuringExecution !== undefined){
 let data1 = data.requiredDuringSchedulingIgnoredDuringExecution;
 const _errs3 = errors;
-if(!(validate312(data1, {instancePath:instancePath+"/requiredDuringSchedulingIgnoredDuringExecution",parentData:data,parentDataProperty:"requiredDuringSchedulingIgnoredDuringExecution",rootData}))){
-vErrors = vErrors === null ? validate312.errors : vErrors.concat(validate312.errors);
+if(!(validate313(data1, {instancePath:instancePath+"/requiredDuringSchedulingIgnoredDuringExecution",parentData:data,parentDataProperty:"requiredDuringSchedulingIgnoredDuringExecution",rootData}))){
+vErrors = vErrors === null ? validate313.errors : vErrors.concat(validate313.errors);
 errors = vErrors.length;
 }
 else {
@@ -1109,17 +1120,17 @@ else {
 var valid0 = _errs3 === errors;
 }
 }
-validate305.errors = vErrors;
+validate306.errors = vErrors;
 return errors === 0;
 }
 
-const schema12 = {"properties":{"preferredDuringSchedulingIgnoredDuringExecution":{"$ref":"Gv8Hvk-YMeAbi17zcXvGdYz35Trv28l0k6de2GFzrpY"},"requiredDuringSchedulingIgnoredDuringExecution":{"$ref":"x-4CXre8Q_6LB7j_yEJTNRttDcJly0o6xUOEkjdRAMg"}},"type":"object","nullable":true};
-const schema13 = {"items":{"$ref":"9Yx6B--m2eQFYkNbnIcDLOTpZxndM94PyYZq_-kDybs"},"type":"array","nullable":true};
-const schema14 = {"properties":{"podAffinityTerm":{"$ref":"8t0N05ceNTQObj1ufnNXouWS88GDJF66xuctgeD6LLg"},"weight":{"$ref":"6VbGrbfqnPJ4dMmNewHbRn4M59VZOmu0uhV1edBN8qE"}},"required":["podAffinityTerm","weight"],"type":"object"};
-const schema11 = {"properties":{"labelSelector":{"$ref":"VVCKgJOBvzPMFDWky4rRQ5NkqJqB9eXDLOrP2lnPweI"},"matchLabelKeys":{"$ref":"uqi-NWpwJAtCtKg340P2GU85hOwdccNKh8Eansj5IGE"},"mismatchLabelKeys":{"$ref":"uqi-NWpwJAtCtKg340P2GU85hOwdccNKh8Eansj5IGE"},"namespaceSelector":{"$ref":"VVCKgJOBvzPMFDWky4rRQ5NkqJqB9eXDLOrP2lnPweI"},"namespaces":{"$ref":"uqi-NWpwJAtCtKg340P2GU85hOwdccNKh8Eansj5IGE"},"topologyKey":{"$ref":"sLlNkWhANXZ15lvmcujppy1mXxqn6f-GaeQpWRYm_dw"}},"required":["topologyKey"],"type":"object"};
-const schema9 = {"properties":{"matchExpressions":{"$ref":"ayKrb4PFrKLMYqvjiutPxrbz750hbVgxft904f5rFtQ"},"matchLabels":{"$ref":"HJJzIHbiJa8GGL2u2CTOVy-Hry2MGWIvSIk30RN75wI"}},"type":"object","nullable":true};
+const schema13 = {"properties":{"preferredDuringSchedulingIgnoredDuringExecution":{"$ref":"Gv8Hvk-YMeAbi17zcXvGdYz35Trv28l0k6de2GFzrpY"},"requiredDuringSchedulingIgnoredDuringExecution":{"$ref":"x-4CXre8Q_6LB7j_yEJTNRttDcJly0o6xUOEkjdRAMg"}},"type":"object","nullable":true};
+const schema14 = {"items":{"$ref":"9Yx6B--m2eQFYkNbnIcDLOTpZxndM94PyYZq_-kDybs"},"type":"array","nullable":true};
+const schema15 = {"properties":{"podAffinityTerm":{"$ref":"8t0N05ceNTQObj1ufnNXouWS88GDJF66xuctgeD6LLg"},"weight":{"$ref":"6VbGrbfqnPJ4dMmNewHbRn4M59VZOmu0uhV1edBN8qE"}},"required":["podAffinityTerm","weight"],"type":"object"};
+const schema12 = {"properties":{"labelSelector":{"$ref":"VVCKgJOBvzPMFDWky4rRQ5NkqJqB9eXDLOrP2lnPweI"},"matchLabelKeys":{"$ref":"uqi-NWpwJAtCtKg340P2GU85hOwdccNKh8Eansj5IGE"},"mismatchLabelKeys":{"$ref":"uqi-NWpwJAtCtKg340P2GU85hOwdccNKh8Eansj5IGE"},"namespaceSelector":{"$ref":"VVCKgJOBvzPMFDWky4rRQ5NkqJqB9eXDLOrP2lnPweI"},"namespaces":{"$ref":"uqi-NWpwJAtCtKg340P2GU85hOwdccNKh8Eansj5IGE"},"topologyKey":{"$ref":"sLlNkWhANXZ15lvmcujppy1mXxqn6f-GaeQpWRYm_dw"}},"required":["topologyKey"],"type":"object"};
+const schema10 = {"properties":{"matchExpressions":{"$ref":"ayKrb4PFrKLMYqvjiutPxrbz750hbVgxft904f5rFtQ"},"matchLabels":{"$ref":"HJJzIHbiJa8GGL2u2CTOVy-Hry2MGWIvSIk30RN75wI"}},"type":"object","nullable":true};
 
-function validate20(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+function validate21(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
 let errors = 0;
 if((!(data && typeof data == "object" && !Array.isArray(data))) && (data !== null)){
@@ -1138,8 +1149,8 @@ if(data && typeof data == "object" && !Array.isArray(data)){
 if(data.matchExpressions !== undefined){
 let data0 = data.matchExpressions;
 const _errs2 = errors;
-if(!(validate11(data0, {instancePath:instancePath+"/matchExpressions",parentData:data,parentDataProperty:"matchExpressions",rootData}))){
-vErrors = vErrors === null ? validate11.errors : vErrors.concat(validate11.errors);
+if(!(validate12(data0, {instancePath:instancePath+"/matchExpressions",parentData:data,parentDataProperty:"matchExpressions",rootData}))){
+vErrors = vErrors === null ? validate12.errors : vErrors.concat(validate12.errors);
 errors = vErrors.length;
 }
 else {
@@ -1149,8 +1160,8 @@ var valid0 = _errs2 === errors;
 if(data.matchLabels !== undefined){
 let data1 = data.matchLabels;
 const _errs3 = errors;
-if(!(validate7(data1, {instancePath:instancePath+"/matchLabels",parentData:data,parentDataProperty:"matchLabels",rootData}))){
-vErrors = vErrors === null ? validate7.errors : vErrors.concat(validate7.errors);
+if(!(validate8(data1, {instancePath:instancePath+"/matchLabels",parentData:data,parentDataProperty:"matchLabels",rootData}))){
+vErrors = vErrors === null ? validate8.errors : vErrors.concat(validate8.errors);
 errors = vErrors.length;
 }
 else {
@@ -1158,12 +1169,12 @@ else {
 var valid0 = _errs3 === errors;
 }
 }
-validate20.errors = vErrors;
+validate21.errors = vErrors;
 return errors === 0;
 }
 
 
-function validate24(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+function validate25(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
 let errors = 0;
 const _errs0 = errors;
@@ -1181,8 +1192,8 @@ errors++;
 if(data.labelSelector !== undefined){
 let data0 = data.labelSelector;
 const _errs1 = errors;
-if(!(validate20(data0, {instancePath:instancePath+"/labelSelector",parentData:data,parentDataProperty:"labelSelector",rootData}))){
-vErrors = vErrors === null ? validate20.errors : vErrors.concat(validate20.errors);
+if(!(validate21(data0, {instancePath:instancePath+"/labelSelector",parentData:data,parentDataProperty:"labelSelector",rootData}))){
+vErrors = vErrors === null ? validate21.errors : vErrors.concat(validate21.errors);
 errors = vErrors.length;
 }
 else {
@@ -1192,8 +1203,8 @@ var valid0 = _errs1 === errors;
 if(data.matchLabelKeys !== undefined){
 let data1 = data.matchLabelKeys;
 const _errs2 = errors;
-if(!(validate9(data1, {instancePath:instancePath+"/matchLabelKeys",parentData:data,parentDataProperty:"matchLabelKeys",rootData}))){
-vErrors = vErrors === null ? validate9.errors : vErrors.concat(validate9.errors);
+if(!(validate10(data1, {instancePath:instancePath+"/matchLabelKeys",parentData:data,parentDataProperty:"matchLabelKeys",rootData}))){
+vErrors = vErrors === null ? validate10.errors : vErrors.concat(validate10.errors);
 errors = vErrors.length;
 }
 else {
@@ -1203,8 +1214,8 @@ var valid0 = _errs2 === errors;
 if(data.mismatchLabelKeys !== undefined){
 let data2 = data.mismatchLabelKeys;
 const _errs3 = errors;
-if(!(validate9(data2, {instancePath:instancePath+"/mismatchLabelKeys",parentData:data,parentDataProperty:"mismatchLabelKeys",rootData}))){
-vErrors = vErrors === null ? validate9.errors : vErrors.concat(validate9.errors);
+if(!(validate10(data2, {instancePath:instancePath+"/mismatchLabelKeys",parentData:data,parentDataProperty:"mismatchLabelKeys",rootData}))){
+vErrors = vErrors === null ? validate10.errors : vErrors.concat(validate10.errors);
 errors = vErrors.length;
 }
 else {
@@ -1214,8 +1225,8 @@ var valid0 = _errs3 === errors;
 if(data.namespaceSelector !== undefined){
 let data3 = data.namespaceSelector;
 const _errs4 = errors;
-if(!(validate20(data3, {instancePath:instancePath+"/namespaceSelector",parentData:data,parentDataProperty:"namespaceSelector",rootData}))){
-vErrors = vErrors === null ? validate20.errors : vErrors.concat(validate20.errors);
+if(!(validate21(data3, {instancePath:instancePath+"/namespaceSelector",parentData:data,parentDataProperty:"namespaceSelector",rootData}))){
+vErrors = vErrors === null ? validate21.errors : vErrors.concat(validate21.errors);
 errors = vErrors.length;
 }
 else {
@@ -1225,8 +1236,8 @@ var valid0 = _errs4 === errors;
 if(data.namespaces !== undefined){
 let data4 = data.namespaces;
 const _errs5 = errors;
-if(!(validate9(data4, {instancePath:instancePath+"/namespaces",parentData:data,parentDataProperty:"namespaces",rootData}))){
-vErrors = vErrors === null ? validate9.errors : vErrors.concat(validate9.errors);
+if(!(validate10(data4, {instancePath:instancePath+"/namespaces",parentData:data,parentDataProperty:"namespaces",rootData}))){
+vErrors = vErrors === null ? validate10.errors : vErrors.concat(validate10.errors);
 errors = vErrors.length;
 }
 else {
@@ -1255,12 +1266,12 @@ vErrors.push(err1);
 }
 errors++;
 }
-validate24.errors = vErrors;
+validate25.errors = vErrors;
 return errors === 0;
 }
 
 
-function validate33(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+function validate34(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
 let errors = 0;
 const _errs0 = errors;
@@ -1288,8 +1299,8 @@ errors++;
 if(data.podAffinityTerm !== undefined){
 let data0 = data.podAffinityTerm;
 const _errs1 = errors;
-if(!(validate24(data0, {instancePath:instancePath+"/podAffinityTerm",parentData:data,parentDataProperty:"podAffinityTerm",rootData}))){
-vErrors = vErrors === null ? validate24.errors : vErrors.concat(validate24.errors);
+if(!(validate25(data0, {instancePath:instancePath+"/podAffinityTerm",parentData:data,parentDataProperty:"podAffinityTerm",rootData}))){
+vErrors = vErrors === null ? validate25.errors : vErrors.concat(validate25.errors);
 errors = vErrors.length;
 }
 else {
@@ -1299,8 +1310,8 @@ var valid0 = _errs1 === errors;
 if(data.weight !== undefined){
 let data1 = data.weight;
 const _errs2 = errors;
-if(!(validate23(data1, {instancePath:instancePath+"/weight",parentData:data,parentDataProperty:"weight",rootData}))){
-vErrors = vErrors === null ? validate23.errors : vErrors.concat(validate23.errors);
+if(!(validate24(data1, {instancePath:instancePath+"/weight",parentData:data,parentDataProperty:"weight",rootData}))){
+vErrors = vErrors === null ? validate24.errors : vErrors.concat(validate24.errors);
 errors = vErrors.length;
 }
 else {
@@ -1318,89 +1329,89 @@ vErrors.push(err2);
 }
 errors++;
 }
+validate34.errors = vErrors;
+return errors === 0;
+}
+
+
+function validate33(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+let vErrors = null;
+let errors = 0;
+if((!(Array.isArray(data))) && (data !== null)){
+const err0 = {instancePath,schemaPath:"#/type",keyword:"type",params:{type: "array"}};
+if(vErrors === null){
+vErrors = [err0];
+}
+else {
+vErrors.push(err0);
+}
+errors++;
+}
+const _errs0 = errors;
+const _errs1 = errors;
+if(Array.isArray(data)){
+let valid1 = true;
+const len0 = data.length;
+for(let i0=0; i0<len0; i0++){
+let data0 = data[i0];
+const _errs2 = errors;
+if(!(validate34(data0, {instancePath:instancePath+"/" + i0,parentData:data,parentDataProperty:i0,rootData}))){
+vErrors = vErrors === null ? validate34.errors : vErrors.concat(validate34.errors);
+errors = vErrors.length;
+}
+else {
+}
+var valid0 = _errs2 === errors;
+if(!valid0){
+valid1 = false;
+}
+}
+}
 validate33.errors = vErrors;
+return errors === 0;
+}
+
+const schema16 = {"items":{"$ref":"8t0N05ceNTQObj1ufnNXouWS88GDJF66xuctgeD6LLg"},"type":"array","nullable":true};
+
+function validate39(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+let vErrors = null;
+let errors = 0;
+if((!(Array.isArray(data))) && (data !== null)){
+const err0 = {instancePath,schemaPath:"#/type",keyword:"type",params:{type: "array"}};
+if(vErrors === null){
+vErrors = [err0];
+}
+else {
+vErrors.push(err0);
+}
+errors++;
+}
+const _errs0 = errors;
+const _errs1 = errors;
+if(Array.isArray(data)){
+let valid1 = true;
+const len0 = data.length;
+for(let i0=0; i0<len0; i0++){
+let data0 = data[i0];
+const _errs2 = errors;
+if(!(validate25(data0, {instancePath:instancePath+"/" + i0,parentData:data,parentDataProperty:i0,rootData}))){
+vErrors = vErrors === null ? validate25.errors : vErrors.concat(validate25.errors);
+errors = vErrors.length;
+}
+else {
+}
+var valid0 = _errs2 === errors;
+if(!valid0){
+valid1 = false;
+}
+}
+}
+validate39.errors = vErrors;
 return errors === 0;
 }
 
 
 function validate32(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
-let vErrors = null;
-let errors = 0;
-if((!(Array.isArray(data))) && (data !== null)){
-const err0 = {instancePath,schemaPath:"#/type",keyword:"type",params:{type: "array"}};
-if(vErrors === null){
-vErrors = [err0];
-}
-else {
-vErrors.push(err0);
-}
-errors++;
-}
-const _errs0 = errors;
-const _errs1 = errors;
-if(Array.isArray(data)){
-let valid1 = true;
-const len0 = data.length;
-for(let i0=0; i0<len0; i0++){
-let data0 = data[i0];
-const _errs2 = errors;
-if(!(validate33(data0, {instancePath:instancePath+"/" + i0,parentData:data,parentDataProperty:i0,rootData}))){
-vErrors = vErrors === null ? validate33.errors : vErrors.concat(validate33.errors);
-errors = vErrors.length;
-}
-else {
-}
-var valid0 = _errs2 === errors;
-if(!valid0){
-valid1 = false;
-}
-}
-}
-validate32.errors = vErrors;
-return errors === 0;
-}
-
-const schema15 = {"items":{"$ref":"8t0N05ceNTQObj1ufnNXouWS88GDJF66xuctgeD6LLg"},"type":"array","nullable":true};
-
-function validate38(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
-let vErrors = null;
-let errors = 0;
-if((!(Array.isArray(data))) && (data !== null)){
-const err0 = {instancePath,schemaPath:"#/type",keyword:"type",params:{type: "array"}};
-if(vErrors === null){
-vErrors = [err0];
-}
-else {
-vErrors.push(err0);
-}
-errors++;
-}
-const _errs0 = errors;
-const _errs1 = errors;
-if(Array.isArray(data)){
-let valid1 = true;
-const len0 = data.length;
-for(let i0=0; i0<len0; i0++){
-let data0 = data[i0];
-const _errs2 = errors;
-if(!(validate24(data0, {instancePath:instancePath+"/" + i0,parentData:data,parentDataProperty:i0,rootData}))){
-vErrors = vErrors === null ? validate24.errors : vErrors.concat(validate24.errors);
-errors = vErrors.length;
-}
-else {
-}
-var valid0 = _errs2 === errors;
-if(!valid0){
-valid1 = false;
-}
-}
-}
-validate38.errors = vErrors;
-return errors === 0;
-}
-
-
-function validate31(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
 let errors = 0;
 if((!(data && typeof data == "object" && !Array.isArray(data))) && (data !== null)){
@@ -1419,8 +1430,8 @@ if(data && typeof data == "object" && !Array.isArray(data)){
 if(data.preferredDuringSchedulingIgnoredDuringExecution !== undefined){
 let data0 = data.preferredDuringSchedulingIgnoredDuringExecution;
 const _errs2 = errors;
-if(!(validate32(data0, {instancePath:instancePath+"/preferredDuringSchedulingIgnoredDuringExecution",parentData:data,parentDataProperty:"preferredDuringSchedulingIgnoredDuringExecution",rootData}))){
-vErrors = vErrors === null ? validate32.errors : vErrors.concat(validate32.errors);
+if(!(validate33(data0, {instancePath:instancePath+"/preferredDuringSchedulingIgnoredDuringExecution",parentData:data,parentDataProperty:"preferredDuringSchedulingIgnoredDuringExecution",rootData}))){
+vErrors = vErrors === null ? validate33.errors : vErrors.concat(validate33.errors);
 errors = vErrors.length;
 }
 else {
@@ -1430,8 +1441,8 @@ var valid0 = _errs2 === errors;
 if(data.requiredDuringSchedulingIgnoredDuringExecution !== undefined){
 let data1 = data.requiredDuringSchedulingIgnoredDuringExecution;
 const _errs3 = errors;
-if(!(validate38(data1, {instancePath:instancePath+"/requiredDuringSchedulingIgnoredDuringExecution",parentData:data,parentDataProperty:"requiredDuringSchedulingIgnoredDuringExecution",rootData}))){
-vErrors = vErrors === null ? validate38.errors : vErrors.concat(validate38.errors);
+if(!(validate39(data1, {instancePath:instancePath+"/requiredDuringSchedulingIgnoredDuringExecution",parentData:data,parentDataProperty:"requiredDuringSchedulingIgnoredDuringExecution",rootData}))){
+vErrors = vErrors === null ? validate39.errors : vErrors.concat(validate39.errors);
 errors = vErrors.length;
 }
 else {
@@ -1439,12 +1450,12 @@ else {
 var valid0 = _errs3 === errors;
 }
 }
-validate31.errors = vErrors;
+validate32.errors = vErrors;
 return errors === 0;
 }
 
 
-function validate304(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+function validate305(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
 let errors = 0;
 if((!(data && typeof data == "object" && !Array.isArray(data))) && (data !== null)){
@@ -1463,8 +1474,8 @@ if(data && typeof data == "object" && !Array.isArray(data)){
 if(data.nodeAffinity !== undefined){
 let data0 = data.nodeAffinity;
 const _errs2 = errors;
-if(!(validate305(data0, {instancePath:instancePath+"/nodeAffinity",parentData:data,parentDataProperty:"nodeAffinity",rootData}))){
-vErrors = vErrors === null ? validate305.errors : vErrors.concat(validate305.errors);
+if(!(validate306(data0, {instancePath:instancePath+"/nodeAffinity",parentData:data,parentDataProperty:"nodeAffinity",rootData}))){
+vErrors = vErrors === null ? validate306.errors : vErrors.concat(validate306.errors);
 errors = vErrors.length;
 }
 else {
@@ -1474,8 +1485,8 @@ var valid0 = _errs2 === errors;
 if(data.podAffinity !== undefined){
 let data1 = data.podAffinity;
 const _errs3 = errors;
-if(!(validate31(data1, {instancePath:instancePath+"/podAffinity",parentData:data,parentDataProperty:"podAffinity",rootData}))){
-vErrors = vErrors === null ? validate31.errors : vErrors.concat(validate31.errors);
+if(!(validate32(data1, {instancePath:instancePath+"/podAffinity",parentData:data,parentDataProperty:"podAffinity",rootData}))){
+vErrors = vErrors === null ? validate32.errors : vErrors.concat(validate32.errors);
 errors = vErrors.length;
 }
 else {
@@ -1485,8 +1496,8 @@ var valid0 = _errs3 === errors;
 if(data.podAntiAffinity !== undefined){
 let data2 = data.podAntiAffinity;
 const _errs4 = errors;
-if(!(validate31(data2, {instancePath:instancePath+"/podAntiAffinity",parentData:data,parentDataProperty:"podAntiAffinity",rootData}))){
-vErrors = vErrors === null ? validate31.errors : vErrors.concat(validate31.errors);
+if(!(validate32(data2, {instancePath:instancePath+"/podAntiAffinity",parentData:data,parentDataProperty:"podAntiAffinity",rootData}))){
+vErrors = vErrors === null ? validate32.errors : vErrors.concat(validate32.errors);
 errors = vErrors.length;
 }
 else {
@@ -1494,7 +1505,7 @@ else {
 var valid0 = _errs4 === errors;
 }
 }
-validate304.errors = vErrors;
+validate305.errors = vErrors;
 return errors === 0;
 }
 
@@ -1577,8 +1588,8 @@ var valid0 = _errs3 === errors;
 if(data.optional !== undefined){
 let data2 = data.optional;
 const _errs4 = errors;
-if(!(validate41(data2, {instancePath:instancePath+"/optional",parentData:data,parentDataProperty:"optional",rootData}))){
-vErrors = vErrors === null ? validate41.errors : vErrors.concat(validate41.errors);
+if(!(validate2(data2, {instancePath:instancePath+"/optional",parentData:data,parentDataProperty:"optional",rootData}))){
+vErrors = vErrors === null ? validate2.errors : vErrors.concat(validate2.errors);
 errors = vErrors.length;
 }
 else {
@@ -2129,8 +2140,8 @@ var valid0 = _errs2 === errors;
 if(data.optional !== undefined){
 let data1 = data.optional;
 const _errs3 = errors;
-if(!(validate41(data1, {instancePath:instancePath+"/optional",parentData:data,parentDataProperty:"optional",rootData}))){
-vErrors = vErrors === null ? validate41.errors : vErrors.concat(validate41.errors);
+if(!(validate2(data1, {instancePath:instancePath+"/optional",parentData:data,parentDataProperty:"optional",rootData}))){
+vErrors = vErrors === null ? validate2.errors : vErrors.concat(validate2.errors);
 errors = vErrors.length;
 }
 else {
@@ -2257,8 +2268,8 @@ if(data && typeof data == "object" && !Array.isArray(data)){
 if(data.command !== undefined){
 let data0 = data.command;
 const _errs2 = errors;
-if(!(validate9(data0, {instancePath:instancePath+"/command",parentData:data,parentDataProperty:"command",rootData}))){
-vErrors = vErrors === null ? validate9.errors : vErrors.concat(validate9.errors);
+if(!(validate10(data0, {instancePath:instancePath+"/command",parentData:data,parentDataProperty:"command",rootData}))){
+vErrors = vErrors === null ? validate10.errors : vErrors.concat(validate10.errors);
 errors = vErrors.length;
 }
 else {
@@ -2836,8 +2847,8 @@ errors++;
 if(data.port !== undefined){
 let data0 = data.port;
 const _errs2 = errors;
-if(!(validate23(data0, {instancePath:instancePath+"/port",parentData:data,parentDataProperty:"port",rootData}))){
-vErrors = vErrors === null ? validate23.errors : vErrors.concat(validate23.errors);
+if(!(validate24(data0, {instancePath:instancePath+"/port",parentData:data,parentDataProperty:"port",rootData}))){
+vErrors = vErrors === null ? validate24.errors : vErrors.concat(validate24.errors);
 errors = vErrors.length;
 }
 else {
@@ -3034,8 +3045,8 @@ errors++;
 if(data.containerPort !== undefined){
 let data0 = data.containerPort;
 const _errs1 = errors;
-if(!(validate23(data0, {instancePath:instancePath+"/containerPort",parentData:data,parentDataProperty:"containerPort",rootData}))){
-vErrors = vErrors === null ? validate23.errors : vErrors.concat(validate23.errors);
+if(!(validate24(data0, {instancePath:instancePath+"/containerPort",parentData:data,parentDataProperty:"containerPort",rootData}))){
+vErrors = vErrors === null ? validate24.errors : vErrors.concat(validate24.errors);
 errors = vErrors.length;
 }
 else {
@@ -3452,8 +3463,8 @@ const len0 = data.length;
 for(let i0=0; i0<len0; i0++){
 let data0 = data[i0];
 const _errs2 = errors;
-if(!(validate23(data0, {instancePath:instancePath+"/" + i0,parentData:data,parentDataProperty:i0,rootData}))){
-vErrors = vErrors === null ? validate23.errors : vErrors.concat(validate23.errors);
+if(!(validate24(data0, {instancePath:instancePath+"/" + i0,parentData:data,parentDataProperty:i0,rootData}))){
+vErrors = vErrors === null ? validate24.errors : vErrors.concat(validate24.errors);
 errors = vErrors.length;
 }
 else {
@@ -3690,8 +3701,8 @@ if(data && typeof data == "object" && !Array.isArray(data)){
 if(data.add !== undefined){
 let data0 = data.add;
 const _errs2 = errors;
-if(!(validate9(data0, {instancePath:instancePath+"/add",parentData:data,parentDataProperty:"add",rootData}))){
-vErrors = vErrors === null ? validate9.errors : vErrors.concat(validate9.errors);
+if(!(validate10(data0, {instancePath:instancePath+"/add",parentData:data,parentDataProperty:"add",rootData}))){
+vErrors = vErrors === null ? validate10.errors : vErrors.concat(validate10.errors);
 errors = vErrors.length;
 }
 else {
@@ -3701,8 +3712,8 @@ var valid0 = _errs2 === errors;
 if(data.drop !== undefined){
 let data1 = data.drop;
 const _errs3 = errors;
-if(!(validate9(data1, {instancePath:instancePath+"/drop",parentData:data,parentDataProperty:"drop",rootData}))){
-vErrors = vErrors === null ? validate9.errors : vErrors.concat(validate9.errors);
+if(!(validate10(data1, {instancePath:instancePath+"/drop",parentData:data,parentDataProperty:"drop",rootData}))){
+vErrors = vErrors === null ? validate10.errors : vErrors.concat(validate10.errors);
 errors = vErrors.length;
 }
 else {
@@ -3824,8 +3835,8 @@ var valid0 = _errs3 === errors;
 if(data.hostProcess !== undefined){
 let data2 = data.hostProcess;
 const _errs4 = errors;
-if(!(validate41(data2, {instancePath:instancePath+"/hostProcess",parentData:data,parentDataProperty:"hostProcess",rootData}))){
-vErrors = vErrors === null ? validate41.errors : vErrors.concat(validate41.errors);
+if(!(validate2(data2, {instancePath:instancePath+"/hostProcess",parentData:data,parentDataProperty:"hostProcess",rootData}))){
+vErrors = vErrors === null ? validate2.errors : vErrors.concat(validate2.errors);
 errors = vErrors.length;
 }
 else {
@@ -3868,8 +3879,8 @@ if(data && typeof data == "object" && !Array.isArray(data)){
 if(data.allowPrivilegeEscalation !== undefined){
 let data0 = data.allowPrivilegeEscalation;
 const _errs2 = errors;
-if(!(validate41(data0, {instancePath:instancePath+"/allowPrivilegeEscalation",parentData:data,parentDataProperty:"allowPrivilegeEscalation",rootData}))){
-vErrors = vErrors === null ? validate41.errors : vErrors.concat(validate41.errors);
+if(!(validate2(data0, {instancePath:instancePath+"/allowPrivilegeEscalation",parentData:data,parentDataProperty:"allowPrivilegeEscalation",rootData}))){
+vErrors = vErrors === null ? validate2.errors : vErrors.concat(validate2.errors);
 errors = vErrors.length;
 }
 else {
@@ -3901,8 +3912,8 @@ var valid0 = _errs4 === errors;
 if(data.privileged !== undefined){
 let data3 = data.privileged;
 const _errs5 = errors;
-if(!(validate41(data3, {instancePath:instancePath+"/privileged",parentData:data,parentDataProperty:"privileged",rootData}))){
-vErrors = vErrors === null ? validate41.errors : vErrors.concat(validate41.errors);
+if(!(validate2(data3, {instancePath:instancePath+"/privileged",parentData:data,parentDataProperty:"privileged",rootData}))){
+vErrors = vErrors === null ? validate2.errors : vErrors.concat(validate2.errors);
 errors = vErrors.length;
 }
 else {
@@ -3923,8 +3934,8 @@ var valid0 = _errs6 === errors;
 if(data.readOnlyRootFilesystem !== undefined){
 let data5 = data.readOnlyRootFilesystem;
 const _errs7 = errors;
-if(!(validate41(data5, {instancePath:instancePath+"/readOnlyRootFilesystem",parentData:data,parentDataProperty:"readOnlyRootFilesystem",rootData}))){
-vErrors = vErrors === null ? validate41.errors : vErrors.concat(validate41.errors);
+if(!(validate2(data5, {instancePath:instancePath+"/readOnlyRootFilesystem",parentData:data,parentDataProperty:"readOnlyRootFilesystem",rootData}))){
+vErrors = vErrors === null ? validate2.errors : vErrors.concat(validate2.errors);
 errors = vErrors.length;
 }
 else {
@@ -3945,8 +3956,8 @@ var valid0 = _errs8 === errors;
 if(data.runAsNonRoot !== undefined){
 let data7 = data.runAsNonRoot;
 const _errs9 = errors;
-if(!(validate41(data7, {instancePath:instancePath+"/runAsNonRoot",parentData:data,parentDataProperty:"runAsNonRoot",rootData}))){
-vErrors = vErrors === null ? validate41.errors : vErrors.concat(validate41.errors);
+if(!(validate2(data7, {instancePath:instancePath+"/runAsNonRoot",parentData:data,parentDataProperty:"runAsNonRoot",rootData}))){
+vErrors = vErrors === null ? validate2.errors : vErrors.concat(validate2.errors);
 errors = vErrors.length;
 }
 else {
@@ -4169,8 +4180,8 @@ var valid0 = _errs3 === errors;
 if(data.readOnly !== undefined){
 let data3 = data.readOnly;
 const _errs4 = errors;
-if(!(validate41(data3, {instancePath:instancePath+"/readOnly",parentData:data,parentDataProperty:"readOnly",rootData}))){
-vErrors = vErrors === null ? validate41.errors : vErrors.concat(validate41.errors);
+if(!(validate2(data3, {instancePath:instancePath+"/readOnly",parentData:data,parentDataProperty:"readOnly",rootData}))){
+vErrors = vErrors === null ? validate2.errors : vErrors.concat(validate2.errors);
 errors = vErrors.length;
 }
 else {
@@ -4282,8 +4293,8 @@ errors++;
 if(data.args !== undefined){
 let data0 = data.args;
 const _errs1 = errors;
-if(!(validate9(data0, {instancePath:instancePath+"/args",parentData:data,parentDataProperty:"args",rootData}))){
-vErrors = vErrors === null ? validate9.errors : vErrors.concat(validate9.errors);
+if(!(validate10(data0, {instancePath:instancePath+"/args",parentData:data,parentDataProperty:"args",rootData}))){
+vErrors = vErrors === null ? validate10.errors : vErrors.concat(validate10.errors);
 errors = vErrors.length;
 }
 else {
@@ -4293,8 +4304,8 @@ var valid0 = _errs1 === errors;
 if(data.command !== undefined){
 let data1 = data.command;
 const _errs2 = errors;
-if(!(validate9(data1, {instancePath:instancePath+"/command",parentData:data,parentDataProperty:"command",rootData}))){
-vErrors = vErrors === null ? validate9.errors : vErrors.concat(validate9.errors);
+if(!(validate10(data1, {instancePath:instancePath+"/command",parentData:data,parentDataProperty:"command",rootData}))){
+vErrors = vErrors === null ? validate10.errors : vErrors.concat(validate10.errors);
 errors = vErrors.length;
 }
 else {
@@ -4469,8 +4480,8 @@ var valid0 = _errs17 === errors;
 if(data.stdin !== undefined){
 let data17 = data.stdin;
 const _errs18 = errors;
-if(!(validate41(data17, {instancePath:instancePath+"/stdin",parentData:data,parentDataProperty:"stdin",rootData}))){
-vErrors = vErrors === null ? validate41.errors : vErrors.concat(validate41.errors);
+if(!(validate2(data17, {instancePath:instancePath+"/stdin",parentData:data,parentDataProperty:"stdin",rootData}))){
+vErrors = vErrors === null ? validate2.errors : vErrors.concat(validate2.errors);
 errors = vErrors.length;
 }
 else {
@@ -4480,8 +4491,8 @@ var valid0 = _errs18 === errors;
 if(data.stdinOnce !== undefined){
 let data18 = data.stdinOnce;
 const _errs19 = errors;
-if(!(validate41(data18, {instancePath:instancePath+"/stdinOnce",parentData:data,parentDataProperty:"stdinOnce",rootData}))){
-vErrors = vErrors === null ? validate41.errors : vErrors.concat(validate41.errors);
+if(!(validate2(data18, {instancePath:instancePath+"/stdinOnce",parentData:data,parentDataProperty:"stdinOnce",rootData}))){
+vErrors = vErrors === null ? validate2.errors : vErrors.concat(validate2.errors);
 errors = vErrors.length;
 }
 else {
@@ -4513,8 +4524,8 @@ var valid0 = _errs21 === errors;
 if(data.tty !== undefined){
 let data21 = data.tty;
 const _errs22 = errors;
-if(!(validate41(data21, {instancePath:instancePath+"/tty",parentData:data,parentDataProperty:"tty",rootData}))){
-vErrors = vErrors === null ? validate41.errors : vErrors.concat(validate41.errors);
+if(!(validate2(data21, {instancePath:instancePath+"/tty",parentData:data,parentDataProperty:"tty",rootData}))){
+vErrors = vErrors === null ? validate2.errors : vErrors.concat(validate2.errors);
 errors = vErrors.length;
 }
 else {
@@ -4570,7 +4581,7 @@ return errors === 0;
 }
 
 
-function validate322(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+function validate323(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
 let errors = 0;
 const _errs0 = errors;
@@ -4602,7 +4613,7 @@ vErrors.push(err0);
 }
 errors++;
 }
-validate322.errors = vErrors;
+validate323.errors = vErrors;
 return errors === 0;
 }
 
@@ -4610,7 +4621,7 @@ const schema99 = {"properties":{"nameservers":{"$ref":"uqi-NWpwJAtCtKg340P2GU85h
 const schema100 = {"items":{"$ref":"F4Xy5Fz36W_URgJ39USLrSRkrK9xMUDLknD7E0nmTrw"},"type":"array","nullable":true};
 const schema101 = {"properties":{"name":{"$ref":"ldoCEsh0ARg8F2aeji6S38NFl7aLPSuz1hGlgX2tjuQ"},"value":{"$ref":"ldoCEsh0ARg8F2aeji6S38NFl7aLPSuz1hGlgX2tjuQ"}},"type":"object"};
 
-function validate328(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+function validate329(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
 let errors = 0;
 const _errs0 = errors;
@@ -4648,12 +4659,12 @@ vErrors.push(err0);
 }
 errors++;
 }
-validate328.errors = vErrors;
+validate329.errors = vErrors;
 return errors === 0;
 }
 
 
-function validate327(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+function validate328(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
 let errors = 0;
 if((!(Array.isArray(data))) && (data !== null)){
@@ -4674,8 +4685,8 @@ const len0 = data.length;
 for(let i0=0; i0<len0; i0++){
 let data0 = data[i0];
 const _errs2 = errors;
-if(!(validate328(data0, {instancePath:instancePath+"/" + i0,parentData:data,parentDataProperty:i0,rootData}))){
-vErrors = vErrors === null ? validate328.errors : vErrors.concat(validate328.errors);
+if(!(validate329(data0, {instancePath:instancePath+"/" + i0,parentData:data,parentDataProperty:i0,rootData}))){
+vErrors = vErrors === null ? validate329.errors : vErrors.concat(validate329.errors);
 errors = vErrors.length;
 }
 else {
@@ -4686,12 +4697,12 @@ valid1 = false;
 }
 }
 }
-validate327.errors = vErrors;
+validate328.errors = vErrors;
 return errors === 0;
 }
 
 
-function validate325(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+function validate326(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
 let errors = 0;
 if((!(data && typeof data == "object" && !Array.isArray(data))) && (data !== null)){
@@ -4710,8 +4721,8 @@ if(data && typeof data == "object" && !Array.isArray(data)){
 if(data.nameservers !== undefined){
 let data0 = data.nameservers;
 const _errs2 = errors;
-if(!(validate9(data0, {instancePath:instancePath+"/nameservers",parentData:data,parentDataProperty:"nameservers",rootData}))){
-vErrors = vErrors === null ? validate9.errors : vErrors.concat(validate9.errors);
+if(!(validate10(data0, {instancePath:instancePath+"/nameservers",parentData:data,parentDataProperty:"nameservers",rootData}))){
+vErrors = vErrors === null ? validate10.errors : vErrors.concat(validate10.errors);
 errors = vErrors.length;
 }
 else {
@@ -4721,8 +4732,8 @@ var valid0 = _errs2 === errors;
 if(data.options !== undefined){
 let data1 = data.options;
 const _errs3 = errors;
-if(!(validate327(data1, {instancePath:instancePath+"/options",parentData:data,parentDataProperty:"options",rootData}))){
-vErrors = vErrors === null ? validate327.errors : vErrors.concat(validate327.errors);
+if(!(validate328(data1, {instancePath:instancePath+"/options",parentData:data,parentDataProperty:"options",rootData}))){
+vErrors = vErrors === null ? validate328.errors : vErrors.concat(validate328.errors);
 errors = vErrors.length;
 }
 else {
@@ -4732,8 +4743,8 @@ var valid0 = _errs3 === errors;
 if(data.searches !== undefined){
 let data2 = data.searches;
 const _errs4 = errors;
-if(!(validate9(data2, {instancePath:instancePath+"/searches",parentData:data,parentDataProperty:"searches",rootData}))){
-vErrors = vErrors === null ? validate9.errors : vErrors.concat(validate9.errors);
+if(!(validate10(data2, {instancePath:instancePath+"/searches",parentData:data,parentDataProperty:"searches",rootData}))){
+vErrors = vErrors === null ? validate10.errors : vErrors.concat(validate10.errors);
 errors = vErrors.length;
 }
 else {
@@ -4741,14 +4752,14 @@ else {
 var valid0 = _errs4 === errors;
 }
 }
-validate325.errors = vErrors;
+validate326.errors = vErrors;
 return errors === 0;
 }
 
 const schema102 = {"items":{"$ref":"C-ceGOizjWksqCzap3EC-S8JeZSosW0aT9tkSJlW-hw"},"type":"array","nullable":true};
 const schema103 = {"properties":{"args":{"$ref":"uqi-NWpwJAtCtKg340P2GU85hOwdccNKh8Eansj5IGE"},"command":{"$ref":"uqi-NWpwJAtCtKg340P2GU85hOwdccNKh8Eansj5IGE"},"env":{"$ref":"QK6qdOVPcIj3ymOL58J6NgOdTW_Xbf1pI79iGILi8uU"},"envFrom":{"$ref":"ZRw41W3mWwhKksdKQqy6gdGI0VqZa0mht_DKnlcF-lw"},"image":{"$ref":"ldoCEsh0ARg8F2aeji6S38NFl7aLPSuz1hGlgX2tjuQ"},"imagePullPolicy":{"$ref":"ldoCEsh0ARg8F2aeji6S38NFl7aLPSuz1hGlgX2tjuQ"},"lifecycle":{"$ref":"2GolHCLsHBmPr5h5-SqeL3kwFl1yyHXgHxOurrzuSpc"},"livenessProbe":{"$ref":"5AW0Q6kBN4321Hs5WncP7jZ-5npxooKpHn9Lz5S4Ppc"},"name":{"$ref":"sLlNkWhANXZ15lvmcujppy1mXxqn6f-GaeQpWRYm_dw"},"ports":{"$ref":"QdA0VP-JsKHKjWu-1Hu8oyYcguMz4UHlXTFbpvKweaM"},"readinessProbe":{"$ref":"5AW0Q6kBN4321Hs5WncP7jZ-5npxooKpHn9Lz5S4Ppc"},"resizePolicy":{"$ref":"6FxzbMy3fQv1gheBeNadVqOl2xbXIqiFGG5KNo9kRcw"},"resources":{"$ref":"FhMRS9yiPxYjQhkDxbgv-jQ4jx9VLxRdMLNZtrOnwhI"},"restartPolicy":{"$ref":"ldoCEsh0ARg8F2aeji6S38NFl7aLPSuz1hGlgX2tjuQ"},"restartPolicyRules":{"$ref":"bn1AnMh-2dkJyL1LY5A_xgvSFgNvRm9Wd4RL1NkeXRU"},"securityContext":{"$ref":"ppbGhvBFiV7RuYhp7GW5xoG5M7lU4kbUlUSlBvBbdzE"},"startupProbe":{"$ref":"5AW0Q6kBN4321Hs5WncP7jZ-5npxooKpHn9Lz5S4Ppc"},"stdin":{"$ref":"CTX4WtafS9K1Gv7k2X1H0J3M9LziUVVRBMOR0rDDzTk"},"stdinOnce":{"$ref":"CTX4WtafS9K1Gv7k2X1H0J3M9LziUVVRBMOR0rDDzTk"},"targetContainerName":{"$ref":"ldoCEsh0ARg8F2aeji6S38NFl7aLPSuz1hGlgX2tjuQ"},"terminationMessagePath":{"$ref":"ldoCEsh0ARg8F2aeji6S38NFl7aLPSuz1hGlgX2tjuQ"},"terminationMessagePolicy":{"$ref":"ldoCEsh0ARg8F2aeji6S38NFl7aLPSuz1hGlgX2tjuQ"},"tty":{"$ref":"CTX4WtafS9K1Gv7k2X1H0J3M9LziUVVRBMOR0rDDzTk"},"volumeDevices":{"$ref":"yySLqkz1jc_2D5zmwBnHmcS-y-0ogKvDTXKQGVruH8A"},"volumeMounts":{"$ref":"K3z2jQ4aYZcOrB0gSTeLWvm5O5c50b2P06GZmb9a8OM"},"workingDir":{"$ref":"ldoCEsh0ARg8F2aeji6S38NFl7aLPSuz1hGlgX2tjuQ"}},"required":["name"],"type":"object"};
 
-function validate338(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+function validate339(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
 let errors = 0;
 const _errs0 = errors;
@@ -4766,8 +4777,8 @@ errors++;
 if(data.args !== undefined){
 let data0 = data.args;
 const _errs1 = errors;
-if(!(validate9(data0, {instancePath:instancePath+"/args",parentData:data,parentDataProperty:"args",rootData}))){
-vErrors = vErrors === null ? validate9.errors : vErrors.concat(validate9.errors);
+if(!(validate10(data0, {instancePath:instancePath+"/args",parentData:data,parentDataProperty:"args",rootData}))){
+vErrors = vErrors === null ? validate10.errors : vErrors.concat(validate10.errors);
 errors = vErrors.length;
 }
 else {
@@ -4777,8 +4788,8 @@ var valid0 = _errs1 === errors;
 if(data.command !== undefined){
 let data1 = data.command;
 const _errs2 = errors;
-if(!(validate9(data1, {instancePath:instancePath+"/command",parentData:data,parentDataProperty:"command",rootData}))){
-vErrors = vErrors === null ? validate9.errors : vErrors.concat(validate9.errors);
+if(!(validate10(data1, {instancePath:instancePath+"/command",parentData:data,parentDataProperty:"command",rootData}))){
+vErrors = vErrors === null ? validate10.errors : vErrors.concat(validate10.errors);
 errors = vErrors.length;
 }
 else {
@@ -4953,8 +4964,8 @@ var valid0 = _errs17 === errors;
 if(data.stdin !== undefined){
 let data17 = data.stdin;
 const _errs18 = errors;
-if(!(validate41(data17, {instancePath:instancePath+"/stdin",parentData:data,parentDataProperty:"stdin",rootData}))){
-vErrors = vErrors === null ? validate41.errors : vErrors.concat(validate41.errors);
+if(!(validate2(data17, {instancePath:instancePath+"/stdin",parentData:data,parentDataProperty:"stdin",rootData}))){
+vErrors = vErrors === null ? validate2.errors : vErrors.concat(validate2.errors);
 errors = vErrors.length;
 }
 else {
@@ -4964,8 +4975,8 @@ var valid0 = _errs18 === errors;
 if(data.stdinOnce !== undefined){
 let data18 = data.stdinOnce;
 const _errs19 = errors;
-if(!(validate41(data18, {instancePath:instancePath+"/stdinOnce",parentData:data,parentDataProperty:"stdinOnce",rootData}))){
-vErrors = vErrors === null ? validate41.errors : vErrors.concat(validate41.errors);
+if(!(validate2(data18, {instancePath:instancePath+"/stdinOnce",parentData:data,parentDataProperty:"stdinOnce",rootData}))){
+vErrors = vErrors === null ? validate2.errors : vErrors.concat(validate2.errors);
 errors = vErrors.length;
 }
 else {
@@ -5008,8 +5019,8 @@ var valid0 = _errs22 === errors;
 if(data.tty !== undefined){
 let data22 = data.tty;
 const _errs23 = errors;
-if(!(validate41(data22, {instancePath:instancePath+"/tty",parentData:data,parentDataProperty:"tty",rootData}))){
-vErrors = vErrors === null ? validate41.errors : vErrors.concat(validate41.errors);
+if(!(validate2(data22, {instancePath:instancePath+"/tty",parentData:data,parentDataProperty:"tty",rootData}))){
+vErrors = vErrors === null ? validate2.errors : vErrors.concat(validate2.errors);
 errors = vErrors.length;
 }
 else {
@@ -5060,12 +5071,12 @@ vErrors.push(err1);
 }
 errors++;
 }
-validate338.errors = vErrors;
+validate339.errors = vErrors;
 return errors === 0;
 }
 
 
-function validate337(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+function validate338(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
 let errors = 0;
 if((!(Array.isArray(data))) && (data !== null)){
@@ -5086,8 +5097,8 @@ const len0 = data.length;
 for(let i0=0; i0<len0; i0++){
 let data0 = data[i0];
 const _errs2 = errors;
-if(!(validate338(data0, {instancePath:instancePath+"/" + i0,parentData:data,parentDataProperty:i0,rootData}))){
-vErrors = vErrors === null ? validate338.errors : vErrors.concat(validate338.errors);
+if(!(validate339(data0, {instancePath:instancePath+"/" + i0,parentData:data,parentDataProperty:i0,rootData}))){
+vErrors = vErrors === null ? validate339.errors : vErrors.concat(validate339.errors);
 errors = vErrors.length;
 }
 else {
@@ -5098,14 +5109,14 @@ valid1 = false;
 }
 }
 }
-validate337.errors = vErrors;
+validate338.errors = vErrors;
 return errors === 0;
 }
 
 const schema104 = {"items":{"$ref":"1HespOXKrotYoqvobtjdYpFt-3Uj4rr3rOO-NdY0MJw"},"type":"array","nullable":true};
 const schema105 = {"properties":{"hostnames":{"$ref":"uqi-NWpwJAtCtKg340P2GU85hOwdccNKh8Eansj5IGE"},"ip":{"$ref":"sLlNkWhANXZ15lvmcujppy1mXxqn6f-GaeQpWRYm_dw"}},"required":["ip"],"type":"object"};
 
-function validate368(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+function validate369(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
 let errors = 0;
 const _errs0 = errors;
@@ -5123,8 +5134,8 @@ errors++;
 if(data.hostnames !== undefined){
 let data0 = data.hostnames;
 const _errs1 = errors;
-if(!(validate9(data0, {instancePath:instancePath+"/hostnames",parentData:data,parentDataProperty:"hostnames",rootData}))){
-vErrors = vErrors === null ? validate9.errors : vErrors.concat(validate9.errors);
+if(!(validate10(data0, {instancePath:instancePath+"/hostnames",parentData:data,parentDataProperty:"hostnames",rootData}))){
+vErrors = vErrors === null ? validate10.errors : vErrors.concat(validate10.errors);
 errors = vErrors.length;
 }
 else {
@@ -5153,12 +5164,12 @@ vErrors.push(err1);
 }
 errors++;
 }
-validate368.errors = vErrors;
+validate369.errors = vErrors;
 return errors === 0;
 }
 
 
-function validate367(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+function validate368(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
 let errors = 0;
 if((!(Array.isArray(data))) && (data !== null)){
@@ -5179,8 +5190,8 @@ const len0 = data.length;
 for(let i0=0; i0<len0; i0++){
 let data0 = data[i0];
 const _errs2 = errors;
-if(!(validate368(data0, {instancePath:instancePath+"/" + i0,parentData:data,parentDataProperty:i0,rootData}))){
-vErrors = vErrors === null ? validate368.errors : vErrors.concat(validate368.errors);
+if(!(validate369(data0, {instancePath:instancePath+"/" + i0,parentData:data,parentDataProperty:i0,rootData}))){
+vErrors = vErrors === null ? validate369.errors : vErrors.concat(validate369.errors);
 errors = vErrors.length;
 }
 else {
@@ -5191,7 +5202,7 @@ valid1 = false;
 }
 }
 }
-validate367.errors = vErrors;
+validate368.errors = vErrors;
 return errors === 0;
 }
 
@@ -5230,7 +5241,7 @@ return errors === 0;
 }
 
 
-function validate379(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+function validate380(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
 let errors = 0;
 if((!(Array.isArray(data))) && (data !== null)){
@@ -5263,13 +5274,13 @@ valid1 = false;
 }
 }
 }
-validate379.errors = vErrors;
+validate380.errors = vErrors;
 return errors === 0;
 }
 
 const schema107 = {"items":{"$ref":"chE8IbiwOYvrhp6jxf4CeNPe4xowDfDQCt1Zhaa9Prk"},"type":"array","nullable":true};
 
-function validate382(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+function validate383(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
 let errors = 0;
 if((!(Array.isArray(data))) && (data !== null)){
@@ -5302,13 +5313,13 @@ valid1 = false;
 }
 }
 }
-validate382.errors = vErrors;
+validate383.errors = vErrors;
 return errors === 0;
 }
 
 const schema108 = {"properties":{"name":{"$ref":"sLlNkWhANXZ15lvmcujppy1mXxqn6f-GaeQpWRYm_dw"}},"required":["name"],"type":"object","nullable":true};
 
-function validate387(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+function validate388(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
 let errors = 0;
 if((!(data && typeof data == "object" && !Array.isArray(data))) && (data !== null)){
@@ -5346,14 +5357,14 @@ else {
 var valid0 = _errs2 === errors;
 }
 }
-validate387.errors = vErrors;
+validate388.errors = vErrors;
 return errors === 0;
 }
 
 const schema109 = {"items":{"$ref":"7SJ8IHNZpr4K9bVQcc8BXyxEB7fvxKGrCHMOn4uuNjk"},"type":"array","nullable":true};
 const schema110 = {"properties":{"conditionType":{"$ref":"sLlNkWhANXZ15lvmcujppy1mXxqn6f-GaeQpWRYm_dw"}},"required":["conditionType"],"type":"object"};
 
-function validate395(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+function validate396(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
 let errors = 0;
 const _errs0 = errors;
@@ -5390,12 +5401,12 @@ vErrors.push(err1);
 }
 errors++;
 }
-validate395.errors = vErrors;
+validate396.errors = vErrors;
 return errors === 0;
 }
 
 
-function validate394(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+function validate395(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
 let errors = 0;
 if((!(Array.isArray(data))) && (data !== null)){
@@ -5416,8 +5427,8 @@ const len0 = data.length;
 for(let i0=0; i0<len0; i0++){
 let data0 = data[i0];
 const _errs2 = errors;
-if(!(validate395(data0, {instancePath:instancePath+"/" + i0,parentData:data,parentDataProperty:i0,rootData}))){
-vErrors = vErrors === null ? validate395.errors : vErrors.concat(validate395.errors);
+if(!(validate396(data0, {instancePath:instancePath+"/" + i0,parentData:data,parentDataProperty:i0,rootData}))){
+vErrors = vErrors === null ? validate396.errors : vErrors.concat(validate396.errors);
 errors = vErrors.length;
 }
 else {
@@ -5428,14 +5439,14 @@ valid1 = false;
 }
 }
 }
-validate394.errors = vErrors;
+validate395.errors = vErrors;
 return errors === 0;
 }
 
 const schema111 = {"items":{"$ref":"8oMSVTgbQLfKCbtW7rBmcM71xueDXJZxnN_-a3YWUoE"},"type":"array","nullable":true};
 const schema112 = {"properties":{"name":{"$ref":"sLlNkWhANXZ15lvmcujppy1mXxqn6f-GaeQpWRYm_dw"},"resourceClaimName":{"$ref":"ldoCEsh0ARg8F2aeji6S38NFl7aLPSuz1hGlgX2tjuQ"},"resourceClaimTemplateName":{"$ref":"ldoCEsh0ARg8F2aeji6S38NFl7aLPSuz1hGlgX2tjuQ"}},"required":["name"],"type":"object"};
 
-function validate400(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+function validate401(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
 let errors = 0;
 const _errs0 = errors;
@@ -5494,12 +5505,12 @@ vErrors.push(err1);
 }
 errors++;
 }
-validate400.errors = vErrors;
+validate401.errors = vErrors;
 return errors === 0;
 }
 
 
-function validate399(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+function validate400(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
 let errors = 0;
 if((!(Array.isArray(data))) && (data !== null)){
@@ -5520,8 +5531,8 @@ const len0 = data.length;
 for(let i0=0; i0<len0; i0++){
 let data0 = data[i0];
 const _errs2 = errors;
-if(!(validate400(data0, {instancePath:instancePath+"/" + i0,parentData:data,parentDataProperty:i0,rootData}))){
-vErrors = vErrors === null ? validate400.errors : vErrors.concat(validate400.errors);
+if(!(validate401(data0, {instancePath:instancePath+"/" + i0,parentData:data,parentDataProperty:i0,rootData}))){
+vErrors = vErrors === null ? validate401.errors : vErrors.concat(validate401.errors);
 errors = vErrors.length;
 }
 else {
@@ -5532,14 +5543,14 @@ valid1 = false;
 }
 }
 }
-validate399.errors = vErrors;
+validate400.errors = vErrors;
 return errors === 0;
 }
 
 const schema113 = {"items":{"$ref":"Tv4xxEM4-rkWx429stngdyg1y-NXOJv9XnOY7jdo7LY"},"type":"array","nullable":true};
 const schema114 = {"properties":{"name":{"$ref":"sLlNkWhANXZ15lvmcujppy1mXxqn6f-GaeQpWRYm_dw"}},"required":["name"],"type":"object"};
 
-function validate411(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+function validate412(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
 let errors = 0;
 const _errs0 = errors;
@@ -5576,12 +5587,12 @@ vErrors.push(err1);
 }
 errors++;
 }
-validate411.errors = vErrors;
+validate412.errors = vErrors;
 return errors === 0;
 }
 
 
-function validate410(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+function validate411(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
 let errors = 0;
 if((!(Array.isArray(data))) && (data !== null)){
@@ -5602,8 +5613,8 @@ const len0 = data.length;
 for(let i0=0; i0<len0; i0++){
 let data0 = data[i0];
 const _errs2 = errors;
-if(!(validate411(data0, {instancePath:instancePath+"/" + i0,parentData:data,parentDataProperty:i0,rootData}))){
-vErrors = vErrors === null ? validate411.errors : vErrors.concat(validate411.errors);
+if(!(validate412(data0, {instancePath:instancePath+"/" + i0,parentData:data,parentDataProperty:i0,rootData}))){
+vErrors = vErrors === null ? validate412.errors : vErrors.concat(validate412.errors);
 errors = vErrors.length;
 }
 else {
@@ -5614,13 +5625,13 @@ valid1 = false;
 }
 }
 }
-validate410.errors = vErrors;
+validate411.errors = vErrors;
 return errors === 0;
 }
 
 const schema115 = {"properties":{"podGroupName":{"$ref":"ldoCEsh0ARg8F2aeji6S38NFl7aLPSuz1hGlgX2tjuQ"}},"type":"object","nullable":true};
 
-function validate415(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+function validate416(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
 let errors = 0;
 if((!(data && typeof data == "object" && !Array.isArray(data))) && (data !== null)){
@@ -5648,14 +5659,14 @@ else {
 var valid0 = _errs2 === errors;
 }
 }
-validate415.errors = vErrors;
+validate416.errors = vErrors;
 return errors === 0;
 }
 
 const schema116 = {"properties":{"appArmorProfile":{"$ref":"aMnE7Im_y76-Nz9q0hhh6yja57sQFej02mLc00OwhtE"},"fsGroup":{"$ref":"otlW-2SioSJxw2ZRa8bQrFi14CUkm_yS2tfdShK98Vk"},"fsGroupChangePolicy":{"$ref":"ldoCEsh0ARg8F2aeji6S38NFl7aLPSuz1hGlgX2tjuQ"},"runAsGroup":{"$ref":"otlW-2SioSJxw2ZRa8bQrFi14CUkm_yS2tfdShK98Vk"},"runAsNonRoot":{"$ref":"CTX4WtafS9K1Gv7k2X1H0J3M9LziUVVRBMOR0rDDzTk"},"runAsUser":{"$ref":"otlW-2SioSJxw2ZRa8bQrFi14CUkm_yS2tfdShK98Vk"},"seLinuxChangePolicy":{"$ref":"ldoCEsh0ARg8F2aeji6S38NFl7aLPSuz1hGlgX2tjuQ"},"seLinuxOptions":{"$ref":"RAvVUd1y4DBTzL23WWML0HifcsQtvUbbJLKVUvzXXO4"},"seccompProfile":{"$ref":"aMnE7Im_y76-Nz9q0hhh6yja57sQFej02mLc00OwhtE"},"supplementalGroups":{"$ref":"61CuU5PR0DTXgf6CSVY2YGQyMC0xseKwOl9CPTT5SMw"},"supplementalGroupsPolicy":{"$ref":"ldoCEsh0ARg8F2aeji6S38NFl7aLPSuz1hGlgX2tjuQ"},"sysctls":{"$ref":"MsS0666yf0HSUh6mG0cBqbw9ThqZk9-DowZaIzPios0"},"windowsOptions":{"$ref":"6z1i1A1Aq99luryppL8NHWpsKmtBfItfBpL24p91f_I"}},"type":"object","nullable":true};
 const schema117 = {"items":{"$ref":"0YQm7z5aN2fg7S8XlbxrquRU6pdIr97uCbtQYyjv3S4"},"type":"array","nullable":true};
 
-function validate428(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+function validate429(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
 let errors = 0;
 if((!(Array.isArray(data))) && (data !== null)){
@@ -5688,12 +5699,12 @@ valid1 = false;
 }
 }
 }
-validate428.errors = vErrors;
+validate429.errors = vErrors;
 return errors === 0;
 }
 
 
-function validate418(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+function validate419(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
 let errors = 0;
 if((!(data && typeof data == "object" && !Array.isArray(data))) && (data !== null)){
@@ -5756,8 +5767,8 @@ var valid0 = _errs5 === errors;
 if(data.runAsNonRoot !== undefined){
 let data4 = data.runAsNonRoot;
 const _errs6 = errors;
-if(!(validate41(data4, {instancePath:instancePath+"/runAsNonRoot",parentData:data,parentDataProperty:"runAsNonRoot",rootData}))){
-vErrors = vErrors === null ? validate41.errors : vErrors.concat(validate41.errors);
+if(!(validate2(data4, {instancePath:instancePath+"/runAsNonRoot",parentData:data,parentDataProperty:"runAsNonRoot",rootData}))){
+vErrors = vErrors === null ? validate2.errors : vErrors.concat(validate2.errors);
 errors = vErrors.length;
 }
 else {
@@ -5811,8 +5822,8 @@ var valid0 = _errs10 === errors;
 if(data.supplementalGroups !== undefined){
 let data9 = data.supplementalGroups;
 const _errs11 = errors;
-if(!(validate428(data9, {instancePath:instancePath+"/supplementalGroups",parentData:data,parentDataProperty:"supplementalGroups",rootData}))){
-vErrors = vErrors === null ? validate428.errors : vErrors.concat(validate428.errors);
+if(!(validate429(data9, {instancePath:instancePath+"/supplementalGroups",parentData:data,parentDataProperty:"supplementalGroups",rootData}))){
+vErrors = vErrors === null ? validate429.errors : vErrors.concat(validate429.errors);
 errors = vErrors.length;
 }
 else {
@@ -5853,14 +5864,14 @@ else {
 var valid0 = _errs14 === errors;
 }
 }
-validate418.errors = vErrors;
+validate419.errors = vErrors;
 return errors === 0;
 }
 
 const schema118 = {"items":{"$ref":"0ByfSGW7wvmVW7bPgwyiWBjeufbPURNaUIcLKKK35ZA"},"type":"array","nullable":true};
 const schema119 = {"properties":{"effect":{"$ref":"ldoCEsh0ARg8F2aeji6S38NFl7aLPSuz1hGlgX2tjuQ"},"key":{"$ref":"ldoCEsh0ARg8F2aeji6S38NFl7aLPSuz1hGlgX2tjuQ"},"operator":{"$ref":"ldoCEsh0ARg8F2aeji6S38NFl7aLPSuz1hGlgX2tjuQ"},"tolerationSeconds":{"$ref":"otlW-2SioSJxw2ZRa8bQrFi14CUkm_yS2tfdShK98Vk"},"value":{"$ref":"ldoCEsh0ARg8F2aeji6S38NFl7aLPSuz1hGlgX2tjuQ"}},"type":"object"};
 
-function validate442(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+function validate443(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
 let errors = 0;
 const _errs0 = errors;
@@ -5931,12 +5942,12 @@ vErrors.push(err0);
 }
 errors++;
 }
-validate442.errors = vErrors;
+validate443.errors = vErrors;
 return errors === 0;
 }
 
 
-function validate441(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+function validate442(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
 let errors = 0;
 if((!(Array.isArray(data))) && (data !== null)){
@@ -5957,8 +5968,8 @@ const len0 = data.length;
 for(let i0=0; i0<len0; i0++){
 let data0 = data[i0];
 const _errs2 = errors;
-if(!(validate442(data0, {instancePath:instancePath+"/" + i0,parentData:data,parentDataProperty:i0,rootData}))){
-vErrors = vErrors === null ? validate442.errors : vErrors.concat(validate442.errors);
+if(!(validate443(data0, {instancePath:instancePath+"/" + i0,parentData:data,parentDataProperty:i0,rootData}))){
+vErrors = vErrors === null ? validate443.errors : vErrors.concat(validate443.errors);
 errors = vErrors.length;
 }
 else {
@@ -5969,14 +5980,14 @@ valid1 = false;
 }
 }
 }
-validate441.errors = vErrors;
+validate442.errors = vErrors;
 return errors === 0;
 }
 
 const schema120 = {"items":{"$ref":"StMxQItS9v0SfOwJaZyLYLt5kRuP512kSHqU4NYTwI0"},"type":"array","nullable":true};
 const schema121 = {"properties":{"labelSelector":{"$ref":"VVCKgJOBvzPMFDWky4rRQ5NkqJqB9eXDLOrP2lnPweI"},"matchLabelKeys":{"$ref":"uqi-NWpwJAtCtKg340P2GU85hOwdccNKh8Eansj5IGE"},"maxSkew":{"$ref":"6VbGrbfqnPJ4dMmNewHbRn4M59VZOmu0uhV1edBN8qE"},"minDomains":{"$ref":"j4SBnKFzNWrJQU4F8rp8qSB0IqehV1dh50NKzJhlTjs"},"nodeAffinityPolicy":{"$ref":"ldoCEsh0ARg8F2aeji6S38NFl7aLPSuz1hGlgX2tjuQ"},"nodeTaintsPolicy":{"$ref":"ldoCEsh0ARg8F2aeji6S38NFl7aLPSuz1hGlgX2tjuQ"},"topologyKey":{"$ref":"sLlNkWhANXZ15lvmcujppy1mXxqn6f-GaeQpWRYm_dw"},"whenUnsatisfiable":{"$ref":"sLlNkWhANXZ15lvmcujppy1mXxqn6f-GaeQpWRYm_dw"}},"required":["maxSkew","topologyKey","whenUnsatisfiable"],"type":"object"};
 
-function validate451(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+function validate452(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
 let errors = 0;
 const _errs0 = errors;
@@ -6014,8 +6025,8 @@ errors++;
 if(data.labelSelector !== undefined){
 let data0 = data.labelSelector;
 const _errs1 = errors;
-if(!(validate20(data0, {instancePath:instancePath+"/labelSelector",parentData:data,parentDataProperty:"labelSelector",rootData}))){
-vErrors = vErrors === null ? validate20.errors : vErrors.concat(validate20.errors);
+if(!(validate21(data0, {instancePath:instancePath+"/labelSelector",parentData:data,parentDataProperty:"labelSelector",rootData}))){
+vErrors = vErrors === null ? validate21.errors : vErrors.concat(validate21.errors);
 errors = vErrors.length;
 }
 else {
@@ -6025,8 +6036,8 @@ var valid0 = _errs1 === errors;
 if(data.matchLabelKeys !== undefined){
 let data1 = data.matchLabelKeys;
 const _errs2 = errors;
-if(!(validate9(data1, {instancePath:instancePath+"/matchLabelKeys",parentData:data,parentDataProperty:"matchLabelKeys",rootData}))){
-vErrors = vErrors === null ? validate9.errors : vErrors.concat(validate9.errors);
+if(!(validate10(data1, {instancePath:instancePath+"/matchLabelKeys",parentData:data,parentDataProperty:"matchLabelKeys",rootData}))){
+vErrors = vErrors === null ? validate10.errors : vErrors.concat(validate10.errors);
 errors = vErrors.length;
 }
 else {
@@ -6036,8 +6047,8 @@ var valid0 = _errs2 === errors;
 if(data.maxSkew !== undefined){
 let data2 = data.maxSkew;
 const _errs3 = errors;
-if(!(validate23(data2, {instancePath:instancePath+"/maxSkew",parentData:data,parentDataProperty:"maxSkew",rootData}))){
-vErrors = vErrors === null ? validate23.errors : vErrors.concat(validate23.errors);
+if(!(validate24(data2, {instancePath:instancePath+"/maxSkew",parentData:data,parentDataProperty:"maxSkew",rootData}))){
+vErrors = vErrors === null ? validate24.errors : vErrors.concat(validate24.errors);
 errors = vErrors.length;
 }
 else {
@@ -6110,12 +6121,12 @@ vErrors.push(err3);
 }
 errors++;
 }
-validate451.errors = vErrors;
+validate452.errors = vErrors;
 return errors === 0;
 }
 
 
-function validate450(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+function validate451(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
 let errors = 0;
 if((!(Array.isArray(data))) && (data !== null)){
@@ -6136,8 +6147,8 @@ const len0 = data.length;
 for(let i0=0; i0<len0; i0++){
 let data0 = data[i0];
 const _errs2 = errors;
-if(!(validate451(data0, {instancePath:instancePath+"/" + i0,parentData:data,parentDataProperty:i0,rootData}))){
-vErrors = vErrors === null ? validate451.errors : vErrors.concat(validate451.errors);
+if(!(validate452(data0, {instancePath:instancePath+"/" + i0,parentData:data,parentDataProperty:i0,rootData}))){
+vErrors = vErrors === null ? validate452.errors : vErrors.concat(validate452.errors);
 errors = vErrors.length;
 }
 else {
@@ -6148,7 +6159,7 @@ valid1 = false;
 }
 }
 }
-validate450.errors = vErrors;
+validate451.errors = vErrors;
 return errors === 0;
 }
 
@@ -6156,7 +6167,7 @@ const schema122 = {"items":{"$ref":"Hj6zWhh70IB7X0q3eRZDjlHhz7sqbnQspRAima0qQSE"
 const schema123 = {"properties":{"awsElasticBlockStore":{"$ref":"vPA0bm54uQADvg8Ep2156ezWb9pvkjUSgi79O6AEzUs"},"azureDisk":{"$ref":"wFqLNNJgW_o5ObauitiCOyT0NGvkjQH59OgBfR3nx78"},"azureFile":{"$ref":"ra-qRI4a9EDFDlPkSamRu2Q2QFXgcgrTkMEaIAfIFlQ"},"cephfs":{"$ref":"hF2IjS1nzlRhEgH0aYEOkSyicJRz2WA5TydzEGoRLKg"},"cinder":{"$ref":"fNCUZPQc9iEaWmz8ai20p-XbVRg8tBJIhSF3TXq-YMs"},"configMap":{"$ref":"aviBc3qnN2f55E2vimjJLIzsV9DrIo0yQQb5hwqxUOc"},"csi":{"$ref":"oQ5udLLiWaZv5Xde630bmkROSPyJ-qElIPSHcGuPOY4"},"downwardAPI":{"$ref":"GMd9Y-VcblyvoFTlA1OqTa5xw10fjnz_tJ5HDF6AEOU"},"emptyDir":{"$ref":"dD_f54ZfU9CI7NKO29jcEDlRdCPgexeuapdopjIU01E"},"ephemeral":{"$ref":"eNrnIy2CikSgPB0aVTsii2hzgtDrTs6oGNyfcyCWEMs"},"fc":{"$ref":"4YMYCoeKb62-XCvxNQKZZg8ljPa2bImErUwuV6lfzMc"},"flexVolume":{"$ref":"87oLwN-NCLaqdDpK_Xpdr0U9qiabmcRmprmqZV3W2OM"},"flocker":{"$ref":"aKg6ZgUktk8XvWlSQnzXgMGusTLk-Y4v0E66MJqnxKM"},"gcePersistentDisk":{"$ref":"Nc8CY9PKVBuFiqw-t7h5cOVQLWFbxUZcHQ_nHz9xtm0"},"gitRepo":{"$ref":"rS29wFkNVu1ceZUQHqPBmyB8-Ms8_nnLBrD35UT73dI"},"glusterfs":{"$ref":"TpFF3OzeCU-chmDfffTsAmyFGMVfPLAPDphy4r3XKjg"},"hostPath":{"$ref":"EXTQAV0X282Zg3GxvBwRnhWqJJDwIVAFTHzBb8v3nlg"},"image":{"$ref":"5c0MzG5RcFc2MWsW2mHabMHz4ImtJyTyHppNKfKeOdQ"},"iscsi":{"$ref":"8HbKIUlglpSfrcdpgZeJFdBlpWGsIvExGUK1n48WUr0"},"name":{"$ref":"sLlNkWhANXZ15lvmcujppy1mXxqn6f-GaeQpWRYm_dw"},"nfs":{"$ref":"nwSeAMDcw-4i412pD0rNHf229BX9fN7BBcjt-3DdCKI"},"persistentVolumeClaim":{"$ref":"Nt1_4vgMqd6c7fTj2yEYei6As7a9E2OyyNV5h8I-T-w"},"photonPersistentDisk":{"$ref":"Ed4AAIR_qYXTjtKQpuCQkveQduEVxyKSFYufAbsWSJQ"},"portworxVolume":{"$ref":"_qkJOFjT4iVO-EThDJ3tJ8R8OjXW5ytgOhPUrts7VCw"},"projected":{"$ref":"7xCtd90hb1cpRlMmHzI_H6sbzbpkjpI3GAlSHRbg64E"},"quobyte":{"$ref":"ZXGgqPX-VDcSDf8w43imCiVzHKzcgfpUOl-yALusknA"},"rbd":{"$ref":"j-DO-_nrU_kl5foZpuWFww_njUnDUr4E1u8oCeqXJE4"},"scaleIO":{"$ref":"Pz5rdKKPt5xwuDA5BqivksbvxoLDreFxoGght9-tDko"},"secret":{"$ref":"p2IOGKuqym0QlcKZpielo4SFxm41yjJyrMQ9Pmr5A2A"},"storageos":{"$ref":"JLIMsOAl8xZaat8jT6oTbEVgrK7d76K8GSAAjC8omEk"},"vsphereVolume":{"$ref":"Yl_IkrhrBmYK2ezUSAmmTuS5zATmqlK0Gh1MlcOGsT8"}},"required":["name"],"type":"object"};
 const schema124 = {"properties":{"fsType":{"$ref":"ldoCEsh0ARg8F2aeji6S38NFl7aLPSuz1hGlgX2tjuQ"},"partition":{"$ref":"j4SBnKFzNWrJQU4F8rp8qSB0IqehV1dh50NKzJhlTjs"},"readOnly":{"$ref":"CTX4WtafS9K1Gv7k2X1H0J3M9LziUVVRBMOR0rDDzTk"},"volumeID":{"$ref":"sLlNkWhANXZ15lvmcujppy1mXxqn6f-GaeQpWRYm_dw"}},"required":["volumeID"],"type":"object","nullable":true};
 
-function validate464(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+function validate465(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
 let errors = 0;
 if((!(data && typeof data == "object" && !Array.isArray(data))) && (data !== null)){
@@ -6207,8 +6218,8 @@ var valid0 = _errs3 === errors;
 if(data.readOnly !== undefined){
 let data2 = data.readOnly;
 const _errs4 = errors;
-if(!(validate41(data2, {instancePath:instancePath+"/readOnly",parentData:data,parentDataProperty:"readOnly",rootData}))){
-vErrors = vErrors === null ? validate41.errors : vErrors.concat(validate41.errors);
+if(!(validate2(data2, {instancePath:instancePath+"/readOnly",parentData:data,parentDataProperty:"readOnly",rootData}))){
+vErrors = vErrors === null ? validate2.errors : vErrors.concat(validate2.errors);
 errors = vErrors.length;
 }
 else {
@@ -6227,14 +6238,14 @@ else {
 var valid0 = _errs5 === errors;
 }
 }
-validate464.errors = vErrors;
+validate465.errors = vErrors;
 return errors === 0;
 }
 
 const schema125 = {"properties":{"cachingMode":{"$ref":"ldoCEsh0ARg8F2aeji6S38NFl7aLPSuz1hGlgX2tjuQ"},"diskName":{"$ref":"sLlNkWhANXZ15lvmcujppy1mXxqn6f-GaeQpWRYm_dw"},"diskURI":{"$ref":"sLlNkWhANXZ15lvmcujppy1mXxqn6f-GaeQpWRYm_dw"},"fsType":{"$ref":"b7rsf0DzZXS6T136mheaM3HHbss23WkJGWNWmAb7obA"},"kind":{"$ref":"ldoCEsh0ARg8F2aeji6S38NFl7aLPSuz1hGlgX2tjuQ"},"readOnly":{"$ref":"PxmoJm38YOn1dCbyB5PLDDQXV2B2rqFhpzNXj0_ibe4"}},"required":["diskName","diskURI"],"type":"object","nullable":true};
 const schema126 = {"default":"ext4","type":"string","nullable":true};
 
-function validate474(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+function validate475(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
 let errors = 0;
 if((typeof data !== "string") && (data !== null)){
@@ -6249,12 +6260,12 @@ errors++;
 }
 const _errs0 = errors;
 const _errs1 = errors;
-validate474.errors = vErrors;
+validate475.errors = vErrors;
 return errors === 0;
 }
 
 
-function validate470(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+function validate471(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
 let errors = 0;
 if((!(data && typeof data == "object" && !Array.isArray(data))) && (data !== null)){
@@ -6326,8 +6337,8 @@ var valid0 = _errs4 === errors;
 if(data.fsType !== undefined){
 let data3 = data.fsType;
 const _errs5 = errors;
-if(!(validate474(data3, {instancePath:instancePath+"/fsType",parentData:data,parentDataProperty:"fsType",rootData}))){
-vErrors = vErrors === null ? validate474.errors : vErrors.concat(validate474.errors);
+if(!(validate475(data3, {instancePath:instancePath+"/fsType",parentData:data,parentDataProperty:"fsType",rootData}))){
+vErrors = vErrors === null ? validate475.errors : vErrors.concat(validate475.errors);
 errors = vErrors.length;
 }
 else {
@@ -6357,13 +6368,13 @@ else {
 var valid0 = _errs7 === errors;
 }
 }
-validate470.errors = vErrors;
+validate471.errors = vErrors;
 return errors === 0;
 }
 
 const schema127 = {"properties":{"readOnly":{"$ref":"CTX4WtafS9K1Gv7k2X1H0J3M9LziUVVRBMOR0rDDzTk"},"secretName":{"$ref":"sLlNkWhANXZ15lvmcujppy1mXxqn6f-GaeQpWRYm_dw"},"shareName":{"$ref":"sLlNkWhANXZ15lvmcujppy1mXxqn6f-GaeQpWRYm_dw"}},"required":["secretName","shareName"],"type":"object","nullable":true};
 
-function validate479(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+function validate480(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
 let errors = 0;
 if((!(data && typeof data == "object" && !Array.isArray(data))) && (data !== null)){
@@ -6402,8 +6413,8 @@ errors++;
 if(data.readOnly !== undefined){
 let data0 = data.readOnly;
 const _errs2 = errors;
-if(!(validate41(data0, {instancePath:instancePath+"/readOnly",parentData:data,parentDataProperty:"readOnly",rootData}))){
-vErrors = vErrors === null ? validate41.errors : vErrors.concat(validate41.errors);
+if(!(validate2(data0, {instancePath:instancePath+"/readOnly",parentData:data,parentDataProperty:"readOnly",rootData}))){
+vErrors = vErrors === null ? validate2.errors : vErrors.concat(validate2.errors);
 errors = vErrors.length;
 }
 else {
@@ -6433,7 +6444,7 @@ else {
 var valid0 = _errs4 === errors;
 }
 }
-validate479.errors = vErrors;
+validate480.errors = vErrors;
 return errors === 0;
 }
 
@@ -6473,7 +6484,7 @@ return errors === 0;
 }
 
 
-function validate484(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+function validate485(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
 let errors = 0;
 if((!(data && typeof data == "object" && !Array.isArray(data))) && (data !== null)){
@@ -6524,8 +6535,8 @@ var valid0 = _errs3 === errors;
 if(data.readOnly !== undefined){
 let data2 = data.readOnly;
 const _errs4 = errors;
-if(!(validate41(data2, {instancePath:instancePath+"/readOnly",parentData:data,parentDataProperty:"readOnly",rootData}))){
-vErrors = vErrors === null ? validate41.errors : vErrors.concat(validate41.errors);
+if(!(validate2(data2, {instancePath:instancePath+"/readOnly",parentData:data,parentDataProperty:"readOnly",rootData}))){
+vErrors = vErrors === null ? validate2.errors : vErrors.concat(validate2.errors);
 errors = vErrors.length;
 }
 else {
@@ -6566,13 +6577,13 @@ else {
 var valid0 = _errs7 === errors;
 }
 }
-validate484.errors = vErrors;
+validate485.errors = vErrors;
 return errors === 0;
 }
 
 const schema129 = {"properties":{"fsType":{"$ref":"ldoCEsh0ARg8F2aeji6S38NFl7aLPSuz1hGlgX2tjuQ"},"readOnly":{"$ref":"CTX4WtafS9K1Gv7k2X1H0J3M9LziUVVRBMOR0rDDzTk"},"secretRef":{"$ref":"HGGQOMQgT1vNp8FYFYYzJJVb9JUwnCv6j6jyprlvEho"},"volumeID":{"$ref":"sLlNkWhANXZ15lvmcujppy1mXxqn6f-GaeQpWRYm_dw"}},"required":["volumeID"],"type":"object","nullable":true};
 
-function validate492(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+function validate493(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
 let errors = 0;
 if((!(data && typeof data == "object" && !Array.isArray(data))) && (data !== null)){
@@ -6612,8 +6623,8 @@ var valid0 = _errs2 === errors;
 if(data.readOnly !== undefined){
 let data1 = data.readOnly;
 const _errs3 = errors;
-if(!(validate41(data1, {instancePath:instancePath+"/readOnly",parentData:data,parentDataProperty:"readOnly",rootData}))){
-vErrors = vErrors === null ? validate41.errors : vErrors.concat(validate41.errors);
+if(!(validate2(data1, {instancePath:instancePath+"/readOnly",parentData:data,parentDataProperty:"readOnly",rootData}))){
+vErrors = vErrors === null ? validate2.errors : vErrors.concat(validate2.errors);
 errors = vErrors.length;
 }
 else {
@@ -6643,7 +6654,7 @@ else {
 var valid0 = _errs5 === errors;
 }
 }
-validate492.errors = vErrors;
+validate493.errors = vErrors;
 return errors === 0;
 }
 
@@ -6763,7 +6774,7 @@ return errors === 0;
 }
 
 
-function validate498(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+function validate499(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
 let errors = 0;
 if((!(data && typeof data == "object" && !Array.isArray(data))) && (data !== null)){
@@ -6815,8 +6826,8 @@ var valid0 = _errs4 === errors;
 if(data.optional !== undefined){
 let data3 = data.optional;
 const _errs5 = errors;
-if(!(validate41(data3, {instancePath:instancePath+"/optional",parentData:data,parentDataProperty:"optional",rootData}))){
-vErrors = vErrors === null ? validate41.errors : vErrors.concat(validate41.errors);
+if(!(validate2(data3, {instancePath:instancePath+"/optional",parentData:data,parentDataProperty:"optional",rootData}))){
+vErrors = vErrors === null ? validate2.errors : vErrors.concat(validate2.errors);
 errors = vErrors.length;
 }
 else {
@@ -6824,13 +6835,13 @@ else {
 var valid0 = _errs5 === errors;
 }
 }
-validate498.errors = vErrors;
+validate499.errors = vErrors;
 return errors === 0;
 }
 
 const schema131 = {"properties":{"driver":{"$ref":"sLlNkWhANXZ15lvmcujppy1mXxqn6f-GaeQpWRYm_dw"},"fsType":{"$ref":"ldoCEsh0ARg8F2aeji6S38NFl7aLPSuz1hGlgX2tjuQ"},"nodePublishSecretRef":{"$ref":"HGGQOMQgT1vNp8FYFYYzJJVb9JUwnCv6j6jyprlvEho"},"readOnly":{"$ref":"CTX4WtafS9K1Gv7k2X1H0J3M9LziUVVRBMOR0rDDzTk"},"volumeAttributes":{"$ref":"HJJzIHbiJa8GGL2u2CTOVy-Hry2MGWIvSIk30RN75wI"}},"required":["driver"],"type":"object","nullable":true};
 
-function validate504(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+function validate505(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
 let errors = 0;
 if((!(data && typeof data == "object" && !Array.isArray(data))) && (data !== null)){
@@ -6892,8 +6903,8 @@ var valid0 = _errs4 === errors;
 if(data.readOnly !== undefined){
 let data3 = data.readOnly;
 const _errs5 = errors;
-if(!(validate41(data3, {instancePath:instancePath+"/readOnly",parentData:data,parentDataProperty:"readOnly",rootData}))){
-vErrors = vErrors === null ? validate41.errors : vErrors.concat(validate41.errors);
+if(!(validate2(data3, {instancePath:instancePath+"/readOnly",parentData:data,parentDataProperty:"readOnly",rootData}))){
+vErrors = vErrors === null ? validate2.errors : vErrors.concat(validate2.errors);
 errors = vErrors.length;
 }
 else {
@@ -6903,8 +6914,8 @@ var valid0 = _errs5 === errors;
 if(data.volumeAttributes !== undefined){
 let data4 = data.volumeAttributes;
 const _errs6 = errors;
-if(!(validate7(data4, {instancePath:instancePath+"/volumeAttributes",parentData:data,parentDataProperty:"volumeAttributes",rootData}))){
-vErrors = vErrors === null ? validate7.errors : vErrors.concat(validate7.errors);
+if(!(validate8(data4, {instancePath:instancePath+"/volumeAttributes",parentData:data,parentDataProperty:"volumeAttributes",rootData}))){
+vErrors = vErrors === null ? validate8.errors : vErrors.concat(validate8.errors);
 errors = vErrors.length;
 }
 else {
@@ -6912,7 +6923,7 @@ else {
 var valid0 = _errs6 === errors;
 }
 }
-validate504.errors = vErrors;
+validate505.errors = vErrors;
 return errors === 0;
 }
 
@@ -7033,7 +7044,7 @@ return errors === 0;
 }
 
 
-function validate511(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+function validate512(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
 let errors = 0;
 if((!(data && typeof data == "object" && !Array.isArray(data))) && (data !== null)){
@@ -7072,13 +7083,13 @@ else {
 var valid0 = _errs3 === errors;
 }
 }
-validate511.errors = vErrors;
+validate512.errors = vErrors;
 return errors === 0;
 }
 
 const schema133 = {"properties":{"medium":{"$ref":"ldoCEsh0ARg8F2aeji6S38NFl7aLPSuz1hGlgX2tjuQ"},"sizeLimit":{"$ref":"3dmDSoHI3Hv64ppBBbqAEh3HzVwqzFWb_nrM2BhHTgs"}},"type":"object","nullable":true};
 
-function validate515(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+function validate516(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
 let errors = 0;
 if((!(data && typeof data == "object" && !Array.isArray(data))) && (data !== null)){
@@ -7117,7 +7128,7 @@ else {
 var valid0 = _errs3 === errors;
 }
 }
-validate515.errors = vErrors;
+validate516.errors = vErrors;
 return errors === 0;
 }
 
@@ -7126,7 +7137,7 @@ const schema135 = {"properties":{"metadata":{"$ref":"9xOEryzozGanNCCz7goq0K4hzMv
 const schema136 = {"properties":{"accessModes":{"$ref":"uqi-NWpwJAtCtKg340P2GU85hOwdccNKh8Eansj5IGE"},"dataSource":{"$ref":"wjNzvnq-dR_-OiqRXDrOerEJO_HAowFBQnjb_nOgEyU"},"dataSourceRef":{"$ref":"oqf7uvYqNIR47CPHDvw3sYWQXSKnigFe8zHjsXWE35M"},"resources":{"$ref":"yTxZaQI_fncHf2yr5nLz-uUGOQ9FD-geEFW-5-qjX30"},"selector":{"$ref":"VVCKgJOBvzPMFDWky4rRQ5NkqJqB9eXDLOrP2lnPweI"},"storageClassName":{"$ref":"ldoCEsh0ARg8F2aeji6S38NFl7aLPSuz1hGlgX2tjuQ"},"volumeAttributesClassName":{"$ref":"ldoCEsh0ARg8F2aeji6S38NFl7aLPSuz1hGlgX2tjuQ"},"volumeMode":{"$ref":"ldoCEsh0ARg8F2aeji6S38NFl7aLPSuz1hGlgX2tjuQ"},"volumeName":{"$ref":"ldoCEsh0ARg8F2aeji6S38NFl7aLPSuz1hGlgX2tjuQ"}},"type":"object"};
 const schema137 = {"properties":{"apiGroup":{"$ref":"ldoCEsh0ARg8F2aeji6S38NFl7aLPSuz1hGlgX2tjuQ"},"kind":{"$ref":"sLlNkWhANXZ15lvmcujppy1mXxqn6f-GaeQpWRYm_dw"},"name":{"$ref":"sLlNkWhANXZ15lvmcujppy1mXxqn6f-GaeQpWRYm_dw"}},"required":["kind","name"],"type":"object","nullable":true};
 
-function validate524(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+function validate525(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
 let errors = 0;
 if((!(data && typeof data == "object" && !Array.isArray(data))) && (data !== null)){
@@ -7196,13 +7207,13 @@ else {
 var valid0 = _errs4 === errors;
 }
 }
-validate524.errors = vErrors;
+validate525.errors = vErrors;
 return errors === 0;
 }
 
 const schema138 = {"properties":{"apiGroup":{"$ref":"ldoCEsh0ARg8F2aeji6S38NFl7aLPSuz1hGlgX2tjuQ"},"kind":{"$ref":"sLlNkWhANXZ15lvmcujppy1mXxqn6f-GaeQpWRYm_dw"},"name":{"$ref":"sLlNkWhANXZ15lvmcujppy1mXxqn6f-GaeQpWRYm_dw"},"namespace":{"$ref":"ldoCEsh0ARg8F2aeji6S38NFl7aLPSuz1hGlgX2tjuQ"}},"required":["kind","name"],"type":"object","nullable":true};
 
-function validate529(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+function validate530(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
 let errors = 0;
 if((!(data && typeof data == "object" && !Array.isArray(data))) && (data !== null)){
@@ -7283,13 +7294,13 @@ else {
 var valid0 = _errs5 === errors;
 }
 }
-validate529.errors = vErrors;
+validate530.errors = vErrors;
 return errors === 0;
 }
 
 const schema139 = {"properties":{"limits":{"$ref":"RCKC7guMhfSVV-Y94GrPgvOuvS1Phl11ypc2ADk-g5Q"},"requests":{"$ref":"RCKC7guMhfSVV-Y94GrPgvOuvS1Phl11ypc2ADk-g5Q"}},"type":"object","nullable":true};
 
-function validate535(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+function validate536(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
 let errors = 0;
 if((!(data && typeof data == "object" && !Array.isArray(data))) && (data !== null)){
@@ -7328,12 +7339,12 @@ else {
 var valid0 = _errs3 === errors;
 }
 }
-validate535.errors = vErrors;
+validate536.errors = vErrors;
 return errors === 0;
 }
 
 
-function validate522(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+function validate523(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
 let errors = 0;
 const _errs0 = errors;
@@ -7341,8 +7352,8 @@ if(data && typeof data == "object" && !Array.isArray(data)){
 if(data.accessModes !== undefined){
 let data0 = data.accessModes;
 const _errs1 = errors;
-if(!(validate9(data0, {instancePath:instancePath+"/accessModes",parentData:data,parentDataProperty:"accessModes",rootData}))){
-vErrors = vErrors === null ? validate9.errors : vErrors.concat(validate9.errors);
+if(!(validate10(data0, {instancePath:instancePath+"/accessModes",parentData:data,parentDataProperty:"accessModes",rootData}))){
+vErrors = vErrors === null ? validate10.errors : vErrors.concat(validate10.errors);
 errors = vErrors.length;
 }
 else {
@@ -7352,8 +7363,8 @@ var valid0 = _errs1 === errors;
 if(data.dataSource !== undefined){
 let data1 = data.dataSource;
 const _errs2 = errors;
-if(!(validate524(data1, {instancePath:instancePath+"/dataSource",parentData:data,parentDataProperty:"dataSource",rootData}))){
-vErrors = vErrors === null ? validate524.errors : vErrors.concat(validate524.errors);
+if(!(validate525(data1, {instancePath:instancePath+"/dataSource",parentData:data,parentDataProperty:"dataSource",rootData}))){
+vErrors = vErrors === null ? validate525.errors : vErrors.concat(validate525.errors);
 errors = vErrors.length;
 }
 else {
@@ -7363,8 +7374,8 @@ var valid0 = _errs2 === errors;
 if(data.dataSourceRef !== undefined){
 let data2 = data.dataSourceRef;
 const _errs3 = errors;
-if(!(validate529(data2, {instancePath:instancePath+"/dataSourceRef",parentData:data,parentDataProperty:"dataSourceRef",rootData}))){
-vErrors = vErrors === null ? validate529.errors : vErrors.concat(validate529.errors);
+if(!(validate530(data2, {instancePath:instancePath+"/dataSourceRef",parentData:data,parentDataProperty:"dataSourceRef",rootData}))){
+vErrors = vErrors === null ? validate530.errors : vErrors.concat(validate530.errors);
 errors = vErrors.length;
 }
 else {
@@ -7374,8 +7385,8 @@ var valid0 = _errs3 === errors;
 if(data.resources !== undefined){
 let data3 = data.resources;
 const _errs4 = errors;
-if(!(validate535(data3, {instancePath:instancePath+"/resources",parentData:data,parentDataProperty:"resources",rootData}))){
-vErrors = vErrors === null ? validate535.errors : vErrors.concat(validate535.errors);
+if(!(validate536(data3, {instancePath:instancePath+"/resources",parentData:data,parentDataProperty:"resources",rootData}))){
+vErrors = vErrors === null ? validate536.errors : vErrors.concat(validate536.errors);
 errors = vErrors.length;
 }
 else {
@@ -7385,8 +7396,8 @@ var valid0 = _errs4 === errors;
 if(data.selector !== undefined){
 let data4 = data.selector;
 const _errs5 = errors;
-if(!(validate20(data4, {instancePath:instancePath+"/selector",parentData:data,parentDataProperty:"selector",rootData}))){
-vErrors = vErrors === null ? validate20.errors : vErrors.concat(validate20.errors);
+if(!(validate21(data4, {instancePath:instancePath+"/selector",parentData:data,parentDataProperty:"selector",rootData}))){
+vErrors = vErrors === null ? validate21.errors : vErrors.concat(validate21.errors);
 errors = vErrors.length;
 }
 else {
@@ -7448,12 +7459,12 @@ vErrors.push(err0);
 }
 errors++;
 }
-validate522.errors = vErrors;
+validate523.errors = vErrors;
 return errors === 0;
 }
 
 
-function validate520(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+function validate521(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
 let errors = 0;
 if((!(data && typeof data == "object" && !Array.isArray(data))) && (data !== null)){
@@ -7493,8 +7504,8 @@ var valid0 = _errs2 === errors;
 if(data.spec !== undefined){
 let data1 = data.spec;
 const _errs3 = errors;
-if(!(validate522(data1, {instancePath:instancePath+"/spec",parentData:data,parentDataProperty:"spec",rootData}))){
-vErrors = vErrors === null ? validate522.errors : vErrors.concat(validate522.errors);
+if(!(validate523(data1, {instancePath:instancePath+"/spec",parentData:data,parentDataProperty:"spec",rootData}))){
+vErrors = vErrors === null ? validate523.errors : vErrors.concat(validate523.errors);
 errors = vErrors.length;
 }
 else {
@@ -7502,12 +7513,12 @@ else {
 var valid0 = _errs3 === errors;
 }
 }
-validate520.errors = vErrors;
+validate521.errors = vErrors;
 return errors === 0;
 }
 
 
-function validate519(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+function validate520(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
 let errors = 0;
 if((!(data && typeof data == "object" && !Array.isArray(data))) && (data !== null)){
@@ -7526,8 +7537,8 @@ if(data && typeof data == "object" && !Array.isArray(data)){
 if(data.volumeClaimTemplate !== undefined){
 let data0 = data.volumeClaimTemplate;
 const _errs2 = errors;
-if(!(validate520(data0, {instancePath:instancePath+"/volumeClaimTemplate",parentData:data,parentDataProperty:"volumeClaimTemplate",rootData}))){
-vErrors = vErrors === null ? validate520.errors : vErrors.concat(validate520.errors);
+if(!(validate521(data0, {instancePath:instancePath+"/volumeClaimTemplate",parentData:data,parentDataProperty:"volumeClaimTemplate",rootData}))){
+vErrors = vErrors === null ? validate521.errors : vErrors.concat(validate521.errors);
 errors = vErrors.length;
 }
 else {
@@ -7535,13 +7546,13 @@ else {
 var valid0 = _errs2 === errors;
 }
 }
-validate519.errors = vErrors;
+validate520.errors = vErrors;
 return errors === 0;
 }
 
 const schema140 = {"properties":{"fsType":{"$ref":"ldoCEsh0ARg8F2aeji6S38NFl7aLPSuz1hGlgX2tjuQ"},"lun":{"$ref":"j4SBnKFzNWrJQU4F8rp8qSB0IqehV1dh50NKzJhlTjs"},"readOnly":{"$ref":"CTX4WtafS9K1Gv7k2X1H0J3M9LziUVVRBMOR0rDDzTk"},"targetWWNs":{"$ref":"uqi-NWpwJAtCtKg340P2GU85hOwdccNKh8Eansj5IGE"},"wwids":{"$ref":"uqi-NWpwJAtCtKg340P2GU85hOwdccNKh8Eansj5IGE"}},"type":"object","nullable":true};
 
-function validate547(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+function validate548(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
 let errors = 0;
 if((!(data && typeof data == "object" && !Array.isArray(data))) && (data !== null)){
@@ -7582,8 +7593,8 @@ var valid0 = _errs3 === errors;
 if(data.readOnly !== undefined){
 let data2 = data.readOnly;
 const _errs4 = errors;
-if(!(validate41(data2, {instancePath:instancePath+"/readOnly",parentData:data,parentDataProperty:"readOnly",rootData}))){
-vErrors = vErrors === null ? validate41.errors : vErrors.concat(validate41.errors);
+if(!(validate2(data2, {instancePath:instancePath+"/readOnly",parentData:data,parentDataProperty:"readOnly",rootData}))){
+vErrors = vErrors === null ? validate2.errors : vErrors.concat(validate2.errors);
 errors = vErrors.length;
 }
 else {
@@ -7593,8 +7604,8 @@ var valid0 = _errs4 === errors;
 if(data.targetWWNs !== undefined){
 let data3 = data.targetWWNs;
 const _errs5 = errors;
-if(!(validate9(data3, {instancePath:instancePath+"/targetWWNs",parentData:data,parentDataProperty:"targetWWNs",rootData}))){
-vErrors = vErrors === null ? validate9.errors : vErrors.concat(validate9.errors);
+if(!(validate10(data3, {instancePath:instancePath+"/targetWWNs",parentData:data,parentDataProperty:"targetWWNs",rootData}))){
+vErrors = vErrors === null ? validate10.errors : vErrors.concat(validate10.errors);
 errors = vErrors.length;
 }
 else {
@@ -7604,8 +7615,8 @@ var valid0 = _errs5 === errors;
 if(data.wwids !== undefined){
 let data4 = data.wwids;
 const _errs6 = errors;
-if(!(validate9(data4, {instancePath:instancePath+"/wwids",parentData:data,parentDataProperty:"wwids",rootData}))){
-vErrors = vErrors === null ? validate9.errors : vErrors.concat(validate9.errors);
+if(!(validate10(data4, {instancePath:instancePath+"/wwids",parentData:data,parentDataProperty:"wwids",rootData}))){
+vErrors = vErrors === null ? validate10.errors : vErrors.concat(validate10.errors);
 errors = vErrors.length;
 }
 else {
@@ -7613,13 +7624,13 @@ else {
 var valid0 = _errs6 === errors;
 }
 }
-validate547.errors = vErrors;
+validate548.errors = vErrors;
 return errors === 0;
 }
 
 const schema141 = {"properties":{"driver":{"$ref":"sLlNkWhANXZ15lvmcujppy1mXxqn6f-GaeQpWRYm_dw"},"fsType":{"$ref":"ldoCEsh0ARg8F2aeji6S38NFl7aLPSuz1hGlgX2tjuQ"},"options":{"$ref":"HJJzIHbiJa8GGL2u2CTOVy-Hry2MGWIvSIk30RN75wI"},"readOnly":{"$ref":"CTX4WtafS9K1Gv7k2X1H0J3M9LziUVVRBMOR0rDDzTk"},"secretRef":{"$ref":"HGGQOMQgT1vNp8FYFYYzJJVb9JUwnCv6j6jyprlvEho"}},"required":["driver"],"type":"object","nullable":true};
 
-function validate554(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+function validate555(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
 let errors = 0;
 if((!(data && typeof data == "object" && !Array.isArray(data))) && (data !== null)){
@@ -7670,8 +7681,8 @@ var valid0 = _errs3 === errors;
 if(data.options !== undefined){
 let data2 = data.options;
 const _errs4 = errors;
-if(!(validate7(data2, {instancePath:instancePath+"/options",parentData:data,parentDataProperty:"options",rootData}))){
-vErrors = vErrors === null ? validate7.errors : vErrors.concat(validate7.errors);
+if(!(validate8(data2, {instancePath:instancePath+"/options",parentData:data,parentDataProperty:"options",rootData}))){
+vErrors = vErrors === null ? validate8.errors : vErrors.concat(validate8.errors);
 errors = vErrors.length;
 }
 else {
@@ -7681,8 +7692,8 @@ var valid0 = _errs4 === errors;
 if(data.readOnly !== undefined){
 let data3 = data.readOnly;
 const _errs5 = errors;
-if(!(validate41(data3, {instancePath:instancePath+"/readOnly",parentData:data,parentDataProperty:"readOnly",rootData}))){
-vErrors = vErrors === null ? validate41.errors : vErrors.concat(validate41.errors);
+if(!(validate2(data3, {instancePath:instancePath+"/readOnly",parentData:data,parentDataProperty:"readOnly",rootData}))){
+vErrors = vErrors === null ? validate2.errors : vErrors.concat(validate2.errors);
 errors = vErrors.length;
 }
 else {
@@ -7701,13 +7712,13 @@ else {
 var valid0 = _errs6 === errors;
 }
 }
-validate554.errors = vErrors;
+validate555.errors = vErrors;
 return errors === 0;
 }
 
 const schema142 = {"properties":{"datasetName":{"$ref":"ldoCEsh0ARg8F2aeji6S38NFl7aLPSuz1hGlgX2tjuQ"},"datasetUUID":{"$ref":"ldoCEsh0ARg8F2aeji6S38NFl7aLPSuz1hGlgX2tjuQ"}},"type":"object","nullable":true};
 
-function validate561(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+function validate562(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
 let errors = 0;
 if((!(data && typeof data == "object" && !Array.isArray(data))) && (data !== null)){
@@ -7746,13 +7757,13 @@ else {
 var valid0 = _errs3 === errors;
 }
 }
-validate561.errors = vErrors;
+validate562.errors = vErrors;
 return errors === 0;
 }
 
 const schema143 = {"properties":{"fsType":{"$ref":"ldoCEsh0ARg8F2aeji6S38NFl7aLPSuz1hGlgX2tjuQ"},"partition":{"$ref":"j4SBnKFzNWrJQU4F8rp8qSB0IqehV1dh50NKzJhlTjs"},"pdName":{"$ref":"sLlNkWhANXZ15lvmcujppy1mXxqn6f-GaeQpWRYm_dw"},"readOnly":{"$ref":"CTX4WtafS9K1Gv7k2X1H0J3M9LziUVVRBMOR0rDDzTk"}},"required":["pdName"],"type":"object","nullable":true};
 
-function validate565(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+function validate566(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
 let errors = 0;
 if((!(data && typeof data == "object" && !Array.isArray(data))) && (data !== null)){
@@ -7814,8 +7825,8 @@ var valid0 = _errs4 === errors;
 if(data.readOnly !== undefined){
 let data3 = data.readOnly;
 const _errs5 = errors;
-if(!(validate41(data3, {instancePath:instancePath+"/readOnly",parentData:data,parentDataProperty:"readOnly",rootData}))){
-vErrors = vErrors === null ? validate41.errors : vErrors.concat(validate41.errors);
+if(!(validate2(data3, {instancePath:instancePath+"/readOnly",parentData:data,parentDataProperty:"readOnly",rootData}))){
+vErrors = vErrors === null ? validate2.errors : vErrors.concat(validate2.errors);
 errors = vErrors.length;
 }
 else {
@@ -7823,13 +7834,13 @@ else {
 var valid0 = _errs5 === errors;
 }
 }
-validate565.errors = vErrors;
+validate566.errors = vErrors;
 return errors === 0;
 }
 
 const schema144 = {"properties":{"directory":{"$ref":"ldoCEsh0ARg8F2aeji6S38NFl7aLPSuz1hGlgX2tjuQ"},"repository":{"$ref":"sLlNkWhANXZ15lvmcujppy1mXxqn6f-GaeQpWRYm_dw"},"revision":{"$ref":"ldoCEsh0ARg8F2aeji6S38NFl7aLPSuz1hGlgX2tjuQ"}},"required":["repository"],"type":"object","nullable":true};
 
-function validate571(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+function validate572(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
 let errors = 0;
 if((!(data && typeof data == "object" && !Array.isArray(data))) && (data !== null)){
@@ -7889,13 +7900,13 @@ else {
 var valid0 = _errs4 === errors;
 }
 }
-validate571.errors = vErrors;
+validate572.errors = vErrors;
 return errors === 0;
 }
 
 const schema145 = {"properties":{"endpoints":{"$ref":"sLlNkWhANXZ15lvmcujppy1mXxqn6f-GaeQpWRYm_dw"},"path":{"$ref":"sLlNkWhANXZ15lvmcujppy1mXxqn6f-GaeQpWRYm_dw"},"readOnly":{"$ref":"CTX4WtafS9K1Gv7k2X1H0J3M9LziUVVRBMOR0rDDzTk"}},"required":["endpoints","path"],"type":"object","nullable":true};
 
-function validate576(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+function validate577(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
 let errors = 0;
 if((!(data && typeof data == "object" && !Array.isArray(data))) && (data !== null)){
@@ -7956,8 +7967,8 @@ var valid0 = _errs3 === errors;
 if(data.readOnly !== undefined){
 let data2 = data.readOnly;
 const _errs4 = errors;
-if(!(validate41(data2, {instancePath:instancePath+"/readOnly",parentData:data,parentDataProperty:"readOnly",rootData}))){
-vErrors = vErrors === null ? validate41.errors : vErrors.concat(validate41.errors);
+if(!(validate2(data2, {instancePath:instancePath+"/readOnly",parentData:data,parentDataProperty:"readOnly",rootData}))){
+vErrors = vErrors === null ? validate2.errors : vErrors.concat(validate2.errors);
 errors = vErrors.length;
 }
 else {
@@ -7965,13 +7976,13 @@ else {
 var valid0 = _errs4 === errors;
 }
 }
-validate576.errors = vErrors;
+validate577.errors = vErrors;
 return errors === 0;
 }
 
 const schema146 = {"properties":{"path":{"$ref":"sLlNkWhANXZ15lvmcujppy1mXxqn6f-GaeQpWRYm_dw"},"type":{"$ref":"ldoCEsh0ARg8F2aeji6S38NFl7aLPSuz1hGlgX2tjuQ"}},"required":["path"],"type":"object","nullable":true};
 
-function validate581(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+function validate582(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
 let errors = 0;
 if((!(data && typeof data == "object" && !Array.isArray(data))) && (data !== null)){
@@ -8020,13 +8031,13 @@ else {
 var valid0 = _errs3 === errors;
 }
 }
-validate581.errors = vErrors;
+validate582.errors = vErrors;
 return errors === 0;
 }
 
 const schema147 = {"properties":{"pullPolicy":{"$ref":"ldoCEsh0ARg8F2aeji6S38NFl7aLPSuz1hGlgX2tjuQ"},"reference":{"$ref":"ldoCEsh0ARg8F2aeji6S38NFl7aLPSuz1hGlgX2tjuQ"}},"type":"object","nullable":true};
 
-function validate585(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+function validate586(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
 let errors = 0;
 if((!(data && typeof data == "object" && !Array.isArray(data))) && (data !== null)){
@@ -8065,14 +8076,14 @@ else {
 var valid0 = _errs3 === errors;
 }
 }
-validate585.errors = vErrors;
+validate586.errors = vErrors;
 return errors === 0;
 }
 
 const schema148 = {"properties":{"chapAuthDiscovery":{"$ref":"CTX4WtafS9K1Gv7k2X1H0J3M9LziUVVRBMOR0rDDzTk"},"chapAuthSession":{"$ref":"CTX4WtafS9K1Gv7k2X1H0J3M9LziUVVRBMOR0rDDzTk"},"fsType":{"$ref":"ldoCEsh0ARg8F2aeji6S38NFl7aLPSuz1hGlgX2tjuQ"},"initiatorName":{"$ref":"ldoCEsh0ARg8F2aeji6S38NFl7aLPSuz1hGlgX2tjuQ"},"iqn":{"$ref":"sLlNkWhANXZ15lvmcujppy1mXxqn6f-GaeQpWRYm_dw"},"iscsiInterface":{"$ref":"5cSUFXhOjtgR-1-w0YuciQg4fuFzccKB0OFYzeWCsrY"},"lun":{"$ref":"6VbGrbfqnPJ4dMmNewHbRn4M59VZOmu0uhV1edBN8qE"},"portals":{"$ref":"uqi-NWpwJAtCtKg340P2GU85hOwdccNKh8Eansj5IGE"},"readOnly":{"$ref":"CTX4WtafS9K1Gv7k2X1H0J3M9LziUVVRBMOR0rDDzTk"},"secretRef":{"$ref":"HGGQOMQgT1vNp8FYFYYzJJVb9JUwnCv6j6jyprlvEho"},"targetPortal":{"$ref":"sLlNkWhANXZ15lvmcujppy1mXxqn6f-GaeQpWRYm_dw"}},"required":["iqn","lun","targetPortal"],"type":"object","nullable":true};
 const schema149 = {"default":"default","type":"string","nullable":true};
 
-function validate595(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+function validate596(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
 let errors = 0;
 if((typeof data !== "string") && (data !== null)){
@@ -8087,12 +8098,12 @@ errors++;
 }
 const _errs0 = errors;
 const _errs1 = errors;
-validate595.errors = vErrors;
+validate596.errors = vErrors;
 return errors === 0;
 }
 
 
-function validate589(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+function validate590(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
 let errors = 0;
 if((!(data && typeof data == "object" && !Array.isArray(data))) && (data !== null)){
@@ -8141,8 +8152,8 @@ errors++;
 if(data.chapAuthDiscovery !== undefined){
 let data0 = data.chapAuthDiscovery;
 const _errs2 = errors;
-if(!(validate41(data0, {instancePath:instancePath+"/chapAuthDiscovery",parentData:data,parentDataProperty:"chapAuthDiscovery",rootData}))){
-vErrors = vErrors === null ? validate41.errors : vErrors.concat(validate41.errors);
+if(!(validate2(data0, {instancePath:instancePath+"/chapAuthDiscovery",parentData:data,parentDataProperty:"chapAuthDiscovery",rootData}))){
+vErrors = vErrors === null ? validate2.errors : vErrors.concat(validate2.errors);
 errors = vErrors.length;
 }
 else {
@@ -8152,8 +8163,8 @@ var valid0 = _errs2 === errors;
 if(data.chapAuthSession !== undefined){
 let data1 = data.chapAuthSession;
 const _errs3 = errors;
-if(!(validate41(data1, {instancePath:instancePath+"/chapAuthSession",parentData:data,parentDataProperty:"chapAuthSession",rootData}))){
-vErrors = vErrors === null ? validate41.errors : vErrors.concat(validate41.errors);
+if(!(validate2(data1, {instancePath:instancePath+"/chapAuthSession",parentData:data,parentDataProperty:"chapAuthSession",rootData}))){
+vErrors = vErrors === null ? validate2.errors : vErrors.concat(validate2.errors);
 errors = vErrors.length;
 }
 else {
@@ -8196,8 +8207,8 @@ var valid0 = _errs6 === errors;
 if(data.iscsiInterface !== undefined){
 let data5 = data.iscsiInterface;
 const _errs7 = errors;
-if(!(validate595(data5, {instancePath:instancePath+"/iscsiInterface",parentData:data,parentDataProperty:"iscsiInterface",rootData}))){
-vErrors = vErrors === null ? validate595.errors : vErrors.concat(validate595.errors);
+if(!(validate596(data5, {instancePath:instancePath+"/iscsiInterface",parentData:data,parentDataProperty:"iscsiInterface",rootData}))){
+vErrors = vErrors === null ? validate596.errors : vErrors.concat(validate596.errors);
 errors = vErrors.length;
 }
 else {
@@ -8207,8 +8218,8 @@ var valid0 = _errs7 === errors;
 if(data.lun !== undefined){
 let data6 = data.lun;
 const _errs8 = errors;
-if(!(validate23(data6, {instancePath:instancePath+"/lun",parentData:data,parentDataProperty:"lun",rootData}))){
-vErrors = vErrors === null ? validate23.errors : vErrors.concat(validate23.errors);
+if(!(validate24(data6, {instancePath:instancePath+"/lun",parentData:data,parentDataProperty:"lun",rootData}))){
+vErrors = vErrors === null ? validate24.errors : vErrors.concat(validate24.errors);
 errors = vErrors.length;
 }
 else {
@@ -8218,8 +8229,8 @@ var valid0 = _errs8 === errors;
 if(data.portals !== undefined){
 let data7 = data.portals;
 const _errs9 = errors;
-if(!(validate9(data7, {instancePath:instancePath+"/portals",parentData:data,parentDataProperty:"portals",rootData}))){
-vErrors = vErrors === null ? validate9.errors : vErrors.concat(validate9.errors);
+if(!(validate10(data7, {instancePath:instancePath+"/portals",parentData:data,parentDataProperty:"portals",rootData}))){
+vErrors = vErrors === null ? validate10.errors : vErrors.concat(validate10.errors);
 errors = vErrors.length;
 }
 else {
@@ -8229,8 +8240,8 @@ var valid0 = _errs9 === errors;
 if(data.readOnly !== undefined){
 let data8 = data.readOnly;
 const _errs10 = errors;
-if(!(validate41(data8, {instancePath:instancePath+"/readOnly",parentData:data,parentDataProperty:"readOnly",rootData}))){
-vErrors = vErrors === null ? validate41.errors : vErrors.concat(validate41.errors);
+if(!(validate2(data8, {instancePath:instancePath+"/readOnly",parentData:data,parentDataProperty:"readOnly",rootData}))){
+vErrors = vErrors === null ? validate2.errors : vErrors.concat(validate2.errors);
 errors = vErrors.length;
 }
 else {
@@ -8260,13 +8271,13 @@ else {
 var valid0 = _errs12 === errors;
 }
 }
-validate589.errors = vErrors;
+validate590.errors = vErrors;
 return errors === 0;
 }
 
 const schema150 = {"properties":{"path":{"$ref":"sLlNkWhANXZ15lvmcujppy1mXxqn6f-GaeQpWRYm_dw"},"readOnly":{"$ref":"CTX4WtafS9K1Gv7k2X1H0J3M9LziUVVRBMOR0rDDzTk"},"server":{"$ref":"sLlNkWhANXZ15lvmcujppy1mXxqn6f-GaeQpWRYm_dw"}},"required":["path","server"],"type":"object","nullable":true};
 
-function validate604(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+function validate605(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
 let errors = 0;
 if((!(data && typeof data == "object" && !Array.isArray(data))) && (data !== null)){
@@ -8316,8 +8327,8 @@ var valid0 = _errs2 === errors;
 if(data.readOnly !== undefined){
 let data1 = data.readOnly;
 const _errs3 = errors;
-if(!(validate41(data1, {instancePath:instancePath+"/readOnly",parentData:data,parentDataProperty:"readOnly",rootData}))){
-vErrors = vErrors === null ? validate41.errors : vErrors.concat(validate41.errors);
+if(!(validate2(data1, {instancePath:instancePath+"/readOnly",parentData:data,parentDataProperty:"readOnly",rootData}))){
+vErrors = vErrors === null ? validate2.errors : vErrors.concat(validate2.errors);
 errors = vErrors.length;
 }
 else {
@@ -8336,13 +8347,13 @@ else {
 var valid0 = _errs4 === errors;
 }
 }
-validate604.errors = vErrors;
+validate605.errors = vErrors;
 return errors === 0;
 }
 
 const schema151 = {"properties":{"claimName":{"$ref":"sLlNkWhANXZ15lvmcujppy1mXxqn6f-GaeQpWRYm_dw"},"readOnly":{"$ref":"CTX4WtafS9K1Gv7k2X1H0J3M9LziUVVRBMOR0rDDzTk"}},"required":["claimName"],"type":"object","nullable":true};
 
-function validate609(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+function validate610(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
 let errors = 0;
 if((!(data && typeof data == "object" && !Array.isArray(data))) && (data !== null)){
@@ -8382,8 +8393,8 @@ var valid0 = _errs2 === errors;
 if(data.readOnly !== undefined){
 let data1 = data.readOnly;
 const _errs3 = errors;
-if(!(validate41(data1, {instancePath:instancePath+"/readOnly",parentData:data,parentDataProperty:"readOnly",rootData}))){
-vErrors = vErrors === null ? validate41.errors : vErrors.concat(validate41.errors);
+if(!(validate2(data1, {instancePath:instancePath+"/readOnly",parentData:data,parentDataProperty:"readOnly",rootData}))){
+vErrors = vErrors === null ? validate2.errors : vErrors.concat(validate2.errors);
 errors = vErrors.length;
 }
 else {
@@ -8391,13 +8402,13 @@ else {
 var valid0 = _errs3 === errors;
 }
 }
-validate609.errors = vErrors;
+validate610.errors = vErrors;
 return errors === 0;
 }
 
 const schema152 = {"properties":{"fsType":{"$ref":"ldoCEsh0ARg8F2aeji6S38NFl7aLPSuz1hGlgX2tjuQ"},"pdID":{"$ref":"sLlNkWhANXZ15lvmcujppy1mXxqn6f-GaeQpWRYm_dw"}},"required":["pdID"],"type":"object","nullable":true};
 
-function validate613(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+function validate614(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
 let errors = 0;
 if((!(data && typeof data == "object" && !Array.isArray(data))) && (data !== null)){
@@ -8446,13 +8457,13 @@ else {
 var valid0 = _errs3 === errors;
 }
 }
-validate613.errors = vErrors;
+validate614.errors = vErrors;
 return errors === 0;
 }
 
 const schema153 = {"properties":{"fsType":{"$ref":"ldoCEsh0ARg8F2aeji6S38NFl7aLPSuz1hGlgX2tjuQ"},"readOnly":{"$ref":"CTX4WtafS9K1Gv7k2X1H0J3M9LziUVVRBMOR0rDDzTk"},"volumeID":{"$ref":"sLlNkWhANXZ15lvmcujppy1mXxqn6f-GaeQpWRYm_dw"}},"required":["volumeID"],"type":"object","nullable":true};
 
-function validate617(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+function validate618(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
 let errors = 0;
 if((!(data && typeof data == "object" && !Array.isArray(data))) && (data !== null)){
@@ -8492,8 +8503,8 @@ var valid0 = _errs2 === errors;
 if(data.readOnly !== undefined){
 let data1 = data.readOnly;
 const _errs3 = errors;
-if(!(validate41(data1, {instancePath:instancePath+"/readOnly",parentData:data,parentDataProperty:"readOnly",rootData}))){
-vErrors = vErrors === null ? validate41.errors : vErrors.concat(validate41.errors);
+if(!(validate2(data1, {instancePath:instancePath+"/readOnly",parentData:data,parentDataProperty:"readOnly",rootData}))){
+vErrors = vErrors === null ? validate2.errors : vErrors.concat(validate2.errors);
 errors = vErrors.length;
 }
 else {
@@ -8512,7 +8523,7 @@ else {
 var valid0 = _errs4 === errors;
 }
 }
-validate617.errors = vErrors;
+validate618.errors = vErrors;
 return errors === 0;
 }
 
@@ -8521,7 +8532,7 @@ const schema155 = {"items":{"$ref":"dn4YVt3SWkPnEZSpnhO3KeVzR4VIpu7pqfcL-TcKd_8"
 const schema156 = {"properties":{"clusterTrustBundle":{"$ref":"pTiPjbxwypYoy6bApVo9pwc1crR9_v84NPbQ_C3oPbY"},"configMap":{"$ref":"_HCmSZsdcRhpFKkZM7Jl5QCi9tmpzo8UCET9LQeHx0w"},"downwardAPI":{"$ref":"lFpI7xGpYDupYMDE5JdT4IlnCI2yCKkoVlJch0sNjdg"},"podCertificate":{"$ref":"Kcg0-qwUIoLjyZwuajb1VKncuRc2pFltN23i8If-VrM"},"secret":{"$ref":"_HCmSZsdcRhpFKkZM7Jl5QCi9tmpzo8UCET9LQeHx0w"},"serviceAccountToken":{"$ref":"GWk01BlhTg6m5b0ywNZc8vdrp7TAMZkgdXFVQl52C0E"}},"type":"object"};
 const schema157 = {"properties":{"labelSelector":{"$ref":"VVCKgJOBvzPMFDWky4rRQ5NkqJqB9eXDLOrP2lnPweI"},"name":{"$ref":"ldoCEsh0ARg8F2aeji6S38NFl7aLPSuz1hGlgX2tjuQ"},"optional":{"$ref":"CTX4WtafS9K1Gv7k2X1H0J3M9LziUVVRBMOR0rDDzTk"},"path":{"$ref":"sLlNkWhANXZ15lvmcujppy1mXxqn6f-GaeQpWRYm_dw"},"signerName":{"$ref":"ldoCEsh0ARg8F2aeji6S38NFl7aLPSuz1hGlgX2tjuQ"}},"required":["path"],"type":"object","nullable":true};
 
-function validate626(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+function validate627(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
 let errors = 0;
 if((!(data && typeof data == "object" && !Array.isArray(data))) && (data !== null)){
@@ -8550,8 +8561,8 @@ errors++;
 if(data.labelSelector !== undefined){
 let data0 = data.labelSelector;
 const _errs2 = errors;
-if(!(validate20(data0, {instancePath:instancePath+"/labelSelector",parentData:data,parentDataProperty:"labelSelector",rootData}))){
-vErrors = vErrors === null ? validate20.errors : vErrors.concat(validate20.errors);
+if(!(validate21(data0, {instancePath:instancePath+"/labelSelector",parentData:data,parentDataProperty:"labelSelector",rootData}))){
+vErrors = vErrors === null ? validate21.errors : vErrors.concat(validate21.errors);
 errors = vErrors.length;
 }
 else {
@@ -8572,8 +8583,8 @@ var valid0 = _errs3 === errors;
 if(data.optional !== undefined){
 let data2 = data.optional;
 const _errs4 = errors;
-if(!(validate41(data2, {instancePath:instancePath+"/optional",parentData:data,parentDataProperty:"optional",rootData}))){
-vErrors = vErrors === null ? validate41.errors : vErrors.concat(validate41.errors);
+if(!(validate2(data2, {instancePath:instancePath+"/optional",parentData:data,parentDataProperty:"optional",rootData}))){
+vErrors = vErrors === null ? validate2.errors : vErrors.concat(validate2.errors);
 errors = vErrors.length;
 }
 else {
@@ -8603,7 +8614,7 @@ else {
 var valid0 = _errs6 === errors;
 }
 }
-validate626.errors = vErrors;
+validate627.errors = vErrors;
 return errors === 0;
 }
 
@@ -8650,8 +8661,8 @@ var valid0 = _errs3 === errors;
 if(data.optional !== undefined){
 let data2 = data.optional;
 const _errs4 = errors;
-if(!(validate41(data2, {instancePath:instancePath+"/optional",parentData:data,parentDataProperty:"optional",rootData}))){
-vErrors = vErrors === null ? validate41.errors : vErrors.concat(validate41.errors);
+if(!(validate2(data2, {instancePath:instancePath+"/optional",parentData:data,parentDataProperty:"optional",rootData}))){
+vErrors = vErrors === null ? validate2.errors : vErrors.concat(validate2.errors);
 errors = vErrors.length;
 }
 else {
@@ -8665,7 +8676,7 @@ return errors === 0;
 
 const schema158 = {"properties":{"items":{"$ref":"d-PZJWo9tuJUK1sF4I9c0c4HI5ec_LUrbkqbJN0kxNA"}},"type":"object","nullable":true};
 
-function validate634(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+function validate635(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
 let errors = 0;
 if((!(data && typeof data == "object" && !Array.isArray(data))) && (data !== null)){
@@ -8693,13 +8704,13 @@ else {
 var valid0 = _errs2 === errors;
 }
 }
-validate634.errors = vErrors;
+validate635.errors = vErrors;
 return errors === 0;
 }
 
 const schema159 = {"properties":{"certificateChainPath":{"$ref":"ldoCEsh0ARg8F2aeji6S38NFl7aLPSuz1hGlgX2tjuQ"},"credentialBundlePath":{"$ref":"ldoCEsh0ARg8F2aeji6S38NFl7aLPSuz1hGlgX2tjuQ"},"keyPath":{"$ref":"ldoCEsh0ARg8F2aeji6S38NFl7aLPSuz1hGlgX2tjuQ"},"keyType":{"$ref":"sLlNkWhANXZ15lvmcujppy1mXxqn6f-GaeQpWRYm_dw"},"maxExpirationSeconds":{"$ref":"j4SBnKFzNWrJQU4F8rp8qSB0IqehV1dh50NKzJhlTjs"},"signerName":{"$ref":"sLlNkWhANXZ15lvmcujppy1mXxqn6f-GaeQpWRYm_dw"},"userAnnotations":{"$ref":"HJJzIHbiJa8GGL2u2CTOVy-Hry2MGWIvSIk30RN75wI"}},"required":["keyType","signerName"],"type":"object","nullable":true};
 
-function validate637(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+function validate638(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
 let errors = 0;
 if((!(data && typeof data == "object" && !Array.isArray(data))) && (data !== null)){
@@ -8804,8 +8815,8 @@ var valid0 = _errs7 === errors;
 if(data.userAnnotations !== undefined){
 let data6 = data.userAnnotations;
 const _errs8 = errors;
-if(!(validate7(data6, {instancePath:instancePath+"/userAnnotations",parentData:data,parentDataProperty:"userAnnotations",rootData}))){
-vErrors = vErrors === null ? validate7.errors : vErrors.concat(validate7.errors);
+if(!(validate8(data6, {instancePath:instancePath+"/userAnnotations",parentData:data,parentDataProperty:"userAnnotations",rootData}))){
+vErrors = vErrors === null ? validate8.errors : vErrors.concat(validate8.errors);
 errors = vErrors.length;
 }
 else {
@@ -8813,13 +8824,13 @@ else {
 var valid0 = _errs8 === errors;
 }
 }
-validate637.errors = vErrors;
+validate638.errors = vErrors;
 return errors === 0;
 }
 
 const schema160 = {"properties":{"audience":{"$ref":"ldoCEsh0ARg8F2aeji6S38NFl7aLPSuz1hGlgX2tjuQ"},"expirationSeconds":{"$ref":"otlW-2SioSJxw2ZRa8bQrFi14CUkm_yS2tfdShK98Vk"},"path":{"$ref":"sLlNkWhANXZ15lvmcujppy1mXxqn6f-GaeQpWRYm_dw"}},"required":["path"],"type":"object","nullable":true};
 
-function validate647(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+function validate648(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
 let errors = 0;
 if((!(data && typeof data == "object" && !Array.isArray(data))) && (data !== null)){
@@ -8879,12 +8890,12 @@ else {
 var valid0 = _errs4 === errors;
 }
 }
-validate647.errors = vErrors;
+validate648.errors = vErrors;
 return errors === 0;
 }
 
 
-function validate625(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+function validate626(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
 let errors = 0;
 const _errs0 = errors;
@@ -8892,8 +8903,8 @@ if(data && typeof data == "object" && !Array.isArray(data)){
 if(data.clusterTrustBundle !== undefined){
 let data0 = data.clusterTrustBundle;
 const _errs1 = errors;
-if(!(validate626(data0, {instancePath:instancePath+"/clusterTrustBundle",parentData:data,parentDataProperty:"clusterTrustBundle",rootData}))){
-vErrors = vErrors === null ? validate626.errors : vErrors.concat(validate626.errors);
+if(!(validate627(data0, {instancePath:instancePath+"/clusterTrustBundle",parentData:data,parentDataProperty:"clusterTrustBundle",rootData}))){
+vErrors = vErrors === null ? validate627.errors : vErrors.concat(validate627.errors);
 errors = vErrors.length;
 }
 else {
@@ -8914,8 +8925,8 @@ var valid0 = _errs2 === errors;
 if(data.downwardAPI !== undefined){
 let data2 = data.downwardAPI;
 const _errs3 = errors;
-if(!(validate634(data2, {instancePath:instancePath+"/downwardAPI",parentData:data,parentDataProperty:"downwardAPI",rootData}))){
-vErrors = vErrors === null ? validate634.errors : vErrors.concat(validate634.errors);
+if(!(validate635(data2, {instancePath:instancePath+"/downwardAPI",parentData:data,parentDataProperty:"downwardAPI",rootData}))){
+vErrors = vErrors === null ? validate635.errors : vErrors.concat(validate635.errors);
 errors = vErrors.length;
 }
 else {
@@ -8925,8 +8936,8 @@ var valid0 = _errs3 === errors;
 if(data.podCertificate !== undefined){
 let data3 = data.podCertificate;
 const _errs4 = errors;
-if(!(validate637(data3, {instancePath:instancePath+"/podCertificate",parentData:data,parentDataProperty:"podCertificate",rootData}))){
-vErrors = vErrors === null ? validate637.errors : vErrors.concat(validate637.errors);
+if(!(validate638(data3, {instancePath:instancePath+"/podCertificate",parentData:data,parentDataProperty:"podCertificate",rootData}))){
+vErrors = vErrors === null ? validate638.errors : vErrors.concat(validate638.errors);
 errors = vErrors.length;
 }
 else {
@@ -8947,8 +8958,8 @@ var valid0 = _errs5 === errors;
 if(data.serviceAccountToken !== undefined){
 let data5 = data.serviceAccountToken;
 const _errs6 = errors;
-if(!(validate647(data5, {instancePath:instancePath+"/serviceAccountToken",parentData:data,parentDataProperty:"serviceAccountToken",rootData}))){
-vErrors = vErrors === null ? validate647.errors : vErrors.concat(validate647.errors);
+if(!(validate648(data5, {instancePath:instancePath+"/serviceAccountToken",parentData:data,parentDataProperty:"serviceAccountToken",rootData}))){
+vErrors = vErrors === null ? validate648.errors : vErrors.concat(validate648.errors);
 errors = vErrors.length;
 }
 else {
@@ -8966,12 +8977,12 @@ vErrors.push(err0);
 }
 errors++;
 }
-validate625.errors = vErrors;
+validate626.errors = vErrors;
 return errors === 0;
 }
 
 
-function validate624(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+function validate625(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
 let errors = 0;
 if((!(Array.isArray(data))) && (data !== null)){
@@ -8992,8 +9003,8 @@ const len0 = data.length;
 for(let i0=0; i0<len0; i0++){
 let data0 = data[i0];
 const _errs2 = errors;
-if(!(validate625(data0, {instancePath:instancePath+"/" + i0,parentData:data,parentDataProperty:i0,rootData}))){
-vErrors = vErrors === null ? validate625.errors : vErrors.concat(validate625.errors);
+if(!(validate626(data0, {instancePath:instancePath+"/" + i0,parentData:data,parentDataProperty:i0,rootData}))){
+vErrors = vErrors === null ? validate626.errors : vErrors.concat(validate626.errors);
 errors = vErrors.length;
 }
 else {
@@ -9004,12 +9015,12 @@ valid1 = false;
 }
 }
 }
-validate624.errors = vErrors;
+validate625.errors = vErrors;
 return errors === 0;
 }
 
 
-function validate622(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+function validate623(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
 let errors = 0;
 if((!(data && typeof data == "object" && !Array.isArray(data))) && (data !== null)){
@@ -9039,8 +9050,8 @@ var valid0 = _errs2 === errors;
 if(data.sources !== undefined){
 let data1 = data.sources;
 const _errs3 = errors;
-if(!(validate624(data1, {instancePath:instancePath+"/sources",parentData:data,parentDataProperty:"sources",rootData}))){
-vErrors = vErrors === null ? validate624.errors : vErrors.concat(validate624.errors);
+if(!(validate625(data1, {instancePath:instancePath+"/sources",parentData:data,parentDataProperty:"sources",rootData}))){
+vErrors = vErrors === null ? validate625.errors : vErrors.concat(validate625.errors);
 errors = vErrors.length;
 }
 else {
@@ -9048,13 +9059,13 @@ else {
 var valid0 = _errs3 === errors;
 }
 }
-validate622.errors = vErrors;
+validate623.errors = vErrors;
 return errors === 0;
 }
 
 const schema161 = {"properties":{"group":{"$ref":"ldoCEsh0ARg8F2aeji6S38NFl7aLPSuz1hGlgX2tjuQ"},"readOnly":{"$ref":"CTX4WtafS9K1Gv7k2X1H0J3M9LziUVVRBMOR0rDDzTk"},"registry":{"$ref":"sLlNkWhANXZ15lvmcujppy1mXxqn6f-GaeQpWRYm_dw"},"tenant":{"$ref":"ldoCEsh0ARg8F2aeji6S38NFl7aLPSuz1hGlgX2tjuQ"},"user":{"$ref":"ldoCEsh0ARg8F2aeji6S38NFl7aLPSuz1hGlgX2tjuQ"},"volume":{"$ref":"sLlNkWhANXZ15lvmcujppy1mXxqn6f-GaeQpWRYm_dw"}},"required":["registry","volume"],"type":"object","nullable":true};
 
-function validate655(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+function validate656(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
 let errors = 0;
 if((!(data && typeof data == "object" && !Array.isArray(data))) && (data !== null)){
@@ -9104,8 +9115,8 @@ var valid0 = _errs2 === errors;
 if(data.readOnly !== undefined){
 let data1 = data.readOnly;
 const _errs3 = errors;
-if(!(validate41(data1, {instancePath:instancePath+"/readOnly",parentData:data,parentDataProperty:"readOnly",rootData}))){
-vErrors = vErrors === null ? validate41.errors : vErrors.concat(validate41.errors);
+if(!(validate2(data1, {instancePath:instancePath+"/readOnly",parentData:data,parentDataProperty:"readOnly",rootData}))){
+vErrors = vErrors === null ? validate2.errors : vErrors.concat(validate2.errors);
 errors = vErrors.length;
 }
 else {
@@ -9157,14 +9168,14 @@ else {
 var valid0 = _errs7 === errors;
 }
 }
-validate655.errors = vErrors;
+validate656.errors = vErrors;
 return errors === 0;
 }
 
 const schema162 = {"properties":{"fsType":{"$ref":"ldoCEsh0ARg8F2aeji6S38NFl7aLPSuz1hGlgX2tjuQ"},"image":{"$ref":"sLlNkWhANXZ15lvmcujppy1mXxqn6f-GaeQpWRYm_dw"},"keyring":{"$ref":"qJqT86B0L2JUpaRmtZDpYjFJgt4rjgnvcEUS3zGb1eI"},"monitors":{"$ref":"uqUtVyG9D2UAWDvqosEgVMtwK5kI3TMy2eLbDZB452I"},"pool":{"$ref":"Dh86ML4rFjEcx1-u_8ZgfsmYcv8nNBqGgZwoQ3ylFNU"},"readOnly":{"$ref":"CTX4WtafS9K1Gv7k2X1H0J3M9LziUVVRBMOR0rDDzTk"},"secretRef":{"$ref":"HGGQOMQgT1vNp8FYFYYzJJVb9JUwnCv6j6jyprlvEho"},"user":{"$ref":"LvEyp1RPo8AnrMLndf_Vv4zih3rUP2kwyU22RiXstYI"}},"required":["image","monitors"],"type":"object","nullable":true};
 const schema163 = {"default":"/etc/ceph/keyring","type":"string","nullable":true};
 
-function validate666(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+function validate667(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
 let errors = 0;
 if((typeof data !== "string") && (data !== null)){
@@ -9179,13 +9190,13 @@ errors++;
 }
 const _errs0 = errors;
 const _errs1 = errors;
-validate666.errors = vErrors;
+validate667.errors = vErrors;
 return errors === 0;
 }
 
 const schema164 = {"default":"rbd","type":"string","nullable":true};
 
-function validate669(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+function validate670(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
 let errors = 0;
 if((typeof data !== "string") && (data !== null)){
@@ -9200,13 +9211,13 @@ errors++;
 }
 const _errs0 = errors;
 const _errs1 = errors;
-validate669.errors = vErrors;
+validate670.errors = vErrors;
 return errors === 0;
 }
 
 const schema165 = {"default":"admin","type":"string","nullable":true};
 
-function validate673(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+function validate674(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
 let errors = 0;
 if((typeof data !== "string") && (data !== null)){
@@ -9221,12 +9232,12 @@ errors++;
 }
 const _errs0 = errors;
 const _errs1 = errors;
-validate673.errors = vErrors;
+validate674.errors = vErrors;
 return errors === 0;
 }
 
 
-function validate663(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+function validate664(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
 let errors = 0;
 if((!(data && typeof data == "object" && !Array.isArray(data))) && (data !== null)){
@@ -9287,8 +9298,8 @@ var valid0 = _errs3 === errors;
 if(data.keyring !== undefined){
 let data2 = data.keyring;
 const _errs4 = errors;
-if(!(validate666(data2, {instancePath:instancePath+"/keyring",parentData:data,parentDataProperty:"keyring",rootData}))){
-vErrors = vErrors === null ? validate666.errors : vErrors.concat(validate666.errors);
+if(!(validate667(data2, {instancePath:instancePath+"/keyring",parentData:data,parentDataProperty:"keyring",rootData}))){
+vErrors = vErrors === null ? validate667.errors : vErrors.concat(validate667.errors);
 errors = vErrors.length;
 }
 else {
@@ -9309,8 +9320,8 @@ var valid0 = _errs5 === errors;
 if(data.pool !== undefined){
 let data4 = data.pool;
 const _errs6 = errors;
-if(!(validate669(data4, {instancePath:instancePath+"/pool",parentData:data,parentDataProperty:"pool",rootData}))){
-vErrors = vErrors === null ? validate669.errors : vErrors.concat(validate669.errors);
+if(!(validate670(data4, {instancePath:instancePath+"/pool",parentData:data,parentDataProperty:"pool",rootData}))){
+vErrors = vErrors === null ? validate670.errors : vErrors.concat(validate670.errors);
 errors = vErrors.length;
 }
 else {
@@ -9320,8 +9331,8 @@ var valid0 = _errs6 === errors;
 if(data.readOnly !== undefined){
 let data5 = data.readOnly;
 const _errs7 = errors;
-if(!(validate41(data5, {instancePath:instancePath+"/readOnly",parentData:data,parentDataProperty:"readOnly",rootData}))){
-vErrors = vErrors === null ? validate41.errors : vErrors.concat(validate41.errors);
+if(!(validate2(data5, {instancePath:instancePath+"/readOnly",parentData:data,parentDataProperty:"readOnly",rootData}))){
+vErrors = vErrors === null ? validate2.errors : vErrors.concat(validate2.errors);
 errors = vErrors.length;
 }
 else {
@@ -9342,8 +9353,8 @@ var valid0 = _errs8 === errors;
 if(data.user !== undefined){
 let data7 = data.user;
 const _errs9 = errors;
-if(!(validate673(data7, {instancePath:instancePath+"/user",parentData:data,parentDataProperty:"user",rootData}))){
-vErrors = vErrors === null ? validate673.errors : vErrors.concat(validate673.errors);
+if(!(validate674(data7, {instancePath:instancePath+"/user",parentData:data,parentDataProperty:"user",rootData}))){
+vErrors = vErrors === null ? validate674.errors : vErrors.concat(validate674.errors);
 errors = vErrors.length;
 }
 else {
@@ -9351,14 +9362,14 @@ else {
 var valid0 = _errs9 === errors;
 }
 }
-validate663.errors = vErrors;
+validate664.errors = vErrors;
 return errors === 0;
 }
 
 const schema166 = {"properties":{"fsType":{"$ref":"Wgdy0s1CznF5U0Xdixh3dfX6xVZC-f4ZSRagme8xEZA"},"gateway":{"$ref":"sLlNkWhANXZ15lvmcujppy1mXxqn6f-GaeQpWRYm_dw"},"protectionDomain":{"$ref":"ldoCEsh0ARg8F2aeji6S38NFl7aLPSuz1hGlgX2tjuQ"},"readOnly":{"$ref":"CTX4WtafS9K1Gv7k2X1H0J3M9LziUVVRBMOR0rDDzTk"},"secretRef":{"$ref":"CeclzNr20k5vr0FY8_Di-i5kv_hKd8rGtt9CG90tDrI"},"sslEnabled":{"$ref":"CTX4WtafS9K1Gv7k2X1H0J3M9LziUVVRBMOR0rDDzTk"},"storageMode":{"$ref":"nMIgymwC0Nh7u9Ub8ryXfL13c9EAIAX1eZzkO47rq5o"},"storagePool":{"$ref":"ldoCEsh0ARg8F2aeji6S38NFl7aLPSuz1hGlgX2tjuQ"},"system":{"$ref":"sLlNkWhANXZ15lvmcujppy1mXxqn6f-GaeQpWRYm_dw"},"volumeName":{"$ref":"ldoCEsh0ARg8F2aeji6S38NFl7aLPSuz1hGlgX2tjuQ"}},"required":["gateway","secretRef","system"],"type":"object","nullable":true};
 const schema167 = {"default":"xfs","type":"string","nullable":true};
 
-function validate677(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+function validate678(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
 let errors = 0;
 if((typeof data !== "string") && (data !== null)){
@@ -9373,13 +9384,13 @@ errors++;
 }
 const _errs0 = errors;
 const _errs1 = errors;
-validate677.errors = vErrors;
+validate678.errors = vErrors;
 return errors === 0;
 }
 
 const schema168 = {"default":"ThinProvisioned","type":"string","nullable":true};
 
-function validate684(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+function validate685(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
 let errors = 0;
 if((typeof data !== "string") && (data !== null)){
@@ -9394,12 +9405,12 @@ errors++;
 }
 const _errs0 = errors;
 const _errs1 = errors;
-validate684.errors = vErrors;
+validate685.errors = vErrors;
 return errors === 0;
 }
 
 
-function validate676(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+function validate677(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
 let errors = 0;
 if((!(data && typeof data == "object" && !Array.isArray(data))) && (data !== null)){
@@ -9448,8 +9459,8 @@ errors++;
 if(data.fsType !== undefined){
 let data0 = data.fsType;
 const _errs2 = errors;
-if(!(validate677(data0, {instancePath:instancePath+"/fsType",parentData:data,parentDataProperty:"fsType",rootData}))){
-vErrors = vErrors === null ? validate677.errors : vErrors.concat(validate677.errors);
+if(!(validate678(data0, {instancePath:instancePath+"/fsType",parentData:data,parentDataProperty:"fsType",rootData}))){
+vErrors = vErrors === null ? validate678.errors : vErrors.concat(validate678.errors);
 errors = vErrors.length;
 }
 else {
@@ -9481,8 +9492,8 @@ var valid0 = _errs4 === errors;
 if(data.readOnly !== undefined){
 let data3 = data.readOnly;
 const _errs5 = errors;
-if(!(validate41(data3, {instancePath:instancePath+"/readOnly",parentData:data,parentDataProperty:"readOnly",rootData}))){
-vErrors = vErrors === null ? validate41.errors : vErrors.concat(validate41.errors);
+if(!(validate2(data3, {instancePath:instancePath+"/readOnly",parentData:data,parentDataProperty:"readOnly",rootData}))){
+vErrors = vErrors === null ? validate2.errors : vErrors.concat(validate2.errors);
 errors = vErrors.length;
 }
 else {
@@ -9503,8 +9514,8 @@ var valid0 = _errs6 === errors;
 if(data.sslEnabled !== undefined){
 let data5 = data.sslEnabled;
 const _errs7 = errors;
-if(!(validate41(data5, {instancePath:instancePath+"/sslEnabled",parentData:data,parentDataProperty:"sslEnabled",rootData}))){
-vErrors = vErrors === null ? validate41.errors : vErrors.concat(validate41.errors);
+if(!(validate2(data5, {instancePath:instancePath+"/sslEnabled",parentData:data,parentDataProperty:"sslEnabled",rootData}))){
+vErrors = vErrors === null ? validate2.errors : vErrors.concat(validate2.errors);
 errors = vErrors.length;
 }
 else {
@@ -9514,8 +9525,8 @@ var valid0 = _errs7 === errors;
 if(data.storageMode !== undefined){
 let data6 = data.storageMode;
 const _errs8 = errors;
-if(!(validate684(data6, {instancePath:instancePath+"/storageMode",parentData:data,parentDataProperty:"storageMode",rootData}))){
-vErrors = vErrors === null ? validate684.errors : vErrors.concat(validate684.errors);
+if(!(validate685(data6, {instancePath:instancePath+"/storageMode",parentData:data,parentDataProperty:"storageMode",rootData}))){
+vErrors = vErrors === null ? validate685.errors : vErrors.concat(validate685.errors);
 errors = vErrors.length;
 }
 else {
@@ -9556,13 +9567,13 @@ else {
 var valid0 = _errs11 === errors;
 }
 }
-validate676.errors = vErrors;
+validate677.errors = vErrors;
 return errors === 0;
 }
 
 const schema169 = {"properties":{"defaultMode":{"$ref":"j4SBnKFzNWrJQU4F8rp8qSB0IqehV1dh50NKzJhlTjs"},"items":{"$ref":"gPtCVyFH2eXv-J44JI3istIuhC40N-NdI4mRYcFGaCI"},"optional":{"$ref":"CTX4WtafS9K1Gv7k2X1H0J3M9LziUVVRBMOR0rDDzTk"},"secretName":{"$ref":"ldoCEsh0ARg8F2aeji6S38NFl7aLPSuz1hGlgX2tjuQ"}},"type":"object","nullable":true};
 
-function validate690(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+function validate691(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
 let errors = 0;
 if((!(data && typeof data == "object" && !Array.isArray(data))) && (data !== null)){
@@ -9603,8 +9614,8 @@ var valid0 = _errs3 === errors;
 if(data.optional !== undefined){
 let data2 = data.optional;
 const _errs4 = errors;
-if(!(validate41(data2, {instancePath:instancePath+"/optional",parentData:data,parentDataProperty:"optional",rootData}))){
-vErrors = vErrors === null ? validate41.errors : vErrors.concat(validate41.errors);
+if(!(validate2(data2, {instancePath:instancePath+"/optional",parentData:data,parentDataProperty:"optional",rootData}))){
+vErrors = vErrors === null ? validate2.errors : vErrors.concat(validate2.errors);
 errors = vErrors.length;
 }
 else {
@@ -9623,13 +9634,13 @@ else {
 var valid0 = _errs5 === errors;
 }
 }
-validate690.errors = vErrors;
+validate691.errors = vErrors;
 return errors === 0;
 }
 
 const schema170 = {"properties":{"fsType":{"$ref":"ldoCEsh0ARg8F2aeji6S38NFl7aLPSuz1hGlgX2tjuQ"},"readOnly":{"$ref":"CTX4WtafS9K1Gv7k2X1H0J3M9LziUVVRBMOR0rDDzTk"},"secretRef":{"$ref":"HGGQOMQgT1vNp8FYFYYzJJVb9JUwnCv6j6jyprlvEho"},"volumeName":{"$ref":"ldoCEsh0ARg8F2aeji6S38NFl7aLPSuz1hGlgX2tjuQ"},"volumeNamespace":{"$ref":"ldoCEsh0ARg8F2aeji6S38NFl7aLPSuz1hGlgX2tjuQ"}},"type":"object","nullable":true};
 
-function validate696(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+function validate697(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
 let errors = 0;
 if((!(data && typeof data == "object" && !Array.isArray(data))) && (data !== null)){
@@ -9659,8 +9670,8 @@ var valid0 = _errs2 === errors;
 if(data.readOnly !== undefined){
 let data1 = data.readOnly;
 const _errs3 = errors;
-if(!(validate41(data1, {instancePath:instancePath+"/readOnly",parentData:data,parentDataProperty:"readOnly",rootData}))){
-vErrors = vErrors === null ? validate41.errors : vErrors.concat(validate41.errors);
+if(!(validate2(data1, {instancePath:instancePath+"/readOnly",parentData:data,parentDataProperty:"readOnly",rootData}))){
+vErrors = vErrors === null ? validate2.errors : vErrors.concat(validate2.errors);
 errors = vErrors.length;
 }
 else {
@@ -9701,13 +9712,13 @@ else {
 var valid0 = _errs6 === errors;
 }
 }
-validate696.errors = vErrors;
+validate697.errors = vErrors;
 return errors === 0;
 }
 
 const schema171 = {"properties":{"fsType":{"$ref":"ldoCEsh0ARg8F2aeji6S38NFl7aLPSuz1hGlgX2tjuQ"},"storagePolicyID":{"$ref":"ldoCEsh0ARg8F2aeji6S38NFl7aLPSuz1hGlgX2tjuQ"},"storagePolicyName":{"$ref":"ldoCEsh0ARg8F2aeji6S38NFl7aLPSuz1hGlgX2tjuQ"},"volumePath":{"$ref":"sLlNkWhANXZ15lvmcujppy1mXxqn6f-GaeQpWRYm_dw"}},"required":["volumePath"],"type":"object","nullable":true};
 
-function validate703(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+function validate704(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
 let errors = 0;
 if((!(data && typeof data == "object" && !Array.isArray(data))) && (data !== null)){
@@ -9778,12 +9789,12 @@ else {
 var valid0 = _errs5 === errors;
 }
 }
-validate703.errors = vErrors;
+validate704.errors = vErrors;
 return errors === 0;
 }
 
 
-function validate463(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+function validate464(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
 let errors = 0;
 const _errs0 = errors;
@@ -9801,8 +9812,8 @@ errors++;
 if(data.awsElasticBlockStore !== undefined){
 let data0 = data.awsElasticBlockStore;
 const _errs1 = errors;
-if(!(validate464(data0, {instancePath:instancePath+"/awsElasticBlockStore",parentData:data,parentDataProperty:"awsElasticBlockStore",rootData}))){
-vErrors = vErrors === null ? validate464.errors : vErrors.concat(validate464.errors);
+if(!(validate465(data0, {instancePath:instancePath+"/awsElasticBlockStore",parentData:data,parentDataProperty:"awsElasticBlockStore",rootData}))){
+vErrors = vErrors === null ? validate465.errors : vErrors.concat(validate465.errors);
 errors = vErrors.length;
 }
 else {
@@ -9812,8 +9823,8 @@ var valid0 = _errs1 === errors;
 if(data.azureDisk !== undefined){
 let data1 = data.azureDisk;
 const _errs2 = errors;
-if(!(validate470(data1, {instancePath:instancePath+"/azureDisk",parentData:data,parentDataProperty:"azureDisk",rootData}))){
-vErrors = vErrors === null ? validate470.errors : vErrors.concat(validate470.errors);
+if(!(validate471(data1, {instancePath:instancePath+"/azureDisk",parentData:data,parentDataProperty:"azureDisk",rootData}))){
+vErrors = vErrors === null ? validate471.errors : vErrors.concat(validate471.errors);
 errors = vErrors.length;
 }
 else {
@@ -9823,8 +9834,8 @@ var valid0 = _errs2 === errors;
 if(data.azureFile !== undefined){
 let data2 = data.azureFile;
 const _errs3 = errors;
-if(!(validate479(data2, {instancePath:instancePath+"/azureFile",parentData:data,parentDataProperty:"azureFile",rootData}))){
-vErrors = vErrors === null ? validate479.errors : vErrors.concat(validate479.errors);
+if(!(validate480(data2, {instancePath:instancePath+"/azureFile",parentData:data,parentDataProperty:"azureFile",rootData}))){
+vErrors = vErrors === null ? validate480.errors : vErrors.concat(validate480.errors);
 errors = vErrors.length;
 }
 else {
@@ -9834,8 +9845,8 @@ var valid0 = _errs3 === errors;
 if(data.cephfs !== undefined){
 let data3 = data.cephfs;
 const _errs4 = errors;
-if(!(validate484(data3, {instancePath:instancePath+"/cephfs",parentData:data,parentDataProperty:"cephfs",rootData}))){
-vErrors = vErrors === null ? validate484.errors : vErrors.concat(validate484.errors);
+if(!(validate485(data3, {instancePath:instancePath+"/cephfs",parentData:data,parentDataProperty:"cephfs",rootData}))){
+vErrors = vErrors === null ? validate485.errors : vErrors.concat(validate485.errors);
 errors = vErrors.length;
 }
 else {
@@ -9845,8 +9856,8 @@ var valid0 = _errs4 === errors;
 if(data.cinder !== undefined){
 let data4 = data.cinder;
 const _errs5 = errors;
-if(!(validate492(data4, {instancePath:instancePath+"/cinder",parentData:data,parentDataProperty:"cinder",rootData}))){
-vErrors = vErrors === null ? validate492.errors : vErrors.concat(validate492.errors);
+if(!(validate493(data4, {instancePath:instancePath+"/cinder",parentData:data,parentDataProperty:"cinder",rootData}))){
+vErrors = vErrors === null ? validate493.errors : vErrors.concat(validate493.errors);
 errors = vErrors.length;
 }
 else {
@@ -9856,8 +9867,8 @@ var valid0 = _errs5 === errors;
 if(data.configMap !== undefined){
 let data5 = data.configMap;
 const _errs6 = errors;
-if(!(validate498(data5, {instancePath:instancePath+"/configMap",parentData:data,parentDataProperty:"configMap",rootData}))){
-vErrors = vErrors === null ? validate498.errors : vErrors.concat(validate498.errors);
+if(!(validate499(data5, {instancePath:instancePath+"/configMap",parentData:data,parentDataProperty:"configMap",rootData}))){
+vErrors = vErrors === null ? validate499.errors : vErrors.concat(validate499.errors);
 errors = vErrors.length;
 }
 else {
@@ -9867,8 +9878,8 @@ var valid0 = _errs6 === errors;
 if(data.csi !== undefined){
 let data6 = data.csi;
 const _errs7 = errors;
-if(!(validate504(data6, {instancePath:instancePath+"/csi",parentData:data,parentDataProperty:"csi",rootData}))){
-vErrors = vErrors === null ? validate504.errors : vErrors.concat(validate504.errors);
+if(!(validate505(data6, {instancePath:instancePath+"/csi",parentData:data,parentDataProperty:"csi",rootData}))){
+vErrors = vErrors === null ? validate505.errors : vErrors.concat(validate505.errors);
 errors = vErrors.length;
 }
 else {
@@ -9878,8 +9889,8 @@ var valid0 = _errs7 === errors;
 if(data.downwardAPI !== undefined){
 let data7 = data.downwardAPI;
 const _errs8 = errors;
-if(!(validate511(data7, {instancePath:instancePath+"/downwardAPI",parentData:data,parentDataProperty:"downwardAPI",rootData}))){
-vErrors = vErrors === null ? validate511.errors : vErrors.concat(validate511.errors);
+if(!(validate512(data7, {instancePath:instancePath+"/downwardAPI",parentData:data,parentDataProperty:"downwardAPI",rootData}))){
+vErrors = vErrors === null ? validate512.errors : vErrors.concat(validate512.errors);
 errors = vErrors.length;
 }
 else {
@@ -9889,8 +9900,8 @@ var valid0 = _errs8 === errors;
 if(data.emptyDir !== undefined){
 let data8 = data.emptyDir;
 const _errs9 = errors;
-if(!(validate515(data8, {instancePath:instancePath+"/emptyDir",parentData:data,parentDataProperty:"emptyDir",rootData}))){
-vErrors = vErrors === null ? validate515.errors : vErrors.concat(validate515.errors);
+if(!(validate516(data8, {instancePath:instancePath+"/emptyDir",parentData:data,parentDataProperty:"emptyDir",rootData}))){
+vErrors = vErrors === null ? validate516.errors : vErrors.concat(validate516.errors);
 errors = vErrors.length;
 }
 else {
@@ -9900,8 +9911,8 @@ var valid0 = _errs9 === errors;
 if(data.ephemeral !== undefined){
 let data9 = data.ephemeral;
 const _errs10 = errors;
-if(!(validate519(data9, {instancePath:instancePath+"/ephemeral",parentData:data,parentDataProperty:"ephemeral",rootData}))){
-vErrors = vErrors === null ? validate519.errors : vErrors.concat(validate519.errors);
+if(!(validate520(data9, {instancePath:instancePath+"/ephemeral",parentData:data,parentDataProperty:"ephemeral",rootData}))){
+vErrors = vErrors === null ? validate520.errors : vErrors.concat(validate520.errors);
 errors = vErrors.length;
 }
 else {
@@ -9911,8 +9922,8 @@ var valid0 = _errs10 === errors;
 if(data.fc !== undefined){
 let data10 = data.fc;
 const _errs11 = errors;
-if(!(validate547(data10, {instancePath:instancePath+"/fc",parentData:data,parentDataProperty:"fc",rootData}))){
-vErrors = vErrors === null ? validate547.errors : vErrors.concat(validate547.errors);
+if(!(validate548(data10, {instancePath:instancePath+"/fc",parentData:data,parentDataProperty:"fc",rootData}))){
+vErrors = vErrors === null ? validate548.errors : vErrors.concat(validate548.errors);
 errors = vErrors.length;
 }
 else {
@@ -9922,8 +9933,8 @@ var valid0 = _errs11 === errors;
 if(data.flexVolume !== undefined){
 let data11 = data.flexVolume;
 const _errs12 = errors;
-if(!(validate554(data11, {instancePath:instancePath+"/flexVolume",parentData:data,parentDataProperty:"flexVolume",rootData}))){
-vErrors = vErrors === null ? validate554.errors : vErrors.concat(validate554.errors);
+if(!(validate555(data11, {instancePath:instancePath+"/flexVolume",parentData:data,parentDataProperty:"flexVolume",rootData}))){
+vErrors = vErrors === null ? validate555.errors : vErrors.concat(validate555.errors);
 errors = vErrors.length;
 }
 else {
@@ -9933,8 +9944,8 @@ var valid0 = _errs12 === errors;
 if(data.flocker !== undefined){
 let data12 = data.flocker;
 const _errs13 = errors;
-if(!(validate561(data12, {instancePath:instancePath+"/flocker",parentData:data,parentDataProperty:"flocker",rootData}))){
-vErrors = vErrors === null ? validate561.errors : vErrors.concat(validate561.errors);
+if(!(validate562(data12, {instancePath:instancePath+"/flocker",parentData:data,parentDataProperty:"flocker",rootData}))){
+vErrors = vErrors === null ? validate562.errors : vErrors.concat(validate562.errors);
 errors = vErrors.length;
 }
 else {
@@ -9944,8 +9955,8 @@ var valid0 = _errs13 === errors;
 if(data.gcePersistentDisk !== undefined){
 let data13 = data.gcePersistentDisk;
 const _errs14 = errors;
-if(!(validate565(data13, {instancePath:instancePath+"/gcePersistentDisk",parentData:data,parentDataProperty:"gcePersistentDisk",rootData}))){
-vErrors = vErrors === null ? validate565.errors : vErrors.concat(validate565.errors);
+if(!(validate566(data13, {instancePath:instancePath+"/gcePersistentDisk",parentData:data,parentDataProperty:"gcePersistentDisk",rootData}))){
+vErrors = vErrors === null ? validate566.errors : vErrors.concat(validate566.errors);
 errors = vErrors.length;
 }
 else {
@@ -9955,8 +9966,8 @@ var valid0 = _errs14 === errors;
 if(data.gitRepo !== undefined){
 let data14 = data.gitRepo;
 const _errs15 = errors;
-if(!(validate571(data14, {instancePath:instancePath+"/gitRepo",parentData:data,parentDataProperty:"gitRepo",rootData}))){
-vErrors = vErrors === null ? validate571.errors : vErrors.concat(validate571.errors);
+if(!(validate572(data14, {instancePath:instancePath+"/gitRepo",parentData:data,parentDataProperty:"gitRepo",rootData}))){
+vErrors = vErrors === null ? validate572.errors : vErrors.concat(validate572.errors);
 errors = vErrors.length;
 }
 else {
@@ -9966,8 +9977,8 @@ var valid0 = _errs15 === errors;
 if(data.glusterfs !== undefined){
 let data15 = data.glusterfs;
 const _errs16 = errors;
-if(!(validate576(data15, {instancePath:instancePath+"/glusterfs",parentData:data,parentDataProperty:"glusterfs",rootData}))){
-vErrors = vErrors === null ? validate576.errors : vErrors.concat(validate576.errors);
+if(!(validate577(data15, {instancePath:instancePath+"/glusterfs",parentData:data,parentDataProperty:"glusterfs",rootData}))){
+vErrors = vErrors === null ? validate577.errors : vErrors.concat(validate577.errors);
 errors = vErrors.length;
 }
 else {
@@ -9977,8 +9988,8 @@ var valid0 = _errs16 === errors;
 if(data.hostPath !== undefined){
 let data16 = data.hostPath;
 const _errs17 = errors;
-if(!(validate581(data16, {instancePath:instancePath+"/hostPath",parentData:data,parentDataProperty:"hostPath",rootData}))){
-vErrors = vErrors === null ? validate581.errors : vErrors.concat(validate581.errors);
+if(!(validate582(data16, {instancePath:instancePath+"/hostPath",parentData:data,parentDataProperty:"hostPath",rootData}))){
+vErrors = vErrors === null ? validate582.errors : vErrors.concat(validate582.errors);
 errors = vErrors.length;
 }
 else {
@@ -9988,8 +9999,8 @@ var valid0 = _errs17 === errors;
 if(data.image !== undefined){
 let data17 = data.image;
 const _errs18 = errors;
-if(!(validate585(data17, {instancePath:instancePath+"/image",parentData:data,parentDataProperty:"image",rootData}))){
-vErrors = vErrors === null ? validate585.errors : vErrors.concat(validate585.errors);
+if(!(validate586(data17, {instancePath:instancePath+"/image",parentData:data,parentDataProperty:"image",rootData}))){
+vErrors = vErrors === null ? validate586.errors : vErrors.concat(validate586.errors);
 errors = vErrors.length;
 }
 else {
@@ -9999,8 +10010,8 @@ var valid0 = _errs18 === errors;
 if(data.iscsi !== undefined){
 let data18 = data.iscsi;
 const _errs19 = errors;
-if(!(validate589(data18, {instancePath:instancePath+"/iscsi",parentData:data,parentDataProperty:"iscsi",rootData}))){
-vErrors = vErrors === null ? validate589.errors : vErrors.concat(validate589.errors);
+if(!(validate590(data18, {instancePath:instancePath+"/iscsi",parentData:data,parentDataProperty:"iscsi",rootData}))){
+vErrors = vErrors === null ? validate590.errors : vErrors.concat(validate590.errors);
 errors = vErrors.length;
 }
 else {
@@ -10021,8 +10032,8 @@ var valid0 = _errs20 === errors;
 if(data.nfs !== undefined){
 let data20 = data.nfs;
 const _errs21 = errors;
-if(!(validate604(data20, {instancePath:instancePath+"/nfs",parentData:data,parentDataProperty:"nfs",rootData}))){
-vErrors = vErrors === null ? validate604.errors : vErrors.concat(validate604.errors);
+if(!(validate605(data20, {instancePath:instancePath+"/nfs",parentData:data,parentDataProperty:"nfs",rootData}))){
+vErrors = vErrors === null ? validate605.errors : vErrors.concat(validate605.errors);
 errors = vErrors.length;
 }
 else {
@@ -10032,8 +10043,8 @@ var valid0 = _errs21 === errors;
 if(data.persistentVolumeClaim !== undefined){
 let data21 = data.persistentVolumeClaim;
 const _errs22 = errors;
-if(!(validate609(data21, {instancePath:instancePath+"/persistentVolumeClaim",parentData:data,parentDataProperty:"persistentVolumeClaim",rootData}))){
-vErrors = vErrors === null ? validate609.errors : vErrors.concat(validate609.errors);
+if(!(validate610(data21, {instancePath:instancePath+"/persistentVolumeClaim",parentData:data,parentDataProperty:"persistentVolumeClaim",rootData}))){
+vErrors = vErrors === null ? validate610.errors : vErrors.concat(validate610.errors);
 errors = vErrors.length;
 }
 else {
@@ -10043,8 +10054,8 @@ var valid0 = _errs22 === errors;
 if(data.photonPersistentDisk !== undefined){
 let data22 = data.photonPersistentDisk;
 const _errs23 = errors;
-if(!(validate613(data22, {instancePath:instancePath+"/photonPersistentDisk",parentData:data,parentDataProperty:"photonPersistentDisk",rootData}))){
-vErrors = vErrors === null ? validate613.errors : vErrors.concat(validate613.errors);
+if(!(validate614(data22, {instancePath:instancePath+"/photonPersistentDisk",parentData:data,parentDataProperty:"photonPersistentDisk",rootData}))){
+vErrors = vErrors === null ? validate614.errors : vErrors.concat(validate614.errors);
 errors = vErrors.length;
 }
 else {
@@ -10054,8 +10065,8 @@ var valid0 = _errs23 === errors;
 if(data.portworxVolume !== undefined){
 let data23 = data.portworxVolume;
 const _errs24 = errors;
-if(!(validate617(data23, {instancePath:instancePath+"/portworxVolume",parentData:data,parentDataProperty:"portworxVolume",rootData}))){
-vErrors = vErrors === null ? validate617.errors : vErrors.concat(validate617.errors);
+if(!(validate618(data23, {instancePath:instancePath+"/portworxVolume",parentData:data,parentDataProperty:"portworxVolume",rootData}))){
+vErrors = vErrors === null ? validate618.errors : vErrors.concat(validate618.errors);
 errors = vErrors.length;
 }
 else {
@@ -10065,8 +10076,8 @@ var valid0 = _errs24 === errors;
 if(data.projected !== undefined){
 let data24 = data.projected;
 const _errs25 = errors;
-if(!(validate622(data24, {instancePath:instancePath+"/projected",parentData:data,parentDataProperty:"projected",rootData}))){
-vErrors = vErrors === null ? validate622.errors : vErrors.concat(validate622.errors);
+if(!(validate623(data24, {instancePath:instancePath+"/projected",parentData:data,parentDataProperty:"projected",rootData}))){
+vErrors = vErrors === null ? validate623.errors : vErrors.concat(validate623.errors);
 errors = vErrors.length;
 }
 else {
@@ -10076,8 +10087,8 @@ var valid0 = _errs25 === errors;
 if(data.quobyte !== undefined){
 let data25 = data.quobyte;
 const _errs26 = errors;
-if(!(validate655(data25, {instancePath:instancePath+"/quobyte",parentData:data,parentDataProperty:"quobyte",rootData}))){
-vErrors = vErrors === null ? validate655.errors : vErrors.concat(validate655.errors);
+if(!(validate656(data25, {instancePath:instancePath+"/quobyte",parentData:data,parentDataProperty:"quobyte",rootData}))){
+vErrors = vErrors === null ? validate656.errors : vErrors.concat(validate656.errors);
 errors = vErrors.length;
 }
 else {
@@ -10087,8 +10098,8 @@ var valid0 = _errs26 === errors;
 if(data.rbd !== undefined){
 let data26 = data.rbd;
 const _errs27 = errors;
-if(!(validate663(data26, {instancePath:instancePath+"/rbd",parentData:data,parentDataProperty:"rbd",rootData}))){
-vErrors = vErrors === null ? validate663.errors : vErrors.concat(validate663.errors);
+if(!(validate664(data26, {instancePath:instancePath+"/rbd",parentData:data,parentDataProperty:"rbd",rootData}))){
+vErrors = vErrors === null ? validate664.errors : vErrors.concat(validate664.errors);
 errors = vErrors.length;
 }
 else {
@@ -10098,8 +10109,8 @@ var valid0 = _errs27 === errors;
 if(data.scaleIO !== undefined){
 let data27 = data.scaleIO;
 const _errs28 = errors;
-if(!(validate676(data27, {instancePath:instancePath+"/scaleIO",parentData:data,parentDataProperty:"scaleIO",rootData}))){
-vErrors = vErrors === null ? validate676.errors : vErrors.concat(validate676.errors);
+if(!(validate677(data27, {instancePath:instancePath+"/scaleIO",parentData:data,parentDataProperty:"scaleIO",rootData}))){
+vErrors = vErrors === null ? validate677.errors : vErrors.concat(validate677.errors);
 errors = vErrors.length;
 }
 else {
@@ -10109,8 +10120,8 @@ var valid0 = _errs28 === errors;
 if(data.secret !== undefined){
 let data28 = data.secret;
 const _errs29 = errors;
-if(!(validate690(data28, {instancePath:instancePath+"/secret",parentData:data,parentDataProperty:"secret",rootData}))){
-vErrors = vErrors === null ? validate690.errors : vErrors.concat(validate690.errors);
+if(!(validate691(data28, {instancePath:instancePath+"/secret",parentData:data,parentDataProperty:"secret",rootData}))){
+vErrors = vErrors === null ? validate691.errors : vErrors.concat(validate691.errors);
 errors = vErrors.length;
 }
 else {
@@ -10120,8 +10131,8 @@ var valid0 = _errs29 === errors;
 if(data.storageos !== undefined){
 let data29 = data.storageos;
 const _errs30 = errors;
-if(!(validate696(data29, {instancePath:instancePath+"/storageos",parentData:data,parentDataProperty:"storageos",rootData}))){
-vErrors = vErrors === null ? validate696.errors : vErrors.concat(validate696.errors);
+if(!(validate697(data29, {instancePath:instancePath+"/storageos",parentData:data,parentDataProperty:"storageos",rootData}))){
+vErrors = vErrors === null ? validate697.errors : vErrors.concat(validate697.errors);
 errors = vErrors.length;
 }
 else {
@@ -10131,8 +10142,8 @@ var valid0 = _errs30 === errors;
 if(data.vsphereVolume !== undefined){
 let data30 = data.vsphereVolume;
 const _errs31 = errors;
-if(!(validate703(data30, {instancePath:instancePath+"/vsphereVolume",parentData:data,parentDataProperty:"vsphereVolume",rootData}))){
-vErrors = vErrors === null ? validate703.errors : vErrors.concat(validate703.errors);
+if(!(validate704(data30, {instancePath:instancePath+"/vsphereVolume",parentData:data,parentDataProperty:"vsphereVolume",rootData}))){
+vErrors = vErrors === null ? validate704.errors : vErrors.concat(validate704.errors);
 errors = vErrors.length;
 }
 else {
@@ -10150,12 +10161,12 @@ vErrors.push(err1);
 }
 errors++;
 }
-validate463.errors = vErrors;
+validate464.errors = vErrors;
 return errors === 0;
 }
 
 
-function validate462(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+function validate463(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
 let errors = 0;
 if((!(Array.isArray(data))) && (data !== null)){
@@ -10176,8 +10187,8 @@ const len0 = data.length;
 for(let i0=0; i0<len0; i0++){
 let data0 = data[i0];
 const _errs2 = errors;
-if(!(validate463(data0, {instancePath:instancePath+"/" + i0,parentData:data,parentDataProperty:i0,rootData}))){
-vErrors = vErrors === null ? validate463.errors : vErrors.concat(validate463.errors);
+if(!(validate464(data0, {instancePath:instancePath+"/" + i0,parentData:data,parentDataProperty:i0,rootData}))){
+vErrors = vErrors === null ? validate464.errors : vErrors.concat(validate464.errors);
 errors = vErrors.length;
 }
 else {
@@ -10188,12 +10199,12 @@ valid1 = false;
 }
 }
 }
-validate462.errors = vErrors;
+validate463.errors = vErrors;
 return errors === 0;
 }
 
 
-function validate302(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+function validate303(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
 let errors = 0;
 if((!(data && typeof data == "object" && !Array.isArray(data))) && (data !== null)){
@@ -10233,8 +10244,8 @@ var valid0 = _errs2 === errors;
 if(data.affinity !== undefined){
 let data1 = data.affinity;
 const _errs3 = errors;
-if(!(validate304(data1, {instancePath:instancePath+"/affinity",parentData:data,parentDataProperty:"affinity",rootData}))){
-vErrors = vErrors === null ? validate304.errors : vErrors.concat(validate304.errors);
+if(!(validate305(data1, {instancePath:instancePath+"/affinity",parentData:data,parentDataProperty:"affinity",rootData}))){
+vErrors = vErrors === null ? validate305.errors : vErrors.concat(validate305.errors);
 errors = vErrors.length;
 }
 else {
@@ -10244,8 +10255,8 @@ var valid0 = _errs3 === errors;
 if(data.automountServiceAccountToken !== undefined){
 let data2 = data.automountServiceAccountToken;
 const _errs4 = errors;
-if(!(validate41(data2, {instancePath:instancePath+"/automountServiceAccountToken",parentData:data,parentDataProperty:"automountServiceAccountToken",rootData}))){
-vErrors = vErrors === null ? validate41.errors : vErrors.concat(validate41.errors);
+if(!(validate2(data2, {instancePath:instancePath+"/automountServiceAccountToken",parentData:data,parentDataProperty:"automountServiceAccountToken",rootData}))){
+vErrors = vErrors === null ? validate2.errors : vErrors.concat(validate2.errors);
 errors = vErrors.length;
 }
 else {
@@ -10255,8 +10266,8 @@ var valid0 = _errs4 === errors;
 if(data.containers !== undefined){
 let data3 = data.containers;
 const _errs5 = errors;
-if(!(validate322(data3, {instancePath:instancePath+"/containers",parentData:data,parentDataProperty:"containers",rootData}))){
-vErrors = vErrors === null ? validate322.errors : vErrors.concat(validate322.errors);
+if(!(validate323(data3, {instancePath:instancePath+"/containers",parentData:data,parentDataProperty:"containers",rootData}))){
+vErrors = vErrors === null ? validate323.errors : vErrors.concat(validate323.errors);
 errors = vErrors.length;
 }
 else {
@@ -10266,8 +10277,8 @@ var valid0 = _errs5 === errors;
 if(data.dnsConfig !== undefined){
 let data4 = data.dnsConfig;
 const _errs6 = errors;
-if(!(validate325(data4, {instancePath:instancePath+"/dnsConfig",parentData:data,parentDataProperty:"dnsConfig",rootData}))){
-vErrors = vErrors === null ? validate325.errors : vErrors.concat(validate325.errors);
+if(!(validate326(data4, {instancePath:instancePath+"/dnsConfig",parentData:data,parentDataProperty:"dnsConfig",rootData}))){
+vErrors = vErrors === null ? validate326.errors : vErrors.concat(validate326.errors);
 errors = vErrors.length;
 }
 else {
@@ -10288,8 +10299,8 @@ var valid0 = _errs7 === errors;
 if(data.enableServiceLinks !== undefined){
 let data6 = data.enableServiceLinks;
 const _errs8 = errors;
-if(!(validate41(data6, {instancePath:instancePath+"/enableServiceLinks",parentData:data,parentDataProperty:"enableServiceLinks",rootData}))){
-vErrors = vErrors === null ? validate41.errors : vErrors.concat(validate41.errors);
+if(!(validate2(data6, {instancePath:instancePath+"/enableServiceLinks",parentData:data,parentDataProperty:"enableServiceLinks",rootData}))){
+vErrors = vErrors === null ? validate2.errors : vErrors.concat(validate2.errors);
 errors = vErrors.length;
 }
 else {
@@ -10299,8 +10310,8 @@ var valid0 = _errs8 === errors;
 if(data.ephemeralContainers !== undefined){
 let data7 = data.ephemeralContainers;
 const _errs9 = errors;
-if(!(validate337(data7, {instancePath:instancePath+"/ephemeralContainers",parentData:data,parentDataProperty:"ephemeralContainers",rootData}))){
-vErrors = vErrors === null ? validate337.errors : vErrors.concat(validate337.errors);
+if(!(validate338(data7, {instancePath:instancePath+"/ephemeralContainers",parentData:data,parentDataProperty:"ephemeralContainers",rootData}))){
+vErrors = vErrors === null ? validate338.errors : vErrors.concat(validate338.errors);
 errors = vErrors.length;
 }
 else {
@@ -10310,8 +10321,8 @@ var valid0 = _errs9 === errors;
 if(data.hostAliases !== undefined){
 let data8 = data.hostAliases;
 const _errs10 = errors;
-if(!(validate367(data8, {instancePath:instancePath+"/hostAliases",parentData:data,parentDataProperty:"hostAliases",rootData}))){
-vErrors = vErrors === null ? validate367.errors : vErrors.concat(validate367.errors);
+if(!(validate368(data8, {instancePath:instancePath+"/hostAliases",parentData:data,parentDataProperty:"hostAliases",rootData}))){
+vErrors = vErrors === null ? validate368.errors : vErrors.concat(validate368.errors);
 errors = vErrors.length;
 }
 else {
@@ -10321,8 +10332,8 @@ var valid0 = _errs10 === errors;
 if(data.hostIPC !== undefined){
 let data9 = data.hostIPC;
 const _errs11 = errors;
-if(!(validate41(data9, {instancePath:instancePath+"/hostIPC",parentData:data,parentDataProperty:"hostIPC",rootData}))){
-vErrors = vErrors === null ? validate41.errors : vErrors.concat(validate41.errors);
+if(!(validate2(data9, {instancePath:instancePath+"/hostIPC",parentData:data,parentDataProperty:"hostIPC",rootData}))){
+vErrors = vErrors === null ? validate2.errors : vErrors.concat(validate2.errors);
 errors = vErrors.length;
 }
 else {
@@ -10332,8 +10343,8 @@ var valid0 = _errs11 === errors;
 if(data.hostNetwork !== undefined){
 let data10 = data.hostNetwork;
 const _errs12 = errors;
-if(!(validate41(data10, {instancePath:instancePath+"/hostNetwork",parentData:data,parentDataProperty:"hostNetwork",rootData}))){
-vErrors = vErrors === null ? validate41.errors : vErrors.concat(validate41.errors);
+if(!(validate2(data10, {instancePath:instancePath+"/hostNetwork",parentData:data,parentDataProperty:"hostNetwork",rootData}))){
+vErrors = vErrors === null ? validate2.errors : vErrors.concat(validate2.errors);
 errors = vErrors.length;
 }
 else {
@@ -10343,8 +10354,8 @@ var valid0 = _errs12 === errors;
 if(data.hostPID !== undefined){
 let data11 = data.hostPID;
 const _errs13 = errors;
-if(!(validate41(data11, {instancePath:instancePath+"/hostPID",parentData:data,parentDataProperty:"hostPID",rootData}))){
-vErrors = vErrors === null ? validate41.errors : vErrors.concat(validate41.errors);
+if(!(validate2(data11, {instancePath:instancePath+"/hostPID",parentData:data,parentDataProperty:"hostPID",rootData}))){
+vErrors = vErrors === null ? validate2.errors : vErrors.concat(validate2.errors);
 errors = vErrors.length;
 }
 else {
@@ -10354,8 +10365,8 @@ var valid0 = _errs13 === errors;
 if(data.hostUsers !== undefined){
 let data12 = data.hostUsers;
 const _errs14 = errors;
-if(!(validate41(data12, {instancePath:instancePath+"/hostUsers",parentData:data,parentDataProperty:"hostUsers",rootData}))){
-vErrors = vErrors === null ? validate41.errors : vErrors.concat(validate41.errors);
+if(!(validate2(data12, {instancePath:instancePath+"/hostUsers",parentData:data,parentDataProperty:"hostUsers",rootData}))){
+vErrors = vErrors === null ? validate2.errors : vErrors.concat(validate2.errors);
 errors = vErrors.length;
 }
 else {
@@ -10387,8 +10398,8 @@ var valid0 = _errs16 === errors;
 if(data.imagePullSecrets !== undefined){
 let data15 = data.imagePullSecrets;
 const _errs17 = errors;
-if(!(validate379(data15, {instancePath:instancePath+"/imagePullSecrets",parentData:data,parentDataProperty:"imagePullSecrets",rootData}))){
-vErrors = vErrors === null ? validate379.errors : vErrors.concat(validate379.errors);
+if(!(validate380(data15, {instancePath:instancePath+"/imagePullSecrets",parentData:data,parentDataProperty:"imagePullSecrets",rootData}))){
+vErrors = vErrors === null ? validate380.errors : vErrors.concat(validate380.errors);
 errors = vErrors.length;
 }
 else {
@@ -10398,8 +10409,8 @@ var valid0 = _errs17 === errors;
 if(data.initContainers !== undefined){
 let data16 = data.initContainers;
 const _errs18 = errors;
-if(!(validate382(data16, {instancePath:instancePath+"/initContainers",parentData:data,parentDataProperty:"initContainers",rootData}))){
-vErrors = vErrors === null ? validate382.errors : vErrors.concat(validate382.errors);
+if(!(validate383(data16, {instancePath:instancePath+"/initContainers",parentData:data,parentDataProperty:"initContainers",rootData}))){
+vErrors = vErrors === null ? validate383.errors : vErrors.concat(validate383.errors);
 errors = vErrors.length;
 }
 else {
@@ -10420,8 +10431,8 @@ var valid0 = _errs19 === errors;
 if(data.nodeSelector !== undefined){
 let data18 = data.nodeSelector;
 const _errs20 = errors;
-if(!(validate7(data18, {instancePath:instancePath+"/nodeSelector",parentData:data,parentDataProperty:"nodeSelector",rootData}))){
-vErrors = vErrors === null ? validate7.errors : vErrors.concat(validate7.errors);
+if(!(validate8(data18, {instancePath:instancePath+"/nodeSelector",parentData:data,parentDataProperty:"nodeSelector",rootData}))){
+vErrors = vErrors === null ? validate8.errors : vErrors.concat(validate8.errors);
 errors = vErrors.length;
 }
 else {
@@ -10431,8 +10442,8 @@ var valid0 = _errs20 === errors;
 if(data.os !== undefined){
 let data19 = data.os;
 const _errs21 = errors;
-if(!(validate387(data19, {instancePath:instancePath+"/os",parentData:data,parentDataProperty:"os",rootData}))){
-vErrors = vErrors === null ? validate387.errors : vErrors.concat(validate387.errors);
+if(!(validate388(data19, {instancePath:instancePath+"/os",parentData:data,parentDataProperty:"os",rootData}))){
+vErrors = vErrors === null ? validate388.errors : vErrors.concat(validate388.errors);
 errors = vErrors.length;
 }
 else {
@@ -10486,8 +10497,8 @@ var valid0 = _errs25 === errors;
 if(data.readinessGates !== undefined){
 let data24 = data.readinessGates;
 const _errs26 = errors;
-if(!(validate394(data24, {instancePath:instancePath+"/readinessGates",parentData:data,parentDataProperty:"readinessGates",rootData}))){
-vErrors = vErrors === null ? validate394.errors : vErrors.concat(validate394.errors);
+if(!(validate395(data24, {instancePath:instancePath+"/readinessGates",parentData:data,parentDataProperty:"readinessGates",rootData}))){
+vErrors = vErrors === null ? validate395.errors : vErrors.concat(validate395.errors);
 errors = vErrors.length;
 }
 else {
@@ -10497,8 +10508,8 @@ var valid0 = _errs26 === errors;
 if(data.resourceClaims !== undefined){
 let data25 = data.resourceClaims;
 const _errs27 = errors;
-if(!(validate399(data25, {instancePath:instancePath+"/resourceClaims",parentData:data,parentDataProperty:"resourceClaims",rootData}))){
-vErrors = vErrors === null ? validate399.errors : vErrors.concat(validate399.errors);
+if(!(validate400(data25, {instancePath:instancePath+"/resourceClaims",parentData:data,parentDataProperty:"resourceClaims",rootData}))){
+vErrors = vErrors === null ? validate400.errors : vErrors.concat(validate400.errors);
 errors = vErrors.length;
 }
 else {
@@ -10552,8 +10563,8 @@ var valid0 = _errs31 === errors;
 if(data.schedulingGates !== undefined){
 let data30 = data.schedulingGates;
 const _errs32 = errors;
-if(!(validate410(data30, {instancePath:instancePath+"/schedulingGates",parentData:data,parentDataProperty:"schedulingGates",rootData}))){
-vErrors = vErrors === null ? validate410.errors : vErrors.concat(validate410.errors);
+if(!(validate411(data30, {instancePath:instancePath+"/schedulingGates",parentData:data,parentDataProperty:"schedulingGates",rootData}))){
+vErrors = vErrors === null ? validate411.errors : vErrors.concat(validate411.errors);
 errors = vErrors.length;
 }
 else {
@@ -10563,8 +10574,8 @@ var valid0 = _errs32 === errors;
 if(data.schedulingGroup !== undefined){
 let data31 = data.schedulingGroup;
 const _errs33 = errors;
-if(!(validate415(data31, {instancePath:instancePath+"/schedulingGroup",parentData:data,parentDataProperty:"schedulingGroup",rootData}))){
-vErrors = vErrors === null ? validate415.errors : vErrors.concat(validate415.errors);
+if(!(validate416(data31, {instancePath:instancePath+"/schedulingGroup",parentData:data,parentDataProperty:"schedulingGroup",rootData}))){
+vErrors = vErrors === null ? validate416.errors : vErrors.concat(validate416.errors);
 errors = vErrors.length;
 }
 else {
@@ -10574,8 +10585,8 @@ var valid0 = _errs33 === errors;
 if(data.securityContext !== undefined){
 let data32 = data.securityContext;
 const _errs34 = errors;
-if(!(validate418(data32, {instancePath:instancePath+"/securityContext",parentData:data,parentDataProperty:"securityContext",rootData}))){
-vErrors = vErrors === null ? validate418.errors : vErrors.concat(validate418.errors);
+if(!(validate419(data32, {instancePath:instancePath+"/securityContext",parentData:data,parentDataProperty:"securityContext",rootData}))){
+vErrors = vErrors === null ? validate419.errors : vErrors.concat(validate419.errors);
 errors = vErrors.length;
 }
 else {
@@ -10607,8 +10618,8 @@ var valid0 = _errs36 === errors;
 if(data.setHostnameAsFQDN !== undefined){
 let data35 = data.setHostnameAsFQDN;
 const _errs37 = errors;
-if(!(validate41(data35, {instancePath:instancePath+"/setHostnameAsFQDN",parentData:data,parentDataProperty:"setHostnameAsFQDN",rootData}))){
-vErrors = vErrors === null ? validate41.errors : vErrors.concat(validate41.errors);
+if(!(validate2(data35, {instancePath:instancePath+"/setHostnameAsFQDN",parentData:data,parentDataProperty:"setHostnameAsFQDN",rootData}))){
+vErrors = vErrors === null ? validate2.errors : vErrors.concat(validate2.errors);
 errors = vErrors.length;
 }
 else {
@@ -10618,8 +10629,8 @@ var valid0 = _errs37 === errors;
 if(data.shareProcessNamespace !== undefined){
 let data36 = data.shareProcessNamespace;
 const _errs38 = errors;
-if(!(validate41(data36, {instancePath:instancePath+"/shareProcessNamespace",parentData:data,parentDataProperty:"shareProcessNamespace",rootData}))){
-vErrors = vErrors === null ? validate41.errors : vErrors.concat(validate41.errors);
+if(!(validate2(data36, {instancePath:instancePath+"/shareProcessNamespace",parentData:data,parentDataProperty:"shareProcessNamespace",rootData}))){
+vErrors = vErrors === null ? validate2.errors : vErrors.concat(validate2.errors);
 errors = vErrors.length;
 }
 else {
@@ -10651,8 +10662,8 @@ var valid0 = _errs40 === errors;
 if(data.tolerations !== undefined){
 let data39 = data.tolerations;
 const _errs41 = errors;
-if(!(validate441(data39, {instancePath:instancePath+"/tolerations",parentData:data,parentDataProperty:"tolerations",rootData}))){
-vErrors = vErrors === null ? validate441.errors : vErrors.concat(validate441.errors);
+if(!(validate442(data39, {instancePath:instancePath+"/tolerations",parentData:data,parentDataProperty:"tolerations",rootData}))){
+vErrors = vErrors === null ? validate442.errors : vErrors.concat(validate442.errors);
 errors = vErrors.length;
 }
 else {
@@ -10662,8 +10673,8 @@ var valid0 = _errs41 === errors;
 if(data.topologySpreadConstraints !== undefined){
 let data40 = data.topologySpreadConstraints;
 const _errs42 = errors;
-if(!(validate450(data40, {instancePath:instancePath+"/topologySpreadConstraints",parentData:data,parentDataProperty:"topologySpreadConstraints",rootData}))){
-vErrors = vErrors === null ? validate450.errors : vErrors.concat(validate450.errors);
+if(!(validate451(data40, {instancePath:instancePath+"/topologySpreadConstraints",parentData:data,parentDataProperty:"topologySpreadConstraints",rootData}))){
+vErrors = vErrors === null ? validate451.errors : vErrors.concat(validate451.errors);
 errors = vErrors.length;
 }
 else {
@@ -10673,8 +10684,8 @@ var valid0 = _errs42 === errors;
 if(data.volumes !== undefined){
 let data41 = data.volumes;
 const _errs43 = errors;
-if(!(validate462(data41, {instancePath:instancePath+"/volumes",parentData:data,parentDataProperty:"volumes",rootData}))){
-vErrors = vErrors === null ? validate462.errors : vErrors.concat(validate462.errors);
+if(!(validate463(data41, {instancePath:instancePath+"/volumes",parentData:data,parentDataProperty:"volumes",rootData}))){
+vErrors = vErrors === null ? validate463.errors : vErrors.concat(validate463.errors);
 errors = vErrors.length;
 }
 else {
@@ -10682,12 +10693,12 @@ else {
 var valid0 = _errs43 === errors;
 }
 }
-validate302.errors = vErrors;
+validate303.errors = vErrors;
 return errors === 0;
 }
 
 
-function validate300(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+function validate301(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
 let errors = 0;
 if((!(data && typeof data == "object" && !Array.isArray(data))) && (data !== null)){
@@ -10717,8 +10728,8 @@ var valid0 = _errs2 === errors;
 if(data.spec !== undefined){
 let data1 = data.spec;
 const _errs3 = errors;
-if(!(validate302(data1, {instancePath:instancePath+"/spec",parentData:data,parentDataProperty:"spec",rootData}))){
-vErrors = vErrors === null ? validate302.errors : vErrors.concat(validate302.errors);
+if(!(validate303(data1, {instancePath:instancePath+"/spec",parentData:data,parentDataProperty:"spec",rootData}))){
+vErrors = vErrors === null ? validate303.errors : vErrors.concat(validate303.errors);
 errors = vErrors.length;
 }
 else {
@@ -10726,12 +10737,12 @@ else {
 var valid0 = _errs3 === errors;
 }
 }
-validate300.errors = vErrors;
+validate301.errors = vErrors;
 return errors === 0;
 }
 
 
-function validate296(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+function validate297(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
 let errors = 0;
 const _errs0 = errors;
@@ -10759,8 +10770,8 @@ errors++;
 if(data.carrier !== undefined){
 let data0 = data.carrier;
 const _errs1 = errors;
-if(!(validate2(data0, {instancePath:instancePath+"/carrier",parentData:data,parentDataProperty:"carrier",rootData}))){
-vErrors = vErrors === null ? validate2.errors : vErrors.concat(validate2.errors);
+if(!(validate3(data0, {instancePath:instancePath+"/carrier",parentData:data,parentDataProperty:"carrier",rootData}))){
+vErrors = vErrors === null ? validate3.errors : vErrors.concat(validate3.errors);
 errors = vErrors.length;
 }
 else {
@@ -10781,8 +10792,8 @@ var valid0 = _errs2 === errors;
 if(data.parameters !== undefined){
 let data2 = data.parameters;
 const _errs3 = errors;
-if(!(validate3(data2, {instancePath:instancePath+"/parameters",parentData:data,parentDataProperty:"parameters",rootData}))){
-vErrors = vErrors === null ? validate3.errors : vErrors.concat(validate3.errors);
+if(!(validate4(data2, {instancePath:instancePath+"/parameters",parentData:data,parentDataProperty:"parameters",rootData}))){
+vErrors = vErrors === null ? validate4.errors : vErrors.concat(validate4.errors);
 errors = vErrors.length;
 }
 else {
@@ -10792,8 +10803,8 @@ var valid0 = _errs3 === errors;
 if(data.template !== undefined){
 let data3 = data.template;
 const _errs4 = errors;
-if(!(validate300(data3, {instancePath:instancePath+"/template",parentData:data,parentDataProperty:"template",rootData}))){
-vErrors = vErrors === null ? validate300.errors : vErrors.concat(validate300.errors);
+if(!(validate301(data3, {instancePath:instancePath+"/template",parentData:data,parentDataProperty:"template",rootData}))){
+vErrors = vErrors === null ? validate301.errors : vErrors.concat(validate301.errors);
 errors = vErrors.length;
 }
 else {
@@ -10822,7 +10833,7 @@ vErrors.push(err2);
 }
 errors++;
 }
-validate296.errors = vErrors;
+validate297.errors = vErrors;
 return errors === 0;
 }
 
@@ -10930,8 +10941,8 @@ var valid0 = _errs5 === errors;
 if(data.runtime !== undefined){
 let data4 = data.runtime;
 const _errs6 = errors;
-if(!(validate285(data4, {instancePath:instancePath+"/runtime",parentData:data,parentDataProperty:"runtime",rootData}))){
-vErrors = vErrors === null ? validate285.errors : vErrors.concat(validate285.errors);
+if(!(validate286(data4, {instancePath:instancePath+"/runtime",parentData:data,parentDataProperty:"runtime",rootData}))){
+vErrors = vErrors === null ? validate286.errors : vErrors.concat(validate286.errors);
 errors = vErrors.length;
 }
 else {
@@ -10941,8 +10952,8 @@ var valid0 = _errs6 === errors;
 if(data.suspended !== undefined){
 let data5 = data.suspended;
 const _errs7 = errors;
-if(!(validate41(data5, {instancePath:instancePath+"/suspended",parentData:data,parentDataProperty:"suspended",rootData}))){
-vErrors = vErrors === null ? validate41.errors : vErrors.concat(validate41.errors);
+if(!(validate2(data5, {instancePath:instancePath+"/suspended",parentData:data,parentDataProperty:"suspended",rootData}))){
+vErrors = vErrors === null ? validate2.errors : vErrors.concat(validate2.errors);
 errors = vErrors.length;
 }
 else {
@@ -10952,8 +10963,8 @@ var valid0 = _errs7 === errors;
 if(data.tags !== undefined){
 let data6 = data.tags;
 const _errs8 = errors;
-if(!(validate290(data6, {instancePath:instancePath+"/tags",parentData:data,parentDataProperty:"tags",rootData}))){
-vErrors = vErrors === null ? validate290.errors : vErrors.concat(validate290.errors);
+if(!(validate291(data6, {instancePath:instancePath+"/tags",parentData:data,parentDataProperty:"tags",rootData}))){
+vErrors = vErrors === null ? validate291.errors : vErrors.concat(validate291.errors);
 errors = vErrors.length;
 }
 else {
@@ -10963,8 +10974,8 @@ var valid0 = _errs8 === errors;
 if(data.workload !== undefined){
 let data7 = data.workload;
 const _errs9 = errors;
-if(!(validate296(data7, {instancePath:instancePath+"/workload",parentData:data,parentDataProperty:"workload",rootData}))){
-vErrors = vErrors === null ? validate296.errors : vErrors.concat(validate296.errors);
+if(!(validate297(data7, {instancePath:instancePath+"/workload",parentData:data,parentDataProperty:"workload",rootData}))){
+vErrors = vErrors === null ? validate297.errors : vErrors.concat(validate297.errors);
 errors = vErrors.length;
 }
 else {
@@ -10976,7 +10987,7 @@ validate276.errors = vErrors;
 return errors === 0;
 }
 
-const schema172 = {"properties":{"completionTime":{"$ref":"YL2AaRx5mZZL3drs48WsIqN7ZQe66kWzKXDNrUwOgoc"},"conditions":{"$ref":"hhAxL57cvApnLYfNWQbGuX0ymd4M4buVmG7H0q63I0w"},"events":{"$ref":"Ju-wMSQJ-nWv9bz8kP8PuWhur4odJBfn2n0aWeAvRzo"},"message":{"$ref":"ldoCEsh0ARg8F2aeji6S38NFl7aLPSuz1hGlgX2tjuQ"},"observedGeneration":{"$ref":"otlW-2SioSJxw2ZRa8bQrFi14CUkm_yS2tfdShK98Vk"},"observedNodes":{"$ref":"uqi-NWpwJAtCtKg340P2GU85hOwdccNKh8Eansj5IGE"},"phase":{"$ref":"OumCqY-lP6-t1qsO7hLYZf_ZC9lX1mEyjnwbPTz244M"},"pullProgress":{"$ref":"gDMAFrrisSGbwGplQDJI2kIWbFoO35CEb_0uFAdTsQ8"},"retryCount":{"$ref":"j4SBnKFzNWrJQU4F8rp8qSB0IqehV1dh50NKzJhlTjs"},"startTime":{"$ref":"YL2AaRx5mZZL3drs48WsIqN7ZQe66kWzKXDNrUwOgoc"},"tensorBoardProxy":{"$ref":"ldoCEsh0ARg8F2aeji6S38NFl7aLPSuz1hGlgX2tjuQ"}},"type":"object","nullable":true};
+const schema172 = {"properties":{"completionTime":{"$ref":"YL2AaRx5mZZL3drs48WsIqN7ZQe66kWzKXDNrUwOgoc"},"conditions":{"$ref":"hhAxL57cvApnLYfNWQbGuX0ymd4M4buVmG7H0q63I0w"},"events":{"$ref":"Ju-wMSQJ-nWv9bz8kP8PuWhur4odJBfn2n0aWeAvRzo"},"instances":{"$ref":"HBdkuS2O70rks3YPxVrhSp4ClhCoC_yxq3v3s1Lyvkg"},"message":{"$ref":"ldoCEsh0ARg8F2aeji6S38NFl7aLPSuz1hGlgX2tjuQ"},"observedGeneration":{"$ref":"otlW-2SioSJxw2ZRa8bQrFi14CUkm_yS2tfdShK98Vk"},"observedNodes":{"$ref":"uqi-NWpwJAtCtKg340P2GU85hOwdccNKh8Eansj5IGE"},"phase":{"$ref":"OumCqY-lP6-t1qsO7hLYZf_ZC9lX1mEyjnwbPTz244M"},"pullProgress":{"$ref":"gDMAFrrisSGbwGplQDJI2kIWbFoO35CEb_0uFAdTsQ8"},"retryCount":{"$ref":"j4SBnKFzNWrJQU4F8rp8qSB0IqehV1dh50NKzJhlTjs"},"startTime":{"$ref":"YL2AaRx5mZZL3drs48WsIqN7ZQe66kWzKXDNrUwOgoc"},"tensorBoardProxy":{"$ref":"ldoCEsh0ARg8F2aeji6S38NFl7aLPSuz1hGlgX2tjuQ"}},"type":"object","nullable":true};
 const schema77 = {"format":"date-time","type":"string","nullable":true};
 const formats8 = formats["date-time"];
 
@@ -11017,7 +11028,7 @@ const schema173 = {"items":{"$ref":"dZ13d79yfL0AfKGv8XJr0-7aalgpv7dwgkV5EU9HxwM"
 const schema174 = {"properties":{"lastTransitionTime":{"$ref":"nWP098h5Flk6EOMa_OWYW4EnhyCrisyvgJPgk0WtC9c"},"message":{"$ref":"CG805GD3KzsipQt5EKLOQw9SjU_4PVFnnbOjDh0LzJQ"},"observedGeneration":{"$ref":"Tv0gqme9PlVaT-l831KRjUe4u9reG1m_llVaPqPtqUs"},"reason":{"$ref":"UPBfG4e9zcqG6mx3tN1LWinVzYKOFfIO2VnMgg6lAWI"},"status":{"$ref":"UcCRuQZyUlftnmEwuGDZcciwLAdzzRj4HOLofWAwyW8"},"type":{"$ref":"grctw_GwW6iDVZUzowft1rMz55_d64qiJ_wOfyk2Qoo"}},"required":["lastTransitionTime","message","reason","status","type"],"type":"object"};
 const schema175 = {"format":"date-time","type":"string"};
 
-function validate720(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+function validate721(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
 let errors = 0;
 const _errs0 = errors;
@@ -11045,14 +11056,14 @@ vErrors.push(err1);
 }
 errors++;
 }
-validate720.errors = vErrors;
+validate721.errors = vErrors;
 return errors === 0;
 }
 
 const schema176 = {"maxLength":32768,"type":"string"};
 import func0 from "@kubernetes-models/validate/runtime/ucs2length";
 
-function validate722(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+function validate723(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
 let errors = 0;
 const _errs0 = errors;
@@ -11078,13 +11089,13 @@ vErrors.push(err1);
 }
 errors++;
 }
-validate722.errors = vErrors;
+validate723.errors = vErrors;
 return errors === 0;
 }
 
 const schema177 = {"format":"int64","type":"integer","minimum":0,"nullable":true};
 
-function validate724(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+function validate725(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
 let errors = 0;
 if((!(((typeof data == "number") && (!(data % 1) && !isNaN(data))) && (isFinite(data)))) && (data !== null)){
@@ -11123,14 +11134,14 @@ errors++;
 }
 if(typeof data === "string"){
 }
-validate724.errors = vErrors;
+validate725.errors = vErrors;
 return errors === 0;
 }
 
 const schema178 = {"maxLength":1024,"minLength":1,"pattern":"^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$","type":"string"};
 const pattern1 = new RegExp("^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$", "u");
 
-function validate726(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+function validate727(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
 let errors = 0;
 const _errs0 = errors;
@@ -11176,13 +11187,13 @@ vErrors.push(err3);
 }
 errors++;
 }
-validate726.errors = vErrors;
+validate727.errors = vErrors;
 return errors === 0;
 }
 
 const schema179 = {"enum":["True","False","Unknown"],"type":"string"};
 
-function validate728(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+function validate729(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
 let errors = 0;
 if(typeof data !== "string"){
@@ -11207,14 +11218,14 @@ vErrors.push(err1);
 }
 errors++;
 }
-validate728.errors = vErrors;
+validate729.errors = vErrors;
 return errors === 0;
 }
 
 const schema180 = {"maxLength":316,"pattern":"^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$","type":"string"};
 const pattern2 = new RegExp("^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$", "u");
 
-function validate730(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+function validate731(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
 let errors = 0;
 const _errs0 = errors;
@@ -11250,12 +11261,12 @@ vErrors.push(err2);
 }
 errors++;
 }
-validate730.errors = vErrors;
+validate731.errors = vErrors;
 return errors === 0;
 }
 
 
-function validate719(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+function validate720(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
 let errors = 0;
 const _errs0 = errors;
@@ -11313,8 +11324,8 @@ errors++;
 if(data.lastTransitionTime !== undefined){
 let data0 = data.lastTransitionTime;
 const _errs1 = errors;
-if(!(validate720(data0, {instancePath:instancePath+"/lastTransitionTime",parentData:data,parentDataProperty:"lastTransitionTime",rootData}))){
-vErrors = vErrors === null ? validate720.errors : vErrors.concat(validate720.errors);
+if(!(validate721(data0, {instancePath:instancePath+"/lastTransitionTime",parentData:data,parentDataProperty:"lastTransitionTime",rootData}))){
+vErrors = vErrors === null ? validate721.errors : vErrors.concat(validate721.errors);
 errors = vErrors.length;
 }
 else {
@@ -11324,8 +11335,8 @@ var valid0 = _errs1 === errors;
 if(data.message !== undefined){
 let data1 = data.message;
 const _errs2 = errors;
-if(!(validate722(data1, {instancePath:instancePath+"/message",parentData:data,parentDataProperty:"message",rootData}))){
-vErrors = vErrors === null ? validate722.errors : vErrors.concat(validate722.errors);
+if(!(validate723(data1, {instancePath:instancePath+"/message",parentData:data,parentDataProperty:"message",rootData}))){
+vErrors = vErrors === null ? validate723.errors : vErrors.concat(validate723.errors);
 errors = vErrors.length;
 }
 else {
@@ -11335,8 +11346,8 @@ var valid0 = _errs2 === errors;
 if(data.observedGeneration !== undefined){
 let data2 = data.observedGeneration;
 const _errs3 = errors;
-if(!(validate724(data2, {instancePath:instancePath+"/observedGeneration",parentData:data,parentDataProperty:"observedGeneration",rootData}))){
-vErrors = vErrors === null ? validate724.errors : vErrors.concat(validate724.errors);
+if(!(validate725(data2, {instancePath:instancePath+"/observedGeneration",parentData:data,parentDataProperty:"observedGeneration",rootData}))){
+vErrors = vErrors === null ? validate725.errors : vErrors.concat(validate725.errors);
 errors = vErrors.length;
 }
 else {
@@ -11346,8 +11357,8 @@ var valid0 = _errs3 === errors;
 if(data.reason !== undefined){
 let data3 = data.reason;
 const _errs4 = errors;
-if(!(validate726(data3, {instancePath:instancePath+"/reason",parentData:data,parentDataProperty:"reason",rootData}))){
-vErrors = vErrors === null ? validate726.errors : vErrors.concat(validate726.errors);
+if(!(validate727(data3, {instancePath:instancePath+"/reason",parentData:data,parentDataProperty:"reason",rootData}))){
+vErrors = vErrors === null ? validate727.errors : vErrors.concat(validate727.errors);
 errors = vErrors.length;
 }
 else {
@@ -11357,8 +11368,8 @@ var valid0 = _errs4 === errors;
 if(data.status !== undefined){
 let data4 = data.status;
 const _errs5 = errors;
-if(!(validate728(data4, {instancePath:instancePath+"/status",parentData:data,parentDataProperty:"status",rootData}))){
-vErrors = vErrors === null ? validate728.errors : vErrors.concat(validate728.errors);
+if(!(validate729(data4, {instancePath:instancePath+"/status",parentData:data,parentDataProperty:"status",rootData}))){
+vErrors = vErrors === null ? validate729.errors : vErrors.concat(validate729.errors);
 errors = vErrors.length;
 }
 else {
@@ -11368,8 +11379,8 @@ var valid0 = _errs5 === errors;
 if(data.type !== undefined){
 let data5 = data.type;
 const _errs6 = errors;
-if(!(validate730(data5, {instancePath:instancePath+"/type",parentData:data,parentDataProperty:"type",rootData}))){
-vErrors = vErrors === null ? validate730.errors : vErrors.concat(validate730.errors);
+if(!(validate731(data5, {instancePath:instancePath+"/type",parentData:data,parentDataProperty:"type",rootData}))){
+vErrors = vErrors === null ? validate731.errors : vErrors.concat(validate731.errors);
 errors = vErrors.length;
 }
 else {
@@ -11387,12 +11398,12 @@ vErrors.push(err5);
 }
 errors++;
 }
-validate719.errors = vErrors;
+validate720.errors = vErrors;
 return errors === 0;
 }
 
 
-function validate718(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+function validate719(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
 let errors = 0;
 if((!(Array.isArray(data))) && (data !== null)){
@@ -11413,8 +11424,8 @@ const len0 = data.length;
 for(let i0=0; i0<len0; i0++){
 let data0 = data[i0];
 const _errs2 = errors;
-if(!(validate719(data0, {instancePath:instancePath+"/" + i0,parentData:data,parentDataProperty:i0,rootData}))){
-vErrors = vErrors === null ? validate719.errors : vErrors.concat(validate719.errors);
+if(!(validate720(data0, {instancePath:instancePath+"/" + i0,parentData:data,parentDataProperty:i0,rootData}))){
+vErrors = vErrors === null ? validate720.errors : vErrors.concat(validate720.errors);
 errors = vErrors.length;
 }
 else {
@@ -11425,14 +11436,14 @@ valid1 = false;
 }
 }
 }
-validate718.errors = vErrors;
+validate719.errors = vErrors;
 return errors === 0;
 }
 
 const schema181 = {"items":{"$ref":"psMXK1PdmbXnnoGH_RHVnCc5FjNkMdWz1aoeVYVaq1s"},"type":"array","nullable":true};
 const schema182 = {"properties":{"count":{"$ref":"j4SBnKFzNWrJQU4F8rp8qSB0IqehV1dh50NKzJhlTjs"},"lastTime":{"$ref":"YL2AaRx5mZZL3drs48WsIqN7ZQe66kWzKXDNrUwOgoc"},"message":{"$ref":"ldoCEsh0ARg8F2aeji6S38NFl7aLPSuz1hGlgX2tjuQ"},"objectKind":{"$ref":"ldoCEsh0ARg8F2aeji6S38NFl7aLPSuz1hGlgX2tjuQ"},"objectName":{"$ref":"ldoCEsh0ARg8F2aeji6S38NFl7aLPSuz1hGlgX2tjuQ"},"reason":{"$ref":"sLlNkWhANXZ15lvmcujppy1mXxqn6f-GaeQpWRYm_dw"},"source":{"$ref":"ldoCEsh0ARg8F2aeji6S38NFl7aLPSuz1hGlgX2tjuQ"},"type":{"$ref":"sLlNkWhANXZ15lvmcujppy1mXxqn6f-GaeQpWRYm_dw"}},"required":["reason","type"],"type":"object"};
 
-function validate735(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+function validate736(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
 let errors = 0;
 const _errs0 = errors;
@@ -11556,12 +11567,12 @@ vErrors.push(err2);
 }
 errors++;
 }
-validate735.errors = vErrors;
+validate736.errors = vErrors;
 return errors === 0;
 }
 
 
-function validate734(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+function validate735(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
 let errors = 0;
 if((!(Array.isArray(data))) && (data !== null)){
@@ -11582,8 +11593,8 @@ const len0 = data.length;
 for(let i0=0; i0<len0; i0++){
 let data0 = data[i0];
 const _errs2 = errors;
-if(!(validate735(data0, {instancePath:instancePath+"/" + i0,parentData:data,parentDataProperty:i0,rootData}))){
-vErrors = vErrors === null ? validate735.errors : vErrors.concat(validate735.errors);
+if(!(validate736(data0, {instancePath:instancePath+"/" + i0,parentData:data,parentDataProperty:i0,rootData}))){
+vErrors = vErrors === null ? validate736.errors : vErrors.concat(validate736.errors);
 errors = vErrors.length;
 }
 else {
@@ -11594,13 +11605,180 @@ valid1 = false;
 }
 }
 }
-validate734.errors = vErrors;
+validate735.errors = vErrors;
 return errors === 0;
 }
 
-const schema183 = {"enum":["Pending","Running","Succeeded","Failed","Stopped"],"type":"string","nullable":true};
+const schema183 = {"items":{"$ref":"ewL7oYpwaGZXQP-J_D4vAj5R0i7L8FqHS_8YOL4L9PQ"},"type":"array","nullable":true};
+const schema184 = {"properties":{"image":{"$ref":"ldoCEsh0ARg8F2aeji6S38NFl7aLPSuz1hGlgX2tjuQ"},"message":{"$ref":"ldoCEsh0ARg8F2aeji6S38NFl7aLPSuz1hGlgX2tjuQ"},"name":{"$ref":"sLlNkWhANXZ15lvmcujppy1mXxqn6f-GaeQpWRYm_dw"},"node":{"$ref":"ldoCEsh0ARg8F2aeji6S38NFl7aLPSuz1hGlgX2tjuQ"},"phase":{"$ref":"rcaYURg_lle-J5bR6HvPQ3PZex_4SRv4vMwUupfbzHQ"}},"required":["name","phase"],"type":"object"};
+const schema185 = {"enum":["Pending","Running","Failed"],"type":"string"};
 
-function validate749(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+function validate753(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+let vErrors = null;
+let errors = 0;
+if(typeof data !== "string"){
+const err0 = {instancePath,schemaPath:"#/type",keyword:"type",params:{type: "string"}};
+if(vErrors === null){
+vErrors = [err0];
+}
+else {
+vErrors.push(err0);
+}
+errors++;
+}
+const _errs0 = errors;
+const vSchema0 = schema185.enum;
+if(!(((data === "Pending") || (data === "Running")) || (data === "Failed"))){
+const err1 = {instancePath,schemaPath:"#/enum",keyword:"enum",params:{allowedValues: schema185.enum}};
+if(vErrors === null){
+vErrors = [err1];
+}
+else {
+vErrors.push(err1);
+}
+errors++;
+}
+validate753.errors = vErrors;
+return errors === 0;
+}
+
+
+function validate748(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+let vErrors = null;
+let errors = 0;
+const _errs0 = errors;
+if(data && typeof data == "object" && !Array.isArray(data)){
+if(data.name === undefined){
+const err0 = {instancePath,schemaPath:"#/required",keyword:"required",params:{missingProperty: "name"}};
+if(vErrors === null){
+vErrors = [err0];
+}
+else {
+vErrors.push(err0);
+}
+errors++;
+}
+if(data.phase === undefined){
+const err1 = {instancePath,schemaPath:"#/required",keyword:"required",params:{missingProperty: "phase"}};
+if(vErrors === null){
+vErrors = [err1];
+}
+else {
+vErrors.push(err1);
+}
+errors++;
+}
+if(data.image !== undefined){
+let data0 = data.image;
+const _errs1 = errors;
+if(!(validate1(data0, {instancePath:instancePath+"/image",parentData:data,parentDataProperty:"image",rootData}))){
+vErrors = vErrors === null ? validate1.errors : vErrors.concat(validate1.errors);
+errors = vErrors.length;
+}
+else {
+}
+var valid0 = _errs1 === errors;
+}
+if(data.message !== undefined){
+let data1 = data.message;
+const _errs2 = errors;
+if(!(validate1(data1, {instancePath:instancePath+"/message",parentData:data,parentDataProperty:"message",rootData}))){
+vErrors = vErrors === null ? validate1.errors : vErrors.concat(validate1.errors);
+errors = vErrors.length;
+}
+else {
+}
+var valid0 = _errs2 === errors;
+}
+if(data.name !== undefined){
+let data2 = data.name;
+const _errs3 = errors;
+if(!(validate0(data2, {instancePath:instancePath+"/name",parentData:data,parentDataProperty:"name",rootData}))){
+vErrors = vErrors === null ? validate0.errors : vErrors.concat(validate0.errors);
+errors = vErrors.length;
+}
+else {
+}
+var valid0 = _errs3 === errors;
+}
+if(data.node !== undefined){
+let data3 = data.node;
+const _errs4 = errors;
+if(!(validate1(data3, {instancePath:instancePath+"/node",parentData:data,parentDataProperty:"node",rootData}))){
+vErrors = vErrors === null ? validate1.errors : vErrors.concat(validate1.errors);
+errors = vErrors.length;
+}
+else {
+}
+var valid0 = _errs4 === errors;
+}
+if(data.phase !== undefined){
+let data4 = data.phase;
+const _errs5 = errors;
+if(!(validate753(data4, {instancePath:instancePath+"/phase",parentData:data,parentDataProperty:"phase",rootData}))){
+vErrors = vErrors === null ? validate753.errors : vErrors.concat(validate753.errors);
+errors = vErrors.length;
+}
+else {
+}
+var valid0 = _errs5 === errors;
+}
+}
+else {
+const err2 = {instancePath,schemaPath:"#/type",keyword:"type",params:{type: "object"}};
+if(vErrors === null){
+vErrors = [err2];
+}
+else {
+vErrors.push(err2);
+}
+errors++;
+}
+validate748.errors = vErrors;
+return errors === 0;
+}
+
+
+function validate747(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+let vErrors = null;
+let errors = 0;
+if((!(Array.isArray(data))) && (data !== null)){
+const err0 = {instancePath,schemaPath:"#/type",keyword:"type",params:{type: "array"}};
+if(vErrors === null){
+vErrors = [err0];
+}
+else {
+vErrors.push(err0);
+}
+errors++;
+}
+const _errs0 = errors;
+const _errs1 = errors;
+if(Array.isArray(data)){
+let valid1 = true;
+const len0 = data.length;
+for(let i0=0; i0<len0; i0++){
+let data0 = data[i0];
+const _errs2 = errors;
+if(!(validate748(data0, {instancePath:instancePath+"/" + i0,parentData:data,parentDataProperty:i0,rootData}))){
+vErrors = vErrors === null ? validate748.errors : vErrors.concat(validate748.errors);
+errors = vErrors.length;
+}
+else {
+}
+var valid0 = _errs2 === errors;
+if(!valid0){
+valid1 = false;
+}
+}
+}
+validate747.errors = vErrors;
+return errors === 0;
+}
+
+const schema186 = {"enum":["Pending","Running","Succeeded","Failed","Stopped"],"type":"string","nullable":true};
+
+function validate760(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
 let errors = 0;
 if((typeof data !== "string") && (data !== null)){
@@ -11615,9 +11793,9 @@ errors++;
 }
 const _errs0 = errors;
 const _errs1 = errors;
-const vSchema0 = schema183.enum;
+const vSchema0 = schema186.enum;
 if(!(((((data === "Pending") || (data === "Running")) || (data === "Succeeded")) || (data === "Failed")) || (data === "Stopped"))){
-const err1 = {instancePath,schemaPath:"#/enum",keyword:"enum",params:{allowedValues: schema183.enum}};
+const err1 = {instancePath,schemaPath:"#/enum",keyword:"enum",params:{allowedValues: schema186.enum}};
 if(vErrors === null){
 vErrors = [err1];
 }
@@ -11626,15 +11804,15 @@ vErrors.push(err1);
 }
 errors++;
 }
-validate749.errors = vErrors;
+validate760.errors = vErrors;
 return errors === 0;
 }
 
-const schema184 = {"items":{"$ref":"eXqsosMmVlqiYyBADb2y8LOSfkVbCL3AlfIBXQ87hmE"},"type":"array","nullable":true};
-const schema185 = {"properties":{"downloaded":{"$ref":"0YQm7z5aN2fg7S8XlbxrquRU6pdIr97uCbtQYyjv3S4"},"image":{"$ref":"sLlNkWhANXZ15lvmcujppy1mXxqn6f-GaeQpWRYm_dw"},"message":{"$ref":"ldoCEsh0ARg8F2aeji6S38NFl7aLPSuz1hGlgX2tjuQ"},"speed":{"$ref":"0hFN2lc8EZNwdRPFUdVm0IS7gM8AwqK_YhN0yw_gZLU"},"status":{"$ref":"sLlNkWhANXZ15lvmcujppy1mXxqn6f-GaeQpWRYm_dw"},"total":{"$ref":"0YQm7z5aN2fg7S8XlbxrquRU6pdIr97uCbtQYyjv3S4"}},"required":["downloaded","image","speed","status","total"],"type":"object"};
-const schema186 = {"type":"number"};
+const schema187 = {"items":{"$ref":"eXqsosMmVlqiYyBADb2y8LOSfkVbCL3AlfIBXQ87hmE"},"type":"array","nullable":true};
+const schema188 = {"properties":{"downloaded":{"$ref":"0YQm7z5aN2fg7S8XlbxrquRU6pdIr97uCbtQYyjv3S4"},"image":{"$ref":"sLlNkWhANXZ15lvmcujppy1mXxqn6f-GaeQpWRYm_dw"},"message":{"$ref":"ldoCEsh0ARg8F2aeji6S38NFl7aLPSuz1hGlgX2tjuQ"},"speed":{"$ref":"0hFN2lc8EZNwdRPFUdVm0IS7gM8AwqK_YhN0yw_gZLU"},"status":{"$ref":"sLlNkWhANXZ15lvmcujppy1mXxqn6f-GaeQpWRYm_dw"},"total":{"$ref":"0YQm7z5aN2fg7S8XlbxrquRU6pdIr97uCbtQYyjv3S4"}},"required":["downloaded","image","speed","status","total"],"type":"object"};
+const schema189 = {"type":"number"};
 
-function validate756(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+function validate767(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
 let errors = 0;
 if(!((typeof data == "number") && (isFinite(data)))){
@@ -11648,12 +11826,12 @@ vErrors.push(err0);
 errors++;
 }
 const _errs0 = errors;
-validate756.errors = vErrors;
+validate767.errors = vErrors;
 return errors === 0;
 }
 
 
-function validate752(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+function validate763(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
 let errors = 0;
 const _errs0 = errors;
@@ -11744,8 +11922,8 @@ var valid0 = _errs3 === errors;
 if(data.speed !== undefined){
 let data3 = data.speed;
 const _errs4 = errors;
-if(!(validate756(data3, {instancePath:instancePath+"/speed",parentData:data,parentDataProperty:"speed",rootData}))){
-vErrors = vErrors === null ? validate756.errors : vErrors.concat(validate756.errors);
+if(!(validate767(data3, {instancePath:instancePath+"/speed",parentData:data,parentDataProperty:"speed",rootData}))){
+vErrors = vErrors === null ? validate767.errors : vErrors.concat(validate767.errors);
 errors = vErrors.length;
 }
 else {
@@ -11785,12 +11963,12 @@ vErrors.push(err5);
 }
 errors++;
 }
-validate752.errors = vErrors;
+validate763.errors = vErrors;
 return errors === 0;
 }
 
 
-function validate751(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+function validate762(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
 let errors = 0;
 if((!(Array.isArray(data))) && (data !== null)){
@@ -11811,8 +11989,8 @@ const len0 = data.length;
 for(let i0=0; i0<len0; i0++){
 let data0 = data[i0];
 const _errs2 = errors;
-if(!(validate752(data0, {instancePath:instancePath+"/" + i0,parentData:data,parentDataProperty:i0,rootData}))){
-vErrors = vErrors === null ? validate752.errors : vErrors.concat(validate752.errors);
+if(!(validate763(data0, {instancePath:instancePath+"/" + i0,parentData:data,parentDataProperty:i0,rootData}))){
+vErrors = vErrors === null ? validate763.errors : vErrors.concat(validate763.errors);
 errors = vErrors.length;
 }
 else {
@@ -11823,12 +12001,12 @@ valid1 = false;
 }
 }
 }
-validate751.errors = vErrors;
+validate762.errors = vErrors;
 return errors === 0;
 }
 
 
-function validate716(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+function validate717(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
 let errors = 0;
 if((!(data && typeof data == "object" && !Array.isArray(data))) && (data !== null)){
@@ -11858,8 +12036,8 @@ var valid0 = _errs2 === errors;
 if(data.conditions !== undefined){
 let data1 = data.conditions;
 const _errs3 = errors;
-if(!(validate718(data1, {instancePath:instancePath+"/conditions",parentData:data,parentDataProperty:"conditions",rootData}))){
-vErrors = vErrors === null ? validate718.errors : vErrors.concat(validate718.errors);
+if(!(validate719(data1, {instancePath:instancePath+"/conditions",parentData:data,parentDataProperty:"conditions",rootData}))){
+vErrors = vErrors === null ? validate719.errors : vErrors.concat(validate719.errors);
 errors = vErrors.length;
 }
 else {
@@ -11869,104 +12047,115 @@ var valid0 = _errs3 === errors;
 if(data.events !== undefined){
 let data2 = data.events;
 const _errs4 = errors;
-if(!(validate734(data2, {instancePath:instancePath+"/events",parentData:data,parentDataProperty:"events",rootData}))){
-vErrors = vErrors === null ? validate734.errors : vErrors.concat(validate734.errors);
+if(!(validate735(data2, {instancePath:instancePath+"/events",parentData:data,parentDataProperty:"events",rootData}))){
+vErrors = vErrors === null ? validate735.errors : vErrors.concat(validate735.errors);
 errors = vErrors.length;
 }
 else {
 }
 var valid0 = _errs4 === errors;
 }
-if(data.message !== undefined){
-let data3 = data.message;
+if(data.instances !== undefined){
+let data3 = data.instances;
 const _errs5 = errors;
-if(!(validate1(data3, {instancePath:instancePath+"/message",parentData:data,parentDataProperty:"message",rootData}))){
-vErrors = vErrors === null ? validate1.errors : vErrors.concat(validate1.errors);
+if(!(validate747(data3, {instancePath:instancePath+"/instances",parentData:data,parentDataProperty:"instances",rootData}))){
+vErrors = vErrors === null ? validate747.errors : vErrors.concat(validate747.errors);
 errors = vErrors.length;
 }
 else {
 }
 var valid0 = _errs5 === errors;
 }
-if(data.observedGeneration !== undefined){
-let data4 = data.observedGeneration;
+if(data.message !== undefined){
+let data4 = data.message;
 const _errs6 = errors;
-if(!(validate79(data4, {instancePath:instancePath+"/observedGeneration",parentData:data,parentDataProperty:"observedGeneration",rootData}))){
-vErrors = vErrors === null ? validate79.errors : vErrors.concat(validate79.errors);
+if(!(validate1(data4, {instancePath:instancePath+"/message",parentData:data,parentDataProperty:"message",rootData}))){
+vErrors = vErrors === null ? validate1.errors : vErrors.concat(validate1.errors);
 errors = vErrors.length;
 }
 else {
 }
 var valid0 = _errs6 === errors;
 }
-if(data.observedNodes !== undefined){
-let data5 = data.observedNodes;
+if(data.observedGeneration !== undefined){
+let data5 = data.observedGeneration;
 const _errs7 = errors;
-if(!(validate9(data5, {instancePath:instancePath+"/observedNodes",parentData:data,parentDataProperty:"observedNodes",rootData}))){
-vErrors = vErrors === null ? validate9.errors : vErrors.concat(validate9.errors);
+if(!(validate79(data5, {instancePath:instancePath+"/observedGeneration",parentData:data,parentDataProperty:"observedGeneration",rootData}))){
+vErrors = vErrors === null ? validate79.errors : vErrors.concat(validate79.errors);
 errors = vErrors.length;
 }
 else {
 }
 var valid0 = _errs7 === errors;
 }
-if(data.phase !== undefined){
-let data6 = data.phase;
+if(data.observedNodes !== undefined){
+let data6 = data.observedNodes;
 const _errs8 = errors;
-if(!(validate749(data6, {instancePath:instancePath+"/phase",parentData:data,parentDataProperty:"phase",rootData}))){
-vErrors = vErrors === null ? validate749.errors : vErrors.concat(validate749.errors);
+if(!(validate10(data6, {instancePath:instancePath+"/observedNodes",parentData:data,parentDataProperty:"observedNodes",rootData}))){
+vErrors = vErrors === null ? validate10.errors : vErrors.concat(validate10.errors);
 errors = vErrors.length;
 }
 else {
 }
 var valid0 = _errs8 === errors;
 }
-if(data.pullProgress !== undefined){
-let data7 = data.pullProgress;
+if(data.phase !== undefined){
+let data7 = data.phase;
 const _errs9 = errors;
-if(!(validate751(data7, {instancePath:instancePath+"/pullProgress",parentData:data,parentDataProperty:"pullProgress",rootData}))){
-vErrors = vErrors === null ? validate751.errors : vErrors.concat(validate751.errors);
+if(!(validate760(data7, {instancePath:instancePath+"/phase",parentData:data,parentDataProperty:"phase",rootData}))){
+vErrors = vErrors === null ? validate760.errors : vErrors.concat(validate760.errors);
 errors = vErrors.length;
 }
 else {
 }
 var valid0 = _errs9 === errors;
 }
-if(data.retryCount !== undefined){
-let data8 = data.retryCount;
+if(data.pullProgress !== undefined){
+let data8 = data.pullProgress;
 const _errs10 = errors;
-if(!(validate78(data8, {instancePath:instancePath+"/retryCount",parentData:data,parentDataProperty:"retryCount",rootData}))){
-vErrors = vErrors === null ? validate78.errors : vErrors.concat(validate78.errors);
+if(!(validate762(data8, {instancePath:instancePath+"/pullProgress",parentData:data,parentDataProperty:"pullProgress",rootData}))){
+vErrors = vErrors === null ? validate762.errors : vErrors.concat(validate762.errors);
 errors = vErrors.length;
 }
 else {
 }
 var valid0 = _errs10 === errors;
 }
-if(data.startTime !== undefined){
-let data9 = data.startTime;
+if(data.retryCount !== undefined){
+let data9 = data.retryCount;
 const _errs11 = errors;
-if(!(validate266(data9, {instancePath:instancePath+"/startTime",parentData:data,parentDataProperty:"startTime",rootData}))){
-vErrors = vErrors === null ? validate266.errors : vErrors.concat(validate266.errors);
+if(!(validate78(data9, {instancePath:instancePath+"/retryCount",parentData:data,parentDataProperty:"retryCount",rootData}))){
+vErrors = vErrors === null ? validate78.errors : vErrors.concat(validate78.errors);
 errors = vErrors.length;
 }
 else {
 }
 var valid0 = _errs11 === errors;
 }
-if(data.tensorBoardProxy !== undefined){
-let data10 = data.tensorBoardProxy;
+if(data.startTime !== undefined){
+let data10 = data.startTime;
 const _errs12 = errors;
-if(!(validate1(data10, {instancePath:instancePath+"/tensorBoardProxy",parentData:data,parentDataProperty:"tensorBoardProxy",rootData}))){
-vErrors = vErrors === null ? validate1.errors : vErrors.concat(validate1.errors);
+if(!(validate266(data10, {instancePath:instancePath+"/startTime",parentData:data,parentDataProperty:"startTime",rootData}))){
+vErrors = vErrors === null ? validate266.errors : vErrors.concat(validate266.errors);
 errors = vErrors.length;
 }
 else {
 }
 var valid0 = _errs12 === errors;
 }
+if(data.tensorBoardProxy !== undefined){
+let data11 = data.tensorBoardProxy;
+const _errs13 = errors;
+if(!(validate1(data11, {instancePath:instancePath+"/tensorBoardProxy",parentData:data,parentDataProperty:"tensorBoardProxy",rootData}))){
+vErrors = vErrors === null ? validate1.errors : vErrors.concat(validate1.errors);
+errors = vErrors.length;
 }
-validate716.errors = vErrors;
+else {
+}
+var valid0 = _errs13 === errors;
+}
+}
+validate717.errors = vErrors;
 return errors === 0;
 }
 
@@ -12044,8 +12233,8 @@ var valid0 = _errs4 === errors;
 if(data.status !== undefined){
 let data4 = data.status;
 const _errs5 = errors;
-if(!(validate716(data4, {instancePath:instancePath+"/status",parentData:data,parentDataProperty:"status",rootData}))){
-vErrors = vErrors === null ? validate716.errors : vErrors.concat(validate716.errors);
+if(!(validate717(data4, {instancePath:instancePath+"/status",parentData:data,parentDataProperty:"status",rootData}))){
+vErrors = vErrors === null ? validate717.errors : vErrors.concat(validate717.errors);
 errors = vErrors.length;
 }
 else {

@@ -60,7 +60,8 @@ Workload 与 Runtime 概念保持正交，但不能任意组合。只有显式�
 Agent 会在启动装配阶段拒绝该注册。Kubernetes 当前只注册一个
 `(rlinf.io/ray, v1, Kubernetes)` implementation。Ray Adapter 独立解码
 `workload.carrier`，支持版本为 `v1` 的 `rlinf.io/kubernetes-deployment`、
-`rlinf.io/kubernetes-statefulset` carrier。
+`rlinf.io/kubernetes-statefulset` carrier，以及用于按节点放置的 Task
+（`placement.perNode`）的 `rlinf.io/kubernetes-daemonset` carrier。
 它们不是通用 Kubernetes 原生 workload 实现。
 
 未 claim Task 会先完成解码和精确 Registry 检查，之后才能写入任何 claim metadata。
@@ -72,7 +73,7 @@ implementation，并在不依赖当前 Workload Spec 的情况下按 Task identi
 因此在 API 降级或只完成部分迁移的更新后仍可恢复这些清理流程。完整的 per-Runtime
 Bundle/Factory 仍属于后续装配工作，本文不会把它描述为已经存在。
 
-Deployment 和 StatefulSet 是单个 Ray Adapter 注册内的 carrier 选择，
+Deployment、StatefulSet 和 DaemonSet 是单个 Ray Adapter 注册内的 carrier 选择，
 不是 Workload 选择入口。
 
 该 compatibility tree 有意归 Task controller 所有，不属于 Runtime-neutral
@@ -143,7 +144,7 @@ cleanup，因为此时已无法证明 Task UID 和 claimed identity。
 - Workload 自有模板修改和 workload identity，在 Workload 编译期间、渲染期望 Kubernetes 对象之前仅执行一次；跨 Domain Network 注入改由 Environment binding 完成；
 - 镜像拉取 Secret、PVC 与 Ray 资源；
 - 声明式 workload SSH requirement；Secret 交付和 Pod template mount 由 Environment 层负责；
-- 渲染选中的 Deployment 或 StatefulSet workload，再由 Coordinator 和 Runtime Provider 应用。
+- 渲染选中的 Deployment、StatefulSet 或 DaemonSet workload，再由 Coordinator 和 Runtime Provider 应用。
 
 旧 `Operations` Adapter 仅作为有测试覆盖的兼容端口保留；生产装配使用 Ray-on-Kubernetes Adapter，不会调用其中的 `ApplyWorkload` 方法。
 
@@ -159,7 +160,7 @@ Process declaration 是 portable Plan 合同，会被深拷贝并计入 Adapter 
 
 在可选的用户 prepare-script 边界之后、执行任何 Ray stop/start 命令之前，`ray-launcher` 会确认配置的 Ray CLI 可解析且可执行。CLI 缺失或不可执行会使 primary 失败。Head 上通过 embed 交付的 Ray SDK 集群检查为保持兼容仍是非致命检查，但随后的 `ray status` 失败属于致命错误。Worker 上无论 `ray start --block` 启动失败，还是启动后 Ray 以非零状态退出，都会使 primary 失败；普通进程退出时，Ray 退出码会经 launcher 和 supervisor 保留下来。
 
-Workload 语义由 `spec.workload.kind` 和 `spec.workload.version` 选择，任意 JSON `spec.workload.parameters` 必须由选中的 Adapter 严格解码。`spec.workload.carrier` 独立包含 Runtime-specific carrier 的 `type`、`version` 和任意 JSON `parameters`。Deployment 与 StatefulSet carrier 只接受 `{replicas}`。Environment 使用相同的 type/version/parameters envelope 组成有序列表，并且允许重复；是否要求唯一由选中的 Environment resolver 按自身合同决定。未知类型、版本、非法参数或 Runtime 不支持的能力都必须在 Provider effect 前失败。
+Workload 语义由 `spec.workload.kind` 和 `spec.workload.version` 选择，任意 JSON `spec.workload.parameters` 必须由选中的 Adapter 严格解码。`spec.workload.carrier` 独立包含 Runtime-specific carrier 的 `type`、`version` 和任意 JSON `parameters`。Deployment 与 StatefulSet carrier 只接受 `{replicas}`；DaemonSet carrier 只接受 `{maxUnavailable}`，且可以省略参数。Environment 使用相同的 type/version/parameters envelope 组成有序列表，并且允许重复；是否要求唯一由选中的 Environment resolver 按自身合同决定。未知类型、版本、非法参数或 Runtime 不支持的能力都必须在 Provider effect 前失败。
 
 Task decoder 会通用映射每个 Environment envelope，不枚举内置类型：它只检查必需的公共字段，保留顺序和重复声明，深拷贝参数，并把特定类型的唯一性、version 与参数校验交给选中的 Runtime resolver。Kubernetes Environment resolver 通过不可变的 type-to-resolver registry 安装；空 type、nil resolver 或重复 type 注册会在构造时失败。组合式 resolver 按类型首次出现顺序分组，并把同一类型的全部声明按原始顺序一次性交给对应 resolver。Network、SSH 与 TensorBoard 当前会自行拒绝多个声明；未来的 Environment 合同可以注册接受并解析多个声明的 resolver。因此未知类型可以完成 decode，但会在 Provider observation 或 effect 前的 resolve 阶段 fail closed。Portable execution plan 保留同样的 Environment envelope，不再把 requirement 拆分成 network、secret、tool、service、storage、device 或 config 字段。每个 plan requirement 包含 `name`、开放字符串 `type` 与 `version`、复制后的 `parameters` 以及 consumer selectors。SSH authorized public keys 只保留在本地 execution declaration 中，不进入 portable requirement parameters 或 workload transport；SSH Handler 通过 material boundary 获取它们。
 
@@ -251,7 +252,7 @@ Runtime 的 `ListCandidateObjects`、旧版 `ListManaged` 和 `ListInstances` �
 
 选定的 Workload Adapter 根据冻结的 Task 和 implementation identity 生成有界 inventory。候选项按创建顺序声明。identity cleanup 以 `LifecycleDeleteOnTaskCleanup` 作为删除授权，每轮删除当前仍存在的最后一个精确名称 cleanup candidate，即按逆序清理；它不维护 Kubernetes kind allow-list。Ray-on-Kubernetes Adapter 先声明 SSH Secret，再声明其 workload 消费方，使 workload 对象先于 Secret 消失。它不声明 PVC candidate：引用的外部 PVC 不属于 RLark ownership，generic ephemeral PVC 则随 Pod 生命周期管理。Kubernetes Provider 只执行 Adapter 声明，不计算 Ray 名称，也不推断 Ray role。候选名称和标签只能定位对象，不能证明 ownership；Provider 返回对象前仍会校验标准 Task identity，并在适用处校验对象 UID。任一查询失败都会使完整快照原子失败。实例观测会对 workload root 执行 UID 校验，只列出该 workload 选中的 Pod，并使用 `involvedObject.uid` field selector 查询 Pod Event。
 
-每个 desired Kubernetes object 都会显式选择 typed reconcile profile，而不是让 Provider 根据 manifest kind 推断更新策略。当前 Ray Adapter 为 Deployment 和 StatefulSet carrier 选择 workload projection，为 head Service 选择 Service projection，为 bootstrap ConfigMap 选择 shared-field projection。
+每个 desired Kubernetes object 都会显式选择 typed reconcile profile，而不是让 Provider 根据 manifest kind 推断更新策略。当前 Ray Adapter 为 Deployment、StatefulSet 和 DaemonSet carrier 选择 workload projection，为 head Service 选择 Service projection，为 bootstrap ConfigMap 选择 shared-field projection。
 
 Runtime-owned 不可变 registry 会分派显式选择的版本化 executor，并验证 typed manifest 是否与该 profile 匹配；profile 缺失、未知、重复或不匹配都会被拒绝。每个 executor 为一个有界 Kubernetes 机制同时实现 validation、comparison 和 update preparation，例如比较 Service owned projection。选择哪种机制表达 Workload 契约仍由 Adapter 负责。
 
@@ -320,6 +321,7 @@ Binding revision 是标准化的 `sha256:` digest，输入包括 binding kind/na
 | Task claim 与 finalizer | 支持 | 未实现 | 未实现 |
 | Deployment | 支持 | 不适用 | 不适用 |
 | StatefulSet | 支持 | 不适用 | 不适用 |
+| DaemonSet（按节点放置的 Task） | 支持，滚动更新 | 不适用 | 不适用 |
 | 容器/进程执行 | Kubernetes Pod | 仅有 Spec 骨架 | 仅有 Spec 骨架 |
 | 状态观察 | 支持 | 未实现 | 未实现 |
 | 运行时日志 | Kubernetes Pod fallback | 未实现 | 未实现 |
