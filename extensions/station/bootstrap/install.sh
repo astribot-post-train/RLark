@@ -12,7 +12,9 @@
 #   kubelet.service                     reads drop-ins from /etc/kubernetes/kubelet.conf.d
 #   /etc/hosts                          the site's names, kept by the tunnel service (lines ending in "# rlark names")
 #   /etc/rlark/station/resolv.conf      the site's name servers, likewise, for the kubelet to give to pods
-# and on its Node the annotations rlark.io/node-install-spec and -state (lib.sh).
+#   /var/lib/rlark/volumes/NAME.img     the node's volumes (NODE_VOLUMES, from its admission), each mounted at its
+#                                       path by a mount unit before the runtime and the kubelet start (lib.sh)
+# and on its Node the annotations rlark.io/node-install-spec, -state and rlark.io/node-volumes (lib.sh).
 set -eu
 . /var/lib/rlark/bootstrap/lib.sh
 SOCKET=/run/containerd-fleet/containerd.sock
@@ -58,6 +60,8 @@ if [ -e /etc/kubernetes/kubelet.conf ]; then
   trap back_to_old_cluster EXIT
 fi
 
+# The node's volumes (NODE_VOLUMES, lib.sh), before anything is written where they go.
+volumes
 install -d /opt/rlark/bin /opt/cni/bin /etc/rlark/station /etc/kubernetes/kubelet.conf.d
 install -m 755 "$B"/bin/* /opt/rlark/bin/
 cp -n "$B"/cni/* /opt/cni/bin/

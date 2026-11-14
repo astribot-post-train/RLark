@@ -60,6 +60,8 @@ type answer struct {
 	} `json:"join"`
 	Labels string `json:"labels"`
 	Taints string `json:"taints"`
+	// The node's volumes, "NAME=SIZE:PATH,..." (lib.sh, volumes).
+	Volumes string `json:"volumes"`
 }
 
 func main() {
@@ -99,6 +101,10 @@ func main() {
 	}
 	if len(os.Args) > 1 && os.Args[1] == "control-plane" {
 		onHost("control-plane.sh", os.Args[2:]...)
+		return
+	}
+	if len(os.Args) > 1 && os.Args[1] == "volumes" {
+		onHost("volumes.sh", os.Args[2:]...)
 		return
 	}
 	server, code := os.Getenv("RLARK_SERVER"), os.Getenv("RLARK_CODE")
@@ -216,7 +222,7 @@ func main() {
 		"PATH=/opt/rlark/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
 		"NODE_NAME="+granted.NodeName, "TUNNEL_ADDRESS="+granted.TunnelAddress, "TUNNEL_INTERFACE="+tunnel.Interface,
 		"JOIN_API_SERVER="+granted.Join.APIServer, "JOIN_TOKEN="+granted.Join.Token, "JOIN_CA_HASH="+granted.Join.CACertHash,
-		"NODE_LABELS="+granted.Labels, "NODE_TAINTS="+granted.Taints)
+		"NODE_LABELS="+granted.Labels, "NODE_TAINTS="+granted.Taints, "NODE_VOLUMES="+granted.Volumes)
 	if os.Getenv("RLARK_MIGRATE") != "" {
 		asUnit("rlark-node-migrate", stage+"/install.sh", stage+"/install.log", settings, "RLARK_MIGRATE", "NODE_", "TUNNEL_", "JOIN_", "PATH")
 		return
@@ -308,7 +314,8 @@ func copyTree(from, to string) error {
 // onHost is the other use of the image: a script of the bundle that needs
 // nothing from Station API runs as a host process. upgrade.sh, from a Job
 // pinned to a node, takes that node's Kubernetes one minor version up;
-// control-plane.sh makes the machine a cluster's control plane.
+// control-plane.sh makes the machine a cluster's control plane; volumes.sh
+// moves a node's data into its volumes.
 func onHost(script string, arguments ...string) {
 	if err := copyTree("/bundle", hostRoot+stage); err != nil {
 		log.Fatalf("copy the bundle: %v", err)
@@ -336,7 +343,7 @@ func onHost(script string, arguments ...string) {
 	// From a Job on the node (RLARK_DETACH): the script ends the Job's own pod.
 	if os.Getenv("RLARK_DETACH") != "" {
 		asUnit("rlark-"+strings.TrimSuffix(script, ".sh"), strings.Join(append([]string{stage + "/" + script}, arguments...), " "), stage+"/"+strings.TrimSuffix(script, ".sh")+".log", settings,
-			"CONTROL_PLANE_", "POD_", "SERVICE_", "FROM_", "SUCCESSOR", "ETCD_", "SYSTEM_RESERVED_", "NODE_NAME", "TUNNEL_INTERFACE", "PATH")
+			"CONTROL_PLANE_", "POD_", "SERVICE_", "FROM_", "SUCCESSOR", "ETCD_", "SYSTEM_RESERVED_", "NODE_NAME", "NODE_VOLUMES", "TUNNEL_INTERFACE", "PATH")
 		return
 	}
 	run := hostCommand(stage+"/"+script, arguments...)

@@ -198,8 +198,19 @@ images|control)
       "$B/station-bootstrap" controller-manager-arg "$keep/ClusterConfiguration.before.yaml" terminated-pod-gc-threshold 100 > "$keep/ClusterConfiguration"
       admin create configmap kubeadm-config --from-file="ClusterConfiguration=$keep/ClusterConfiguration" --dry-run=client -o yaml | admin replace -f - >/dev/null
     fi
-    kubeadm upgrade apply "$KUBE_VERSION" --yes $patches > "$keep/upgrade-apply.log" 2>&1 || { tail -25 "$keep/upgrade-apply.log" >&2; fail "kubeadm upgrade apply"; }
-    stamp "control plane at $KUBE_VERSION"
+    if [ "$(sed -n 's/^ *image: .*\/kube-\(apiserver\|controller-manager\|scheduler\):\(.*\)$/\2/p' /etc/kubernetes/manifests/kube-*.yaml | sort -u)" = "$KUBE_VERSION" ]; then
+      # At the version it runs, the control plane is not upgraded again: that
+      # renews every certificate and starts etcd and the API server anew (the
+      # API is away for a minute and more). What the cluster's configuration
+      # says of the controller manager is written into its manifest alone, and
+      # the kubelet starts it anew if that changed it.
+      { printf 'apiVersion: kubeadm.k8s.io/v1beta4\nkind: InitConfiguration\n---\n'; admin get configmap kubeadm-config -o jsonpath='{.data.ClusterConfiguration}'; } > "$keep/kubeadm.yaml"
+      kubeadm init phase control-plane controller-manager --config "$keep/kubeadm.yaml" > "$keep/controller-manager.log" 2>&1 || { tail -15 "$keep/controller-manager.log" >&2; fail "kubeadm init phase control-plane controller-manager"; }
+      stamp "control plane at $KUBE_VERSION already: the controller manager's manifest written from the cluster's configuration"
+    else
+      kubeadm upgrade apply "$KUBE_VERSION" --yes $patches > "$keep/upgrade-apply.log" 2>&1 || { tail -25 "$keep/upgrade-apply.log" >&2; fail "kubeadm upgrade apply"; }
+      stamp "control plane at $KUBE_VERSION"
+    fi
   else
     # kubeadm reads the node's runtime socket from an annotation of the Node,
     # which a node that was not joined by kubeadm join alone may lack.

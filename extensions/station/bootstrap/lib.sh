@@ -202,16 +202,75 @@ CONF
 }
 
 # disk: the kubelet evicts pods and removes images when the filesystem of its
-# data and its runtime's has less than 15 % free. A machine that starts
+# data or its runtime's has less than 15 % free. A machine that starts
 # below 20 % is one step from it, and its node would not hold what the
-# installer gives it.
+# installer gives it. The node's volumes still to be made are taken from it
+# first; where the kubelet's data and its runtime's are both in volumes, the
+# 15 % are counted in them, and this filesystem only has to hold the volumes.
 disk() {
-  free=$(df -P -k /var/lib | awk 'NR == 2 {print int($4 * 100 / $2)}')
+  need=0
+  for volume in $(echo "${NODE_VOLUMES:-}" | tr , ' '); do
+    [ -e "$(volume_image "$volume")" ] || need=$((need + $(volume_bytes "$volume") / 1024))
+    path=$(volume_path "$volume")
+    mountpoint -q "$path" || [ -z "$(ls -A "$path" 2>/dev/null)" ] ||
+      fail "$path holds data and is not the volume ${volume%%=*}: the data of a node is moved into its volumes with node-volumes.sh, the node stopped meanwhile"
+  done
+  free=$(df -P -k /var/lib | awk -v need=$need 'NR == 2 {print int(($4 - need) * 100 / $2)}')
   at=$(df -P /var/lib | awk 'NR == 2 {print $6}')
-  [ "$free" -ge 20 ] ||
-    fail "the filesystem of /var/lib ($at) has $free % free: a kubelet evicts its pods and removes their images below 15 %, and the installer asks for 20. Free space on it, or give /var/lib a filesystem of its own"
-  [ "$at" != "$(df -P /home | awk 'NR == 2 {print $6}')" ] ||
+  floor=20
+  echo ",${NODE_VOLUMES:-}," | grep -q ':/var/lib/kubelet,' && echo ",${NODE_VOLUMES:-}," | grep -q ':/var/lib/containerd-fleet,' && floor=0
+  [ "$free" -ge $floor ] ||
+    fail "the filesystem of /var/lib ($at) has $free % free${NODE_VOLUMES:+ once the node's volumes are made ($NODE_VOLUMES)}: a kubelet evicts its pods and removes their images below 15 %, and the installer asks for 20. Free space on it, or give the kubelet's data and its runtime's volumes of their own (NODE_VOLUMES)"
+  [ $floor = 0 ] || [ "$at" != "$(df -P /home | awk 'NR == 2 {print $6}')" ] ||
     stamp "note: /var/lib shares its filesystem ($at, $free % free) with /home: what people and builds put there counts against the node's 15 %"
+}
+
+# volumes: the node's volumes, NODE_VOLUMES="NAME=SIZE:PATH,..." (SIZE as
+# fallocate reads it: 80G). Each is a file of that size on the machine's disk,
+# /var/lib/rlark/volumes/NAME.img, with a filesystem of its own, mounted at
+# PATH on every boot. Its blocks are taken when it is made: what fills the
+# machine's disk later (builds, images of the machine's docker, people's
+# files) does not fill it, and the kubelet counts what is in it apart from the
+# machine's disk. A volume is never resized, nor removed when it is no longer
+# declared: that is a person's decision, and the file is at a fixed path.
+volumes() {
+  for volume in $(echo "${NODE_VOLUMES:-}" | tr , ' '); do
+    volume_make "$volume"
+    volume_mount "$volume"
+  done
+}
+volume_bytes() { numfmt --from=iec "$(echo "${1#*=}" | cut -d: -f1)"; }
+volume_image() { echo "/var/lib/rlark/volumes/${1%%=*}.img"; }
+volume_path() { echo "${1#*:}"; }
+volume_unit() { systemd-escape --path --suffix=mount "$(volume_path "$1")"; }
+# volume_make VOLUME: its file with a filesystem, where there is none.
+volume_make() {
+  image=$(volume_image "$1")
+  if [ -e "$image" ]; then
+    [ "$(stat -c %s "$image")" = "$(volume_bytes "$1")" ] ||
+      fail "the volume ${1%%=*} is $(stat -c %s "$image" | numfmt --to=iec) on this machine, not the declared $(echo "${1#*=}" | cut -d: -f1): a volume is not resized"
+    return 0
+  fi
+  install -d /var/lib/rlark/volumes
+  fallocate -l "$(volume_bytes "$1")" "$image.new" || fail "make the volume ${1%%=*} in /var/lib/rlark/volumes"
+  mkfs.ext4 -q -F -m 0 -L "${1%%=*}" "$image.new" || fail "make a filesystem in the volume ${1%%=*}"
+  # Empty, as the directory it takes the place of: lost+found is made again
+  # by e2fsck when it needs one.
+  debugfs -w -R 'rmdir lost+found' "$image.new" >/dev/null 2>&1
+  mv "$image.new" "$image"
+  stamp "volume ${1%%=*}: $(echo "${1#*=}" | cut -d: -f1) in $image"
+}
+# volume_mount VOLUME: mounted at its path, now and on every boot (disk has
+# refused a path that holds data of its own; volumes.sh moves such data in).
+volume_mount() {
+  path=$(volume_path "$1") unit=$(volume_unit "$1")
+  printf '[Unit]\nDescription=RLark node volume %s\n\n[Mount]\nWhat=%s\nWhere=%s\nType=ext4\nOptions=loop\n\n[Install]\nWantedBy=local-fs.target\n' \
+    "${1%%=*}" "$(volume_image "$1")" "$path" > "$B/$unit"
+  cmp -s "$B/$unit" "/etc/systemd/system/$unit" || { cp "$B/$unit" "/etc/systemd/system/$unit"; systemctl daemon-reload; }
+  systemctl enable "$unit" >/dev/null 2>&1
+  mountpoint -q "$path" && return 0
+  install -d "$path"
+  systemctl start "$unit" || fail "mount the volume ${1%%=*} at $path: journalctl -u $unit"
 }
 
 # kubelet_unit: the kubelet of the bundle as a service that reads drop-ins
@@ -269,5 +328,5 @@ node_install() {
   install -d /etc/rlark
   printf '%s' "$1" | sha256sum | cut -c1-12 > /etc/rlark/node-install
   kubectl --kubeconfig /etc/kubernetes/kubelet.conf annotate node "$NODE_NAME" --overwrite \
-    "rlark.io/node-install-spec=$(cat "$B/tag").$(cat /etc/rlark/node-install)" "rlark.io/node-install-state=$2" >/dev/null
+    "rlark.io/node-install-spec=$(cat "$B/tag").$(cat /etc/rlark/node-install)" "rlark.io/node-install-state=$2" "rlark.io/node-volumes=${NODE_VOLUMES:-}" >/dev/null
 }
