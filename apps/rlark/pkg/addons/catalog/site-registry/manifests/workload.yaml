@@ -42,6 +42,10 @@ spec:
         - key: node-role.kubernetes.io/control-plane
           operator: Exists
           effect: NoSchedule
+        # A node under disk or memory pressure keeps the Pod (with its critical priority it is not evicted)
+        - {key: node.kubernetes.io/disk-pressure, operator: Exists, effect: NoSchedule}
+        - {key: node.kubernetes.io/memory-pressure, operator: Exists, effect: NoSchedule}
+        - {key: node.kubernetes.io/pid-pressure, operator: Exists, effect: NoSchedule}
 {{- end }}
       containers:
         - name: registry
