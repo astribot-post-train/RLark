@@ -229,18 +229,20 @@ def main():
         reply = rospy.ServiceProxy(name, SetBool)(value)
         return reply.success, reply.message
 
-    rospy.init_node("s1u_power", disable_signals=True)
     power = Power(call)
-    rospy.Subscriber(TOPIC, String, lambda message: power.receive(message.data), queue_size=1)
-    if os.environ.get("S1U_AUTO_DRIVER") == "1":
-        threading.Thread(target=power.automatic, args=(os.environ.get("S1U_AUTO_POWER") == "1",), daemon=True).start()
+    # The socket first: with the robot's master down the state says so (monitor false), it is not missing.
     path = Path(os.environ["S1U_SERVICE_SOCKET"])
     path.parent.mkdir(parents=True, exist_ok=True)
     path.unlink(missing_ok=True)
     server = Server(str(path), handler(power))
     os.chmod(path, 0o600)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    rospy.init_node("s1u_power", disable_signals=True)  # waits for the master
+    rospy.Subscriber(TOPIC, String, lambda message: power.receive(message.data), queue_size=1)
+    if os.environ.get("S1U_AUTO_DRIVER") == "1":
+        threading.Thread(target=power.automatic, args=(os.environ.get("S1U_AUTO_POWER") == "1",), daemon=True).start()
     print("power of this robot on %s" % path, flush=True)
-    server.serve_forever()
+    threading.Event().wait()
 
 
 if __name__ == "__main__":

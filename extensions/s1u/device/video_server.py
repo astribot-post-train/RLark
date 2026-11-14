@@ -200,7 +200,6 @@ def main():
     configuration.write_text(json.dumps(media_config(config)))
     sessions = ViewingSessions(config, VideoPublishers(config, directory))
     previews = Previews(config)  # the camera wall's runs from start to stop, whether anyone watches or not
-    previews.start()
     control, authorization = handlers(sessions, previews)
     socket = Path(os.environ["S1U_SERVICE_SOCKET"])
     socket.parent.mkdir(parents=True, exist_ok=True)
@@ -213,6 +212,7 @@ def main():
     for server in servers:
         server.daemon_threads = True
         threading.Thread(target=server.serve_forever, daemon=True).start()
+    previews.start()  # after the socket: with the robot's master down it waits for it, and the status says so
     process = None
     try:
         with (directory / "mediamtx.log").open("ab") as output:
