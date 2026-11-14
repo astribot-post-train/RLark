@@ -30,7 +30,7 @@
 - **办公室节点的端点先写死在声明里**：第 2 步时节点经隧道连 station-api，登记来源是隧道地址，不能当端点。第 5 步后本地集群经内网登记，来源已是内网地址；"端点留空、跟着登记来源走"随下一个版本启用（agent 改成上报默认路由的源地址）。
 - **机器人的监听端口改成了 51830**（声明里已写）。机器人 16:39 非正常重启后仍用固定源端口 51820，实验室路由器上旧的 NAT 映射一直被对端的保活包续着，三个对端的回包被吃掉；换端口后 30 s 内全通。下一个版本：NAT 后的叶子节点不用固定源端口，枢纽对"等对方拨入"的对端不发保活。
 
-集群向场站登记用 `extensions/station/hack/admit-member.sh`，两个子命令：`install`（把 agent 和 gateway 装进集群）、`credential`（登记管理面怎么访问这个集群的 API；集群的控制面换了机器后再跑一次）。“机器人自带单节点集群、在 NAT 后面”的入网形态（原来的 `bootstrap → rebind → finish` 三个子命令）11-14 起不再支持，已删除：机器人都是场站集群的 worker，入网用 `admit-node.sh`。
+集群向场站登记用 `extensions/station/hack/admit-member.sh`，两个子命令：`install`（把 agent 和 gateway 装进集群）、`credential`（登记管理面怎么访问这个集群的 API：给的是控制面在 SiteNetwork `names` 里的名字；凭据里的地址由 station-controller 按这个名字现在的地址维护，控制面换机器只改 `names` 那一行，每个集群只登记一次）。“机器人自带单节点集群、在 NAT 后面”的入网形态（原来的 `bootstrap → rebind → finish` 三个子命令）11-14 起不再支持，已删除：机器人都是场站集群的 worker，入网用 `admit-node.sh`。
 
 ## 0. 结论
 

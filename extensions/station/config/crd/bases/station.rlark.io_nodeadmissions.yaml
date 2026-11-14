@@ -100,6 +100,12 @@ spec:
                 description: RedeemedAt is when Station API accepted the code.
                 format: date-time
                 type: string
+              site:
+                description: |-
+                  Site is the site the machine stands in when it is not its cluster's.
+                  A node the SiteNetwork declares with a site is in that one.
+                maxLength: 63
+                type: string
               taints:
                 items:
                   maxLength: 317

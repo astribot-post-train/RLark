@@ -10,7 +10,8 @@
 #   API_SERVER   host:port of the cluster's API as the machine reaches it without the tunnel
 #   STATION_API  host:port of Station API as the machine reaches it
 # Environment: KCP (management kubeconfig), CA (Station API's CA file), TAINTS
-# ("k=v:Effect,..."), ADDRESS (pin the tunnel address), UPLINK
+# ("k=v:Effect,..."), SITE (the site the machine stands in, when it is not its
+# cluster's), ADDRESS (pin the tunnel address), UPLINK
 # (the gateway of a machine whose default route does not lead out, where its
 # site declares no leafUplink), TTL (default "2 hours").
 set -euo pipefail
@@ -23,6 +24,8 @@ CLUSTER=$1 NODE=$2 API_SERVER=$3 STATION_API=$4; shift 4
 ca_digest=$(sha256sum < "$CA" | cut -d' ' -f1)
 [[ $(curl -fsS --cacert "$CA" "https://$STATION_API/v1/bootstrap/ca" | sha256sum | cut -d' ' -f1) == "$ca_digest" ]] ||
   { echo "Station API at $STATION_API does not serve, over a connection the CA in $CA verifies, that same CA; nothing was admitted" >&2; exit 1; }
+[[ -z ${SITE:-} ]] || kubectl --kubeconfig "$KCP" -n station-system get sitenetwork default -o jsonpath='{range .spec.sites[*]}{.name}{"\n"}{end}' | grep -qx "$SITE" ||
+  { echo "the SiteNetwork has no site $SITE; nothing was admitted" >&2; exit 1; }
 namespace=$(kubectl --kubeconfig "$KCP" get clusters.rlinf.io "$CLUSTER" -o jsonpath='{.spec.agentNamespace}')
 code=$(head -c 512 /dev/urandom | tr -dc 'a-z0-9' | cut -c1-8)
 {
@@ -36,6 +39,7 @@ spec:
   expiresAt: "$(date -u -d "+${TTL:-2 hours}" +%Y-%m-%dT%H:%M:%SZ)"
   apiServer: $API_SERVER
 ADMISSION
+  echo "  site: ${SITE:-null}"
   [[ -z ${ADDRESS:-} ]] || echo "  address: $ADDRESS"
   [[ -z ${UPLINK:-} ]] || { echo "  uplink: {gateway: $UPLINK}"; }
   [[ -z ${TAINTS:-} ]] || echo "  taints: [\"${TAINTS//,/\", \"}\"]"
@@ -57,10 +61,14 @@ trust="c=\$(mktemp) && curl --connect-timeout 15 -fsSk https://$STATION_API/v1/b
 # runs it only if it is, byte for byte, the file this API serves now.
 read -r gateway login < <(kubectl --kubeconfig "$KCP" -n station-system get sitenetwork default -o json | python3 -c '
 import json, sys
-for site in json.load(sys.stdin)["spec"]["sites"]:
+spec, (cluster, node, named) = json.load(sys.stdin)["spec"], sys.argv[1:]
+for entry in spec.get("nodes", []):
+    if (entry["clusterID"], entry["nodeName"]) == (cluster, node):
+        named = entry.get("site", named)
+for site in spec["sites"]:
     uplink = site.get("leafUplink", {})
-    if sys.argv[1] in site.get("clusters", []) and "setup" in uplink:
-        print(uplink["gateway"], uplink["setup"]["login"])' "$CLUSTER") || true
+    if (site["name"] == named if named else cluster in site.get("clusters", [])) and "setup" in uplink:
+        print(uplink["gateway"], uplink["setup"]["login"])' "$CLUSTER" "$NODE" "${SITE:-}") || true
 if [[ -n ${gateway:-} ]]; then
   digest=$(curl -fsS --cacert "$CA" "https://$STATION_API/b/$code/uplink" | sha256sum | cut -d' ' -f1)
   echo "ssh -t $login@$gateway 'f=\$(mktemp) $trust/uplink -o \$f && echo \"$digest  \$f\" | sha256sum -c - && sudo sh \$f'"

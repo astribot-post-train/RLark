@@ -27,6 +27,10 @@ type NodeAdmissionSpec struct {
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=128
 	ClusterID string `json:"clusterID"`
+	// Site is the site the machine stands in when it is not its cluster's.
+	// A node the SiteNetwork declares with a site is in that one.
+	// +kubebuilder:validation:MaxLength=63
+	Site string `json:"site,omitempty"`
 	// CodeHash is the SHA-256 of the one-time code in hex. The code itself is
 	// shown once to the operator and stored nowhere.
 	// +kubebuilder:validation:MinLength=64

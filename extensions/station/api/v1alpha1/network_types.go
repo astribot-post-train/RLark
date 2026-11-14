@@ -77,7 +77,8 @@ type SiteNetworkSite struct {
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=63
 	Name string `json:"name"`
-	// Clusters are the registered RLark Cluster IDs whose nodes are in this site.
+	// Clusters are the registered RLark Cluster IDs whose nodes are in this
+	// site, except the nodes that name a site of their own.
 	// +kubebuilder:validation:MaxItems=256
 	// +listType=set
 	Clusters []string `json:"clusters,omitempty"`
@@ -91,6 +92,14 @@ type SiteNetworkSite struct {
 	// and reach everything else through it. Without it a leaf also dials
 	// every other hub it can.
 	LeavesViaRelay bool `json:"leavesViaRelay,omitempty"`
+	// Relay is the hub that relays for the leaves of this site, as
+	// "<clusterID>/<nodeName>": a hub with relay set that the site can dial.
+	// Without it a leaf takes a relay of its own site, or else the first one
+	// it can dial. Changing it moves each leaf when it next fetches its
+	// configuration; two leaves reach each other again once both have.
+	// +kubebuilder:validation:MaxLength=382
+	// +kubebuilder:validation:Pattern=`^[^/]+/[^/]+$`
+	Relay string `json:"relay,omitempty"`
 	// LeafUplink is the uplink of every leaf of this site that declares none
 	// of its own: machines of one build, each behind a device of its own
 	// that has the same address on every one of them (a robot's computer
@@ -128,6 +137,11 @@ type SiteNetworkNode struct {
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=253
 	NodeName string `json:"nodeName"`
+	// Site is the site the node is in when it is not its cluster's: a
+	// cluster's nodes may stand in several sites, as robots of one cluster
+	// do whose control plane is somewhere else.
+	// +kubebuilder:validation:MaxLength=63
+	Site string `json:"site,omitempty"`
 	// +kubebuilder:default=Leaf
 	// +kubebuilder:validation:Enum=Leaf;Hub
 	Role string `json:"role,omitempty"`
@@ -328,6 +342,8 @@ type NetworkEnrollmentStatus struct {
 	PublicKey string `json:"publicKey,omitempty"`
 	// +kubebuilder:validation:MaxItems=16
 	Problems []string `json:"problems,omitempty"`
+	// Relay is the hub that relays for this Leaf, "<clusterID>/<nodeName>".
+	Relay string `json:"relay,omitempty"`
 	// Links says, for a Leaf, what each Hub it dials sees of it. A Leaf that
 	// has dropped off cannot report anything, so this is the Hubs' account.
 	// +kubebuilder:validation:MaxItems=64

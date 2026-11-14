@@ -10,6 +10,7 @@ import (
 
 	stationv1alpha1 "github.com/rlinf/rlark/extensions/station/api/v1alpha1"
 	"github.com/rlinf/rlark/extensions/station/network"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -61,6 +62,9 @@ func newNetworkTest(t *testing.T, objects ...client.Object) (*NetworkReconciler,
 	t.Helper()
 	scheme := runtime.NewScheme()
 	if err := stationv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	if err := corev1.AddToScheme(scheme); err != nil {
 		t.Fatal(err)
 	}
 	c := fake.NewClientBuilder().WithScheme(scheme).
@@ -713,5 +717,82 @@ func TestNetworkSaysWhatTheHubsSeeOfALeaf(t *testing.T) {
 	}
 	if _, written := step(clock, 6000, both...); written {
 		t.Fatal("a connected leaf was written again")
+	}
+}
+
+func TestNetworkPutsANodeInTheSiteItNames(t *testing.T) {
+	siteNetwork := testSiteNetwork()
+	siteNetwork.Spec.Sites[0].DNS = []string{"10.11.0.2"}
+	siteNetwork.Spec.Sites[1].DNS = []string{"192.168.50.1"}
+	siteNetwork.Spec.Nodes = append(siteNetwork.Spec.Nodes,
+		stationv1alpha1.SiteNetworkNode{ClusterID: "robot-01", NodeName: "by-entry", Site: "office"},
+		stationv1alpha1.SiteNetworkNode{ClusterID: "robot-01", NodeName: "astray", Site: "nowhere"})
+	objects := []client.Object{siteNetwork,
+		// The entry's site comes before the admission's.
+		&stationv1alpha1.NodeAdmission{ObjectMeta: metav1.ObjectMeta{Namespace: "ns-robot-01", Name: "by-entry"},
+			Spec: stationv1alpha1.NodeAdmissionSpec{ClusterID: "robot-01", Site: "lab", ExpiresAt: metav1.NewTime(time.Unix(1_800_003_600, 0))}},
+		&stationv1alpha1.NodeAdmission{ObjectMeta: metav1.ObjectMeta{Namespace: "ns-robot-01", Name: "by-admission"},
+			Spec: stationv1alpha1.NodeAdmissionSpec{ClusterID: "robot-01", Site: "office", ExpiresAt: metav1.NewTime(time.Unix(1_800_003_600, 0))}},
+		// A machine not yet a node, admitted into a site nothing declares, before and after it redeemed its code.
+		&stationv1alpha1.NodeAdmission{ObjectMeta: metav1.ObjectMeta{Namespace: "ns-robot-01", Name: "new-astray"},
+			Spec: stationv1alpha1.NodeAdmissionSpec{ClusterID: "robot-01", Site: "nowhere", ExpiresAt: metav1.NewTime(time.Unix(1_800_003_600, 0))}},
+		&stationv1alpha1.NodeAdmission{ObjectMeta: metav1.ObjectMeta{Namespace: "ns-robot-01", Name: "new-astray-redeemed"},
+			Spec: stationv1alpha1.NodeAdmissionSpec{ClusterID: "robot-01", Site: "nowhere", PublicKey: "key-new-astray", ExpiresAt: metav1.NewTime(time.Unix(1_800_003_600, 0))}},
+	}
+	objects = append(objects, testMember("dev", "cailiang", "key-dev", "10.11.14.128")...)
+	for _, node := range []string{"at-home", "by-entry", "by-admission", "astray"} {
+		objects = append(objects, testMember("robot-01", node, "key-"+node, "192.168.0.10")...)
+	}
+	r, c := newNetworkTest(t, objects...)
+	reconcileNetwork(t, r)
+
+	for node, site := range map[string]string{"at-home": "lab", "by-entry": "office", "by-admission": "office"} {
+		status := enrollmentStatus(t, c, "robot-01", node)
+		dns := map[string]string{"lab": "192.168.50.1", "office": "10.11.0.2"}[site]
+		if status.Phase != stationv1alpha1.NetworkEnrollmentEnrolled || status.Site != site || configOf(t, status).DNS[0] != dns {
+			t.Fatalf("%s is in %s with that site's name servers: %+v", node, site, status)
+		}
+	}
+	astray := enrollmentStatus(t, c, "robot-01", "astray")
+	if astray.Phase != stationv1alpha1.NetworkEnrollmentRejected || !strings.Contains(astray.Reason, "nowhere") {
+		t.Fatalf("a node of a site nothing declares: %+v", astray)
+	}
+	for name, phase := range map[string]stationv1alpha1.NodeAdmissionPhase{"new-astray": stationv1alpha1.NodeAdmissionPending, "new-astray-redeemed": stationv1alpha1.NodeAdmissionRedeemed} {
+		var admission stationv1alpha1.NodeAdmission
+		if err := c.Get(context.Background(), types.NamespacedName{Namespace: "ns-robot-01", Name: name}, &admission); err != nil {
+			t.Fatal(err)
+		}
+		if admission.Status.Phase != phase || !strings.Contains(admission.Status.Reason, "nowhere") || admission.Status.Config != "" {
+			t.Fatalf("the admission %s into a site nothing declares: %+v", name, admission.Status)
+		}
+	}
+}
+
+func TestNetworkSaysWhichHubRelaysForALeaf(t *testing.T) {
+	siteNetwork := testSiteNetwork()
+	siteNetwork.Spec.Nodes[1].Relay = true
+	objects := []client.Object{siteNetwork}
+	objects = append(objects, testMember("dev", "cailiang", "key-dev", "10.11.14.128")...)
+	objects = append(objects, testMember("dev", "alexfu", "key-3090", "10.11.13.192")...)
+	objects = append(objects, testMember("robot-01", "s1u-01-x86", "key-robot-1", "192.168.0.10")...)
+	r, c := newNetworkTest(t, objects...)
+	reconcileNetwork(t, r)
+	if robot := enrollmentStatus(t, c, "robot-01", "s1u-01-x86"); robot.Relay != "dev/cailiang" {
+		t.Fatalf("the first relay the leaf can dial: %+v", robot)
+	}
+
+	// The site names another: one value of the declaration.
+	var declared stationv1alpha1.SiteNetwork
+	if err := c.Get(context.Background(), testNetworkKey, &declared); err != nil {
+		t.Fatal(err)
+	}
+	declared.Spec.Sites[1].Relay = "dev/alexfu"
+	if err := c.Update(context.Background(), &declared); err != nil {
+		t.Fatal(err)
+	}
+	reconcileNetwork(t, r)
+	robot := enrollmentStatus(t, c, "robot-01", "s1u-01-x86")
+	if robot.Relay != "dev/alexfu" || robot.Phase != stationv1alpha1.NetworkEnrollmentEnrolled || len(robot.Problems) != 0 {
+		t.Fatalf("the relay the site names: %+v", robot)
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -390,5 +391,61 @@ func TestLeavesOfASiteShareItsUplink(t *testing.T) {
 	}
 	if hub := result.Configs["rlark-robot-s1u-01/hub"].UplinkRoutes; len(hub) != 0 {
 		t.Fatalf("a hub took the leaves' uplink: %+v", hub)
+	}
+}
+
+// A site names the hub that relays for its leaves. Changing it changes, in a
+// leaf's configuration, which peer carries the pool, and nothing else: the
+// leaf's own sessions with the hubs it dials stay.
+func TestASiteNamesItsRelay(t *testing.T) {
+	topology := Topology{Pool: "10.254.240.0/24", MTU: 1380, Interface: "st-wg0", ListenPort: 51820, KeepaliveSeconds: 25, Sites: []Site{{Name: "field", Mesh: true}}}
+	members := []Member{
+		{ID: "robots/old", Site: "field", Role: RoleHub, Relay: true, PublicKey: "a", Address: "10.254.240.5", Endpoints: []Endpoint{{Address: "192.168.31.55:51820", Scope: ScopeSite}}},
+		{ID: "robots/new", Site: "field", Role: RoleHub, Relay: true, PublicKey: "b", Address: "10.254.240.6", Endpoints: []Endpoint{{Address: "192.168.31.56:51820", Scope: ScopeSite}}},
+		{ID: "robots/plain", Site: "field", Role: RoleHub, PublicKey: "c", Address: "10.254.240.4", Endpoints: []Endpoint{{Address: "192.168.31.54:51820", Scope: ScopeSite}}},
+		{ID: "robots/robot-1", Site: "field", Role: RoleLeaf, PublicKey: "d", Address: "10.254.240.7"},
+		{ID: "robots/robot-2", Site: "field", Role: RoleLeaf, PublicKey: "e", Address: "10.254.240.8"},
+	}
+	compute := func(relay string) Result {
+		topology.Sites[0].Relay = relay
+		result, err := Compute(topology, members)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return result
+	}
+	carrier := func(config NodeConfig) string {
+		for _, peer := range config.Peers {
+			if slices.Contains(peer.AllowedIPs, "10.254.240.0/24") {
+				return peer.PublicKey
+			}
+		}
+		return ""
+	}
+	before, after := compute(""), compute("robots/new")
+	if before.Relays["robots/robot-1"] != "robots/old" || carrier(before.Configs["robots/robot-1"]) != "a" {
+		t.Fatalf("without a named relay, the first of the site: %+v", before.Relays)
+	}
+	if after.Relays["robots/robot-1"] != "robots/new" || after.Relays["robots/robot-2"] != "robots/new" || carrier(after.Configs["robots/robot-1"]) != "b" {
+		t.Fatalf("the named relay: %+v", after.Relays)
+	}
+	if len(after.Unreachable) != 0 || len(after.Problems) != 0 {
+		t.Fatalf("every member reaches every other through the named relay: %v %v", after.Unreachable, after.Problems)
+	}
+	endpoints := func(config NodeConfig) (list []string) {
+		for _, peer := range config.Peers {
+			list = append(list, peer.PublicKey+"@"+peer.Endpoint)
+		}
+		return list
+	}
+	if !reflect.DeepEqual(endpoints(before.Configs["robots/robot-1"]), endpoints(after.Configs["robots/robot-1"])) {
+		t.Fatalf("the leaf dials the same hubs before and after: %v, %v", endpoints(before.Configs["robots/robot-1"]), endpoints(after.Configs["robots/robot-1"]))
+	}
+	// A hub that does not relay, or a node there is none of, is not replaced by another.
+	for _, wrong := range []string{"robots/plain", "robots/gone"} {
+		result := compute(wrong)
+		if _, has := result.Relays["robots/robot-1"]; has || len(result.Problems["robots/robot-1"]) != 1 || !strings.Contains(result.Problems["robots/robot-1"][0], wrong) {
+			t.Fatalf("relay %s: %+v %v", wrong, result.Relays, result.Problems)
+		}
 	}
 }
