@@ -2,6 +2,7 @@ package job
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -150,5 +151,31 @@ func TestPerNodeTaskIsNotCountedInRayTopology(t *testing.T) {
 	}
 	if parameters.Role != taskapi.RayRoleWorker || parameters.HeadTaskName != "run-head" || parameters.TotalNodes != 3 {
 		t.Fatalf("per-node Ray parameters = %#v", parameters)
+	}
+}
+
+// A Job without a head forms no Ray cluster, so its Tasks get no Ray role and
+// the launcher only runs their scripts instead of waiting for a head.
+func TestTaskOfJobWithoutHeadHasNoRayRole(t *testing.T) {
+	prepare, err := json.Marshal(taskapi.RayExecutionParametersV1{Prepare: &taskapi.InlineScript{Inline: "station"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	station := perNodeTemplate("station")
+	station.Workload.Parameters = apiextensionsv1.JSON{Raw: prepare}
+	job := &rlarkv1alpha1.Job{ObjectMeta: metav1.ObjectMeta{Name: "stations"}, Spec: rlarkv1alpha1.JobSpec{Tasks: []rlarkv1alpha1.JobTaskTemplate{station}}}
+	built := buildTask(job, station, "stations-station", "robots")
+	parameters, err := taskapi.DecodeParametersStrict[taskapi.RayExecutionParametersV1](built.Spec.Workload.Parameters)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if parameters.Role != "" || parameters.HeadTaskName != "" || parameters.Prepare == nil || parameters.Prepare.Inline != "station" {
+		t.Fatalf("Ray parameters = %#v", parameters)
+	}
+	if strings.Contains(string(built.Spec.Workload.Parameters.Raw), `"role"`) {
+		t.Fatalf("parameters carry a role: %s", built.Spec.Workload.Parameters.Raw)
+	}
+	if _, found := built.Annotations[rlarkv1alpha1.RayRoleAnnotation]; found {
+		t.Fatalf("annotations = %#v, want no Ray role", built.Annotations)
 	}
 }

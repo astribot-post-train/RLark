@@ -722,3 +722,38 @@ func jsonEqual(left, right []byte) bool {
 	var a, b any
 	return json.Unmarshal(left, &a) == nil && json.Unmarshal(right, &b) == nil && reflect.DeepEqual(a, b)
 }
+
+func TestRayKubernetesAdapterRunsTaskWithoutRayRoleThroughLauncherOnly(t *testing.T) {
+	task := compileTask(kubernetesworkload.CarrierDaemonSet)
+	parameters, err := json.Marshal(taskapi.RayExecutionParametersV1{Prepare: &taskapi.InlineScript{Inline: "station"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	task.Spec.Workload.Parameters.Raw = parameters
+	plan, err := kubernetesworkload.NewAdapter(workload.TypeID(taskapi.WorkloadTypeRay), namespace).Compile(context.Background(), workload.CompileRequest{
+		Task:    mustSnapshot(t, task),
+		Runtime: agentruntime.Info{Kind: compatibility.RuntimeKindKubernetes},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plan.Processes) != 1 || !reflect.DeepEqual(plan.Processes[0].Args, []string{"ray-launcher"}) {
+		t.Fatalf("processes=%#v, want ray-launcher without a role", plan.Processes)
+	}
+	for _, object := range plan.Objects {
+		if object.LogicalName == "ray-service" {
+			t.Fatal("a Task without a Ray role got a Ray head Service")
+		}
+	}
+	var daemonSet appsv1.DaemonSet
+	if err := json.Unmarshal(findObject(t, plan.Objects, "workload").Manifest.Object, &daemonSet); err != nil {
+		t.Fatal(err)
+	}
+	environment := map[string]string{}
+	for _, variable := range daemonSet.Spec.Template.Spec.Containers[0].Env {
+		environment[variable.Name] = variable.Value
+	}
+	if _, found := environment["RLARK_HEAD_ADDRESS"]; found || environment["RLARK_PREPARE_SCRIPT"] != "station" {
+		t.Fatalf("environment=%#v", environment)
+	}
+}

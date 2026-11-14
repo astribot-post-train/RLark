@@ -215,13 +215,19 @@ func setRayExecution(spec *rlarkv1alpha1.TaskSpec, job *rlarkv1alpha1.Job, templ
 		}
 		parameters = decoded
 	}
-	parameters.Role = taskapi.RayRoleWorker
+	parameters.Role = ""
 	parameters.HeadTaskName = findHeadTaskName(job)
 	parameters.TotalNodes = int32(totalNodeCount(job.Spec.Tasks))
 	parameters.NodeRankStart = int32(rankStartForTask(job, template.Name))
-	if template.Head {
+	// A Job without a head forms no Ray cluster: its Tasks have no Ray role and
+	// only run their own scripts, rather than waiting as workers for a head
+	// that never comes.
+	switch {
+	case template.Head:
 		parameters.Role = taskapi.RayRoleHead
 		parameters.HeadTaskName = ""
+	case parameters.HeadTaskName != "":
+		parameters.Role = taskapi.RayRoleWorker
 	}
 	raw, _ := json.Marshal(parameters)
 	workload.Kind = taskapi.WorkloadTypeRay
@@ -253,12 +259,14 @@ func buildRayAnnotations(job *rlarkv1alpha1.Job, t rlarkv1alpha1.JobTaskTemplate
 	if restartedAt := job.Annotations[RestartedAtAnnotation]; restartedAt != "" {
 		annotations[RestartedAtAnnotation] = restartedAt
 	}
-	if t.Head {
+	headTaskName := findHeadTaskName(job)
+	switch {
+	case t.Head:
 		annotations[rlarkv1alpha1.RayRoleAnnotation] = rlarkv1alpha1.RayRoleHead
-	} else {
+	case headTaskName != "":
 		annotations[rlarkv1alpha1.RayRoleAnnotation] = rlarkv1alpha1.RayRoleWorker
 	}
-	if headTaskName := findHeadTaskName(job); headTaskName != "" {
+	if headTaskName != "" {
 		annotations[rlarkv1alpha1.RayHeadTaskNameAnnotation] = headTaskName
 	}
 	return annotations

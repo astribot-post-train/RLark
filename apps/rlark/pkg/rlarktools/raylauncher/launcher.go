@@ -55,8 +55,8 @@ var prepareAndExecScript string
 var clusterCheckProgram string
 
 func (c Config) Validate() error {
-	if c.Role != RoleHead && c.Role != RoleWorker {
-		return fmt.Errorf("ray role must be head or worker")
+	if c.Role != "" && c.Role != RoleHead && c.Role != RoleWorker {
+		return fmt.Errorf("ray role must be head, worker or empty")
 	}
 	if c.RayBinary == "" {
 		return fmt.Errorf("ray binary is required")
@@ -96,6 +96,18 @@ func Run(ctx context.Context, config Config) error {
 			}
 			return nil
 		}
+	}
+	if config.Role == "" {
+		// A Task without a Ray role (its Job has no head) joins no cluster, so
+		// its image need not have Ray. Its run script follows prepare, and the
+		// launcher then stays up as a head's does.
+		if script := os.Getenv("RLARK_RUN_SCRIPT"); script != "" {
+			if err := commandRunner(ctx, config.BashBinary, "-c", script); err != nil {
+				return preserveExit("run script", err)
+			}
+		}
+		<-ctx.Done()
+		return ctx.Err()
 	}
 	setRayDefaults()
 	if err := executableChecker(config.RayBinary); err != nil {

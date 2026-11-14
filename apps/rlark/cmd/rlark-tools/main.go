@@ -115,7 +115,7 @@ func newRayLauncherCommand() *cobra.Command {
 		}
 		return err
 	}}
-	cmd.Flags().StringVar(&role, "role", "", "Ray role: head or worker")
+	cmd.Flags().StringVar(&role, "role", "", "Ray role: head or worker; empty for a Task that joins no Ray cluster")
 	cmd.Flags().StringVar(&ray, "ray-binary", "ray", "Ray CLI executable")
 	cmd.Flags().StringVar(&bash, "bash-binary", "/bin/bash", "Shell used only for compatibility user scripts")
 	cmd.Flags().StringVar(&python, "python-binary", "python", "Python executable used for Ray cluster readiness")

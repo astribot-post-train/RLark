@@ -217,18 +217,16 @@ func (a *Adapter) Compile(_ context.Context, request workload.CompileRequest) (e
 	}
 	// 3. Compile optional Ray helpers. The head Service has Task identity and is cleaned up.
 	role := string(ray.Role)
-	if role != "" {
-		if role == rlarkv1alpha1.RayRoleHead {
-			service := BuildRayHeadService(namespace, task)
-			object, err := desiredObject("ray-service", "service", service, request.Task.Identity, agentruntime.IdentityTaskIncarnation, agentruntime.LifecycleDeleteOnTaskCleanup)
-			if err != nil {
-				return executionplan.Plan{}, err
-			}
-			object.Ownership = incarnationOwnership(request.Task.Identity)
-			object.ReconcileProfile = kubernetesobjects.ServiceReconcileProfile
-			object.UpdateMode = agentruntime.UpdateReplace
-			objects, dependencies = append(objects, object), append(dependencies, "ray-service")
+	if role == rlarkv1alpha1.RayRoleHead {
+		service := BuildRayHeadService(namespace, task)
+		object, err := desiredObject("ray-service", "service", service, request.Task.Identity, agentruntime.IdentityTaskIncarnation, agentruntime.LifecycleDeleteOnTaskCleanup)
+		if err != nil {
+			return executionplan.Plan{}, err
 		}
+		object.Ownership = incarnationOwnership(request.Task.Identity)
+		object.ReconcileProfile = kubernetesobjects.ServiceReconcileProfile
+		object.UpdateMode = agentruntime.UpdateReplace
+		objects, dependencies = append(objects, object), append(dependencies, "ray-service")
 	}
 	// 4. Render the selected primary workload as the instance-discovery root. It
 	// depends on required Ray helpers and is deleted on Task cleanup.
@@ -271,18 +269,20 @@ func (a *Adapter) Compile(_ context.Context, request workload.CompileRequest) (e
 			Path: "spec.template",
 		},
 	}}
-	processes := []executionprocess.Declaration{}
-	if role == rlarkv1alpha1.RayRoleHead || role == rlarkv1alpha1.RayRoleWorker {
-		args := []string{"ray-launcher", "--role=" + role}
-		if domain != "" {
-			args = append(args, "--wait-network")
-		}
-		processes = append(processes, executionprocess.Declaration{
-			Name: "ray-launcher", Target: workloadPodTemplateTarget, Locator: targets[0].Locator, ContainerName: "main",
-			Role: executionprocess.RolePrimary, Executable: "/rlark-tools/rlark-tools", Args: args,
-			RestartPolicy: executionprocess.RestartNever, Required: true,
-		})
+	// A Task without a Ray role still runs through the launcher, which then runs
+	// only its prepare and run scripts.
+	args := []string{"ray-launcher"}
+	if role != "" {
+		args = append(args, "--role="+role)
 	}
+	if domain != "" {
+		args = append(args, "--wait-network")
+	}
+	processes := []executionprocess.Declaration{{
+		Name: "ray-launcher", Target: workloadPodTemplateTarget, Locator: targets[0].Locator, ContainerName: "main",
+		Role: executionprocess.RolePrimary, Executable: "/rlark-tools/rlark-tools", Args: args,
+		RestartPolicy: executionprocess.RestartNever, Required: true,
+	}}
 	// 6. Hash Adapter-owned objects and process declarations independently of
 	// execution ordering. Environment requirements and targets bind separately.
 	hash, err := compiledHash(objects, processes)
@@ -464,8 +464,8 @@ func decodeConfiguration(request workload.CompileRequest) (*rlarkv1alpha1.Task, 
 	if err != nil {
 		return nil, nil, taskapi.RayExecutionParametersV1{}, fault.Wrap(fault.InvalidArgument, "decode Ray execution parameters", err)
 	}
-	if ray.Role != taskapi.RayRoleHead && ray.Role != taskapi.RayRoleWorker {
-		return nil, nil, taskapi.RayExecutionParametersV1{}, fault.New(fault.InvalidArgument, "Ray execution role must be head or worker")
+	if ray.Role != "" && ray.Role != taskapi.RayRoleHead && ray.Role != taskapi.RayRoleWorker {
+		return nil, nil, taskapi.RayExecutionParametersV1{}, fault.New(fault.InvalidArgument, "Ray execution role must be head, worker or empty")
 	}
 	identity := request.Task.Identity
 	task := &rlarkv1alpha1.Task{ObjectMeta: metav1.ObjectMeta{Name: identity.Logical.Name, Namespace: identity.Logical.Namespace, UID: types.UID(identity.ObjectUID), Generation: identity.Generation}}

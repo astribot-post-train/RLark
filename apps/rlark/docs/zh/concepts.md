@@ -391,7 +391,7 @@ tasks:
 - **约定**：`placement.perNode: true` 要求非空的 `placement.nodeSelector`，在 Kubernetes 上要求 `rlinf.io/kubernetes-daemonset` `v1` carrier；该 carrier 也只用于按节点放置的 Task。它的参数只接受 `maxUnavailable`（正整数，或 1% 到 100% 的百分比），`replicas` 会被拒绝。按节点放置的 Task 不能是 Job 的 `head`。Job Controller 在下发任何 Task 之前拒绝违反约定的模板，并报告 `Validated=False`。
 - **一个集群**：按节点放置的 Task 放在其 selector 所匹配 Node 所在的集群。所有匹配的 Node 都计入，不论其阶段，因此节点离线不会让 Task 换集群；selector 匹配到多个集群的 Node 时会被拒绝，直到收窄到一个集群。
 - **渲染**：Agent 渲染一个 DaemonSet，Pod template 处理、身份标签、镜像拉取 Secret、SSH 和网络环境与其他 carrier 相同。更新按 `maxUnavailable` 逐台滚动，且不超量：一台节点上旧实例退出后新实例才启动，因为按节点的实例通常占用节点的端口、设备和目录。Kubernetes 会为 DaemonSet 加上其标准容忍（not-ready、unreachable 和节点压力污点）；RLark 不额外添加。
-- **Ray 拓扑**：按节点放置的 Task 作为 Job 头节点（若有）的 Ray worker 运行。它不计入头节点等待的节点总数，也不参与节点 rank，因为它的实例数随节点类别变化。
+- **Ray 拓扑**：按节点放置的 Task 作为 Job 头节点（若有）的 Ray worker 运行。它不计入头节点等待的节点总数，也不参与节点 rank，因为它的实例数随节点类别变化。在没有头节点的 Job 中（例如只由按节点放置的 Task 组成的 Job），每个实例没有 Ray 角色：先运行 `prepare` 脚本，再运行 `run` 脚本（若有），然后一直运行到 Task 被停止。
 - **状态**：`status.instances` 列出每个实例的 `node`、Pod `name`、`phase`（Pod 运行且就绪为 `Running`；容器无法启动或反复崩溃为 `Failed`；其余为 `Pending`）、main 容器的 `image` 和 `message`；所在节点不是 Ready 的实例，message 为 `node not ready`。
 - **阶段**：只计 Ready 节点上的实例。它们都运行当前版本且就绪时（包括一个都没有时），Task 为 `Running`；其中有实例正在更新、正在启动（例如新节点在拉镜像）或反复失败时为 `Pending`，message 例如 `2 of 3 instances on ready nodes updated and available`，或失败实例的原因。关机的节点、已加入但尚未 Ready 的节点会列出，但不改变阶段，所以机器人关机时 Job 不会变成 `Pending`；此时 message 写明有几个实例所在节点不是 Ready。任何实例都不会让 Task 变为 `Failed`，所以节点加入、离开或故障都不会让 Job 失败。
 - **当前限制**：更新使用 DaemonSet 的滚动更新；只在工作负载报告空闲时才更新实例的能力尚未实现。
@@ -464,15 +464,15 @@ graph TD
 | `agent-` | Agent 的 workspace | `agent-beijing-01` |
 | `rlark-system` | Agent 创建的默认 namespace | `rlark-system` |
 | Label `rlinf.io/job` | Pod/Task 所属 Job | `rlinf.io/job=ppo-cartpole-v1` |
-| Annotation `rlinf.io/ray-role` | Ray 集群角色 | `head` / `worker` |
+| Annotation `rlinf.io/ray-role` | Ray 集群角色；没有 head 的 Job 中不设置 | `head` / `worker` |
 
 ## 9. Ray 集群集成
 
-Ray 配置由版本为 `v1` 的 `rlinf.io/ray` workload 的 `spec.workload.parameters` 承载。worker 使用 `parameters.headTaskName` 引用同一 namespace 中的具体 head Task；Job Controller 还会写入 launcher 使用的派生值 `parameters.totalNodes` 和 `parameters.nodeRankStart`。实现必须验证可信 Job 关系，不能只因名称匹配就信任目标对象。既有 Ray annotation 仅作为实现兼容元数据，不应作为新 Task 的 canonical 声明：
+Ray 配置由版本为 `v1` 的 `rlinf.io/ray` workload 的 `spec.workload.parameters` 承载。Job Controller 给 `head: true` 的 Task 设置角色 `head`，其余 Task 设置 `worker`。没有 head 的 Job 不组成 Ray 集群，其 Task 没有角色：launcher 只运行它们的 `prepare` 与 `run` 脚本，不启动任何 Ray 进程，镜像中也不需要 Ray。worker 使用 `parameters.headTaskName` 引用同一 namespace 中的具体 head Task；Job Controller 还会写入 launcher 使用的派生值 `parameters.totalNodes` 和 `parameters.nodeRankStart`。实现必须验证可信 Job 关系，不能只因名称匹配就信任目标对象。既有 Ray annotation 仅作为实现兼容元数据，不应作为新 Task 的 canonical 声明：
 
 ```yaml
 annotations:
-  rlinf.io/ray-role: "head"          # head | worker
+  rlinf.io/ray-role: "head"          # head | worker；没有 head 的 Job 中不设置
   rlinf.io/ray-total-nodes: "5"     # 仅 head 需要
   rlinf.io/ray-head-task-name: "actor-head"  # 仅 worker 需要
 ```
@@ -484,7 +484,7 @@ annotations:
 3. Binder 的 Runtime workload assembler 安装 `rlark-tools`，写入归当前 Task incarnation 所有的 supervisor ConfigMap，并把 main container 入口改为 `rlark-tools supervisor`。supervisor 将 `ray-launcher` 与 `sshd` 作为独立 OS 子进程运行；RLark 自有的 Ray 编排不再使用挂载的 shell 脚本。
 4. Adapter 消费 canonical workload 参数并注入 launcher 环境，包括总节点数、rank 元数据与 Head Pod IP。具体而言，没有网络配置时，worker 的 `parameters.headTaskName` 会转换为同一 namespace 中的 Head Service DNS 名称；声明 Network Environment 时则转换为 `<headTaskName>-0.rlark-domain`。后一种情况下 Adapter 还会启用 launcher 内置的网络屏障：执行 prepare script 前，Head 等待自身 `.rlark-domain` 名称可解析，Worker 等待 Head 虚拟域名可解析；取消操作会终止等待。该 Go 实现替代了已不再生效的外部 `WAIT_NETWORK_SCRIPT` 兼容 hook。这些值不以兼容 annotation 为来源。
 5. Head 节点创建属于当前 Task incarnation 的 Service（暴露 6379/8265/8080 端口）。RLark拥有的Service字段发生漂移时使用删除后重建的Replace语义，可能短暂中断访问并改变API Server分配的地址或端口；仅有Kubernetes默认值和分配字段不会触发Replace。
-6. `ray-launcher` 在执行 Ray 命令前会确认配置的 Ray CLI 可执行。随后 Worker 解析并等待 Head 后加入集群。Head 等待声明的节点数量并运行 `ray status`；为保持兼容，集群就绪检查失败仍不作为致命错误，但 `ray status` 失败属于致命错误。
+6. 没有角色时，`ray-launcher` 运行 `prepare`（Job 有 domain 时先等待自身 `.rlark-domain` 名称可解析），再运行 `run`，然后一直等到 Task 被停止，不执行任何 Ray 命令。有角色时，`ray-launcher` 在执行 Ray 命令前会确认配置的 Ray CLI 可执行。随后 Worker 解析并等待 Head 后加入集群。Head 等待声明的节点数量并运行 `ray status`；为保持兼容，集群就绪检查失败仍不作为致命错误，但 `ray status` 失败属于致命错误。
 
 supervisor 配置变化会更新 Pod template revision annotation，从而触发 workload rollout。首次迁移 rollout 后，SSH 公钥轮换只更新独立 projection 的 Secret；原始 key bytes 不会写入 supervisor ConfigMap。
 
