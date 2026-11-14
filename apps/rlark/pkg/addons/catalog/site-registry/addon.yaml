@@ -88,7 +88,7 @@ parameters:
 
   - name: cacheDir
     displayName: 缓存目录
-    description: role=cache 时节点上存放镜像层的目录
+    description: role=cache 时节点上存放镜像层的目录，须是事先挂好的独立固定大小卷（与 kubelet 的根盘分开），不存在时缓存不启动
     type: string
     default: /var/lib/rlark/site-cache
     required: false
