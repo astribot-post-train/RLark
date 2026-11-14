@@ -29,6 +29,11 @@ const (
 	nodeCategoryLabel       = "rlark.io/node-category"
 	nodeCategoryLabelPrefix = "rlark.io/node-category-"
 	nodeRobotLabelPrefix    = "rlark.io/robot-"
+	// A node's place in a rolling change of its machine (an integer, earlier
+	// waves first) and a request that the whole machine restart (an id; the
+	// machine reports what became of it in an annotation of its own).
+	nodeRolloutWaveLabel    = "rlark.io/rollout-wave"
+	nodeRestartRequestLabel = "rlark.io/restart-request"
 	nodeCityAnnotation      = "rlark.io/city"
 	nodeGPUModelAnnotation  = "rlark.io/gpu-model"
 	nodeDeviceAnnotation    = "rlark.io/device-model"
@@ -55,9 +60,11 @@ func SetManagementOwnedLabels(entries []string) error {
 }
 
 // A robot's identity (rlark.io/robot-model, -body, -id) is declared on its
-// management Node like the node's category.
+// management Node like the node's category, and so are what people ask of a
+// node through the management plane: its rollout wave and a restart.
 func isManagementOwnedNodeLabel(key string) bool {
-	if key == nodeCategoryLabel || strings.HasPrefix(key, nodeCategoryLabelPrefix) || strings.HasPrefix(key, nodeRobotLabelPrefix) {
+	if key == nodeCategoryLabel || strings.HasPrefix(key, nodeCategoryLabelPrefix) || strings.HasPrefix(key, nodeRobotLabelPrefix) ||
+		key == nodeRolloutWaveLabel || key == nodeRestartRequestLabel {
 		return true
 	}
 	for _, entry := range siteOwnedLabels {

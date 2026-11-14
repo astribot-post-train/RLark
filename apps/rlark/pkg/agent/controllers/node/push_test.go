@@ -352,6 +352,9 @@ func TestManagementOwnedNodeLabels(t *testing.T) {
 		"rlark.io/node-category": true, "rlark.io/node-category-robot": true,
 		"rlark.io/robot-model": true, "rlark.io/robot-body": true, "rlark.io/robot-id": true,
 		"fleet.astribot/robot-body": true, "site.example/anything": true,
+		"rlark.io/rollout-wave": true, "rlark.io/restart-request": true,
+		// What a machine reports of its rollout and restarts is its own.
+		"rlark.io/rollout-state": false, "rlark.io/node-profile-state": false,
 		// What a node says of itself stays the node's.
 		"fleet.astribot/robot-body-state": false, "fleet.astribot/orin-state": false, "fleet.astribot/node-profile-state": false,
 		"rlark.io/enabled": false, "rlark.io/cluster-id": false, "kubernetes.io/hostname": false,
