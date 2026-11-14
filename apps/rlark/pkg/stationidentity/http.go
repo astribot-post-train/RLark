@@ -93,7 +93,9 @@ type API struct {
 	Enrollments        NetworkEnroller
 	EnrollmentLimiter  ObservationLimiter
 	// Bootstrap, when set, admits machines that are not nodes yet by a one-time code.
-	Bootstrap         *Bootstrap
+	Bootstrap *Bootstrap
+	// Documents, when set, gives a node its document for its WireGuard key.
+	Documents         *NetworkDocuments
 	GatewayCredential func() ([]byte, error)
 }
 
@@ -129,6 +131,11 @@ func (a *API) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if a.Bootstrap != nil && (strings.HasPrefix(r.URL.Path, "/b/") || strings.HasPrefix(r.URL.Path, "/v1/bootstrap/")) {
 		a.Bootstrap.ServeHTTP(w, r)
+		return
+	}
+	// A node's own document, for its WireGuard key: the caller has no token.
+	if a.Documents != nil && r.Method == http.MethodPost && r.URL.Path == "/v1/network/document" {
+		a.Documents.ServeHTTP(w, r)
 		return
 	}
 	if a.Registry == nil {
