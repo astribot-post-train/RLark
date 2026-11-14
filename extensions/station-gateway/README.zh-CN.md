@@ -60,4 +60,4 @@ Station 身份服务源码还包含内部网络摘要读取器：查询时重新
 
 这两个文件由安装器放（`extensions/station/bootstrap`，节点还没有任何 Pod 的时候），由 keeper 保持（`gateway-program` 容器的 `--station-api-directory`、`--station-api-url`、`--station-api-ca`），所以早先装好的节点滚动一次 DaemonSet 就有了。文件每轮都重新读：正在运行的网关在文件出现后就开始取。没有这个文件，网关不向任何人取，Pod 里的网关就是这种情况。
 
-已经和控制面断开、而网关还是旧版本或者没有 `station-api.json` 的节点，DaemonSet 到不了它：只能有人把三个文件（程序、`station-api.json`、`ca.crt`）放上去，或者改 `/etc/hosts` 里那一行。所以要在下一次搬控制面之前发布。
+已经和控制面断开、而网关还是旧版本或者没有 `station-api.json` 的节点，DaemonSet 到不了它：只能有人把三个文件放上去（程序放 `/opt/rlark/bin/station-gateway`，`station-api.json` 和 `ca.crt` 放 `/etc/rlark/station`），再重启 `rlark-station-gateway`（2026-11-14 演练过：重启后 21 秒节点 Ready）。改 `/etc/hosts` 里那一行不行：旧网关 10 秒内会按它手里的文档把带标记的行写回去；不带标记的行排在前面，下一次搬控制面时还指着手写的地址。这样的节点还会卡住 `station-agent-host` 在其他节点上的滚动：不可用的 Pod 已经达到 `maxUnavailable`（10%，向上取整）时它一个也不换，演练里两台中卡住一台就停了。所以要在下一次搬控制面之前发布。
