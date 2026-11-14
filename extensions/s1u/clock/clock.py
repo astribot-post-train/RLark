@@ -144,7 +144,7 @@ def main():
     # Off the SDK core and the device layer's CPUs, which kubelet's pool for Pods holds too (device_pod.yaml).
     os.sched_setaffinity(0, {cpu for part in profile["S1U_KUBERNETES_CPUS"].split(",")
                              for cpu in range(int(part.split("-")[0]), int(part.split("-")[-1]) + 1)})
-    source, driver, node = os.environ["S1U_SITE_TIME_SOURCE"], profile["S1U_VENDOR_DRIVER"], os.environ["NODE_NAME"]
+    source, driver, node = os.environ.get("S1U_SITE_TIME_SOURCE", ""), profile["S1U_VENDOR_DRIVER"], os.environ["NODE_NAME"]
     servo, label, failures, published = Servo(), None, 0, 0.0
     print("Clock of %s against %s" % (node, source or "no site time source"), flush=True)
     if os.environ["S1U_NODE_WANTED"] == "removed":

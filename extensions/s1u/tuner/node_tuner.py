@@ -293,7 +293,9 @@ def main():
         raise SystemExit(code)
     profile = hashlib.sha256(b"".join(open(f"{SOURCE}/{name}", "rb").read() for name in (
         "node_profile.sh", "node_profile.env", "node_spec.py"))).hexdigest()[:16]
-    source = os.environ["S1U_SITE_TIME_SOURCE"]  # the Addon's timeSource: declared, the clock must be locked to it
+    # The Addon's timeSource: declared, the clock must be locked to it. An empty one comes as no variable at all (RLark
+    # renders none; Fleet's v0.11.6 exited on that, 11-14).
+    source = os.environ.get("S1U_SITE_TIME_SOURCE", "")
     # Off the SDK core and the device layer's CPUs, which kubelet's pool for Pods holds too: what this container runs
     # on the host every minute stays with it.
     kubernetes = next(line.split("=", 1)[1].strip() for line in open(f"{SOURCE}/node_profile.env")

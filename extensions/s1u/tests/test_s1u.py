@@ -77,9 +77,10 @@ def test_a_restart_that_did_not_happen_is_tried_again_and_one_that_did_not_help_
 def test_an_idle_robot_gets_the_restart_its_profile_needs_and_one_in_use_does_not(monkeypatch):
     calls, status, record = [], ["REBOOT isolated CPUs (kernel command line): none\n"], [{}]
     for name, value in (("NODE_NAME", "s1u-03-x86"), ("S1U_NODE_WANTED", "installed"), ("S1U_NODE_REBOOT", "idle"),
-                        ("S1U_NODE_ROLLOUT", "all"), ("S1U_SITE_TIME_SOURCE", ""),
-                        ("S1U_IMAGE", "registry/rlark/s1u-robot@sha256:1")):
+                        ("S1U_NODE_ROLLOUT", "all"), ("S1U_IMAGE", "registry/rlark/s1u-robot@sha256:1")):
         monkeypatch.setenv(name, value)
+    # As RLark starts it: no time source declared, so no S1U_SITE_TIME_SOURCE at all.
+    monkeypatch.delenv("S1U_SITE_TIME_SOURCE", raising=False)
     monkeypatch.setattr(node_tuner.shutil, "copy", lambda *paths: None)
     opened = open
     monkeypatch.setattr("builtins.open", lambda path, *a, **k: opened(path, *a, **k) if str(path).startswith(
