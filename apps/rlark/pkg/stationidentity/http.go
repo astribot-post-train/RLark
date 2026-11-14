@@ -11,6 +11,7 @@ import (
 	"mime"
 	"net"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -38,7 +39,25 @@ type Observation struct {
 	Roles      []string        `json:"roles,omitempty"`
 	Wireguard  json.RawMessage `json:"wireguard,omitempty"`
 	Probes     []Probe         `json:"probes,omitempty"`
+	// Gateway is what the node's station-gateway states of itself in its
+	// observation file, Agent the station-agent that sends the report. A
+	// program from before these fields sends none.
+	Gateway *GatewayProgram `json:"gateway,omitempty"`
+	Agent   *AgentProgram   `json:"agent,omitempty"`
 }
+
+// GatewayProgram is a station-gateway by the sha256 of its file and the
+// newest configuration document it understands.
+type GatewayProgram struct {
+	DocumentLevel int32  `json:"documentLevel"`
+	Digest        string `json:"digest"`
+}
+
+type AgentProgram struct {
+	Digest string `json:"digest"`
+}
+
+var programDigestPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
 type Probe struct {
 	Target    string `json:"target"`
@@ -367,6 +386,12 @@ func validateObservation(o Observation, now time.Time) error {
 		if err := validateWireguardObservation(o.Wireguard, now); err != nil {
 			return err
 		}
+	}
+	if o.Gateway != nil && (o.Gateway.DocumentLevel < 1 || !programDigestPattern.MatchString(o.Gateway.Digest)) {
+		return errors.New("invalid gateway program")
+	}
+	if o.Agent != nil && !programDigestPattern.MatchString(o.Agent.Digest) {
+		return errors.New("invalid agent program")
 	}
 	return nil
 }

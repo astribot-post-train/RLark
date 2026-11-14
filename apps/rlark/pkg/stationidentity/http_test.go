@@ -335,3 +335,27 @@ func TestWireguardPeerObservationValidation(t *testing.T) {
 		})
 	}
 }
+
+func TestProgramObservationValidation(t *testing.T) {
+	digest := strings.Repeat("ab", 32)
+	for name, tc := range map[string]struct {
+		observation Observation
+		valid       bool
+	}{
+		"an old agent and gateway state none": {Observation{}, true},
+		"a gateway and an agent":              {Observation{Gateway: &GatewayProgram{DocumentLevel: 1, Digest: digest}, Agent: &AgentProgram{Digest: digest}}, true},
+		"a gateway without a level":           {Observation{Gateway: &GatewayProgram{Digest: digest}}, false},
+		"a gateway without a digest":          {Observation{Gateway: &GatewayProgram{DocumentLevel: 1}}, false},
+		"a gateway digest that is a tag":      {Observation{Gateway: &GatewayProgram{DocumentLevel: 1, Digest: "v0.4.0"}}, false},
+		"a digest in upper case":              {Observation{Agent: &AgentProgram{Digest: strings.ToUpper(digest)}}, false},
+		"a digest with a line after it":       {Observation{Agent: &AgentProgram{Digest: digest + "\n"}}, false},
+	} {
+		if err := validateObservation(tc.observation, time.Now()); (err == nil) != tc.valid {
+			t.Errorf("%s: error = %v, want valid = %v", name, err, tc.valid)
+		}
+	}
+	api := &API{Registry: testRegistry{readers: map[string]IdentityReader{"c": &fakeReader{evidence: validEvidence()}}}, Observations: &testObservationSink{}}
+	if w := apiRequest(api, http.MethodPost, "/v1/observations", `{"cluster_id":"c","observation":{"gateway":{"documentLevel":1,"digest":"`+digest+`","image":"x"}}}`, "token"); w.Code != http.StatusBadRequest {
+		t.Fatalf("a field the gateway does not state was accepted: %d", w.Code)
+	}
+}

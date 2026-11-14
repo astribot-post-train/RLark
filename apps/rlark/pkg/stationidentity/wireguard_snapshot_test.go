@@ -1,6 +1,10 @@
 package stationidentity
 
 import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -12,7 +16,7 @@ import (
 func TestWireguardSnapshotFreshnessAndValidation(t *testing.T) {
 	now := time.Date(2026, 11, 11, 12, 0, 0, 0, time.UTC)
 	path := filepath.Join(t.TempDir(), "wireguard.json")
-	if got := readWireguardSnapshot(path, now); got != nil {
+	if got, _ := readWireguardSnapshot(path, now); got != nil {
 		t.Fatal("missing snapshot was accepted")
 	}
 	tests := []struct {
@@ -35,7 +39,7 @@ func TestWireguardSnapshotFreshnessAndValidation(t *testing.T) {
 			if err := os.WriteFile(path, []byte(tc.body), 0600); err != nil {
 				t.Fatal(err)
 			}
-			got := readWireguardSnapshot(path, now)
+			got, _ := readWireguardSnapshot(path, now)
 			if (got != nil) != tc.valid {
 				t.Fatalf("accepted = %v, want %v", got != nil, tc.valid)
 			}
@@ -43,5 +47,67 @@ func TestWireguardSnapshotFreshnessAndValidation(t *testing.T) {
 				t.Fatalf("peers were not carried: %s", got)
 			}
 		})
+	}
+}
+
+// The file is the one station-gateway writes (TestObservationStatesTheProgram
+// in extensions/station-gateway).
+func TestAgentForwardsWhatTheGatewayStates(t *testing.T) {
+	now := time.Date(2026, 11, 14, 1, 2, 10, 0, time.UTC)
+	path := filepath.Join(t.TempDir(), "wireguard.json")
+	agent, err := newAgent(AgentConfig{APIURL: "https://station-api", ClusterID: "cluster", TokenFile: "token", Interval: 30 * time.Second, RequestLimit: 5 * time.Second, WireguardObservationFile: path},
+		func(string) ([]byte, error) { return []byte("token"), nil }, func() time.Time { return now })
+	if err != nil {
+		t.Fatal(err)
+	}
+	agent.observe = func() (Observation, error) { return Observation{}, nil }
+	agent.program = &AgentProgram{Digest: strings.Repeat("cd", 32)}
+	var sent string
+	agent.post = func(_ context.Context, _ string, body []byte, _ string) error {
+		sent = string(body)
+		var request observationRequest
+		if err := json.Unmarshal(body, &request); err != nil {
+			return err
+		}
+		return validateObservation(request.Observation, now)
+	}
+	for name, c := range map[string]struct{ file, want string }{
+		"a gateway that states its program": {
+			`{"observedAt":"2026-11-14T01:02:03Z","gateway":{"documentLevel":1,"digest":"` + strings.Repeat("ab", 32) + `"},"interface":"st-wg0","publicKey":"","addresses":["10.254.240.9/32"],"peers":[]}`,
+			`{"cluster_id":"cluster","observation":{"wireguard":{"interface":"st-wg0","addresses":["10.254.240.9/32"]},"gateway":{"documentLevel":1,"digest":"` + strings.Repeat("ab", 32) + `"},"agent":{"digest":"` + strings.Repeat("cd", 32) + `"}}}`,
+		},
+		"a gateway from before it did": {
+			`{"observedAt":"2026-11-14T01:02:03Z","interface":"st-wg0","publicKey":"","addresses":["10.254.240.9/32"],"peers":[]}`,
+			`{"cluster_id":"cluster","observation":{"wireguard":{"interface":"st-wg0","addresses":["10.254.240.9/32"]},"agent":{"digest":"` + strings.Repeat("cd", 32) + `"}}}`,
+		},
+		"a gateway that stopped reconciling": {
+			`{"observedAt":"2026-11-14T01:01:03Z","gateway":{"documentLevel":1,"digest":"` + strings.Repeat("ab", 32) + `"},"interface":"st-wg0","publicKey":"","addresses":[],"peers":[]}`,
+			`{"cluster_id":"cluster","observation":{"agent":{"digest":"` + strings.Repeat("cd", 32) + `"}}}`,
+		},
+	} {
+		if err := os.WriteFile(path, []byte(c.file), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if err := agent.Report(context.Background()); err != nil || sent != c.want {
+			t.Errorf("%s: %v\n got %s\nwant %s", name, err, sent, c.want)
+		}
+	}
+}
+
+func TestAgentStatesTheFileItWasStartedFrom(t *testing.T) {
+	agent, err := NewAgent(AgentConfig{APIURL: "https://station-api", ClusterID: "cluster", TokenFile: "token", Interval: 30 * time.Second, RequestLimit: 5 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	content, err := os.ReadFile(self)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sum := sha256.Sum256(content); agent.program.Digest != hex.EncodeToString(sum[:]) {
+		t.Fatalf("digest = %s", agent.program.Digest)
 	}
 }

@@ -122,6 +122,37 @@ type StationObservationStatus struct {
 	Wireguard *WireguardObservation `json:"wireguard,omitempty"`
 	// +kubebuilder:validation:MaxItems=256
 	Probes []StationProbe `json:"probes,omitempty"`
+	// Gateway is the station-gateway of the node, as that program states it
+	// with every good pass. A node without it runs a gateway from before the
+	// field, or one that is not reconciling.
+	Gateway *GatewayProgram `json:"gateway,omitempty"`
+	// Agent is the station-agent that sent this report.
+	Agent *AgentProgram `json:"agent,omitempty"`
+	// Pressures are the DiskPressure, MemoryPressure and PIDPressure
+	// conditions that are True on the member Node, read by station-api when
+	// it verified the report. The list is written with every report, so an
+	// empty one says the Node is under none and a missing one that the report
+	// was stored by a station-api from before the field.
+	// +kubebuilder:validation:MaxItems=3
+	// +kubebuilder:validation:items:Enum=DiskPressure;MemoryPressure;PIDPressure
+	// +listType=set
+	Pressures []string `json:"pressures,omitempty"`
+}
+
+type GatewayProgram struct {
+	// DocumentLevel is the newest configuration document the program
+	// understands; it understands every one before it.
+	// +kubebuilder:validation:Minimum=1
+	DocumentLevel int32 `json:"documentLevel"`
+	// Digest is the sha256 of the program's file.
+	// +kubebuilder:validation:Pattern=`^[0-9a-f]{64}$`
+	Digest string `json:"digest"`
+}
+
+type AgentProgram struct {
+	// Digest is the sha256 of the program's file.
+	// +kubebuilder:validation:Pattern=`^[0-9a-f]{64}$`
+	Digest string `json:"digest"`
 }
 
 type WireguardObservation struct {

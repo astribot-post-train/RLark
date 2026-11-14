@@ -4,8 +4,10 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -75,10 +77,26 @@ type Agent struct {
 	lastSuccessfulReport time.Time
 	observe              func() (Observation, error)
 	dial                 func(context.Context, string) error
+	program              *AgentProgram
 }
 
 func NewAgent(config AgentConfig) (*Agent, error) {
-	return newAgent(config, os.ReadFile, time.Now)
+	agent, err := newAgent(config, os.ReadFile, time.Now)
+	if err != nil {
+		return nil, err
+	}
+	// The file this process was started from: read once, it cannot change.
+	self, err := os.Open("/proc/self/exe")
+	if err != nil {
+		return nil, err
+	}
+	defer self.Close()
+	sum := sha256.New()
+	if _, err := io.Copy(sum, self); err != nil {
+		return nil, err
+	}
+	agent.program = &AgentProgram{Digest: hex.EncodeToString(sum.Sum(nil))}
+	return agent, nil
 }
 
 func newAgent(config AgentConfig, read func(string) ([]byte, error), now func() time.Time) (*Agent, error) {
@@ -224,8 +242,9 @@ func (a *Agent) Report(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("collect Station observation: %w", err)
 	}
+	observation.Agent = a.program
 	if a.config.WireguardObservationFile != "" {
-		observation.Wireguard = readWireguardSnapshot(a.config.WireguardObservationFile, a.now())
+		observation.Wireguard, observation.Gateway = readWireguardSnapshot(a.config.WireguardObservationFile, a.now())
 	}
 	if a.config.NetworkConfigFile != "" {
 		observation.Probes = a.probePeers(ctx)
@@ -244,35 +263,38 @@ func (a *Agent) Report(ctx context.Context) error {
 }
 
 // A missing, malformed or stale snapshot clears the previous observation while
-// leaving the identity heartbeat independent of the network container.
-func readWireguardSnapshot(path string, now time.Time) json.RawMessage {
+// leaving the identity heartbeat independent of the network container. What
+// the gateway states of itself goes with the snapshot: a gateway that is not
+// reconciling is not known to understand anything.
+func readWireguardSnapshot(path string, now time.Time) (json.RawMessage, *GatewayProgram) {
 	f, err := os.Open(path)
 	if err != nil {
-		return nil
+		return nil, nil
 	}
 	defer f.Close()
 	data, err := io.ReadAll(io.LimitReader(f, wireguardObservationBytes+1))
 	if err != nil || len(data) > wireguardObservationBytes {
-		return nil
+		return nil, nil
 	}
 	var snapshot struct {
-		ObservedAt time.Time `json:"observedAt"`
+		ObservedAt time.Time       `json:"observedAt"`
+		Gateway    *GatewayProgram `json:"gateway"`
 		wireguardObservation
 	}
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.DisallowUnknownFields()
 	if dec.Decode(&snapshot) != nil {
-		return nil
+		return nil, nil
 	}
 	var extra any
 	if dec.Decode(&extra) != io.EOF || snapshot.ObservedAt.IsZero() || snapshot.ObservedAt.After(now.Add(5*time.Second)) || now.Sub(snapshot.ObservedAt) > 30*time.Second {
-		return nil
+		return nil, nil
 	}
 	raw, err := json.Marshal(snapshot.wireguardObservation)
 	if err != nil || validateWireguardObservation(raw, now) != nil {
-		return nil
+		return nil, nil
 	}
-	return raw
+	return raw, snapshot.Gateway
 }
 
 func collectSystemObservation() (Observation, error) {

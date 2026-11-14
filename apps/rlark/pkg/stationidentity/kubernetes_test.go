@@ -3,6 +3,7 @@ package stationidentity
 import (
 	"context"
 	"errors"
+	"slices"
 	"testing"
 
 	authv1 "k8s.io/api/authentication/v1"
@@ -72,7 +73,9 @@ func (m mapBindings) Resolve(_ context.Context, cluster, nodeName, nodeUID strin
 
 func TestAuthenticateResolvesPerNodeBindingFromServerState(t *testing.T) {
 	reg := Registration{ClusterID: "cluster", Namespace: "agent", ServiceAccount: "station", ServiceAccountUID: "sa-uid", Audience: "station-api"}
-	client := fake.NewSimpleClientset(&corev1.ServiceAccount{ObjectMeta: metav1.ObjectMeta{Name: "station", Namespace: "agent", UID: "sa-uid"}}, &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "pod", Namespace: "agent", UID: "pod-uid"}, Spec: corev1.PodSpec{ServiceAccountName: "station", NodeName: "node-a"}}, &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node-a", UID: "node-uid-a"}})
+	client := fake.NewSimpleClientset(&corev1.ServiceAccount{ObjectMeta: metav1.ObjectMeta{Name: "station", Namespace: "agent", UID: "sa-uid"}}, &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "pod", Namespace: "agent", UID: "pod-uid"}, Spec: corev1.PodSpec{ServiceAccountName: "station", NodeName: "node-a"}}, &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node-a", UID: "node-uid-a"}, Status: corev1.NodeStatus{Conditions: []corev1.NodeCondition{
+		{Type: corev1.NodeReady, Status: corev1.ConditionTrue}, {Type: corev1.NodeMemoryPressure, Status: corev1.ConditionFalse}, {Type: corev1.NodeDiskPressure, Status: corev1.ConditionTrue},
+	}}})
 	client.PrependReactor("create", "tokenreviews", func(ktesting.Action) (bool, runtime.Object, error) {
 		return true, &authv1.TokenReview{Status: authv1.TokenReviewStatus{Authenticated: true, Audiences: []string{"station-api"}, User: authv1.UserInfo{Username: "system:serviceaccount:agent:station", UID: "sa-uid", Extra: map[string]authv1.ExtraValue{"authentication.kubernetes.io/pod-name": {"pod"}, "authentication.kubernetes.io/pod-uid": {"pod-uid"}}}}}, nil
 	})
@@ -83,6 +86,9 @@ func TestAuthenticateResolvesPerNodeBindingFromServerState(t *testing.T) {
 	}
 	if evidence.StationUID != "station-a" || evidence.Generation != 3 {
 		t.Fatalf("wrong binding: %+v", evidence)
+	}
+	if !slices.Equal(evidence.NodePressures, []string{"DiskPressure"}) {
+		t.Fatalf("pressures of the Node: %v", evidence.NodePressures)
 	}
 	bindings["cluster/node-a"] = Binding{NodeUID: "stale-node-uid", StationUID: "station-a", Generation: 3}
 	if _, err = AuthenticateWithBindings(context.Background(), client, reg, bindings, "token"); err == nil {

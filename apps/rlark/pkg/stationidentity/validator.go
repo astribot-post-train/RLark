@@ -24,6 +24,9 @@ type Evidence struct {
 	TokenAudiences, RequiredAudiences                                                          []string
 	TokenAuthenticated, PodDeleted, NodeDeleted, BindingInactive                               bool
 	Generation, RegisteredGeneration                                                           int64
+	// NodePressures are the pressure conditions that are True on the Node the
+	// identity was verified against. They are no part of the identity.
+	NodePressures []string
 }
 
 func Validate(e Evidence) error {

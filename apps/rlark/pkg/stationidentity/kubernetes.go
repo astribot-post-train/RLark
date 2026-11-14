@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	authv1 "k8s.io/api/authentication/v1"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
@@ -156,6 +158,14 @@ func AuthenticateWithBindings(ctx context.Context, client kubernetes.Interface, 
 		}
 	}
 	e := Evidence{ClusterID: reg.ClusterID, RegisteredClusterID: reg.ClusterID, ServiceAccountNamespace: reg.Namespace, RegisteredNamespace: reg.Namespace, ServiceAccountName: reg.ServiceAccount, RegisteredServiceAccount: reg.ServiceAccount, TokenServiceAccountUID: string(review.Status.User.UID), RegisteredServiceAccountUID: string(sa.UID), PodServiceAccountName: pod.Spec.ServiceAccountName, TokenPodName: name, PodName: pod.Name, TokenPodUID: uid, PodUID: string(pod.UID), PodNodeName: pod.Spec.NodeName, NodeName: node.Name, NodeUID: string(node.UID), RegisteredNodeUID: binding.NodeUID, StationUID: binding.StationUID, RegisteredStationUID: binding.StationUID, TokenAuthenticated: review.Status.Authenticated, TokenAudiences: review.Status.Audiences, RequiredAudiences: []string{reg.Audience}, PodDeleted: pod.DeletionTimestamp != nil || sa.DeletionTimestamp != nil, NodeDeleted: node.DeletionTimestamp != nil, BindingInactive: binding.Inactive, Generation: binding.Generation, RegisteredGeneration: binding.Generation}
+	// The Node is in hand for its UID; its pressure is stored with the report
+	// it vouches for, so no agent is given a way to read or to state it.
+	e.NodePressures = []string{}
+	for _, condition := range node.Status.Conditions {
+		if condition.Status == corev1.ConditionTrue && slices.Contains([]corev1.NodeConditionType{corev1.NodeDiskPressure, corev1.NodeMemoryPressure, corev1.NodePIDPressure}, condition.Type) {
+			e.NodePressures = append(e.NodePressures, string(condition.Type))
+		}
+	}
 	if string(sa.UID) != reg.ServiceAccountUID {
 		return Evidence{}, errors.New("service account registration changed")
 	}
