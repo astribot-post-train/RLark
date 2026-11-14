@@ -160,10 +160,9 @@ certs)
   [ -n "$lacking" ] || [ "$registered" != "$peer" ] || stamp "the certificates name every address of this node: nothing to do"
   ;;
 images|control)
-  for archive in "$B"/images/*.tar; do
-    "$CTR" -a "$SOCKET" -n k8s.io images import "$archive" >/dev/null || fail "import $archive"
-  done
-  stamp "images of $KUBE_VERSION imported"
+  (. "$B/lib.sh"; import_images "$B/images"
+   [ ! -d "$B/images/control-plane" ] || [ ! -e /etc/kubernetes/manifests/kube-apiserver.yaml ] || import_images "$B/images/control-plane")
+  stamp "images of $KUBE_VERSION imported and pinned"
   [ "$PHASE" = control ] || exit 0
   [ -e "$keep/kubeadm" ] || cp -a "$BIN/kubeadm" "$keep/kubeadm"
   [ -d "$keep/etc-kubernetes" ] || cp -a /etc/kubernetes "$keep/etc-kubernetes"
@@ -191,6 +190,14 @@ images|control)
   fi
   install -m 755 "$B/bin/kubeadm" "$BIN/kubeadm"
   if [ -e /etc/kubernetes/manifests/kube-apiserver.yaml ]; then
+    # What a control plane made by this bundle is given (control-plane.sh),
+    # one made before gets here: kubeadm writes the manifests from it.
+    admin() { kubectl --kubeconfig /etc/kubernetes/admin.conf -n kube-system "$@"; }
+    admin get configmap kubeadm-config -o jsonpath='{.data.ClusterConfiguration}' > "$keep/ClusterConfiguration.before.yaml"
+    if ! grep -q terminated-pod-gc-threshold "$keep/ClusterConfiguration.before.yaml"; then
+      "$B/station-bootstrap" controller-manager-arg "$keep/ClusterConfiguration.before.yaml" terminated-pod-gc-threshold 100 > "$keep/ClusterConfiguration"
+      admin create configmap kubeadm-config --from-file="ClusterConfiguration=$keep/ClusterConfiguration" --dry-run=client -o yaml | admin replace -f - >/dev/null
+    fi
     kubeadm upgrade apply "$KUBE_VERSION" --yes $patches > "$keep/upgrade-apply.log" 2>&1 || { tail -25 "$keep/upgrade-apply.log" >&2; fail "kubeadm upgrade apply"; }
     stamp "control plane at $KUBE_VERSION"
   else
@@ -265,6 +272,11 @@ confirm)
      tunnel_service
      [ "${changed:-}" = tunnel ] || systemctl restart rlark-station-gateway)
     stamp "the tunnel service runs the station-gateway of this bundle"
+  fi
+  # The kubelet's settings of this bundle, on a node the installer made.
+  if [ -e /etc/kubernetes/kubelet.conf.d/10-rlark.conf ]; then
+    (. "$B/lib.sh"; changed=; kubelet_settings; [ -z "$changed" ] || systemctl restart kubelet)
+    stamp "the kubelet has this bundle's settings"
   fi
   # The node's install annotations follow it (lib.sh, node_install): the
   # bundle is this one now, the site settings are the ones the node was

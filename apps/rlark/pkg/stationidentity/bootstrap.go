@@ -335,7 +335,11 @@ func (b *Bootstrap) Redeem(ctx context.Context, code, publicKey string) (Bootstr
 	// A node of a site whose registry cache is still being filled would pull
 	// through the uplink what the cache is there to spare it: it waits, and
 	// is told what the cache's addon says. A cluster with no cache waits for none.
+	// (A management plane that knows no Addons has no cache either.)
 	addons, err := b.Management.Resource(addonGVR).Namespace(clusterID).List(ctx, metav1.ListOptions{})
+	if apierrors.IsNotFound(err) {
+		addons, err = &unstructured.UnstructuredList{}, nil
+	}
 	if err != nil {
 		return BootstrapAnswer{}, 0, fmt.Errorf("list the Addons of %s: %w", clusterID, err)
 	}

@@ -62,20 +62,18 @@ spec:
         - {name: RLARK_DETACH, value: "yes"}
 $(for pair in "$@"; do echo "        - {name: ${pair%%=*}, value: \"${pair#*=}\"}"; done)
 JOB
-  k -n "$NS" wait --for=jsonpath='{.status.phase}'=Running pod -l "job-name=$job" --timeout=180s >/dev/null
 }
 # The new one first: it waits for the snapshot, then for the name.
 job "control-plane-to-$TO" "$TO" control-plane "CONTROL_PLANE_NAME=$name" "POD_SUBNET=$pods" "SERVICE_SUBNET=$services" "FROM_CONTROL_PLANE=$old"
+k -n "$NS" wait --for=jsonpath='{.status.phase}'=Running pod -l "job-name=control-plane-to-$TO" --timeout=180s >/dev/null
+# The old one is not waited for: its Job's first act is to stop the API this would ask.
 job "control-plane-from-$from" "$from" 'control-plane, handover' "SUCCESSOR=$TO"
 started=$(date +%s)
 stamp "$from hands over; $TO waits for its snapshot"
 while k get --raw /readyz >/dev/null 2>&1; do sleep 1; done
 stamp "the API at $from has stopped; the site network is told that $name is $new"
-mgmt -n station-system get sitenetwork default -o json | python3 -c '
-import json, sys
-names = json.load(sys.stdin)["spec"]["names"]
-next(n for n in names if n["name"] == sys.argv[1])["address"] = sys.argv[2]
-print(json.dumps({"spec": {"names": names}}))' "$name" "$new" | mgmt -n station-system patch sitenetwork default --type=merge --patch-file /dev/stdin >/dev/null
+index=$(mgmt -n station-system get sitenetwork default -o jsonpath='{range .spec.names[*]}{.name}{"\n"}{end}' | grep -n -x "$name" | cut -d: -f1)
+mgmt -n station-system patch sitenetwork default --type=json -p "[{\"op\": \"replace\", \"path\": \"/spec/names/$((index - 1))/address\", \"value\": \"$new\"}]" >/dev/null
 until k get --raw /readyz >/dev/null 2>&1 && k wait --for=condition=Ready "node/$TO" $nodes --timeout=10s >/dev/null 2>&1; do
   (( $(date +%s) - started < ${TIMEOUT:-600} )) || { echo "the nodes are not Ready under $TO after ${TIMEOUT:-600} s. On $TO: /var/lib/rlark/bootstrap/control-plane.log. Back: give $name the address $old again, \"control-plane resume\" on $from, \"control-plane undo\" on $TO" >&2; exit 1; }
   sleep 2

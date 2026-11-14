@@ -169,23 +169,56 @@ registry() {
 import_images() {
   CTR=$(ctr_of "$SOCKET")
   [ -x "$CTR" ] || fail "cannot find ctr beside the containerd of $SOCKET"
+  # This machine's platform alone: an archive saved from an image store that
+  # keeps an image's index names other platforms and attestations whose
+  # content it does not hold, and an import of everything fails for them.
+  case $(uname -m) in aarch64) platform=linux/arm64 ;; *) platform=linux/amd64 ;; esac
+  # They are pinned: a kubelet under disk pressure removes the images no
+  # container uses, and these are what the node cannot do without and, with
+  # its registry out of reach, cannot get again.
   for archive in "$1"/*.tar; do
-    "$CTR" -a "$SOCKET" -n k8s.io images import "$archive" >/dev/null || fail "import $archive"
+    "$CTR" -a "$SOCKET" -n k8s.io images import --platform $platform "$archive" > "$B/import.log" || fail "import $archive"
+    for image in $(sed -n 's/^unpacking \([^ ]*\) .*/\1/p' "$B/import.log"); do
+      "$CTR" -a "$SOCKET" -n k8s.io images label "$image" io.cri-containerd.pinned=pinned >/dev/null
+    done
   done
 }
 
-# kubelet_unit: the kubelet of the bundle as a service that reads drop-ins
-# from /etc/kubernetes/kubelet.conf.d. Swap stays on for the machine's own
-# software; pods get none.
-kubelet_unit() {
-  install -d /etc/kubernetes/kubelet.conf.d /etc/systemd/system/kubelet.service.d
-  cat > /etc/kubernetes/kubelet.conf.d/10-rlark.conf <<CONF
+# kubelet_settings: what every node's kubelet is told, as a drop-in. Swap
+# stays on for the machine's own software; pods get none. Images are pulled
+# four at a time: one after the other, a node that lost its images (a disk
+# that was full) waits for the largest before it has the smallest.
+kubelet_settings() {
+  cat > "$B/10-rlark.conf" <<CONF
 apiVersion: kubelet.config.k8s.io/v1beta1
 kind: KubeletConfiguration
 failSwapOn: false
 memorySwap:
   swapBehavior: NoSwap
+serializeImagePulls: false
+maxParallelImagePulls: 4
 CONF
+  cmp -s "$B/10-rlark.conf" /etc/kubernetes/kubelet.conf.d/10-rlark.conf || { cp "$B/10-rlark.conf" /etc/kubernetes/kubelet.conf.d/10-rlark.conf; changed=kubelet; }
+}
+
+# disk: the kubelet evicts pods and removes images when the filesystem of its
+# data and its runtime's has less than 15 % free. A machine that starts
+# below 20 % is one step from it, and its node would not hold what the
+# installer gives it.
+disk() {
+  free=$(df -P -k /var/lib | awk 'NR == 2 {print int($4 * 100 / $2)}')
+  at=$(df -P /var/lib | awk 'NR == 2 {print $6}')
+  [ "$free" -ge 20 ] ||
+    fail "the filesystem of /var/lib ($at) has $free % free: a kubelet evicts its pods and removes their images below 15 %, and the installer asks for 20. Free space on it, or give /var/lib a filesystem of its own"
+  [ "$at" != "$(df -P /home | awk 'NR == 2 {print $6}')" ] ||
+    stamp "note: /var/lib shares its filesystem ($at, $free % free) with /home: what people and builds put there counts against the node's 15 %"
+}
+
+# kubelet_unit: the kubelet of the bundle as a service that reads drop-ins
+# from /etc/kubernetes/kubelet.conf.d.
+kubelet_unit() {
+  install -d /etc/kubernetes/kubelet.conf.d /etc/systemd/system/kubelet.service.d
+  kubelet_settings
   # Pods get the name servers the tunnel service keeps: the site's where
   # its network declares them (SiteNetwork, sites, dns), else the machine's
   # own. A robot's computer has none of its own to give.

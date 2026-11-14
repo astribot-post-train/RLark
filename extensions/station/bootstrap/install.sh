@@ -20,6 +20,7 @@ SETTINGS="worker api=$JOIN_API_SERVER interface=$TUNNEL_INTERFACE"
 # A machine that is a node already keeps its runtime, wherever that is installed.
 [ -e /etc/kubernetes/kubelet.conf ] || command -v containerd >/dev/null || fail "containerd is required; it is installed together with docker"
 modprobe wireguard || fail "the kernel has no wireguard module"
+disk
 
 # 0. A machine that is a node already leaves its cluster first (RLARK_MIGRATE,
 #    set by migrate-node.sh). It keeps its container runtime, and with it the
@@ -59,7 +60,12 @@ install -d /opt/rlark/bin /opt/cni/bin /etc/rlark/station /etc/kubernetes/kubele
 install -m 755 "$B"/bin/* /opt/rlark/bin/
 cp -n "$B"/cni/* /opt/cni/bin/
 
-# 1. The tunnel, as a host service (lib.sh).
+# 1. The tunnel, as a host service (lib.sh). The document Station API has
+#    just given this machine is the one it runs on: what an agent stored
+#    while the machine was a node before is older, and would be preferred
+#    (a machine that joins again kept the names of that time, and looked for
+#    its control plane where it no longer was).
+rm -f /run/station-network/config.json /var/lib/station/wg/last-applied.json
 tunnel_service
 # The peers learn this machine's key from their agents, which ask every 30 s.
 tries=0

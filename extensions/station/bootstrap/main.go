@@ -72,6 +72,10 @@ func main() {
 		certSANs(os.Args[2], os.Args[3], os.Args[4:])
 		return
 	}
+	if len(os.Args) == 5 && os.Args[1] == "controller-manager-arg" {
+		controllerManagerArg(os.Args[2], os.Args[3], os.Args[4])
+		return
+	}
 	if len(os.Args) > 2 && os.Args[1] == "cert-addresses" {
 		certAddresses(os.Args[2], os.Args[3:])
 		return
@@ -440,6 +444,45 @@ func certSANs(configFile, pki string, addresses []string) {
 			fmt.Fprintf(os.Stderr, "%s lacks %s\n", list[0], strings.Join(lacks, " "))
 		}
 		at[list[len(list)-1]] = all
+	}
+	out, err := yaml.Marshal(config)
+	if err != nil {
+		log.Fatal(err)
+	}
+	os.Stdout.Write(out)
+}
+
+// controllerManagerArg prints the ClusterConfiguration of configFile with the
+// controller manager given the argument, in the form the configuration's
+// version has (a list of name and value since v1beta4, a map before).
+func controllerManagerArg(configFile, name, value string) {
+	data, err := os.ReadFile(configFile)
+	if err != nil {
+		log.Fatal(err)
+	}
+	var config map[string]interface{}
+	if err := yaml.Unmarshal(data, &config); err != nil {
+		log.Fatalf("%s: %v", configFile, err)
+	}
+	manager, _ := config["controllerManager"].(map[string]interface{})
+	if manager == nil {
+		manager = map[string]interface{}{}
+		config["controllerManager"] = manager
+	}
+	if config["apiVersion"] == "kubeadm.k8s.io/v1beta3" {
+		arguments, _ := manager["extraArgs"].(map[string]interface{})
+		if arguments == nil {
+			arguments = map[string]interface{}{}
+		}
+		arguments[name] = value
+		manager["extraArgs"] = arguments
+	} else {
+		arguments, _ := manager["extraArgs"].([]interface{})
+		arguments = slices.DeleteFunc(arguments, func(argument interface{}) bool {
+			held, _ := argument.(map[string]interface{})
+			return held["name"] == name
+		})
+		manager["extraArgs"] = append(arguments, map[string]interface{}{"name": name, "value": value})
 	}
 	out, err := yaml.Marshal(config)
 	if err != nil {

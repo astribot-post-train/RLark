@@ -17,8 +17,8 @@
 #                                                             are given to that node's kubelet, and to nobody else
 #   on the machine it goes to  IMAGE control-plane            with FROM_CONTROL_PLANE=<the old one's tunnel address>,
 #                                                             on that node, a worker of the cluster: it takes the
-#                                                             snapshot, waits until the site network gives the name
-#                                                             its address (SiteNetwork, names), and goes on from there
+#                                                             snapshot and goes on from there; the site network is
+#                                                             to give the name its address (SiteNetwork, names)
 #   on the machine it leaves   IMAGE control-plane undo       once the nodes are Ready under the new one
 # Until that undo, "IMAGE control-plane resume" on the old machine (after undo
 # on the new one, and the name given back) takes up where handover stopped.
@@ -274,19 +274,17 @@ fi
 ADDRESS=$(tunnel_address | head -1) || true
 [ -n "$ADDRESS" ] || fail "this machine has no address in the site tunnel: $TUNNEL_INTERFACE has none, and neither /var/lib/station/wg/last-applied.json nor /etc/rlark/station/bootstrap.json holds a tunnel configuration. The nodes reach the control plane through the tunnel: enroll the machine in the site network first"
 modprobe wireguard || fail "the kernel has no wireguard module"
+initialized || disk
 systemctl is-enabled rlark-station-gateway >/dev/null 2>&1 || [ -e /var/lib/station/wg/last-applied.json ] || [ -e /etc/rlark/station/bootstrap.json ] ||
   fail "the tunnel on $TUNNEL_INTERFACE is run by a pod of the cluster this machine would leave, and its configuration is not kept on the machine (/var/lib/station/wg/last-applied.json): the tunnel would not come back after a reboot"
 # A tunnel that is up already is asked now; one this installer starts, when it has.
 ! ip link show dev "$TUNNEL_INTERFACE" >/dev/null 2>&1 || ! unanswered ||
   fail "no peer of the site tunnel that this machine dials has answered it on $TUNNEL_INTERFACE: no node would reach a control plane here. $B/bin/station-gateway --config $(tunnel_document) --status"
-tries=0
-while [ -n "${FROM_CONTROL_PLANE:-}" ] && [ -n "$(named_elsewhere)" ] && [ $tries -lt 120 ]; do
-  [ $tries != 0 ] || stamp "this node has the snapshot; waiting for the site network to give $name its address $ADDRESS (SiteNetwork, names)"
-  tries=$((tries + 1))
-  sleep 5
-done
+# The node a control plane was handed over to does not wait to be named: the
+# other nodes learn the name's new address from their agents, whom Station
+# API knows by asking their cluster's API, and that is this machine now.
 elsewhere=$(named_elsewhere)
-[ -z "$elsewhere" ] || fail "the site network gives $name another address than this machine's $ADDRESS ($elsewhere): every other node would look for the control plane there. Change the SiteNetwork (names) first"
+[ -n "${FROM_CONTROL_PLANE:-}" ] || [ -z "$elsewhere" ] || fail "the site network gives $name another address than this machine's $ADDRESS ($elsewhere): every other node would look for the control plane there. Change the SiteNetwork (names) first"
 # The addresses the machine has in the networks it stands in: nothing of the
 # control plane may hold one (the last step looks).
 machine_addresses() {
@@ -315,7 +313,7 @@ if ! initialized; then
   [ "$(df -k --output=avail /var/lib | tail -1)" -ge 10485760 ] || fail "/var/lib has less than 10 GiB free: etcd and the images need them"
   if [ ! -e "$S/init-started" ]; then
     # (A worker of the cluster it takes over has that cluster's pod routes.)
-    same_cluster || for subnet in "$POD_SUBNET" "$SERVICE_SUBNET"; do
+    same_cluster || [ -e "$S/took-over" ] || for subnet in "$POD_SUBNET" "$SERVICE_SUBNET"; do
       routes=$( { ip -4 route show root "$subnet"; ip -4 route show match "$subnet"; } | grep -v -E '^default |proto bird' | sort -u | tr '\n' ';')
       [ -z "$routes" ] || fail "$subnet is in use on this machine's networks already ($routes): the cluster's pod and Service networks must be free"
     done
@@ -449,7 +447,9 @@ fi
 case $changed in kubelet|reservation) ! initialized || systemctl restart kubelet ;; esac
 hosts_name "$ADDRESS" "$name"
 tries=0
-until [ "$(getent hosts "$name" | awk '{print $1}' | sort -u)" = "$ADDRESS" ]; do
+# (This machine's own line is the first; the site's line below it may still
+# say the machine the control plane was handed over from.)
+until [ "$(getent hosts "$name" | awk 'NR == 1 {print $1}')" = "$ADDRESS" ]; do
   tries=$((tries + 1))
   [ $tries -lt 30 ] || fail "$name does not resolve to $ADDRESS on this machine ($(getent hosts "$name" || echo "not at all")): /etc/hosts, journalctl -u rlark-station-gateway"
   sleep 1
@@ -495,6 +495,11 @@ controlPlaneEndpoint: "$name:6443"
 networking: {podSubnet: "$POD_SUBNET", serviceSubnet: "$SERVICE_SUBNET"}
 apiServer:
   certSANs: ["$name", "$ADDRESS", "$NODE_NAME"]
+# Pods that have ended (evicted ones above all) are removed beyond a hundred,
+# not beyond Kubernetes' 12500.
+controllerManager:
+  extraArgs:
+  - {name: terminated-pod-gc-threshold, value: "100"}
 etcd:
   local:
     serverCertSANs: ["$name", "$ADDRESS"]
