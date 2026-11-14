@@ -1,7 +1,7 @@
 name: registry-trust
 displayName: 镜像仓库 CA 信任
 category: other
-version: v0.2.2
+version: v0.2.3
 description: |
   让集群每个节点的 containerd 能拉私有镜像仓库：在节点 kubelet 所用运行时（containerd、containerd-robot、containerd-fleet 等）的 certs.d 下为每个仓库名写入 hosts.toml 和 ca.crt。仓库名（如 registry.rlark.internal）解析到哪里不归本 Addon：由 SiteNetwork 的名字表经 station-agent-network 写进节点 /etc/hosts。
   运行时目录按节点 kubelet 的配置找（/var/lib/kubelet/kubeadm-flags.env，其次 config.yaml），不用按集群配置。containerd 每次拉取时读取 certs.d，不需要重启。拉取凭据仍由「镜像仓库」凭据分发到集群。
