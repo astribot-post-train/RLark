@@ -20,6 +20,7 @@ SETTINGS="worker api=$JOIN_API_SERVER interface=$TUNNEL_INTERFACE"
 # A machine that is a node already keeps its runtime, wherever that is installed.
 [ -e /etc/kubernetes/kubelet.conf ] || command -v containerd >/dev/null || fail "containerd is required; it is installed together with docker"
 modprobe wireguard || fail "the kernel has no wireguard module"
+disk
 
 # 0. A machine that is a node already leaves its cluster first (RLARK_MIGRATE,
 #    set by migrate-node.sh). It keeps its container runtime, and with it the

@@ -274,6 +274,7 @@ fi
 ADDRESS=$(tunnel_address | head -1) || true
 [ -n "$ADDRESS" ] || fail "this machine has no address in the site tunnel: $TUNNEL_INTERFACE has none, and neither /var/lib/station/wg/last-applied.json nor /etc/rlark/station/bootstrap.json holds a tunnel configuration. The nodes reach the control plane through the tunnel: enroll the machine in the site network first"
 modprobe wireguard || fail "the kernel has no wireguard module"
+initialized || disk
 systemctl is-enabled rlark-station-gateway >/dev/null 2>&1 || [ -e /var/lib/station/wg/last-applied.json ] || [ -e /etc/rlark/station/bootstrap.json ] ||
   fail "the tunnel on $TUNNEL_INTERFACE is run by a pod of the cluster this machine would leave, and its configuration is not kept on the machine (/var/lib/station/wg/last-applied.json): the tunnel would not come back after a reboot"
 # A tunnel that is up already is asked now; one this installer starts, when it has.
@@ -494,6 +495,11 @@ controlPlaneEndpoint: "$name:6443"
 networking: {podSubnet: "$POD_SUBNET", serviceSubnet: "$SERVICE_SUBNET"}
 apiServer:
   certSANs: ["$name", "$ADDRESS", "$NODE_NAME"]
+# Pods that have ended (evicted ones above all) are removed beyond a hundred,
+# not beyond Kubernetes' 12500.
+controllerManager:
+  extraArgs:
+  - {name: terminated-pod-gc-threshold, value: "100"}
 etcd:
   local:
     serverCertSANs: ["$name", "$ADDRESS"]
