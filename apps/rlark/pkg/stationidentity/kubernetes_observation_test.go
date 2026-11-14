@@ -444,7 +444,7 @@ func TestObservationPeersAreStoredUnderTheMemberEnrolledWithTheirKey(t *testing.
 		enrollment("agent-old", "old", "desk", "Rejected", moved),
 		enrollment("agent-new", "new", "desk", "Enrolled", moved),
 	)
-	sink := &KubernetesObservationSink{Client: client, Namespaces: observationNamespaceMap{"cluster-a": "agent-a"}}
+	sink := &KubernetesObservationSink{Client: client, Namespaces: observationNamespaceMap{"cluster-a": "agent-a"}, Enrolled: EnrolledKeys(client)}
 	e := validEvidence()
 	e.ClusterID, e.RegisteredClusterID = "cluster-a", "cluster-a"
 	e.NodeName, e.PodNodeName = "hub", "hub"
@@ -493,7 +493,8 @@ func TestObservationSinkListsEnrollmentsOncePerInterval(t *testing.T) {
 	first, second := "bGVhZi1rZXktbGVhZi1rZXktbGVhZi1rZXktbGVhZi0=", "bW92ZWQta2V5LW1vdmVkLWtleS1tb3ZlZC1rZXktbW8="
 	client := testDynamicClient(enrollment("first", first))
 	clock := time.Date(2026, 11, 14, 12, 0, 0, 0, time.UTC)
-	sink := &KubernetesObservationSink{Client: client, Namespaces: observationNamespaceMap{"cluster-a": "agent-a"}, Now: func() time.Time { return clock }}
+	sink := &KubernetesObservationSink{Client: client, Namespaces: observationNamespaceMap{"cluster-a": "agent-a"}, Now: func() time.Time { return clock }, Enrolled: EnrolledKeys(client)}
+	sink.Enrolled.Now = sink.Now
 	e := validEvidence()
 	e.ClusterID, e.RegisteredClusterID = "cluster-a", "cluster-a"
 	e.NodeName, e.PodNodeName = "hub", "hub"

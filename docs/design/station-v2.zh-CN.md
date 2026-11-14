@@ -220,7 +220,7 @@ controller 每次算完都沿着算出来的配置检查任意两台之间有没
 |---|---|
 | station-api | 已有隧道不变（内核状态 + `last-applied.json`，节点重启也能恢复）；新节点进不来，地址变化不传播 |
 | station-controller | 同上；入网请求一直是 pending |
-| 某台节点的 agent | 它的隧道不变；它拿不到别人的变化 |
+| 某台节点的 agent | 它的隧道不变；主机服务形式的网关自己用 WireGuard 密钥向 station-api 取文档（`POST /v1/network/document`，2026-11-14），别人的变化和控制面的新地址照样拿得到；Pod 形式的网关拿不到 |
 | 某台节点的网关容器 | 内核里的接口和会话还在；不再协调 |
 | 场站转发枢纽 | 机器人之间不通；机器人 ↔ 云、机器人 ↔ 其他枢纽不受影响 |
 
@@ -287,6 +287,7 @@ liangcai 现有的件：
 | 网络 controller | `extensions/station/controller/network_reconciler.go` | 入网、分配、第二台机器人加入时叶子配置不变、DHCP 端点跟随、重绑后旧公钥全网去掉且地址不变、退役回收地址、Routed 模式、声明了公钥的节点先于登记被对端认得、今天场站的声明文件 |
 | 入网接口 | `apps/rlark/pkg/stationidentity/network_enrollment.go` | 必须是已绑定的已验证身份；公钥和地址格式；换公钥后不返回旧公钥的答案；别的集群不能接管 |
 | 重装节点的上报 | `kubernetes_registry.go`、`kubernetes_observation.go` | 同名新 UID 的节点按未绑定认证；它的上报替换旧节点的快照；别的集群的同名节点仍被拒 |
+| 节点凭密钥取自己的文档 | `apps/rlark/pkg/stationidentity/network_document.go`、`extensions/station-gateway/document.go` | 证明私钥后给文档；证明错、过期、别的进程发的挑战都重新发挑战；没有文档的密钥证明后才得到 404；两个模块用同一组数对过证明；网关只在文档不同的时候写，station-api 不在时不动手里的文档；keeper 放 `station-api.json` 和 CA |
 | agent 登记 | `apps/rlark/pkg/stationidentity/agent_enrollment.go` | 登记、校验 hash、原子写；pending / 拒绝 / 出错都保留上一份 |
 | 网关 | `extensions/station-gateway` | 配置来源的先后；对端增删改是增量；真实内核（一次性网络命名空间，含他原有的两个内核测试）上加入、离开、删路由 |
 | 两个模块之间的文件格式 | `extensions/station-gateway/testdata/computed-s1u-01-x86.json` | 计算侧必须产出它，网关侧必须能解析它 |

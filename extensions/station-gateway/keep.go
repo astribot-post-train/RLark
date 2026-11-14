@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -39,11 +40,14 @@ type keeper struct {
 	hold        string // a directory of the machine; a file in it says the machine is in use
 	observation string // the file the service rewrites with every good pass
 	dropIn      string // the directory of the unit's drop-ins
-	proc        string
-	wait, stay  time.Duration
-	signal      func(pid int) error
-	sleep       func(time.Duration)
-	now         func() time.Time
+	// Where the service asks for its own document (document.go): the
+	// directory of its configuration, and what is kept there.
+	apiDirectory, apiURL, apiCA string
+	proc                        string
+	wait, stay                  time.Duration
+	signal                      func(pid int) error
+	sleep                       func(time.Duration)
+	now                         func() time.Time
 }
 
 func newKeeper(target, name, hold, observation, dropIn string) (*keeper, error) {
@@ -164,6 +168,32 @@ func (k *keeper) guard() error {
 		return nil
 	}
 	return replaceFile(path, []byte(content), 0644)
+}
+
+// lay keeps station-api.json and the CA it names in the directory of the
+// service's configuration, from what this pod was given: a machine installed
+// before the service asked for its own document, or whose Station API has
+// another address or CA since, gets them with the DaemonSet. The CA is there
+// before the file that names it.
+func (k *keeper) lay() error {
+	ca, err := os.ReadFile(k.apiCA)
+	if err != nil {
+		return err
+	}
+	pointer, _ := json.Marshal(stationAPI{URL: k.apiURL, CA: "ca.crt"})
+	for _, file := range []struct {
+		name    string
+		content []byte
+	}{{"ca.crt", ca}, {stationAPIFile, append(pointer, '\n')}} {
+		path := filepath.Join(k.apiDirectory, file.name)
+		if had, _ := os.ReadFile(path); bytes.Equal(had, file.content) {
+			continue
+		}
+		if err := replaceFile(path, file.content, 0644); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // settledState is what the pod's readiness says: no trial stands, this
@@ -324,10 +354,22 @@ func (k *keeper) settled() string {
 }
 
 func (k *keeper) run(stop <-chan os.Signal) {
-	state := ""
+	state, laid := "", ""
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 	for {
+		// Not part of the pass: the program is replaced whether or not the
+		// machine can be told where Station API is, and the other way round.
+		if k.apiDirectory != "" {
+			said := "keeping " + stationAPIFile + " for " + k.apiURL
+			if err := k.lay(); err != nil {
+				said = "keep " + stationAPIFile + ": " + err.Error()
+			}
+			if said != laid {
+				laid = said
+				log.Print(said)
+			}
+		}
 		next, err := k.pass()
 		// What the last pass could not do stands beside the program, for the
 		// pod's readiness and for whoever looks at the machine.

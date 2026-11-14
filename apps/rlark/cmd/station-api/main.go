@@ -111,12 +111,18 @@ func run(ctx context.Context, kubeConfig configs.KubernetesClientConfig, address
 	if err != nil {
 		return errors.New("configure network enrollment rate limiter")
 	}
+	enrolled := stationidentity.EnrolledKeys(management)
+	documents, err := stationidentity.NewNetworkDocuments(management, enrolled)
+	if err != nil {
+		return errors.New("make the secret of the network document challenges")
+	}
 	api := &stationidentity.API{
 		Registry:           registry,
+		Documents:          documents,
 		Challenges:         challenges,
 		ObservationLimiter: observationLimiter,
 		Observations: &stationidentity.KubernetesObservationSink{
-			Client: management, Namespaces: stationidentity.KubernetesClusterNamespaceResolver{Client: management},
+			Client: management, Namespaces: stationidentity.KubernetesClusterNamespaceResolver{Client: management}, Enrolled: enrolled,
 		},
 		Enrollments: &stationidentity.KubernetesNetworkEnroller{
 			Client: management, Namespaces: stationidentity.KubernetesClusterNamespaceResolver{Client: management},
