@@ -15,9 +15,9 @@ is in use (any mark under /run/rlark/in-use), unless forced with a reason. The s
 monitor publishes every component's status codes (/astribot_error_code/multi_error_code, 30 Hz); a code's digits are
 module (12 power and hardware, 13 driver), level (0 normal, 1 warning, 2 error) and part.
 
-The vendor's ROS is the host's (/opt/ros/noetic): its commands run in the host's namespaces (nsenter), as the node
-tuner's do; this image carries no ROS. The service listens on a Unix socket only (S1U_SERVICE_SOCKET); RLark reaches it
-on the node and decides who may press, and records who did.
+It speaks ROS itself (rospy, the vendor's noetic) to the robot's master at S1U_ROS_IP_ADDRESS, as a node at that address
+(the container is on the host's network). It listens on a Unix socket only (S1U_SERVICE_SOCKET); RLark reaches it on
+the node and decides who may press, and records who did.
 
     GET  /power   the state: monitor, powered, driver, emergency_stop, ready, errors, power_level, driver_level, power_wait_s
     POST /power   {"action": power_on | power_off | driver_on | driver_off | restart | bring_up, "force": false,
@@ -30,7 +30,6 @@ service starts (energising a robot nobody stands at is the site's decision: off 
 import json
 import os
 import socketserver
-import subprocess
 import threading
 import time
 from http.server import BaseHTTPRequestHandler
@@ -85,35 +84,17 @@ def refusal(action, state, force=False, busy=""):
     return None
 
 
-def on_host(command, ros_master):
-    """``command`` in the host's namespaces with the vendor's ROS set up."""
-    script = "set +u; source /opt/ros/noetic/setup.bash; export ROS_MASTER_URI=http://%s:11311; %s" % (ros_master, command)
-    return ["nsenter", "--target", "1", "--mount", "--uts", "--ipc", "--net", "--", "bash", "-c", script]
-
-
 class Power:
-    """The vendor's status codes, followed from the host, and its three services."""
+    """The vendor's status codes and its three services; ``call(service, value)`` answers (success, message)."""
 
-    def __init__(self, ros_master, run=subprocess.run):
-        self.ros_master, self.run = ros_master, run
+    def __init__(self, call):
+        self.call = call
         self.codes, self.codes_at, self.powered_off_at = [], -float("inf"), None
         self.lock = threading.Lock()  # one button at a time
 
-    def follow_codes(self, popen=subprocess.Popen):
-        """The status codes as the vendor publishes them, read from rostopic on the host, for ever."""
-        while True:
-            reader = popen(on_host("exec rostopic echo " + TOPIC, self.ros_master), stdout=subprocess.PIPE,
-                           stderr=subprocess.DEVNULL, text=True)
-            for line in reader.stdout:
-                self.receive(line)
-            reader.wait()
-            time.sleep(2.0)  # the master is down or restarting
-
-    def receive(self, line):
-        """One line of rostopic's output: the codes are its data line."""
-        if line.startswith("data:"):
-            text = line.split(":", 1)[1].strip().strip("\"'")
-            self.codes, self.codes_at = [code for code in text.split(",") if code], time.monotonic()
+    def receive(self, text):
+        """One publication of the status codes (comma-separated)."""
+        self.codes, self.codes_at = [code for code in text.split(",") if code], time.monotonic()
 
     def state(self):
         fresh = time.monotonic() - self.codes_at < CODES_SECONDS
@@ -123,15 +104,10 @@ class Power:
     def send(self, action):
         service, value = SERVICES[action]
         name = "/astribot_system_monitor/" + service
-        done = self.run(on_host("rosservice call %s 'data: %s'" % (name, str(value).lower()), self.ros_master),
-                        capture_output=True, text=True, timeout=15)
-        if done.returncode:
-            raise RuntimeError((done.stderr or done.stdout).strip()[-300:])
-        answer = dict(line.split(":", 1) for line in done.stdout.splitlines() if ":" in line)
+        success, message = self.call(name, value)
         if action == "power_off":
             self.powered_off_at = time.monotonic()
-        return dict(sent=name, value=value, success=answer.get("success", "").strip() == "True",
-                    message=answer.get("message", "").strip().strip("\"'"))
+        return dict(sent=name, value=value, success=success, message=message)
 
     def act(self, action, force=False, reason="", sleep=time.sleep):
         """(HTTP status, body) of one button."""
@@ -243,8 +219,19 @@ def main():
     lines = (line.split("=", 1) for line in open(os.environ["S1U_NODE_PROFILE"]).read().splitlines()
              if "=" in line and line[0] != "#")
     profile = {key: value.strip('"') for key, value in lines}
-    power = Power(profile["S1U_ROS_IP_ADDRESS"])
-    threading.Thread(target=power.follow_codes, daemon=True).start()
+    os.environ.update(ROS_MASTER_URI="http://%s:11311" % profile["S1U_ROS_IP_ADDRESS"], ROS_IP=profile["S1U_ROS_IP_ADDRESS"])
+    import rospy
+    from std_msgs.msg import String
+    from std_srvs.srv import SetBool
+
+    def call(name, value):
+        rospy.wait_for_service(name, timeout=2.0)
+        reply = rospy.ServiceProxy(name, SetBool)(value)
+        return reply.success, reply.message
+
+    rospy.init_node("s1u_power", disable_signals=True)
+    power = Power(call)
+    rospy.Subscriber(TOPIC, String, lambda message: power.receive(message.data), queue_size=1)
     if os.environ.get("S1U_AUTO_DRIVER") == "1":
         threading.Thread(target=power.automatic, args=(os.environ.get("S1U_AUTO_POWER") == "1",), daemon=True).start()
     path = Path(os.environ["S1U_SERVICE_SOCKET"])

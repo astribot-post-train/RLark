@@ -112,19 +112,21 @@ spec:
             - {name: state, mountPath: /state}
             - {name: in-use, mountPath: /in-use, readOnly: true}
             - {name: payloads, mountPath: /payloads, readOnly: true}
-        # The robot's power, driver start and restart (device/power.py): the vendor's buttons through its ROS on the
-        # host (nsenter, so privileged), on a Unix socket only, which RLark reaches on the node.
+        # The robot's power, driver start and restart (device/power.py): the vendor's buttons through its ROS master,
+        # on a Unix socket only, which RLark reaches on the node. No capability: ROS over the host's network.
         - name: power
           image: {{ .Values.image }}
           imagePullPolicy: IfNotPresent
-          command: [/usr/bin/python3, /s1u/device/power.py]
+          command: [/bin/bash, -c, "source /opt/ros/noetic/setup.bash && exec python3 /s1u/device/power.py"]
           env:
             - {name: S1U_NODE_PROFILE, value: /s1u/tuner/node_profile.env}
             - {name: S1U_SERVICE_SOCKET, value: /services/s1u-power.sock}
             - {name: S1U_AUTO_DRIVER, value: "{{ if eq .Values.autoDriver "true" }}1{{ else }}0{{ end }}"}
             - {name: S1U_AUTO_POWER, value: "{{ if eq .Values.autoPower "true" }}1{{ else }}0{{ end }}"}
           securityContext:
-            privileged: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
           resources:
             requests: {cpu: 10m, memory: 32Mi}
             limits: {memory: 128Mi}

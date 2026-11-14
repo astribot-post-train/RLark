@@ -33,29 +33,30 @@ def test_the_state_and_the_vendor_pages_refusals():
     assert power.refusal("driver_on", on, busy="fleet-station: run") is None
 
 
-def test_the_codes_come_from_rostopic_on_the_host_and_the_buttons_from_rosservice(tmp_path, monkeypatch):
-    ran = []
-    service = power.Power("192.168.0.10", run=lambda command, **options: ran.append(command) or done(
-        "success: True\nmessage: \"ok\"\n"))
-    for line in ("data: \"12000000,13000000\"\n", "---\n"):
-        service.receive(line)
+def test_the_codes_are_the_monitors_and_a_button_is_one_service_call():
+    called = []
+    service = power.Power(lambda name, value: called.append((name, value)) or (True, "ok"))
+    service.receive("12000000,13000000")
     assert service.state()["ready"]
     answer = service.send("driver_off")
     assert answer == dict(sent="/astribot_system_monitor/driver_command", value=False, success=True, message="ok")
-    assert ran[0][:4] == ["nsenter", "--target", "1", "--mount"] and "ROS_MASTER_URI=http://192.168.0.10:11311" in ran[0][-1]
-    assert ran[0][-1].endswith("rosservice call /astribot_system_monitor/driver_command 'data: false'")
+    assert called == [("/astribot_system_monitor/driver_command", False)]
     service.codes_at = time.monotonic() - 2  # stale: the monitor is down
     assert service.state()["monitor"] is False
-    service.run = lambda command, **options: done("", 1, "ERROR: Unable to communicate with master!")
-    service.receive("data: \"12000000\"\n")
+
+    def failing(name, value):
+        raise RuntimeError("service [/astribot_system_monitor/power_command] unavailable")
+
+    service.call = failing
+    service.receive("12000000")
     status, body = service.act("power_off")
-    assert status == 503 and "Unable to communicate" in body["detail"]
+    assert status == 503 and "unavailable" in body["detail"]
 
 
 def test_force_needs_a_reason_and_in_use_refuses_power_off(tmp_path, monkeypatch):
     monkeypatch.setattr(power, "IN_USE", tmp_path)
-    service = power.Power("r", run=lambda command, **options: done("success: True\n"))
-    service.receive("data: \"12000000\"\n")
+    service = power.Power(lambda name, value: (True, ""))
+    service.receive("12000000")
     (tmp_path / "fleet-station").write_text("run 20261114\n")
     assert service.act("power_off") == (409, dict(reason="in_use", state=service.state(), in_use="fleet-station: run 20261114"))
     assert service.act("power_off", force=True)[0] == 400  # force without a reason
@@ -68,29 +69,26 @@ def test_bring_up_powers_waits_and_starts_the_driver(monkeypatch):
     codes = [["12000000"]]
     sent = []
 
-    def run(command, **options):
-        sent.append(command[-1].split("rosservice call ")[1])
-        if "power_command" in command[-1]:
-            codes[0] = ["12000000"]
-        if "driver_command" in command[-1]:
-            codes[0] = ["12000000", "13000000"]
-        return done("success: True\n")
+    def call(name, value):
+        sent.append((name, value))
+        codes[0] = ["12000000", "13000000"] if "driver_command" in name else ["12000000"]
+        return True, ""
 
-    service = power.Power("r", run=run)
-    service.receive("data: \"\"\n")  # the monitor publishes nothing powered
+    service = power.Power(call)
+    service.receive("")  # the monitor publishes nothing powered
 
     def sleep(seconds):
-        service.receive("data: \"%s\"\n" % ",".join(codes[0]))
+        service.receive(",".join(codes[0]))
 
     monkeypatch.setattr(power.time, "monotonic", __import__("itertools").count(0.0, 0.1).__next__)  # 0.1 s a look
     status, body = service.act("bring_up", sleep=sleep)
     assert status == 200 and body["state"]["ready"]
-    assert sent == ["/astribot_system_monitor/power_command 'data: true'", "/astribot_system_monitor/driver_command 'data: true'"]
+    assert sent == [("/astribot_system_monitor/power_command", True), ("/astribot_system_monitor/driver_command", True)]
 
 
 def test_the_service_answers_on_its_unix_socket_only(tmp_path):
-    service = power.Power("r", run=lambda command, **options: done("success: True\n"))
-    service.receive("data: \"12000000,13000000\"\n")
+    service = power.Power(lambda name, value: (True, ""))
+    service.receive("12000000,13000000")
     path = tmp_path / "s1u-power.sock"
     server = power.Server(str(path), power.handler(service))
     threading.Thread(target=server.serve_forever, daemon=True).start()

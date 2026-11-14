@@ -7,7 +7,7 @@ description: |
   1. 节点调优（tuner）：让宿主机符合节点规格（内核隔离核、厂商进程和 k8s 的 CPU 范围、kubelet 的 CPU 管理和内存预留、调频策略、调度器参数，开机时由宿主机上的单元重新套上），结果写在节点标签 rlark.io/node-profile-state（ok / drift / kubelet-restart-required / reboot-required）；新机器要重启一次才生效，空闲时自己重启。按 S1U 节点规格核对整台：标签 rlark.io/node-conformance（ok / not-ok），三段指纹和不成立的项写在节点注解上。机器人在用（厂商驱动在跑、电机带电，或别的组件在 /run/rlark/in-use 下标了在用，比如设备层接着 Station）时不重启，原因写在报告注解里。
   2. Orin（orin）：经机器人内网把本机器人的 Orin 对到声明：x86 经 Orin 上网的单元（s1u-orin-uplink）、相机的 USB 规则和设备层请求的相机 USB 复位、站点的 adb 密钥，以及 orinPayloads 声明的载荷（镜像里的 /payload，按版本放到 Orin、开机自启、机器人空闲且轮到它那一批时才切换）。没有人登录 Orin。Orin 的 ssh 主机密钥首次信任后记在节点上，变了就停下，等人在节点注解 s1u.rlark.io/orin-host-key-confirm 上确认新的指纹。状态：标签 s1u.rlark.io/orin-state，注解 s1u.rlark.io/orin。
   3. 时钟（clock）：声明了站点时间源时，微调厂商时间链源头那块网卡硬件时钟的速率，把机器人的 x86 和 Orin 一起对到站点时间；不改厂商的进程和文件。没声明时什么都不做。状态：标签 rlark.io/clock-state。
-  4. 电源（power）：厂商控制中心的“电源 / 启动 / 重启”三个按钮，经宿主机上厂商的 ROS 执行，规则同厂商页面（驱动在跑时不下电除非强制、下电后 10 秒内不上电、驱动只在上电后启动）；机器人在用时不下电、不重启，除非强制并写明原因。只监听本机 Unix socket /run/rlark/services/s1u-power.sock，由 RLark 在节点上转发并记录是谁按的。
+  4. 电源（power）：厂商控制中心的“电源 / 启动 / 重启”三个按钮，经厂商的 ROS master（rospy）执行，规则同厂商页面（驱动在跑时不下电除非强制、下电后 10 秒内不上电、驱动只在上电后启动）；机器人在用时不下电、不重启，除非强制并写明原因。只监听本机 Unix socket /run/rlark/services/s1u-power.sock，由 RLark 在节点上转发并记录是谁按的。
   会让机器人离线或停工的动作（规格要的重启、载荷换版本）按 rollout 分批放行：节点标签 rlark.io/rollout-wave 是批次。人要求的整机重启：节点标签 rlark.io/restart-request（任意值，同一个值只做一次），结果在注解 rlark.io/restart-request-state。
   宿主机上的文件都在 /etc/rlark/s1u、/run/rlark/s1u、/var/lib/rlark/s1u 和带 rlark-s1u 名字的单元与配置片段里；设备层读宿主机上的 /etc/rlark/s1u/node_profile.env 得到它的 CPU 和机器人地址。
 icon: cpu
