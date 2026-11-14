@@ -3,7 +3,7 @@
 # for the power and the cameras; what runs on the host is the host's (node_profile.sh through nsenter).
 #   docker build -f extensions/s1u/Dockerfile -t <registry>/rlark/s1u-robot:<tag> .
 FROM ros:noetic-ros-core@sha256:fd6279f04e51fa61201a791da9a156129941887b95b614ae0cec7865ef49de4f
-RUN apt-get update && apt-get install -y --no-install-recommends ros-noetic-cv-bridge python3-opencv ffmpeg \
+RUN apt-get update && apt-get install -y --no-install-recommends ros-noetic-cv-bridge python3-opencv python3-pil ffmpeg \
       openssh-client util-linux curl ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 # MediaMTX, the WebRTC server the browser watches the cameras through: one pinned, verified release.

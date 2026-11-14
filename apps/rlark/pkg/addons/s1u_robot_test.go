@@ -50,7 +50,7 @@ func TestS1URobotRendersItsContainersOnS1UNodesAndStaysThroughWhatKeepsOthersOff
 			t.Fatalf("%s image = %s", container.Name, container.Image)
 		}
 	}
-	if strings.Join(names, ",") != "tuner,orin,power,clock" {
+	if strings.Join(names, ",") != "tuner,orin,power,video,clock" {
 		t.Fatalf("containers = %v", names)
 	}
 	env := map[string]string{}

@@ -1,4 +1,4 @@
-# The S1U robot x86's model configuration (extensions/s1u): the node tuner, the Orin, the power and the clock, one Pod on every
+# The S1U robot x86's model configuration (extensions/s1u): the node tuner, the Orin, the power, the video and the clock, one Pod on every
 # S1U robot. Privileged in the host's PID namespace (tuner, clock): it writes the host's /etc, /boot/grub and sysfs.
 apiVersion: apps/v1
 kind: DaemonSet
@@ -133,6 +133,33 @@ spec:
           volumeMounts:
             - {name: services, mountPath: /services}
             - {name: in-use, mountPath: /in-use, readOnly: true}
+        # The robot's camera video (device/video_server.py): the body's cameras from the vendor's ROS topics to MediaMTX
+        # (WebRTC :8889, a viewing session's token checked on a loopback port), the camera wall's strip from the device
+        # layer's thumbnails (/run/rlark/s1u/preview.bin); its control a Unix socket only, which RLark reaches on the node.
+        - name: video
+          image: {{ .Values.image }}
+          imagePullPolicy: IfNotPresent
+          command: [/bin/bash, -c, "source /opt/ros/noetic/setup.bash && exec python3 /s1u/device/video_server.py"]
+          env:
+            - name: NODE_NAME
+              valueFrom: {fieldRef: {fieldPath: spec.nodeName}}
+            - name: S1U_NODE_ADDRESS
+              valueFrom: {fieldRef: {fieldPath: status.hostIP}}
+            - {name: S1U_NODE_PROFILE, value: /s1u/tuner/node_profile.env}
+            - {name: S1U_BODIES, value: /s1u/tuner/bodies.json}
+            - {name: S1U_SERVICE_SOCKET, value: /services/s1u-video.sock}
+            - {name: S1U_VIDEO_DIRECTORY, value: /video}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests: {cpu: 500m, memory: 256Mi}
+            limits: {cpu: "2", memory: 512Mi}
+          volumeMounts:
+            - {name: services, mountPath: /services}
+            - {name: host, mountPath: /host, readOnly: true}
+            - {name: video, mountPath: /video}
         # The robot's clock held to the site's time (clock/clock.py): it trims the frequency of the NIC hardware clock
         # at the root of the vendor's own time chain. Privileged for that clock's device (/dev/ptpN).
         - name: clock
@@ -163,6 +190,8 @@ spec:
           emptyDir: {medium: Memory, sizeLimit: 8Mi}
         - name: payloads
           emptyDir: {sizeLimit: 256Mi}
+        - name: video
+          emptyDir: {sizeLimit: 64Mi}
         - name: host
           hostPath: {path: /run/rlark/s1u, type: DirectoryOrCreate}
         # What must outlast a boot and is root's (the Orin's record).
