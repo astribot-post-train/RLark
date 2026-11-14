@@ -3,18 +3,22 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"time"
 
 	"golang.org/x/sync/errgroup"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/tools/cache"
 
 	"github.com/rlinf/rlark/api/kubeclients/clientset/versioned"
 	"github.com/rlinf/rlark/api/kubeclients/informers/externalversions"
 	rlarkv1alpha1 "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
 	"github.com/rlinf/rlark/apps/rlark/pkg/agent/container"
+	"github.com/rlinf/rlark/apps/rlark/pkg/agent/controllers/nodeagent"
 	"github.com/rlinf/rlark/apps/rlark/pkg/agent/imagepull"
 	"github.com/rlinf/rlark/apps/rlark/pkg/agent/nodeevents"
 	"github.com/rlinf/rlark/apps/rlark/pkg/log"
@@ -118,10 +122,35 @@ func (n *nodeAgent) Run(ctx context.Context) error {
 	var taskInformer cache.SharedIndexInformer
 	var imgPuller *imagepull.Puller
 	agentType := rlarkv1alpha1.AgentType(n.a.config.AgentType)
-	if n.a.config.ImagePullEnabled && imagepull.RuntimeFor(agentType) != imagepull.RuntimeNone {
+	runtime := imagepull.RuntimeFor(agentType)
+	pull := n.a.config.ImagePullEnabled && runtime != imagepull.RuntimeNone
+	socket := n.a.config.ContainerdSocket
+	if pull && runtime == imagepull.RuntimeContainerd && socket == "" {
+		// One DaemonSet serves Nodes of different runtimes: each node Agent takes the socket its own
+		// Node records, reached through the host /run the DaemonSet mounts.
+		// On a Node that has just joined the agent can start before the Pod network reaches the
+		// API server, so the first reads may fail.
+		var node *corev1.Node
+		if err := wait.PollUntilContextCancel(ctx, 2*time.Second, true, func(ctx context.Context) (bool, error) {
+			var err error
+			node, err = n.a.localKubeClient.CoreV1().Nodes().Get(ctx, n.a.config.NodeName, metav1.GetOptions{})
+			if err != nil {
+				logger.Error(err, "get own Node for its runtime socket; retrying", "node", n.a.config.NodeName)
+			}
+			return err == nil, nil
+		}); err != nil {
+			return fmt.Errorf("get Node %s for its runtime socket: %w", n.a.config.NodeName, err)
+		}
+		var err error
+		if socket, err = nodeagent.HostRunSocket(node); err != nil {
+			logger.Error(err, "image pre-pull disabled")
+			pull = false
+		}
+	}
+	if pull {
 		rt := imagepull.NewImagePuller(
-			imagepull.RuntimeFor(agentType),
-			n.a.config.ContainerdSocket,
+			runtime,
+			socket,
 			n.a.config.ContainerdNamespace,
 			logger,
 		)
@@ -141,7 +170,7 @@ func (n *nodeAgent) Run(ctx context.Context) error {
 				ProgressPatcher:     patcher,
 				ManagementNamespace: n.a.config.ClientConfig.ServerNamespace,
 			}, taskInformer, logger)
-			logger.Info("image pre-pull enabled", "agentType", agentType, "nodeName", n.a.config.NodeName)
+			logger.Info("image pre-pull enabled", "agentType", agentType, "nodeName", n.a.config.NodeName, "socket", socket)
 		}
 	} else {
 		logger.Info("image pre-pull disabled", "agentType", agentType, "enabled", n.a.config.ImagePullEnabled)

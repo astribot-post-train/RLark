@@ -30,6 +30,23 @@ type ClusterSpec struct {
 	Draining              bool   `json:"draining,omitempty"`
 	Delisted              bool   `json:"delisted,omitempty"`
 	DrainPreviousCordoned bool   `json:"drainPreviousCordoned,omitempty"`
+	// NodeAgents declares the cluster's node Agents. The cluster Agent keeps them as one DaemonSet,
+	// so a Kubernetes Node that joins and matches the selector gets its node Agent without further action.
+	// +optional
+	NodeAgents *ClusterNodeAgents `json:"nodeAgents,omitempty"`
+}
+
+// ClusterNodeAgents declares which Kubernetes Nodes of a cluster run a node Agent. The node Agents run the
+// cluster Agent's own image and connect to the Server with the cluster Agent's credentials.
+type ClusterNodeAgents struct {
+	// Enabled makes the cluster Agent keep the node Agent DaemonSet; false makes it remove the DaemonSet.
+	Enabled bool `json:"enabled"`
+	// NodeSelector selects the Kubernetes Nodes that run a node Agent. It defaults to rlark.io/enabled=true,
+	// the label that makes RLark manage a Kubernetes Node.
+	// +kubebuilder:default={"rlark.io/enabled":"true"}
+	// +kubebuilder:validation:MinProperties=1
+	// +optional
+	NodeSelector map[string]string `json:"nodeSelector,omitempty"`
 }
 
 // ClusterStatus reports the controller's current observation of a data-plane cluster.

@@ -13,7 +13,9 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	metav1validation "k8s.io/apimachinery/pkg/apis/meta/v1/validation"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/validation/field"
 	"k8s.io/client-go/util/retry"
 
 	rlarkv1alpha1 "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
@@ -42,6 +44,8 @@ type ClusterInfo struct {
 	RunningJobs            int                        `json:"runningJobs"`
 	Description            string                     `json:"description"`
 	AgentNamespaceConflict bool                       `json:"agentNamespaceConflict,omitempty"`
+	// NodeAgents is the declared node Agents of the cluster (spec.nodeAgents); absent when never declared.
+	NodeAgents *rlarkv1alpha1.ClusterNodeAgents `json:"nodeAgents,omitempty"`
 }
 
 // ClusterDetail holds details.
@@ -100,6 +104,7 @@ func buildClusterInfo(cluster rlarkv1alpha1.Cluster, nodes []rlarkv1alpha1.Node)
 		Region:                 strings.TrimSpace(cluster.Spec.Region),
 		Phase:                  cluster.Status.Phase,
 		AgentNamespaceConflict: clusterAgentNamespaceConflict(cluster),
+		NodeAgents:             cluster.Spec.NodeAgents,
 		GPUModels:              []string{},
 		RobotModels:            []string{},
 	}
@@ -363,6 +368,36 @@ func drainClusterSpec(cluster *rlarkv1alpha1.Cluster) error {
 	cluster.Spec.Cordoned = true
 	cluster.Spec.Draining = true
 	return nil
+}
+
+// setClusterNodeAgents replaces spec.nodeAgents. The cluster Agent then keeps (or removes) the cluster's
+// node Agent DaemonSet; an omitted nodeSelector takes the CRD default rlark.io/enabled=true.
+func (g *Gateway) setClusterNodeAgents(c *gin.Context) {
+	var body struct {
+		Enabled      *bool             `json:"enabled"`
+		NodeSelector map[string]string `json:"nodeSelector"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		respondError(c, http.StatusBadRequest, CodeInvalidRequest, err.Error())
+		return
+	}
+	// A missing enabled would silently mean "remove every node Agent".
+	if body.Enabled == nil {
+		respondError(c, http.StatusBadRequest, CodeInvalidRequest, "enabled is required")
+		return
+	}
+	if body.NodeSelector != nil && len(body.NodeSelector) == 0 {
+		respondError(c, http.StatusBadRequest, CodeInvalidRequest, "nodeSelector must not be empty: omit it to select rlark.io/enabled=true")
+		return
+	}
+	if errs := metav1validation.ValidateLabels(body.NodeSelector, field.NewPath("nodeSelector")); len(errs) > 0 {
+		respondError(c, http.StatusBadRequest, CodeInvalidRequest, errs.ToAggregate().Error())
+		return
+	}
+	g.updateCluster(c, func(cluster *rlarkv1alpha1.Cluster) error {
+		cluster.Spec.NodeAgents = &rlarkv1alpha1.ClusterNodeAgents{Enabled: *body.Enabled, NodeSelector: body.NodeSelector}
+		return nil
+	})
 }
 
 func (g *Gateway) delistCluster(c *gin.Context) {

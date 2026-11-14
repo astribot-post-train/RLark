@@ -385,6 +385,9 @@ Responses:
   - `displayName`: `string`, optional - DisplayName is a human-readable name; metadata.name remains the stable cluster ID.
   - `drainPreviousCordoned`: `boolean`, optional
   - `draining`: `boolean`, optional
+  - `nodeAgents`: `object`, optional - NodeAgents declares the cluster's node Agents. The cluster Agent keeps them as one DaemonSet, so a Kubernetes Node th...
+    - `enabled`: `boolean`, required - Enabled makes the cluster Agent keep the node Agent DaemonSet; false makes it remove the DaemonSet.
+    - `nodeSelector`: `object`, optional - NodeSelector selects the Kubernetes Nodes that run a node Agent. It defaults to rlark.io/enabled=true, the label that...
   - `region`: `string`, optional - Region is administrator-managed location metadata, independent of node placement.
 - `status`: `object`, optional - ClusterStatus reports the controller's current observation of a data-plane cluster.
   - `conditions`: `array`, optional

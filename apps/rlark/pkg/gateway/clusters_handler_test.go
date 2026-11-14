@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -465,5 +466,71 @@ func TestBuildClusterInfoMixedCategoryLabelForms(t *testing.T) {
 	if info.CloudNodes != 1 || info.EmbodiedNodes != 1 || info.Robots != 1 {
 		t.Fatalf("expected 1/1/1, got %d/%d/%d",
 			info.CloudNodes, info.EmbodiedNodes, info.Robots)
+	}
+}
+
+func TestSetClusterNodeAgents(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, tt := range []struct {
+		name       string
+		body       string
+		existing   *rlarkv1alpha1.ClusterNodeAgents
+		wantStatus int
+		want       *rlarkv1alpha1.ClusterNodeAgents
+	}{
+		{name: "enable with the default selector", body: `{"enabled":true}`, wantStatus: http.StatusOK,
+			want: &rlarkv1alpha1.ClusterNodeAgents{Enabled: true}},
+		{name: "enable with a selector", body: `{"enabled":true,"nodeSelector":{"rlark.io/node-category":"robot"}}`, wantStatus: http.StatusOK,
+			want: &rlarkv1alpha1.ClusterNodeAgents{Enabled: true, NodeSelector: map[string]string{"rlark.io/node-category": "robot"}}},
+		{name: "disable replaces the selector", body: `{"enabled":false}`, wantStatus: http.StatusOK,
+			existing: &rlarkv1alpha1.ClusterNodeAgents{Enabled: true, NodeSelector: map[string]string{"a": "b"}},
+			want:     &rlarkv1alpha1.ClusterNodeAgents{Enabled: false}},
+		{name: "enabled is required", body: `{"nodeSelector":{"a":"b"}}`, wantStatus: http.StatusBadRequest},
+		{name: "empty selector is rejected", body: `{"enabled":true,"nodeSelector":{}}`, wantStatus: http.StatusBadRequest},
+		{name: "invalid label key is rejected", body: `{"enabled":true,"nodeSelector":{"bad key":"x"}}`, wantStatus: http.StatusBadRequest},
+		{name: "invalid label value is rejected", body: `{"enabled":true,"nodeSelector":{"a":"not valid!"}}`, wantStatus: http.StatusBadRequest},
+		{name: "malformed body is rejected", body: `{"enabled":"yes"}`, wantStatus: http.StatusBadRequest},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			cluster := &rlarkv1alpha1.Cluster{
+				ObjectMeta: metav1.ObjectMeta{Name: "cluster-a"},
+				Spec:       rlarkv1alpha1.ClusterSpec{AgentNamespace: "rlark-cluster-a", Cordoned: true, NodeAgents: tt.existing},
+			}
+			client := clientset.NewSimpleClientset(cluster)
+			gateway := &Gateway{kubeClient: client}
+			router := gin.New()
+			router.PUT("/clusters/:cluster_id/node-agents", gateway.setClusterNodeAgents)
+			recorder := httptest.NewRecorder()
+			router.ServeHTTP(recorder, httptest.NewRequest(http.MethodPut, "/clusters/cluster-a/node-agents", strings.NewReader(tt.body)))
+			if recorder.Code != tt.wantStatus {
+				t.Fatalf("status = %d, want %d: %s", recorder.Code, tt.wantStatus, recorder.Body.String())
+			}
+			stored, err := client.RlinfV1alpha1().Clusters().Get(t.Context(), "cluster-a", metav1.GetOptions{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := tt.want
+			if tt.wantStatus != http.StatusOK {
+				want = tt.existing
+			}
+			if !reflect.DeepEqual(stored.Spec.NodeAgents, want) {
+				t.Fatalf("spec.nodeAgents = %#v, want %#v", stored.Spec.NodeAgents, want)
+			}
+			if !stored.Spec.Cordoned {
+				t.Fatal("other spec fields must be kept")
+			}
+			if tt.wantStatus != http.StatusOK {
+				return
+			}
+			var response struct {
+				Data ClusterInfo `json:"data"`
+			}
+			if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(response.Data.NodeAgents, want) {
+				t.Fatalf("response nodeAgents = %#v, want %#v", response.Data.NodeAgents, want)
+			}
+		})
 	}
 }

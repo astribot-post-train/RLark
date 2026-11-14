@@ -1,12 +1,16 @@
 package agent
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"net/http"
+	"net/url"
+	"os"
 	"time"
 
 	"golang.org/x/sync/errgroup"
+	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
@@ -20,9 +24,11 @@ import (
 	"github.com/rlinf/rlark/apps/rlark/pkg/agent/controllers/base"
 	"github.com/rlinf/rlark/apps/rlark/pkg/agent/controllers/delivery"
 	"github.com/rlinf/rlark/apps/rlark/pkg/agent/controllers/node"
+	"github.com/rlinf/rlark/apps/rlark/pkg/agent/controllers/nodeagent"
 	"github.com/rlinf/rlark/apps/rlark/pkg/agent/controllers/pod"
 	"github.com/rlinf/rlark/apps/rlark/pkg/agent/controllers/task"
 	"github.com/rlinf/rlark/apps/rlark/pkg/log"
+	"github.com/rlinf/rlark/apps/rlark/pkg/rlarkadm/constants"
 )
 
 // clusterAgent manages cluster-level operations (controller manager).
@@ -48,6 +54,11 @@ func (c *clusterAgent) Run(ctx context.Context) error {
 		Cache: cache.Options{
 			DefaultNamespaces: map[string]cache.Config{
 				clusterID: {},
+			},
+			// The agent may read only its own Cluster (named as its namespace); a list of every
+			// Cluster would be refused.
+			ByObject: map[client.Object]cache.ByObject{
+				&rlarkv1alpha1.Cluster{}: {Field: fields.OneTermEqualSelector("metadata.name", clusterID)},
 			},
 		},
 	})
@@ -196,6 +207,36 @@ func (c *clusterAgent) Run(ctx context.Context) error {
 	}
 	if err := deliveryReconciler.Setup(mm, localManager); err != nil {
 		return fmt.Errorf("setup delivery controller: %w", err)
+	}
+
+	// Node Agents connect as this agent does; without its own SSH address they take the Server's
+	// SSH port on the host of --server-address, as rlarkadm renders it.
+	serverURL, err := url.Parse(c.a.config.ClientConfig.ServerAddress)
+	if err != nil {
+		return fmt.Errorf("parse server address: %w", err)
+	}
+	sshAddress := cmp.Or(c.a.config.RLarkServerSSHAddress, fmt.Sprintf("client@%s:%d", serverURL.Hostname(), constants.ServerSSHPort))
+	nodeAgents := &nodeagent.Reconciler{
+		Management:  mclient,
+		ClusterName: clusterID,
+		Local:       bc.LocalKubeClient,
+		Namespace:   os.Getenv("POD_NAMESPACE"),
+		PodName:     os.Getenv("POD_NAME"),
+		Connection: nodeagent.Connection{
+			Image:                 c.a.config.Image,
+			AgentType:             agentType,
+			ServerAddress:         c.a.config.ClientConfig.ServerAddress,
+			ServerHostname:        c.a.config.ClientConfig.ServerHostname,
+			CACert:                c.a.config.ClientConfig.CAPath,
+			ClientCert:            c.a.config.ClientConfig.ClientCertPath,
+			ClientKey:             c.a.config.ClientConfig.ClientKeyPath,
+			InsecureSkipTLSVerify: c.a.config.ClientConfig.InsecureSkipTLSVerify,
+			SSHAddress:            sshAddress,
+			SSHHostKey:            c.a.config.RLarkServerSSHHostKey,
+		},
+	}
+	if err := nodeAgents.Setup(mm, localManager); err != nil {
+		return fmt.Errorf("setup node Agent controller: %w", err)
 	}
 
 	var eg errgroup.Group

@@ -81,6 +81,7 @@ func (g *Gateway) RegisterRoutes(r gin.IRouter) {
 		adminClusters.POST("/:cluster_id/delist", g.delistCluster)
 		adminClusters.POST("/:cluster_id/delete", g.deleteCluster)
 		adminClusters.POST("/:cluster_id/restore", g.restoreCluster)
+		adminClusters.PUT("/:cluster_id/node-agents", g.setClusterNodeAgents)
 	}
 
 	nodes := rlinfv1alpha1.Group("/nodes")

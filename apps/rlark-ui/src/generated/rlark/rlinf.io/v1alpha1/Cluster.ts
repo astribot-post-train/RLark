@@ -39,6 +39,23 @@ export interface ICluster {
     "drainPreviousCordoned"?: boolean;
     "draining"?: boolean;
     /**
+     * NodeAgents declares the cluster's node Agents. The cluster Agent keeps them as one DaemonSet,
+     * so a Kubernetes Node that joins and matches the selector gets its node Agent without further action.
+     */
+    "nodeAgents"?: {
+      /**
+       * Enabled makes the cluster Agent keep the node Agent DaemonSet; false makes it remove the DaemonSet.
+       */
+      "enabled": boolean;
+      /**
+       * NodeSelector selects the Kubernetes Nodes that run a node Agent. It defaults to rlark.io/enabled=true,
+       * the label that makes RLark manage a Kubernetes Node.
+       */
+      "nodeSelector"?: {
+        [key: string]: string;
+      };
+    };
+    /**
      * Region is administrator-managed location metadata, independent of node placement.
      */
     "region"?: string;

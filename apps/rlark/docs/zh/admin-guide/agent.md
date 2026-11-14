@@ -76,6 +76,34 @@ Server 会在已注册集群的命名空间中维护集群 Agent 的 `heartbeat`
 
 节点和集群视图会显示接入状态、从节点 Lease 推导的上次心跳时间，以及最近一次接入状态变化时间。Agent 每 15 秒续约一次心跳 Lease，默认 Lease 时长为 45 秒；节点 Lease 过期时，Node 会被标记为 `Offline`。集群详情页会原样展示该集群的全部 Node，包括离线和非 Worker 节点；离线状态旁的信息按钮会提示上次在线时间。
 
+### 在 Cluster 上声明节点 Agent
+
+集群可以在管理面 `Cluster` 对象上声明自己的节点 Agent，而不必为每个 Node 单独建节点 Agent 工作负载。声明之后，集群 Agent 在自己的命名空间里维护一个 DaemonSet `rlark-agent-node`，之后加入且匹配选择器的 Kubernetes Node 无需任何额外操作就会得到节点 Agent。通过 Gateway 的一个管理员请求即可设置：
+
+```bash
+curl -X PUT https://<gateway>/api/v1/clusters/<cluster-id>/node-agents \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"enabled": true}'
+```
+
+`nodeSelector` 可省略，默认为 `{"rlark.io/enabled": "true"}`，即让 RLark 纳管 Node 的那个标签；空选择器会被拒绝。`{"enabled": false}` 让集群 Agent 删除该 DaemonSet。没有 `spec.nodeAgents` 的 Cluster，节点 Agent 仍由安装者（rlarkadm 或手工工作负载）负责。
+
+集群 Agent 以自身为模板渲染 DaemonSet，节点 Agent 与它以完全相同的方式连接：
+
+- 镜像：集群 Agent 的 `--image`（必须设置；同一集群的 Agent 使用同一镜像）。集群 Agent 换新 `--image` 重启后，节点 Agent 随之滚动；
+- `--server-address`、`--server-hostname`、`--ca-cert`、`--client-cert`、`--client-key`、`--insecure-skip-tls-verify`、`--rlark-server-ssh-host-key` 与集群 Agent 相同；`--rlark-server-ssh-address` 取集群 Agent 的值，否则为 `client@<Server 主机>:2222`；
+- 存放上述证书文件的卷、`hostAliases` 和 `imagePullSecrets` 从集群 Agent 自己的 Pod 复制（通过其 downward API 变量 `POD_NAME`/`POD_NAMESPACE` 找到）；
+- `priorityClassName: system-node-critical`、`hostPID`、特权、8081 端口的 `/readyz` 就绪检查、node server 套接字目录 `/var/run/rlark`，以及只读挂载到 `/host/run` 的宿主机 `/run`；
+- 容忍控制面 Node、`not-ready`/`unreachable`（不设过期）、磁盘/内存/PID 压力、`unschedulable` 以及 `rlark.io/node-category` 污点。没有全量容忍：停用（out-of-service）的 Node 会失去节点 Agent。
+
+它同时维护 ServiceAccount、ClusterRole（读取 Node、list/watch 事件）和 ClusterRoleBinding，名字都是 `rlark-agent-node`。它创建的每个对象都带 `app.kubernetes.io/managed-by=rlark-agent`。同名但没有该标签的对象（例如 `rlarkadm` 安装的 DaemonSet）永远不会被修改或删除；集群 Agent 记录冲突并重试。给已有对象打上该标签即可移交：集群 Agent 随后把它改写为声明的形式，节点 Agent 滚动更新。
+
+节点 Agent 从自己的 Node 获取容器运行时套接字：未指定 `--containerd-socket` 时，读取 `kubeadm.alpha.kubernetes.io/cri-socket` 注解（例如 `unix:///run/containerd-fleet/containerd.sock`），并经 `/host/run` 连接。因此一个 DaemonSet 可以服务不同运行时的 Node。没有该注解或套接字不在 `/run` 下的 Node，节点 Agent 照常运行但不做镜像预拉取，直到指定 `--containerd-socket`。
+
+`rlarkadm` 为集群 Agent 的 Deployment 设置 `strategy: Recreate`：滚动更新时新旧两个集群 Agent 同时运行，会各自用自己的 `--image` 反复改写 DaemonSet。其他方式创建的集群 Agent Deployment，在声明节点 Agent 之前也要设置同样的策略。
+
+Server 只允许每个集群 Agent 读取自己的 `Cluster`（`get`/`list`/`watch` 限定为与其 agent namespace 同名的 Cluster）。
+
 ### 验证清单
 
 | 检查项 | 预期结果 |
@@ -126,7 +154,7 @@ kubectl get cluster <cluster-id> -o jsonpath='{.spec.agentNamespace}{"\n"}'
 | `--leader-election` | `false` | Leader Election；需要多副本时 `rlarkadm` 为集群 Agent 启用 |
 | `--task-runtime-resync-period` | `15m` | cluster 模式有界 Task Runtime 修复扫描的基础周期；实际间隔使用 80%–120% 抖动，`0` 表示禁用；`cluster`/`both` 模式下负值无效，node-only 模式接受这个共享 flag，但不会运行扫描器 |
 | `--enable-cross-cluster-direct` | `true` | 允许跨集群 Pod 直连路由 |
-| `--containerd-socket` | `/run/containerd/containerd.sock` | 节点 Agent 的 Containerd Socket |
+| `--containerd-socket` | `""` | 节点 Agent 的 Containerd Socket；为空时取 Node 的 `kubeadm.alpha.kubernetes.io/cri-socket` 注解，经挂载到 `/host/run` 的宿主机 `/run` 连接 |
 
 完整参数列表参见[配置项参考](../reference/configuration.md#rlark-agent)。
 

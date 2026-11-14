@@ -178,7 +178,7 @@ rlark-controller-manager \
 | `--enable-cross-cluster-direct` | bool | `true` | 启用跨集群 Pod 直接访问 |
 | `--kubelet-dir` | string | `""` | Kubelet 目录（用于查找 Pod UID） |
 | `--image-pull-enabled` | bool | `true` | 启用镜像预拉取 |
-| `--containerd-socket` | string | `/run/containerd/containerd.sock` | Containerd Socket 地址 |
+| `--containerd-socket` | string | `""` | Containerd Socket 地址；为空时取 Node 的 `kubeadm.alpha.kubernetes.io/cri-socket` 注解，经 `/host/run` 连接 |
 | `--containerd-namespace` | string | `k8s.io` | Containerd 命名空间 |
 | `--node-name` | string | `$NODE_NAME` | 本地节点名称 |
 | `--nodeserver-unix-socket` | string | `/var/run/rlark/nodeserver.sock` | NodeServer Unix Socket 地址 |
@@ -337,7 +337,7 @@ Gateway 使用的对象存储后端配置。
 | `kcp` | ComponentConfig | 未设置 | kcp 当前限制为单副本。未配置 `etcd` 时使用 StatefulSet 并支持持久化存储；部署或指定外部 etcd 时使用 Deployment |
 | `etcd` | EtcdConfig | 未设置 | etcd 组件配置。`address` 为空时部署 etcd，非空时使用外部 etcd |
 | `postgresql` | ComponentConfig | 未设置 | PostgreSQL 组件配置 |
-| `containerd-socket` | string | `/run/containerd/containerd.sock` | 节点 Agent 的 Containerd Socket 路径 |
+| `containerd-socket` | string | `""` | 节点 Agent 的 Containerd Socket 路径；未设置时节点 Agent 把宿主机 `/run` 挂到 `/host/run`，使用其 Node 记录的套接字 |
 
 !!! tip "镜像优先级"
     `gateway-image` 等组件专用镜像优先于 `image`。
