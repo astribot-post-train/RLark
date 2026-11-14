@@ -107,11 +107,11 @@ func TestBootstrapRedeemsACodeOnceForOneKey(t *testing.T) {
 	answer, status, err := b.Redeem(ctx, code, key)
 	if err != nil || status != http.StatusOK || answer.State != "ready" || answer.NodeName != "s1u-01-x86" || answer.TunnelAddress != "10.254.240.3" ||
 		answer.Join.APIServer != "10.11.14.128:16443" || len(answer.Join.Token) != 23 || !strings.HasPrefix(answer.Join.CACertHash, "sha256:") ||
-		answer.Labels != "rlark.io/node-category=robot,rlark.io/robot-id=s1u-01" || answer.Taints != "rlark.io/node-category=robot:NoSchedule" {
+		answer.Labels != "rlark.io/cluster-id=rlark-local-dev-gpu,rlark.io/enabled=true,rlark.io/node-category=robot,rlark.io/robot-id=s1u-01" || answer.Taints != "rlark.io/node-category=robot:NoSchedule" {
 		t.Fatalf("ready answer: %+v %d %v", answer, status, err)
 	}
 	node, err := management.Resource(rlarkNodeGVR).Namespace("rlark-local-dev-gpu").Get(ctx, "s1u-01-x86", metav1.GetOptions{})
-	if want := map[string]string{"rlark.io/robot-id": "s1u-01", "rlark.io/node-category": "robot", "rlark.io/robot-model": "s1u"}; err != nil || !reflect.DeepEqual(node.GetLabels(), want) {
+	if want := map[string]string{"rlark.io/robot-id": "s1u-01", "rlark.io/node-category": "robot", "rlark.io/robot-model": "s1u", "rlark.io/enabled": "true", "rlark.io/cluster-id": "rlark-local-dev-gpu"}; err != nil || !reflect.DeepEqual(node.GetLabels(), want) {
 		t.Fatalf("labels of the management Node after the admission: %v %v", node.GetLabels(), err)
 	}
 	secrets, err := member.CoreV1().Secrets("kube-system").List(ctx, metav1.ListOptions{})

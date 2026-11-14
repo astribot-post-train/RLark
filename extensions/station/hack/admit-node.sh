@@ -50,6 +50,8 @@ ADMISSION
   echo "  redeemedAt: null"
 } > "${admission:=$(mktemp)}"
 if kubectl --kubeconfig "$KCP" -n "$namespace" get nodeadmissions.station.rlark.io "$NODE" >/dev/null 2>&1; then
+  # The labels are the ones given now: a label of the earlier admission that is left out is gone.
+  kubectl --kubeconfig "$KCP" -n "$namespace" patch nodeadmissions.station.rlark.io "$NODE" --type=json -p '[{"op":"remove","path":"/spec/labels"}]' >/dev/null 2>&1 || true
   kubectl --kubeconfig "$KCP" -n "$namespace" patch nodeadmissions.station.rlark.io "$NODE" --type=merge --patch-file "$admission" >&2
 else
   grep -v ': null$' "$admission" | kubectl --kubeconfig "$KCP" create -f - >&2
