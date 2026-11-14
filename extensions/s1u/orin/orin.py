@@ -478,7 +478,7 @@ class Orin:
         if request.get("id") == self.state.get("camera_reset", {}).get("id"):
             return
         ok, detail = self.reset_cameras()
-        done = dict(id=request["id"], done_at=time.time(), ok=ok, detail=detail)
+        done = dict(id=request["id"], ok=ok, detail=detail, finished_at=time.time())
         self.state = dict(self.state, camera_reset=done)
         Path(HOST + "/camera-reset-result.new").write_text(json.dumps(done) + "\n")
         os.replace(HOST + "/camera-reset-result.new", HOST + "/camera-reset-result")

@@ -622,6 +622,7 @@ def test_the_orin_resets_the_cameras_usb_once_per_request_of_the_device_layer(tm
     robot.camera_pass()
     assert sent[0].startswith("python3 -c '") and sent[0].endswith("' 2bc5") and "sudo" not in sent[0]
     result = json.loads((tmp_path / "camera-reset-result").read_text())
+    assert set(result) == {"id", "ok", "detail", "finished_at"}  # the contract with the device layer
     assert result["id"] == "a" * 32 and result["ok"] and result["detail"] == "reset ok bus 002 dev 008"
     assert events[0][0] == "OrinCameraReset"
     robot.camera_pass()

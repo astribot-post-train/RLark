@@ -21,7 +21,7 @@ robot gets it when it joins; nobody logs in to the robot or its Orin.
 - **Node profile** — `/etc/rlark/s1u/node_profile.env` on the host (`S1U_*` variables): the device layer reads its
   CPUs and the robot's addresses from it, read-only.
 - **Camera reset** — the device layer writes `/run/rlark/s1u/camera-reset-request` (`{"id", "cameras"}`) when it may
-  (it knows whether a Station is attached); each id is done once, the result in `/run/rlark/s1u/camera-reset-result`
+  (it knows whether a Station is attached); each id is done once, the result in `/run/rlark/s1u/camera-reset-result` (`{"id", "ok", "detail", "finished_at"}`)
   and a Node Event.
 - **Orin host key** — state in the Node's label `s1u.rlark.io/orin-state` and annotation `s1u.rlark.io/orin` (JSON).
   After the Orin's key changed, a person confirms the new one by setting the Node's annotation
