@@ -157,6 +157,7 @@ func ReleaseCommand() *cobra.Command {
 	verify.Flags().BoolVar(&allow.Documents.All, "allow-all-documents", false, "The stage changes every member's document")
 	verify.Flags().StringArrayVar(&allow.AddonVersions.IDs, "allow-addon-version", nil, "An Addon (<clusterID>/<addon>) whose version the stage changes")
 	verify.Flags().BoolVar(&allow.AddonVersions.All, "allow-all-addon-versions", false, "The stage changes Addon versions")
+	verify.Flags().StringSliceVar(&allow.HeldLabels, "held-label", nil, "A label key the site sets on management Nodes for the agents to carry (labels-held)")
 	_ = verify.MarkFlagRequired("baseline")
 	verify.MarkFlagsMutuallyExclusive("stage", "checks")
 	cmd.AddCommand(verify)

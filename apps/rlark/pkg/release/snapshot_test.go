@@ -21,13 +21,15 @@ func TestReadSnapshot(t *testing.T) {
 		}}
 	}
 	cluster := object("rlinf.io/v1alpha1", "Cluster", "", "office", map[string]any{"phase": "Downgraded"})
+	node := object("rlinf.io/v1alpha1", "Node", "rlark-office", "s1u-01", map[string]any{"phase": "Online"})
+	node.SetLabels(map[string]string{"site.example/wave": "0"})
 	cluster.Object["spec"] = map[string]any{"agentNamespace": "rlark-office"}
 	client := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), map[schema.GroupVersionResource]string{
 		clusterGVR: "ClusterList", nodeGVR: "NodeList", addonGVR: "AddonList",
 		siteNetworkGVR: "SiteNetworkList", enrollmentGVR: "NetworkEnrollmentList", observationGVR: "StationObservationList",
 	},
 		cluster,
-		object("rlinf.io/v1alpha1", "Node", "rlark-office", "s1u-01", map[string]any{"phase": "Online"}),
+		node,
 		object("rlinf.io/v1alpha1", "Addon", "rlark-office", "station", map[string]any{"phase": "Ready", "version": "0.4.0"}),
 		// An object of a namespace no cluster has is nobody's.
 		object("rlinf.io/v1alpha1", "Addon", "elsewhere", "station", map[string]any{"phase": "Failed"}),
@@ -62,7 +64,7 @@ func TestReadSnapshot(t *testing.T) {
 	want := `{"takenAt":"2026-11-13T20:00:00Z",` +
 		`"siteNetwork":{"ready":true,"fullyConnected":false,"members":2,"unreachable":["a to b","b to a"]},` +
 		`"clusters":{"office":"Downgraded"},` +
-		`"nodes":{"office/s1u-01":"Online"},` +
+		`"nodes":{"office/s1u-01":"Online"},"nodeLabels":{"office/s1u-01":{"site.example/wave":"0"}},` +
 		`"enrollments":{"office/s1u-01":{"phase":"Enrolled","configHash":"abc","problems":["a","z"],"links":{"cloud/gpu-1":"Connected"},"relay":"cloud/gpu-1"}},` +
 		`"addons":{"office/station":{"phase":"Ready","version":"0.4.0"}},` +
 		`"observations":{"office/desk-1":{"reportedAt":"2026-11-13T19:59:30Z","fresh":true,"pressures":[]},` +

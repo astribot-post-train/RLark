@@ -40,11 +40,16 @@ type Snapshot struct {
 	TakenAt     time.Time   `json:"takenAt"`
 	SiteNetwork SiteNetwork `json:"siteNetwork"`
 	// Clusters and Nodes hold status.phase.
-	Clusters     map[string]string      `json:"clusters"`
-	Nodes        map[string]string      `json:"nodes"`
-	Enrollments  map[string]Enrollment  `json:"enrollments"`
-	Addons       map[string]Addon       `json:"addons"`
-	Observations map[string]Observation `json:"observations"`
+	Clusters map[string]string `json:"clusters"`
+	Nodes    map[string]string `json:"nodes"`
+	// NodeLabels are the labels of the management Nodes. A label that only
+	// the management plane sets stays there only while the cluster's agent
+	// carries it to the Node; one it does not carry is replaced by what the
+	// Node has.
+	NodeLabels   map[string]map[string]string `json:"nodeLabels"`
+	Enrollments  map[string]Enrollment        `json:"enrollments"`
+	Addons       map[string]Addon             `json:"addons"`
+	Observations map[string]Observation       `json:"observations"`
 }
 
 type SiteNetwork struct {
@@ -96,6 +101,9 @@ type (
 		} `json:"status"`
 	}
 	nodeObject struct {
+		Metadata struct {
+			Labels map[string]string `json:"labels"`
+		} `json:"metadata"`
 		Status struct {
 			Phase string `json:"phase"`
 		} `json:"status"`
@@ -144,6 +152,7 @@ func Read(ctx context.Context, client dynamic.Interface, now time.Time) (Snapsho
 		TakenAt:      now.UTC().Truncate(time.Second),
 		Clusters:     map[string]string{},
 		Nodes:        map[string]string{},
+		NodeLabels:   map[string]map[string]string{},
 		Enrollments:  map[string]Enrollment{},
 		Addons:       map[string]Addon{},
 		Observations: map[string]Observation{},
@@ -179,6 +188,7 @@ func Read(ctx context.Context, client dynamic.Interface, now time.Time) (Snapsho
 		}
 		for name, node := range nodes {
 			snapshot.Nodes[clusterID+"/"+name] = node.Status.Phase
+			snapshot.NodeLabels[clusterID+"/"+name] = node.Metadata.Labels
 		}
 
 		addons, err := list[addonObject](ctx, client.Resource(addonGVR).Namespace(namespace))
