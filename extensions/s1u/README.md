@@ -12,14 +12,17 @@ robot gets it when it joins; nobody logs in to the robot or its Orin.
 
 ## Interfaces with other components
 
-- **In use** — `/run/rlark/in-use/<component>` on the host, one file per component, holding the reason. This Addon
-  writes `s1u-robot` while the vendor driver runs or the motors are powered. It reads every other file as "the robot
-  is in use" (for example a Station attached to the device layer writes `fleet-station`) and then restarts nothing and
-  switches no payload. RLark's own host programs are replaced only while the directory is empty.
+- **In use** — `/run/rlark/in-use/<component>` on the host, one file per component, holding the reason, kept only
+  while that component is busy. The robot is in use while the directory holds any file, its own included: one
+  signal for every disruption, whoever asks. This Addon writes `s1u-robot` while the vendor driver runs or the motors
+  are powered (a Station attached to the device layer writes `fleet-station`); it restarts nothing and switches no
+  payload while any file is there. RLark's own host programs are replaced only while the directory is empty, and the
+  node agent reports it on the Node (annotation `rlark.io/in-use`) for what decides in the cluster.
 - **Node profile** — `/etc/rlark/s1u/node_profile.env` on the host (`S1U_*` variables): the device layer reads its
   CPUs and the robot's addresses from it, read-only.
-- **Camera reset** — the device layer writes `/run/rlark/s1u/camera-reset-request` (`{"id", "cameras"}`); each id is
-  done once while nothing marks the host in use, the result in `/run/rlark/s1u/camera-reset-result` and a Node Event.
+- **Camera reset** — the device layer writes `/run/rlark/s1u/camera-reset-request` (`{"id", "cameras"}`) when it may
+  (it knows whether a Station is attached); each id is done once, the result in `/run/rlark/s1u/camera-reset-result`
+  and a Node Event.
 - **Orin host key** — state in the Node's label `s1u.rlark.io/orin-state` and annotation `s1u.rlark.io/orin` (JSON).
   After the Orin's key changed, a person confirms the new one by setting the Node's annotation
   `s1u.rlark.io/orin-host-key-confirm` to the presented fingerprint.

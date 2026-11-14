@@ -179,8 +179,10 @@ def test_the_busy_check_reads_other_components_marks_and_not_its_own(tmp_path):
             tmp_path / "library.sh", " ".join(arguments))], capture_output=True, text=True).stdout.strip()
 
     assert busy("kubelet") == ""
+    # One signal: any mark, its own among them, whoever asks; "own" (what its own mark says) reads none.
     (tmp_path / "in-use/s1u-robot").write_text("astribot_driver runs\n")
-    assert busy("kubelet") == ""  # its own mark is said by its own check, not read back
+    assert busy("kubelet") == "s1u-robot: astribot_driver runs" and busy("kubelet", "own") == ""
+    (tmp_path / "in-use/s1u-robot").unlink()
     (tmp_path / "in-use/fleet-station").write_text("attached s1u_03\n")
     assert busy("kubelet") == "fleet-station: attached s1u_03" and busy("kubelet", "own") == ""
 
@@ -497,9 +499,11 @@ def test_payloads_are_placed_switched_when_the_host_is_free_and_removed_when_no_
     # The payload no longer declared goes, by its own removal first; the list on the Orin is the Addon's.
     assert "sudo sh -c '[ ! -x ~astribot/rl/old-thing/install ] || ~astribot/rl/old-thing/install remove'" in sent
     assert sent[-1] == "mkdir -p ~/rl && echo quest-bridge > ~/rl/.rlark-payloads"
-    # The robot's own mark (the vendor driver runs) does not hold a payload.
+    # Any mark holds a payload, the robot's own (the vendor driver runs) too; with none it is switched to.
     (tmp_path / "in-use/fleet-station").unlink()
     (tmp_path / "in-use/s1u-robot").write_text("astribot_driver runs\n")
+    assert robot.place("KEY", [], result).endswith("(s1u-robot: astribot_driver runs)")
+    (tmp_path / "in-use/s1u-robot").unlink()
     sent.clear()
     on["declared"] = "quest-bridge"
     assert robot.place("KEY", [], result) == ""
@@ -600,7 +604,7 @@ def test_removing_takes_back_what_the_orin_got_and_sends_nothing_to_one_never_tr
                         {"metadata": {"annotations": {orin.HOST_KEY: None, orin.TRUST: None, orin.SERIAL: None}}})]
 
 
-def test_the_orin_resets_the_cameras_usb_once_per_request_of_the_device_layer_and_never_while_in_use(tmp_path, monkeypatch):
+def test_the_orin_resets_the_cameras_usb_once_per_request_of_the_device_layer(tmp_path, monkeypatch):
     """s1u_01 11-13 22:40: the head camera's own stream wedged and no restart of the vendor's camera driver brought it
     back. The device layer asks through a file on the host; the reset is the Orin account's (the cameras' rule)."""
     robot = make_orin(tmp_path, monkeypatch)
@@ -612,11 +616,9 @@ def test_the_orin_resets_the_cameras_usb_once_per_request_of_the_device_layer_an
     robot.camera_pass()
     assert not sent  # no request
     (tmp_path / "camera-reset-request").write_text(json.dumps({"id": "a" * 32, "cameras": ["base_rgb"]}))
+    # The device layer asks only when it may (it knows whether a Station is attached): no mark is consulted.
     (tmp_path / "in-use").mkdir()
     (tmp_path / "in-use/fleet-station").write_text("attached\n")
-    robot.camera_pass()
-    assert not sent  # in use
-    (tmp_path / "in-use/fleet-station").unlink()
     robot.camera_pass()
     assert sent[0].startswith("python3 -c '") and sent[0].endswith("' 2bc5") and "sudo" not in sent[0]
     result = json.loads((tmp_path / "camera-reset-result").read_text())

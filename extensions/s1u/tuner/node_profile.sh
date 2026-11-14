@@ -14,9 +14,9 @@
 #       REBOOT where only a restart of the host makes it hold, KUBELET where a restart of kubelet does; exit 1
 #       unless all are ok.
 #   node_profile.sh facts     what this host is, for the node's specification (node_spec.py), one value a line.
-#   node_profile.sh busy host|kubelet [own]   why that restart must wait now (the vendor driver runs, the motors are
-#       on, or another component marks the host in use under /run/rlark/in-use), or nothing: exit 0 while it must
-#       wait. With "own", the robot's own reasons only.
+#   node_profile.sh busy host|kubelet [own]   why that restart must wait now (any component's mark under
+#       /run/rlark/in-use, this Addon's own among them; the vendor driver runs, the motors are on), or nothing: exit 0
+#       while it must wait. With "own", the robot's own reasons only (what this Addon's mark says).
 #   node_profile.sh in-use [reason]   this Addon's mark that the host is in use (/run/rlark/in-use/s1u-robot, the
 #       reason in it): written with a reason, removed without one.
 #   node_profile.sh restart-kubelet   restarts kubelet (its containers keep running) unless the vendor's driver runs.
@@ -354,10 +354,11 @@ in_use() {
 busy() {  # busy host|kubelet [own]: says why that restart must wait and returns 0, or says nothing and returns 1
   source "$PROFILE"
   exec 2> /dev/null  # what it says is the reason, and only that: a command's complaint is not one
-  # Another component's mark (a Station attached to the robot's device layer marks it, /run/rlark/in-use/<its name>).
+  # The host is in use while any component marks it (/run/rlark/in-use/<its name>: a Station attached to the robot's
+  # device layer, this Addon for the vendor driver), whoever asks: one signal for every disruption of the robot.
   local mark
   for mark in "${IN_USE%/*}"/*; do
-    [[ ${2:-} != own && -f $mark && $mark != "$IN_USE" ]] || continue
+    [[ ${2:-} != own && -f $mark ]] || continue
     echo "${mark##*/}: $(head -c 200 "$mark")"; return 0
   done
   if driver_runs; then echo "$S1U_VENDOR_DRIVER runs"; return 0; fi

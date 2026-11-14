@@ -11,12 +11,13 @@ DaemonSet 下发到带 `rlark.io/robot-model=s1u` 标签的节点。新机器入
 
 ## 和其他组件的接口
 
-- **在用标记**：宿主机上 `/run/rlark/in-use/<组件名>`，每个组件一个文件，内容是原因。本 Addon 在厂商驱动运行或电机带电时写
-  `s1u-robot`；别的文件一律视为“机器人在用”（比如设备层接着 Station 时写 `fleet-station`），这时不重启、不切换载荷。RLark
-  自己在宿主机上的程序只在这个目录为空时替换。
+- **在用标记**：宿主机上 `/run/rlark/in-use/<组件名>`，每个组件一个文件，内容是原因，只在这个组件真忙时留着。目录里有任何文件
+  （包括自己的）机器人就算在用：所有会打扰机器人的动作只看这一个信号，不分是谁问。本 Addon 在厂商驱动运行或电机带电时写
+  `s1u-robot`（设备层接着 Station 时写 `fleet-station`）；有任何文件时不重启、不切换载荷。RLark 自己在宿主机上的程序只在目录为空时替换，
+  节点 agent 把它报到节点注解 `rlark.io/in-use` 上，供集群里做判断的一方读。
 - **节点规格文件**：宿主机上 `/etc/rlark/s1u/node_profile.env`（`S1U_*` 变量），设备层只读它，得到自己的 CPU 和机器人地址。
-- **相机复位**：设备层写 `/run/rlark/s1u/camera-reset-request`（`{"id", "cameras"}`）；每个 id 在没有组件标着在用时做一次，
-  结果写到 `/run/rlark/s1u/camera-reset-result`，并在节点上记一条 Event。
+- **相机复位**：设备层在可以的时候（它知道有没有 Station 接着）写 `/run/rlark/s1u/camera-reset-request`（`{"id", "cameras"}`）；
+  每个 id 做一次，结果写到 `/run/rlark/s1u/camera-reset-result`，并在节点上记一条 Event。
 - **Orin 主机密钥**：状态在节点标签 `s1u.rlark.io/orin-state` 和注解 `s1u.rlark.io/orin`（JSON）。Orin 的密钥变了之后，由人把
   节点注解 `s1u.rlark.io/orin-host-key-confirm` 设成它现在出示的指纹来确认。
 - **Orin 载荷**：`orinPayloads: 名字=镜像,...`。每个镜像里有 `/payload`（以及 `/bin/sh` 和 `cp`）；其中可执行的 `install` 由

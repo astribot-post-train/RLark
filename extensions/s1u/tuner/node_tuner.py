@@ -8,9 +8,9 @@ the cluster the result, with no shell on the box:
   reboot-required, and annotation rlark.io/node-profile-report with the status lines that are not ok;
 - does a restart the profile needs by itself while the robot is idle (S1U_NODE_REBOOT "idle", the Addon's default):
   the whole robot (kernel command line, systemd's default affinity) through the vendor's restart while the vendor
-  driver does not run, its motors are off and no other component marks the host in use (/run/rlark/in-use: a
-  Station attached to the robot's device layer marks it there); kubelet alone (a new kubelet configuration of the
-  profile; the Pods keep running) while the driver does not run and nothing marks the host in use. While the robot is
+  driver does not run, its motors are off and nothing marks the host in use (/run/rlark/in-use: any component's
+  mark, a Station attached to the robot's device layer or this Addon's own); kubelet alone (a new kubelet
+  configuration of the profile; the Pods keep running) while the driver does not run and nothing marks the host in use. While the robot is
   in use it waits, as long as that takes, with the reason in the report. Once idle, each attempt is recorded on the
   Node (annotation rlark.io/node-profile-restart) with what the restart changes, the boot's identifier or kubelet's
   start: changed and the rules still do not hold, it is not repeated for this profile; unchanged five minutes later,

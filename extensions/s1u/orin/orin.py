@@ -10,8 +10,9 @@ declares:
   unit deletes the forwarding rules both of them hold;
 - the cameras' USB rule (their devices the account's), and on request a USB reset of the cameras as the Orin's
   account: the robot's device layer writes /run/rlark/s1u/camera-reset-request on the host ({"id", "cameras"}) when
-  it restarted the vendor's camera driver and still had no frames; each id is done once, while nothing marks the
-  host in use, and the result written to /run/rlark/s1u/camera-reset-result and as an Event on the Node;
+  it restarted the vendor's camera driver and still had no frames; each id is done once (the device layer asks only
+  when it may: it knows whether a Station is attached), the result written to /run/rlark/s1u/camera-reset-result and
+  as an Event on the Node;
 - a vendor process that must not run there (the profile's S1U_ORIN_STOPPED) ended at every pass, and the line that
   starts it in the vendor's start script (S1U_ORIN_STOPPED_LAUNCHER) commented out;
 - the site's adb key the headsets trust (the secret's adb_key, if it holds one) as ~/.android/adbkey_rlark;
@@ -20,8 +21,8 @@ declares:
   is the version). A payload's own script ``install`` places what only root can (its units, its USB rules) and
   starts it: run through sudo as ``install`` after a new version is unpacked, ``install restart`` when the link is
   switched to it, ``install remove`` when the payload is no longer declared. It finds the robot's addresses and the
-  account in rlark.env beside it. A new version is switched to only while nothing marks the host in use (a Station
-  attached to the device layer: a restart of a payload may end what it serves) and the robot's wave of the rollout
+  account in rlark.env beside it. A new version is switched to only while nothing marks the host in use (any mark: a
+  Station attached to the device layer, the vendor driver running; a restart of a payload may end what it serves) and the robot's wave of the rollout
   allows (/run/rlark/s1u/rollout, the node tuner's word).
 RLark depends on a payload's image reference only, never on what it is made of.
 
@@ -61,7 +62,6 @@ HERE = Path(__file__).resolve().parent
 ACCESS = "/orin-access"
 PAYLOADS = Path("/payloads")  # one directory per declared payload, filled by the init containers
 IN_USE = Path("/in-use")  # the host's /run/rlark/in-use
-OWN_MARK = "s1u-robot"  # the node tuner's own mark there (the vendor driver runs): not a reason to hold a payload
 # The trusted host key and serial as the Node last had them (public), on the robot's disk in a directory of root's:
 # this container runs as root without any capability and writes only what root owns (11-14: the robot's data
 # directory is the vendor account's, the write was refused and the pass ended there).
@@ -148,8 +148,9 @@ def verdict(known, presented):
 
 
 def in_use():
-    """Why the host is in use by another component now (its mark under /run/rlark/in-use), or ""."""
-    marks = sorted(path for path in IN_USE.glob("*") if path.name != OWN_MARK) if IN_USE.is_dir() else []
+    """Why the host is in use now (each component's mark under /run/rlark/in-use, this Addon's own for the vendor
+    driver among them), or "": while any mark is there, nothing of the robot is disrupted."""
+    marks = sorted(IN_USE.glob("*")) if IN_USE.is_dir() else []
     return "; ".join("%s: %s" % (path.name, path.read_text().strip()[:200]) for path in marks)
 
 
@@ -463,7 +464,7 @@ class Orin:
     def watch_cameras(self):
         """The device layer's request for a USB reset of the cameras (/run/rlark/s1u/camera-reset-request: id,
         cameras), when it restarted the vendor's camera driver and still had no frames (the camera's own stream
-        wedged: s1u_01 11-13 22:40). Each request once, while nothing marks the host in use; the result beside it."""
+        wedged: s1u_01 11-13 22:40). Each request once; the result beside it."""
         while True:
             time.sleep(WATCH_SECONDS)
             self.camera_pass()
@@ -474,7 +475,7 @@ class Orin:
             request = json.loads(Path(HOST + "/camera-reset-request").read_text())
         except (OSError, ValueError):  # none, or being written
             return
-        if request.get("id") == self.state.get("camera_reset", {}).get("id") or in_use():
+        if request.get("id") == self.state.get("camera_reset", {}).get("id"):
             return
         ok, detail = self.reset_cameras()
         done = dict(id=request["id"], done_at=time.time(), ok=ok, detail=detail)
