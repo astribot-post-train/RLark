@@ -2,6 +2,7 @@ package component
 
 import (
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/rlinf/rlark/apps/rlark/pkg/rlarkadm/constants"
@@ -534,4 +535,38 @@ func mapsEqual(got, want map[string]string) bool {
 		}
 	}
 	return true
+}
+
+func TestAgentWorkloadsForDeclaredNodeAgents(t *testing.T) {
+	cfg := &types.DeployConfig{Plane: types.PlaneData, Kubernetes: &types.KubernetesEnv{}}
+	for _, c := range ComponentsForPlane(cfg) {
+		switch c.Name {
+		case constants.ComponentAgent:
+			if got := Deployment(cfg, &c).Spec.Strategy.Type; got != appsv1.RecreateDeploymentStrategyType {
+				t.Errorf("cluster agent strategy = %q: two cluster agents at once would rewrite the node agent DaemonSet back and forth", got)
+			}
+		case constants.ComponentAgentNode:
+			ds := DaemonSet(cfg, &c)
+			if slices.ContainsFunc(ds.Spec.Template.Spec.Containers[0].Args, func(a string) bool { return strings.HasPrefix(a, "--containerd-socket") }) {
+				t.Error("without a configured socket the node agent takes its Node's")
+			}
+			mounts := ds.Spec.Template.Spec.Containers[0].VolumeMounts
+			if !slices.ContainsFunc(mounts, func(m corev1.VolumeMount) bool { return m.MountPath == "/host/run" && m.ReadOnly }) {
+				t.Errorf("mounts %+v lack the host /run at /host/run", mounts)
+			}
+		}
+	}
+	cfg.Kubernetes.ContainerdSocket = "/run/k3s/containerd/containerd.sock"
+	for _, c := range ComponentsForPlane(cfg) {
+		if c.Name != constants.ComponentAgentNode {
+			continue
+		}
+		ds := DaemonSet(cfg, &c)
+		if !slices.Contains(ds.Spec.Template.Spec.Containers[0].Args, "--containerd-socket=/run/k3s/containerd/containerd.sock") {
+			t.Error("a configured socket must be passed")
+		}
+		if !slices.ContainsFunc(ds.Spec.Template.Spec.Containers[0].VolumeMounts, func(m corev1.VolumeMount) bool { return m.MountPath == "/run/k3s/containerd" }) {
+			t.Error("a configured socket's directory must be mounted at its own path")
+		}
+	}
 }

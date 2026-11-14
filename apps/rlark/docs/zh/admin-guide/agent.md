@@ -100,6 +100,8 @@ curl -X PUT https://<gateway>/api/v1/clusters/<cluster-id>/node-agents \
 
 节点 Agent 从自己的 Node 获取容器运行时套接字：未指定 `--containerd-socket` 时，读取 `kubeadm.alpha.kubernetes.io/cri-socket` 注解（例如 `unix:///run/containerd-fleet/containerd.sock`），并经 `/host/run` 连接。因此一个 DaemonSet 可以服务不同运行时的 Node。没有该注解或套接字不在 `/run` 下的 Node，节点 Agent 照常运行但不做镜像预拉取，直到指定 `--containerd-socket`。
 
+`rlarkadm` 为集群 Agent 的 Deployment 设置 `strategy: Recreate`：滚动更新时新旧两个集群 Agent 同时运行，会各自用自己的 `--image` 反复改写 DaemonSet。其他方式创建的集群 Agent Deployment，在声明节点 Agent 之前也要设置同样的策略。
+
 Server 只允许每个集群 Agent 读取自己的 `Cluster`（`get`/`list`/`watch` 限定为与其 agent namespace 同名的 Cluster）。
 
 ### 验证清单

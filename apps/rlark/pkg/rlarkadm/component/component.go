@@ -1101,6 +1101,12 @@ func Deployment(cfg *types.DeployConfig, c *types.Component) *appsv1.Deployment 
 
 	dep.Spec.Template.Spec.NodeSelector = resolveComponentNodeSelector(cfg, c.Name)
 
+	// The cluster Agent rewrites what it renders from its own flags (the node Agent DaemonSet, Task
+	// sidecars). An old and a new one side by side during a rolling update would flip those back and forth.
+	if c.Name == constants.ComponentAgent {
+		dep.Spec.Strategy = appsv1.DeploymentStrategy{Type: appsv1.RecreateDeploymentStrategyType}
+	}
+
 	return dep
 }
 

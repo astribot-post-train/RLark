@@ -100,6 +100,8 @@ It also keeps the `rlark-agent-node` ServiceAccount, ClusterRole (get Nodes, lis
 
 The node Agent takes its container-runtime socket from its own Node: without `--containerd-socket`, it reads the `kubeadm.alpha.kubernetes.io/cri-socket` annotation (for example `unix:///run/containerd-fleet/containerd.sock`) and connects under `/host/run`. One DaemonSet therefore serves Nodes of different runtimes. A Node without the annotation, or with a socket outside `/run`, runs its node Agent without image pre-pull until `--containerd-socket` is given.
 
+`rlarkadm` gives the cluster Agent Deployment `strategy: Recreate`: an old and a new cluster Agent running side by side during a rolling update would each rewrite the DaemonSet with their own `--image`. Set the same strategy on a cluster Agent Deployment made by other means before declaring node Agents.
+
 The Server lets each cluster Agent read only its own `Cluster` (`get`/`list`/`watch` limited to the Cluster named like its agent namespace).
 
 ### Verification Checklist
