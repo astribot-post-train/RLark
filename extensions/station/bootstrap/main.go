@@ -202,6 +202,16 @@ func main() {
 	if err := os.WriteFile("/etc/rlark/station/ca.crt", ca, 0644); err != nil {
 		log.Fatal(err)
 	}
+	// Where the tunnel service asks for the machine's document from now on,
+	// with the machine's key and before any pod of it runs (station-gateway,
+	// document.go). The keeper in the node's pod keeps the same two files.
+	pointer, _ := json.Marshal(struct {
+		URL string `json:"url"`
+		CA  string `json:"ca"`
+	}{server, "ca.crt"})
+	if err := os.WriteFile("/etc/rlark/station/station-api.json", append(pointer, '\n'), 0644); err != nil {
+		log.Fatal(err)
+	}
 	settings := append(os.Environ(),
 		"PATH=/opt/rlark/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
 		"NODE_NAME="+granted.NodeName, "TUNNEL_ADDRESS="+granted.TunnelAddress, "TUNNEL_INTERFACE="+tunnel.Interface,

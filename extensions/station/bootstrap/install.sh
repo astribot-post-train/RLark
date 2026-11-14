@@ -6,6 +6,8 @@
 # Leaves on the machine:
 #   /opt/rlark/bin                      kubeadm, kubelet, kubectl, station-gateway
 #   rlark-station-gateway.service       the tunnel, started before the kubelet on every boot
+#   /etc/rlark/station                  bootstrap.json, the document the machine was admitted with; station-api.json and
+#                                       ca.crt, where the tunnel service asks for the document of now with the machine's key
 #   containerd-fleet.service            a containerd of its own for the kubelet (the machine's docker is not touched)
 #   kubelet.service                     reads drop-ins from /etc/kubernetes/kubelet.conf.d
 #   /etc/hosts                          the site's names, kept by the tunnel service (lines ending in "# rlark names")

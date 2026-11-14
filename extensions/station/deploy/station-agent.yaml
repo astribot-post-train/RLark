@@ -451,6 +451,19 @@ spec:
         - --hold-directory=/host/run/rlark/in-use
         - --unit-drop-in-directory=/host/etc/systemd/system/rlark-station-gateway.service.d
         - --observation-file=/var/run/station-observation/wireguard.json
+        # Also keeps on the machine where its service asks for the node's own
+        # document, with the node's key: a node whose pod is not running
+        # when its control plane moves learns the new address from there,
+        # and without it would not start a pod again.
+        - --station-api-directory=/host/etc/rlark/station
+        - --station-api-url=$(STATION_API_URL)
+        - --station-api-ca=/var/run/secrets/station-api-ca/ca.crt
+        env:
+        - name: STATION_API_URL
+          valueFrom:
+            configMapKeyRef:
+              name: station-agent
+              key: api-url
         readinessProbe:
           exec:
             command:
@@ -492,6 +505,11 @@ spec:
           readOnly: true
         - name: host-unit-drop-ins
           mountPath: /host/etc/systemd/system/rlark-station-gateway.service.d
+        - name: host-station
+          mountPath: /host/etc/rlark/station
+        - name: station-api-ca
+          mountPath: /var/run/secrets/station-api-ca
+          readOnly: true
         - name: wireguard-observation
           mountPath: /var/run/station-observation
           readOnly: true
@@ -508,6 +526,10 @@ spec:
         hostPath:
           path: /etc/systemd/system/rlark-station-gateway.service.d
           type: DirectoryOrCreate
+      - name: host-station
+        hostPath:
+          path: /etc/rlark/station
+          type: Directory
       - name: token
         projected:
           sources:
