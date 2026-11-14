@@ -32,6 +32,10 @@ spec:
     spec:
       serviceAccountName: station-agent
       automountServiceAccountToken: false
+      # Under disk pressure a kubelet turns away every Pod that is not
+      # critical and deletes the images nothing runs: the node's way to its
+      # site must not be among them.
+      priorityClassName: system-node-critical
       tolerations:
       - operator: Exists
       containers:
@@ -138,6 +142,10 @@ spec:
     spec:
       serviceAccountName: station-agent
       automountServiceAccountToken: false
+      # Under disk pressure a kubelet turns away every Pod that is not
+      # critical and deletes the images nothing runs: the node's way to its
+      # site must not be among them.
+      priorityClassName: system-node-critical
       tolerations:
       - operator: Exists
       containers:
@@ -349,6 +357,10 @@ spec:
       hostNetwork: true
       serviceAccountName: station-agent
       automountServiceAccountToken: false
+      # Under disk pressure a kubelet turns away every Pod that is not
+      # critical and deletes the images nothing runs: the node's way to its
+      # site must not be among them.
+      priorityClassName: system-node-critical
       tolerations:
       - operator: Exists
       containers:
