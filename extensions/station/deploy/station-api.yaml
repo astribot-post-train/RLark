@@ -24,10 +24,12 @@ spec:
       dnsPolicy: ClusterFirstWithHostNet
       nodeSelector:
         kubernetes.io/hostname: cailiang
+      # Critical, and tolerating whatever the node is tainted with: under
+      # disk pressure a kubelet turns away every other Pod, and one that is
+      # turned away loses its image.
+      priorityClassName: system-cluster-critical
       tolerations:
-      - key: node-role.kubernetes.io/control-plane
-        operator: Exists
-        effect: NoSchedule
+      - operator: Exists
       automountServiceAccountToken: false
       containers:
       - name: station-api
