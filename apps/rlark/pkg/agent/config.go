@@ -128,7 +128,7 @@ func DefaultConfig() Config {
 		KubeletDir:                 "",
 
 		ImagePullEnabled:    true,
-		ContainerdSocket:    "/run/containerd/containerd.sock",
+		ContainerdSocket:    "",
 		ContainerdNamespace: "k8s.io",
 		NodeName:            os.Getenv("NODE_NAME"),
 	}
@@ -162,7 +162,7 @@ func (c *Config) SetupFlags(fs *pflag.FlagSet) {
 
 	// Image pre-pull (node-agent).
 	fs.BoolVar(&c.ImagePullEnabled, "image-pull-enabled", c.ImagePullEnabled, "Pre-pull task images into the node container runtime (containerd/docker) when a task is dispatched")
-	fs.StringVar(&c.ContainerdSocket, "containerd-socket", c.ContainerdSocket, "containerd socket address used by ctr for image pulling (Kubernetes agent type)")
+	fs.StringVar(&c.ContainerdSocket, "containerd-socket", c.ContainerdSocket, "containerd socket used for image pulling (Kubernetes agent type); empty takes the socket the Node records in kubeadm.alpha.kubernetes.io/cri-socket, under the host /run mounted at /host/run")
 	fs.StringVar(&c.ContainerdNamespace, "containerd-namespace", c.ContainerdNamespace, "containerd namespace used by ctr for image pulling (Kubernetes agent type, default k8s.io)")
 	fs.StringVar(&c.NodeName, "node-name", c.NodeName, "Name of the local node, used for Kubernetes node-selector matching (defaults to $NODE_NAME)")
 }

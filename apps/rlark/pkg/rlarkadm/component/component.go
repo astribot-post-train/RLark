@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strconv"
 
+	"github.com/rlinf/rlark/apps/rlark/pkg/agent/controllers/nodeagent"
 	"github.com/rlinf/rlark/apps/rlark/pkg/log"
 	"github.com/rlinf/rlark/apps/rlark/pkg/rlarkadm/constants"
 	"github.com/rlinf/rlark/apps/rlark/pkg/rlarkadm/health"
@@ -711,27 +712,41 @@ var components = []types.Component{
 				Name:      "nodeserver-socket",
 				MountPath: "/var/run/rlark",
 			})
-			// Mount the host containerd socket so the node-agent can invoke
-			// `ctr` to pre-pull images for Kubernetes/containerd nodes.
-			// When a custom socket path is configured (e.g. k3s uses
-			// /run/k3s/containerd/containerd.sock), mount its parent
-			// directory instead of the default /run/containerd.
-			socketHostDir := "/run/containerd"
+			// Without a configured socket the node Agent takes the one its Node records
+			// (kubeadm.alpha.kubernetes.io/cri-socket) under the host /run, as the node Agent
+			// DaemonSet a cluster Agent keeps does. A configured socket (e.g. k3s's
+			// /run/k3s/containerd/containerd.sock) is mounted at its own path.
 			if cfg.Kubernetes != nil && cfg.Kubernetes.ContainerdSocket != "" {
-				socketHostDir = filepath.Dir(cfg.Kubernetes.ContainerdSocket)
+				socketHostDir := filepath.Dir(cfg.Kubernetes.ContainerdSocket)
+				vols = append(vols, corev1.Volume{
+					Name: "containerd-socket",
+					VolumeSource: corev1.VolumeSource{
+						HostPath: &corev1.HostPathVolumeSource{
+							Path: socketHostDir,
+							Type: &[]corev1.HostPathType{corev1.HostPathDirectoryOrCreate}[0],
+						},
+					},
+				})
+				mounts = append(mounts, corev1.VolumeMount{
+					Name:      "containerd-socket",
+					MountPath: socketHostDir,
+				})
+				return vols, mounts
 			}
 			vols = append(vols, corev1.Volume{
-				Name: "containerd-socket",
+				Name: "host-run",
 				VolumeSource: corev1.VolumeSource{
 					HostPath: &corev1.HostPathVolumeSource{
-						Path: socketHostDir,
-						Type: &[]corev1.HostPathType{corev1.HostPathDirectoryOrCreate}[0],
+						Path: "/run",
+						Type: &[]corev1.HostPathType{corev1.HostPathDirectory}[0],
 					},
 				},
 			})
 			mounts = append(mounts, corev1.VolumeMount{
-				Name:      "containerd-socket",
-				MountPath: socketHostDir,
+				Name:             "host-run",
+				MountPath:        nodeagent.HostRun,
+				ReadOnly:         true,
+				MountPropagation: &[]corev1.MountPropagationMode{corev1.MountPropagationHostToContainer}[0],
 			})
 			return vols, mounts
 		},

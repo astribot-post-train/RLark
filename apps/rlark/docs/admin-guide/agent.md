@@ -76,6 +76,32 @@ A registered Node without its dedicated Lease is marked `Offline` with `NodeAgen
 
 The Nodes and Clusters views display the connection state, the node Lease-derived last heartbeat, and the last connection-state transition time. Agents renew heartbeat Leases every 15 seconds, and the default Lease duration is 45 seconds; a Node is marked `Offline` when its node Lease expires. The cluster detail view keeps every cluster Node visible, including offline and non-worker Nodes; an information control next to an offline status shows the last online time.
 
+### Node Agents Declared on the Cluster
+
+A cluster can declare its node Agents on its management-plane `Cluster` object instead of creating a node Agent workload per Node. With the declaration, the cluster Agent keeps one DaemonSet, `rlark-agent-node` in its own namespace, and every Kubernetes Node that joins later and matches the selector gets its node Agent with no further action. One administrator request sets it through the Gateway:
+
+```bash
+curl -X PUT https://<gateway>/api/v1/clusters/<cluster-id>/node-agents \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"enabled": true}'
+```
+
+`nodeSelector` is optional and defaults to `{"rlark.io/enabled": "true"}`, the label that makes RLark manage a Node; an empty selector is rejected. `{"enabled": false}` makes the cluster Agent delete the DaemonSet. A Cluster without `spec.nodeAgents` leaves node Agents to whoever installed them (rlarkadm or hand-made workloads).
+
+The cluster Agent renders the DaemonSet from itself, so node Agents connect exactly as it does:
+
+- image: the cluster Agent's `--image` (required; the agents of one cluster run one image). Restarting the cluster Agent with a new `--image` rolls the node Agents;
+- `--server-address`, `--server-hostname`, `--ca-cert`, `--client-cert`, `--client-key`, `--insecure-skip-tls-verify` and `--rlark-server-ssh-host-key` as the cluster Agent has them; `--rlark-server-ssh-address` is the cluster Agent's, or `client@<server host>:2222`;
+- the volumes holding those certificate files, `hostAliases` and `imagePullSecrets` copied from the cluster Agent's own Pod (found through its `POD_NAME`/`POD_NAMESPACE` downward-API variables);
+- `priorityClassName: system-node-critical`, `hostPID`, privileged, readiness `/readyz` on 8081, the `/var/run/rlark` node-server socket directory, and the host `/run` read-only at `/host/run`;
+- tolerations for control-plane Nodes, `not-ready`/`unreachable` (without expiry), disk/memory/PID pressure, `unschedulable`, and the `rlark.io/node-category` taint. There is no blanket toleration: an out-of-service Node loses its node Agent.
+
+It also keeps the `rlark-agent-node` ServiceAccount, ClusterRole (get Nodes, list/watch events) and ClusterRoleBinding. Every object it creates carries `app.kubernetes.io/managed-by=rlark-agent`. An object of the same name without that label (for example the DaemonSet `rlarkadm` installs) is never changed or deleted; the cluster Agent logs the conflict and retries. Label the existing object to hand it over: the cluster Agent then rewrites it into the declared form, a rolling update of the node Agents.
+
+The node Agent takes its container-runtime socket from its own Node: without `--containerd-socket`, it reads the `kubeadm.alpha.kubernetes.io/cri-socket` annotation (for example `unix:///run/containerd-fleet/containerd.sock`) and connects under `/host/run`. One DaemonSet therefore serves Nodes of different runtimes. A Node without the annotation, or with a socket outside `/run`, runs its node Agent without image pre-pull until `--containerd-socket` is given.
+
+The Server lets each cluster Agent read only its own `Cluster` (`get`/`list`/`watch` limited to the Cluster named like its agent namespace).
+
 ### Verification Checklist
 
 | Check | Expected Result |
@@ -126,7 +152,7 @@ A legacy cluster that has not reconnected is not guessed or synthesized. Keep it
 | `--leader-election` | `false` | Leader election; `rlarkadm` enables it for the cluster Agent when replicas require it |
 | `--task-runtime-resync-period` | `15m` | Base period for the bounded cluster-mode Task Runtime repair scan; intervals use 80–120% jitter, `0` disables it, and negative values are invalid in `cluster`/`both` mode; node-only mode accepts the shared flag but does not run the scanner |
 | `--enable-cross-cluster-direct` | `true` | Permit direct cross-cluster Pod routes |
-| `--containerd-socket` | `/run/containerd/containerd.sock` | Node Agent containerd socket |
+| `--containerd-socket` | `""` | Node Agent containerd socket; empty takes the Node's `kubeadm.alpha.kubernetes.io/cri-socket` annotation under the host `/run` mounted at `/host/run` |
 
 See [Configuration Reference](../reference/configuration.md#rlark-agent) for the complete list.
 

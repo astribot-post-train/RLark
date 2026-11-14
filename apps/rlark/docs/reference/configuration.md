@@ -177,7 +177,7 @@ Data plane agent. Deployed on each cluster or node. Manages node registration, T
 | `--enable-cross-cluster-direct` | bool | `true` | Enable cross-cluster direct Pod access |
 | `--kubelet-dir` | string | `""` | Kubelet directory for pod UID discovery |
 | `--image-pull-enabled` | bool | `true` | Enable image pre-pull |
-| `--containerd-socket` | string | `/run/containerd/containerd.sock` | Containerd socket path |
+| `--containerd-socket` | string | `""` | Containerd socket path; empty takes the Node's `kubeadm.alpha.kubernetes.io/cri-socket` annotation, reached under `/host/run` |
 | `--containerd-namespace` | string | `k8s.io` | Containerd namespace |
 | `--node-name` | string | `$NODE_NAME` | Local node name |
 | `--nodeserver-unix-socket` | string | `/var/run/rlark/nodeserver.sock` | NodeServer Unix socket path |
@@ -336,7 +336,7 @@ These names are the exact YAML keys accepted by `rlarkadm`.
 | `kcp` | ComponentConfig | unset | kcp component config. kcp is currently limited to one replica. Without `etcd`, it uses a StatefulSet and supports persistent storage; with deployed or external etcd, it uses a Deployment |
 | `etcd` | EtcdConfig | unset | etcd component config. An empty `address` deploys etcd; a non-empty value selects external etcd |
 | `postgresql` | ComponentConfig | unset | PostgreSQL component config |
-| `containerd-socket` | string | `/run/containerd/containerd.sock` | Node Agent containerd socket path |
+| `containerd-socket` | string | `""` | Node Agent containerd socket path; when unset the node Agent mounts the host `/run` at `/host/run` and takes the socket its Node records |
 
 !!! tip "Image priority"
     A component-specific image such as `gateway-image` takes priority over `image`.
