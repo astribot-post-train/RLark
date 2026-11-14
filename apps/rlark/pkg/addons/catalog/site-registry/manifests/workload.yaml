@@ -47,6 +47,21 @@ spec:
         - {key: node.kubernetes.io/memory-pressure, operator: Exists, effect: NoSchedule}
         - {key: node.kubernetes.io/pid-pressure, operator: Exists, effect: NoSchedule}
 {{- end }}
+{{- if eq .Values.role "cache" }}
+      initContainers:
+        # The cache directory must be a volume of its own (the installer's node volume), not a directory on the
+        # disk the node itself runs on: compare the device of the two mounts.
+        - name: volume
+          image: {{ .Values.image }}
+          imagePullPolicy: IfNotPresent
+          command: [sh, -c, 'cache=$(awk ''$5 == "/var/lib/registry" {print $3}'' /proc/self/mountinfo); parent=$(awk ''$5 == "/run/parent" {print $3}'' /proc/self/mountinfo); [ -n "$cache" ] && [ "$cache" != "$parent" ] || { echo "{{ .Values.cacheDir }} is not a volume of its own (device $cache, same as its parent); declare it as a node volume"; exit 1; }']
+          volumeMounts:
+            - name: cache
+              mountPath: /var/lib/registry
+            - name: cache-parent
+              mountPath: /run/parent
+              readOnly: true
+{{- end }}
       containers:
         - name: registry
           image: {{ .Values.image }}
@@ -116,6 +131,10 @@ spec:
         - name: cache
           hostPath:
             path: {{ .Values.cacheDir }}
+            type: Directory
+        - name: cache-parent
+          hostPath:
+            path: /var/lib
             type: Directory
 {{- end }}
 {{- if ne .Values.role "mirror" }}
