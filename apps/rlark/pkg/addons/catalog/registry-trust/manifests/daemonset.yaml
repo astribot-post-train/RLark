@@ -24,6 +24,8 @@ spec:
     spec:
       serviceAccountName: registry-trust
       hostPID: true
+      # Not evicted under disk pressure, so its image is not collected and pulled again from a slow registry.
+      priorityClassName: system-node-critical
       tolerations:
         - operator: Exists
       affinity:

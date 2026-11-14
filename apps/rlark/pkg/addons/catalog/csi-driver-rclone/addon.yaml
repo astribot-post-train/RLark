@@ -1,7 +1,7 @@
 name: csi-driver-rclone
 displayName: RClone CSI 驱动
 category: storage
-version: v0.2.0
+version: v0.2.1
 description: |
   RClone CSI 驱动，支持通过 RClone 挂载远程存储（S3、GCS、Azure Blob 等）到 Pod。
   包含 controller 与 node DaemonSet，提供动态 PV 配置能力。

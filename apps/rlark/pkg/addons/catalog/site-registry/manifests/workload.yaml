@@ -42,6 +42,10 @@ spec:
         - key: node-role.kubernetes.io/control-plane
           operator: Exists
           effect: NoSchedule
+        # A node under disk or memory pressure keeps the Pod (with its critical priority it is not evicted)
+        - {key: node.kubernetes.io/disk-pressure, operator: Exists, effect: NoSchedule}
+        - {key: node.kubernetes.io/memory-pressure, operator: Exists, effect: NoSchedule}
+        - {key: node.kubernetes.io/pid-pressure, operator: Exists, effect: NoSchedule}
 {{- end }}
       containers:
         - name: registry
@@ -107,10 +111,12 @@ spec:
             name: {{ .AddonName }}
             defaultMode: 0755
 {{- if eq .Values.role "cache" }}
+        # A volume of its own, mounted on the node beforehand: a cache filling the node's root disk would put
+        # the node under disk pressure, have its Pods evicted and their images collected.
         - name: cache
           hostPath:
             path: {{ .Values.cacheDir }}
-            type: DirectoryOrCreate
+            type: Directory
 {{- end }}
 {{- if ne .Values.role "mirror" }}
         - name: credentials
