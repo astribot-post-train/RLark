@@ -89,10 +89,10 @@ func TestSiteRegistryRendersBothRoles(t *testing.T) {
 	for _, e := range spec.Containers[0].Env {
 		env[e.Name] = true
 	}
-	if deployment.Kind != "Deployment" || spec.NodeSelector["rlark.io/site-registry"] != "true" || len(spec.Volumes) != 3 ||
+	if deployment.Kind != "Deployment" || spec.NodeSelector["rlark.io/site-registry"] != "true" || len(spec.Volumes) != 4 || len(spec.InitContainers) != 1 || spec.Volumes[2].HostPath.Path != "/var/lib" ||
 		spec.Volumes[1].HostPath == nil || spec.Volumes[1].HostPath.Path != "/var/lib/rlark/site-cache" ||
 		env["REGISTRY_PROXY_USERNAME"] || !env["HTTPS_PROXY"] || !env["SSL_CERT_FILE"] || !env["GODEBUG"] || env["REGISTRY_STORAGE_S3_ACCESSKEY"] ||
-		len(spec.Containers) != 2 || spec.Containers[1].Image != "rlark@sha256:y" || len(spec.Volumes[2].Secret.Items) != 5 {
+		len(spec.Containers) != 2 || spec.Containers[1].Image != "rlark@sha256:y" || len(spec.Volumes[3].Secret.Items) != 5 {
 		t.Fatalf("cache workload:\n%s", m[2].Raw)
 	}
 }
