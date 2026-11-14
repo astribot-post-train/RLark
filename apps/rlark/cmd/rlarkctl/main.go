@@ -20,6 +20,8 @@ func main() {
 	cmd.AddCommand(rlarkctl.RevokeCommand())
 	cmd.AddCommand(rlarkctl.ProxyCurlCommand())
 	cmd.AddCommand(rlarkctl.ReleaseCommand())
+	cmd.AddCommand(rlarkctl.RegistryCommand())
+	cmd.AddCommand(rlarkctl.ImageCommand())
 	rlarkctl.SetupPersistentFlags(cmd.PersistentFlags())
 
 	if err := cmd.Execute(); err != nil {
