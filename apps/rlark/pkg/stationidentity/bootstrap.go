@@ -386,8 +386,9 @@ func (b *Bootstrap) Redeem(ctx context.Context, code, publicKey string) (Bootstr
 	// management Node already, with the labels declared for it before: the
 	// agent would put those back over what this admission declares.
 	patch, _ := json.Marshal(map[string]any{"metadata": map[string]any{"labels": labels}})
-	if _, err := b.Management.Resource(rlarkNodeGVR).Namespace(clusterID).Patch(ctx, admission.GetName(), types.MergePatchType, patch, metav1.PatchOptions{}); err != nil && !apierrors.IsNotFound(err) {
-		return BootstrapAnswer{}, 0, fmt.Errorf("declare the labels on management Node %s/%s: %w", clusterID, admission.GetName(), err)
+	// The admission stands in the cluster's agent namespace, where its management Nodes are.
+	if _, err := b.Management.Resource(rlarkNodeGVR).Namespace(admission.GetNamespace()).Patch(ctx, admission.GetName(), types.MergePatchType, patch, metav1.PatchOptions{}); err != nil && !apierrors.IsNotFound(err) {
+		return BootstrapAnswer{}, 0, fmt.Errorf("declare the labels on management Node %s/%s: %w", admission.GetNamespace(), admission.GetName(), err)
 	}
 	pairs := make([]string, 0, len(labels))
 	for key, value := range labels {
