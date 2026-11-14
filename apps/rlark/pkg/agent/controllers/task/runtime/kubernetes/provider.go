@@ -340,13 +340,40 @@ func (p *Provider) ListInstances(ctx context.Context, query agentruntime.Instanc
 		if err != nil {
 			return agentruntime.InstanceSnapshot{}, err
 		}
+		// A DaemonSet Pod's node readiness tells an instance that is down from one
+		// whose node is: a per-node Task does not wait for nodes that are switched
+		// off. A node that no longer exists counts as not ready. Other carriers'
+		// Pods are rescheduled off such nodes, so their nodes are not read.
+		notReady := map[string]bool{}
+		_, perNode := object.(*appsv1.DaemonSet)
+		for i := range pods {
+			name := pods[i].Spec.NodeName
+			if _, seen := notReady[name]; seen || name == "" || !perNode {
+				continue
+			}
+			var node corev1.Node
+			if err := p.client.Get(ctx, types.NamespacedName{Name: name}, &node); err != nil {
+				if !apierrors.IsNotFound(err) {
+					return agentruntime.InstanceSnapshot{}, fault.Wrap(fault.Internal, "get instance node", err)
+				}
+				notReady[name] = true
+				continue
+			}
+			objectsForRevision = append(objectsForRevision, &node)
+			notReady[name] = true
+			for _, condition := range node.Status.Conditions {
+				if condition.Type == corev1.NodeReady && condition.Status == corev1.ConditionTrue {
+					notReady[name] = false
+				}
+			}
+		}
 		for i := range pods {
 			pod := &pods[i]
 			objectsForRevision = append(objectsForRevision, pod)
 			for j := range events[pod.Name] {
 				objectsForRevision = append(objectsForRevision, &events[pod.Name][j])
 			}
-			instances = append(instances, podInstance(p.id, query.Task, parent, pod, events[pod.Name]))
+			instances = append(instances, podInstance(p.id, query.Task, parent, pod, events[pod.Name], notReady[pod.Spec.NodeName]))
 		}
 	}
 	// 4. Return deterministic instances and a revision derived from all observed
@@ -1344,10 +1371,18 @@ func (p *Provider) podEvents(ctx context.Context, namespace string, pods []corev
 	return result, nil
 }
 
-func podInstance(runtimeID agentruntime.ID, task agentruntime.TaskIdentity, parent agentruntime.ObjectRef, pod *corev1.Pod, events []corev1.Event) agentruntime.Instance {
+func podInstance(runtimeID agentruntime.ID, task agentruntime.TaskIdentity, parent agentruntime.ObjectRef, pod *corev1.Pod, events []corev1.Event, nodeNotReady bool) agentruntime.Instance {
 	conditions := make([]agentruntime.InstanceCondition, 0)
 	if pod.Spec.NodeName != "" {
 		conditions = append(conditions, agentruntime.InstanceCondition{Source: "kubernetes", Scope: "node", Subject: pod.Spec.NodeName})
+	}
+	if nodeNotReady {
+		conditions = append(conditions, agentruntime.InstanceCondition{Source: "kubernetes", Scope: "node", Subject: pod.Spec.NodeName, Reason: "NotReady"})
+	}
+	// The DaemonSet controller labels each Pod with the template generation it
+	// was made from, which tells an updated instance from an old one.
+	if generation, found := pod.Labels["pod-template-generation"]; found {
+		conditions = append(conditions, agentruntime.InstanceCondition{Source: "kubernetes", Scope: "revision", Subject: pod.Name, Message: generation})
 	}
 	for _, status := range pod.Status.ContainerStatuses {
 		if waiting := status.State.Waiting; waiting != nil {
@@ -1361,8 +1396,9 @@ func podInstance(runtimeID agentruntime.ID, task agentruntime.TaskIdentity, pare
 		conditions = append(conditions, agentruntime.InstanceCondition{Source: "kubernetes", Scope: "instance", Subject: pod.Name, Reason: event.Reason, Message: event.Message})
 	}
 	// Readiness and the containers' images are what a per-node Task reports for
-	// each instance. Like the node above, they travel as conditions, so the
-	// runtime-neutral Instance and its transport need no Kubernetes fields.
+	// each instance. Like the node and the revision above, they travel as
+	// conditions, so the runtime-neutral Instance and its transport need no
+	// Kubernetes fields.
 	for _, condition := range pod.Status.Conditions {
 		if condition.Type == corev1.PodReady && condition.Status == corev1.ConditionTrue {
 			conditions = append(conditions, agentruntime.InstanceCondition{Source: "kubernetes", Scope: "instance", Subject: pod.Name, Reason: "Ready"})

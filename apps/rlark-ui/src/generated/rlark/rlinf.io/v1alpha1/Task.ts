@@ -7142,10 +7142,13 @@ export interface ITask {
     /**
      * Instances lists a per-node Task's instances, sorted by node, as the
      * data-plane Agent last observed them. It is empty for other Tasks and
-     * while the Task is stopped. A per-node Task is Running when every instance
-     * is Running; an instance that is Pending or Failed keeps the Task Pending
-     * and never fails it, so nodes joining, leaving or going down never fail
-     * the Job.
+     * while the Task is stopped. Only instances on Ready nodes count toward the
+     * Task's phase: it is Running when each of them runs the current version
+     * and is ready, and Pending while one is being updated, started or keeps
+     * failing. An instance on a node that is not Ready (switched off, or still
+     * joining) is listed with the message "node not ready" and does not hold
+     * the Task back. No instance ever fails the Task, so nodes joining,
+     * leaving or going down never fail the Job.
      */
     "instances"?: Array<{
       /**

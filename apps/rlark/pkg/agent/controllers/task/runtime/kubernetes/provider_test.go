@@ -405,24 +405,40 @@ func TestProviderListInstancesProjectsContainerFailuresAndSchedulingEvents(t *te
 func TestProviderListInstancesProjectsDaemonSetPodNodeReadinessAndImages(t *testing.T) {
 	scheme := testScheme(t)
 	daemonSet := &appsv1.DaemonSet{ObjectMeta: metav1.ObjectMeta{Name: "task", Namespace: "runtime", UID: "daemonset-uid", Annotations: managementAnnotations("task-uid")}, Spec: appsv1.DaemonSetSpec{Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": "task"}}}}
-	pod := &corev1.Pod{
-		ObjectMeta: metav1.ObjectMeta{Name: "task-x1", Namespace: "runtime", UID: "pod-uid", Labels: map[string]string{"app": "task"}, OwnerReferences: []metav1.OwnerReference{{Kind: "DaemonSet", Name: daemonSet.Name, UID: daemonSet.UID, Controller: ptr(true)}}},
-		Spec:       corev1.PodSpec{NodeName: "robot-a", Containers: []corev1.Container{{Name: "main", Image: "station:v2"}, {Name: "sshd", Image: "tools:v1"}}},
-		Status:     corev1.PodStatus{Phase: corev1.PodRunning, Conditions: []corev1.PodCondition{{Type: corev1.PodScheduled, Status: corev1.ConditionTrue}, {Type: corev1.PodReady, Status: corev1.ConditionTrue}}},
+	pod := func(name, node string) *corev1.Pod {
+		return &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "runtime", UID: types.UID(name), Labels: map[string]string{"app": "task", "pod-template-generation": "4"}, OwnerReferences: []metav1.OwnerReference{{Kind: "DaemonSet", Name: daemonSet.Name, UID: daemonSet.UID, Controller: ptr(true)}}},
+			Spec:       corev1.PodSpec{NodeName: node, Containers: []corev1.Container{{Name: "main", Image: "station:v2"}, {Name: "sshd", Image: "tools:v1"}}},
+			Status:     corev1.PodStatus{Phase: corev1.PodRunning, Conditions: []corev1.PodCondition{{Type: corev1.PodScheduled, Status: corev1.ConditionTrue}, {Type: corev1.PodReady, Status: corev1.ConditionTrue}}},
+		}
 	}
-	provider := testProvider(scheme, daemonSet, pod)
+	ready := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "robot-a"}, Status: corev1.NodeStatus{Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionTrue}}}}
+	off := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "robot-b"}, Status: corev1.NodeStatus{Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionUnknown}}}}
+	// robot-c's Node no longer exists.
+	provider := testProvider(scheme, daemonSet, ready, off, pod("task-a", "robot-a"), pod("task-b", "robot-b"), pod("task-c", "robot-c"))
 	snapshot, err := provider.ListInstances(context.Background(), agentruntime.InstanceQuery{Task: taskIdentity(), Workloads: []agentruntime.ObjectRef{objectRefFor(daemonSet, "apps/v1, Kind=DaemonSet")}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []agentruntime.InstanceCondition{
-		{Source: "kubernetes", Scope: "image", Subject: "main", Message: "station:v2"},
-		{Source: "kubernetes", Scope: "image", Subject: "sshd", Message: "tools:v1"},
-		{Source: "kubernetes", Scope: "instance", Subject: "task-x1", Reason: "Ready"},
-		{Source: "kubernetes", Scope: "node", Subject: "robot-a"},
+	conditions := func(name, node string, nodeReady bool) []agentruntime.InstanceCondition {
+		result := []agentruntime.InstanceCondition{
+			{Source: "kubernetes", Scope: "image", Subject: "main", Message: "station:v2"},
+			{Source: "kubernetes", Scope: "image", Subject: "sshd", Message: "tools:v1"},
+			{Source: "kubernetes", Scope: "instance", Subject: name, Reason: "Ready"},
+			{Source: "kubernetes", Scope: "node", Subject: node},
+		}
+		if !nodeReady {
+			result = append(result, agentruntime.InstanceCondition{Source: "kubernetes", Scope: "node", Subject: node, Reason: "NotReady"})
+		}
+		return append(result, agentruntime.InstanceCondition{Source: "kubernetes", Scope: "revision", Subject: name, Message: "4"})
 	}
-	if len(snapshot.Instances) != 1 || !reflect.DeepEqual(snapshot.Instances[0].Conditions, want) {
+	if len(snapshot.Instances) != 3 {
 		t.Fatalf("instances=%#v", snapshot.Instances)
+	}
+	for i, want := range [][]agentruntime.InstanceCondition{conditions("task-a", "robot-a", true), conditions("task-b", "robot-b", false), conditions("task-c", "robot-c", false)} {
+		if !reflect.DeepEqual(snapshot.Instances[i].Conditions, want) {
+			t.Fatalf("instance %d conditions=%#v, want %#v", i, snapshot.Instances[i].Conditions, want)
+		}
 	}
 }
 

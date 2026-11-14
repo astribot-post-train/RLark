@@ -553,19 +553,66 @@ func TestRayKubernetesAdapterObserveUsesProjectedContainerNameAndFailedSchedulin
 	}
 }
 
-func TestObservePerNodeTaskFailingInstanceKeepsTaskPending(t *testing.T) {
-	object := &appsv1.DaemonSet{ObjectMeta: metav1.ObjectMeta{Generation: 2}, Status: appsv1.DaemonSetStatus{ObservedGeneration: 2, DesiredNumberScheduled: 3, UpdatedNumberScheduled: 3, NumberReady: 2, NumberAvailable: 2, NumberUnavailable: 1}}
-	manifest, _ := json.Marshal(object)
-	instances := agentruntime.InstanceSnapshot{Instances: []agentruntime.Instance{
-		{Name: "task-a", Phase: "Running", Conditions: []agentruntime.InstanceCondition{{Scope: "node", Subject: "robot-a"}, {Scope: "instance", Subject: "task-a", Reason: "Ready"}}},
-		{Name: "task-b", Phase: "Running", Conditions: []agentruntime.InstanceCondition{{Scope: "container", Subject: "main", Reason: "CrashLoopBackOff"}, {Scope: "node", Subject: "robot-b"}}},
-	}}
-	phase, message, err := kubernetesworkload.ObserveObject(kubernetesworkload.CarrierDaemonSet, manifest, instances)
-	if err != nil {
-		t.Fatal(err)
+// daemonSetInstance is a per-node instance as the Kubernetes provider reports
+// it: its node, whether that node is Ready, the template generation its Pod was
+// made from, whether it is ready, and a container waiting reason.
+func daemonSetInstance(node string, nodeReady bool, generation string, ready bool, waiting string) agentruntime.Instance {
+	name := "task-" + node
+	conditions := []agentruntime.InstanceCondition{{Scope: "node", Subject: node}, {Scope: "revision", Subject: name, Message: generation}}
+	if !nodeReady {
+		conditions = append(conditions, agentruntime.InstanceCondition{Scope: "node", Subject: node, Reason: "NotReady"})
 	}
-	if phase != rlarkv1alpha1.TaskPhasePending || message != "pod task-b container main: CrashLoopBackOff" {
-		t.Fatalf("got (%q,%q)", phase, message)
+	if ready {
+		conditions = append(conditions, agentruntime.InstanceCondition{Scope: "instance", Subject: name, Reason: "Ready"})
+	}
+	if waiting != "" {
+		conditions = append(conditions, agentruntime.InstanceCondition{Scope: "container", Subject: "main", Reason: waiting})
+	}
+	return agentruntime.Instance{Name: name, Phase: "Running", Conditions: conditions}
+}
+
+func TestObservePerNodeTaskCountsOnlyInstancesOnReadyNodes(t *testing.T) {
+	current := func(node string) agentruntime.Instance { return daemonSetInstance(node, true, "2", true, "") }
+	tests := []struct {
+		name       string
+		generation int64
+		instances  []agentruntime.Instance
+		phase      rlarkv1alpha1.TaskPhase
+		message    string
+	}{
+		{name: "every ready node runs the current version", instances: []agentruntime.Instance{current("a"), current("b")}, phase: rlarkv1alpha1.TaskPhaseRunning},
+		{name: "spec change not yet seen by the DaemonSet", generation: 3, instances: []agentruntime.Instance{current("a")}, phase: rlarkv1alpha1.TaskPhasePending},
+		{name: "node switched off", instances: []agentruntime.Instance{current("a"), daemonSetInstance("b", false, "2", false, "")},
+			phase: rlarkv1alpha1.TaskPhaseRunning, message: "1 of 2 instances on nodes that are not ready"},
+		{name: "ready node crash-looping", instances: []agentruntime.Instance{current("a"), daemonSetInstance("b", true, "2", false, "CrashLoopBackOff")},
+			phase: rlarkv1alpha1.TaskPhasePending, message: "pod task-b container main: CrashLoopBackOff"},
+		{name: "joining node not yet ready", instances: []agentruntime.Instance{current("a"), daemonSetInstance("c", false, "2", false, "ContainerCreating")},
+			phase: rlarkv1alpha1.TaskPhaseRunning, message: "1 of 2 instances on nodes that are not ready"},
+		{name: "joining ready node pulling its image", instances: []agentruntime.Instance{current("a"), current("b"), daemonSetInstance("c", true, "2", false, "ContainerCreating")},
+			phase: rlarkv1alpha1.TaskPhasePending, message: "2 of 3 instances on ready nodes updated and available"},
+		{name: "update rolling out", instances: []agentruntime.Instance{current("a"), daemonSetInstance("b", true, "1", true, "")},
+			phase: rlarkv1alpha1.TaskPhasePending, message: "1 of 2 instances on ready nodes updated and available"},
+		{name: "crash-looping instance on a node switched off", instances: []agentruntime.Instance{current("a"), daemonSetInstance("b", false, "2", false, "CrashLoopBackOff")},
+			phase: rlarkv1alpha1.TaskPhaseRunning, message: "1 of 2 instances on nodes that are not ready"},
+		{name: "no node in the class", phase: rlarkv1alpha1.TaskPhaseRunning, message: "no node matches the Task's node selector"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			generation := test.generation
+			if generation == 0 {
+				generation = 2
+			}
+			object := &appsv1.DaemonSet{ObjectMeta: metav1.ObjectMeta{Generation: generation, Annotations: map[string]string{appsv1.DeprecatedTemplateGeneration: "2"}},
+				Status: appsv1.DaemonSetStatus{ObservedGeneration: 2, DesiredNumberScheduled: int32(len(test.instances))}}
+			manifest, _ := json.Marshal(object)
+			phase, message, err := kubernetesworkload.ObserveObject(kubernetesworkload.CarrierDaemonSet, manifest, agentruntime.InstanceSnapshot{Instances: test.instances})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if phase != test.phase || message != test.message {
+				t.Fatalf("got (%q,%q), want (%q,%q)", phase, message, test.phase, test.message)
+			}
+		})
 	}
 }
 
@@ -584,12 +631,6 @@ func TestObserveStatusMatrixMatchesLegacyReducers(t *testing.T) {
 		{name: "deployment replica failure", kind: kubernetesworkload.CarrierDeployment, object: &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Generation: 2}, Spec: appsv1.DeploymentSpec{Replicas: &one}, Status: appsv1.DeploymentStatus{ObservedGeneration: 2, Conditions: []appsv1.DeploymentCondition{{Type: appsv1.DeploymentReplicaFailure, Status: corev1.ConditionTrue, Message: "replica"}}}}, phase: rlarkv1alpha1.TaskPhaseFailed, message: "replica"},
 		{name: "statefulset stopped", kind: kubernetesworkload.CarrierStatefulSet, object: &appsv1.StatefulSet{Spec: appsv1.StatefulSetSpec{Replicas: &zero}}, phase: rlarkv1alpha1.TaskPhaseStopped},
 		{name: "statefulset revision pending", kind: kubernetesworkload.CarrierStatefulSet, object: &appsv1.StatefulSet{ObjectMeta: metav1.ObjectMeta{Generation: 2}, Spec: appsv1.StatefulSetSpec{Replicas: &one}, Status: appsv1.StatefulSetStatus{ObservedGeneration: 2, UpdatedReplicas: 1, ReadyReplicas: 1, CurrentReplicas: 1, CurrentRevision: "old", UpdateRevision: "new"}}, phase: rlarkv1alpha1.TaskPhasePending},
-		{name: "daemonset unobserved", kind: kubernetesworkload.CarrierDaemonSet, object: &appsv1.DaemonSet{ObjectMeta: metav1.ObjectMeta{Generation: 2}, Status: appsv1.DaemonSetStatus{ObservedGeneration: 1, DesiredNumberScheduled: 2, UpdatedNumberScheduled: 2, NumberAvailable: 2}}, phase: rlarkv1alpha1.TaskPhasePending},
-		{name: "daemonset no node in the class", kind: kubernetesworkload.CarrierDaemonSet, object: &appsv1.DaemonSet{ObjectMeta: metav1.ObjectMeta{Generation: 2}, Status: appsv1.DaemonSetStatus{ObservedGeneration: 2}}, phase: rlarkv1alpha1.TaskPhaseRunning, message: "no node matches the Task's node selector"},
-		{name: "daemonset every node runs", kind: kubernetesworkload.CarrierDaemonSet, object: &appsv1.DaemonSet{ObjectMeta: metav1.ObjectMeta{Generation: 2}, Status: appsv1.DaemonSetStatus{ObservedGeneration: 2, DesiredNumberScheduled: 3, CurrentNumberScheduled: 3, UpdatedNumberScheduled: 3, NumberReady: 3, NumberAvailable: 3}}, phase: rlarkv1alpha1.TaskPhaseRunning},
-		{name: "daemonset node joined", kind: kubernetesworkload.CarrierDaemonSet, object: &appsv1.DaemonSet{ObjectMeta: metav1.ObjectMeta{Generation: 2}, Status: appsv1.DaemonSetStatus{ObservedGeneration: 2, DesiredNumberScheduled: 4, CurrentNumberScheduled: 4, UpdatedNumberScheduled: 4, NumberReady: 3, NumberAvailable: 3, NumberUnavailable: 1}}, phase: rlarkv1alpha1.TaskPhasePending, message: "4 of 4 instances updated, 3 available"},
-		{name: "daemonset update rolling", kind: kubernetesworkload.CarrierDaemonSet, object: &appsv1.DaemonSet{ObjectMeta: metav1.ObjectMeta{Generation: 3}, Status: appsv1.DaemonSetStatus{ObservedGeneration: 3, DesiredNumberScheduled: 3, CurrentNumberScheduled: 3, UpdatedNumberScheduled: 1, NumberReady: 3, NumberAvailable: 3}}, phase: rlarkv1alpha1.TaskPhasePending, message: "1 of 3 instances updated, 3 available"},
-		{name: "daemonset node left", kind: kubernetesworkload.CarrierDaemonSet, object: &appsv1.DaemonSet{ObjectMeta: metav1.ObjectMeta{Generation: 2}, Status: appsv1.DaemonSetStatus{ObservedGeneration: 2, DesiredNumberScheduled: 2, CurrentNumberScheduled: 2, UpdatedNumberScheduled: 2, NumberReady: 2, NumberAvailable: 2}}, phase: rlarkv1alpha1.TaskPhaseRunning},
 		{name: "statefulset ready", kind: kubernetesworkload.CarrierStatefulSet, object: &appsv1.StatefulSet{ObjectMeta: metav1.ObjectMeta{Generation: 2}, Spec: appsv1.StatefulSetSpec{Replicas: &one}, Status: appsv1.StatefulSetStatus{ObservedGeneration: 2, UpdatedReplicas: 1, ReadyReplicas: 1, CurrentReplicas: 1, CurrentRevision: "new", UpdateRevision: "new"}}, phase: rlarkv1alpha1.TaskPhaseRunning},
 	}
 	for _, test := range tests {

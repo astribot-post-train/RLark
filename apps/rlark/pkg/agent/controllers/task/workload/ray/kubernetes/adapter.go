@@ -618,12 +618,9 @@ func ObserveObject(kind string, manifest []byte, instances agentruntime.Instance
 		if err := json.Unmarshal(manifest, &object); err != nil {
 			return "", "", err
 		}
-		phase, message = DaemonSetStatusPhase(&object)
-		// A failing instance holds the Task in Pending and names the failure,
-		// but does not fail the Task as it would a replicated carrier.
-		if failure, found := InstanceFailureMessage(instances); found {
-			return rlarkv1alpha1.TaskPhasePending, failure, nil
-		}
+		// A failing instance holds the Task in Pending but does not fail it as it
+		// would a replicated carrier.
+		phase, message = DaemonSetStatusPhase(&object, instances)
 		return phase, message, nil
 	default:
 		return "", "", fmt.Errorf("unsupported workload kind %q", kind)

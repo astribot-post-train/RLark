@@ -392,7 +392,8 @@ tasks:
 - **一个集群**：按节点放置的 Task 放在其 selector 所匹配 Node 所在的集群。所有匹配的 Node 都计入，不论其阶段，因此节点离线不会让 Task 换集群；selector 匹配到多个集群的 Node 时会被拒绝，直到收窄到一个集群。
 - **渲染**：Agent 渲染一个 DaemonSet，Pod template 处理、身份标签、镜像拉取 Secret、SSH 和网络环境与其他 carrier 相同。更新按 `maxUnavailable` 逐台滚动，且不超量：一台节点上旧实例退出后新实例才启动，因为按节点的实例通常占用节点的端口、设备和目录。Kubernetes 会为 DaemonSet 加上其标准容忍（not-ready、unreachable 和节点压力污点）；RLark 不额外添加。
 - **Ray 拓扑**：按节点放置的 Task 作为 Job 头节点（若有）的 Ray worker 运行。它不计入头节点等待的节点总数，也不参与节点 rank，因为它的实例数随节点类别变化。
-- **状态**：`status.instances` 列出每个实例的 `node`、Pod `name`、`phase`（Pod 运行且就绪为 `Running`；容器无法启动或反复崩溃为 `Failed`；其余为 `Pending`，包括所在节点已失联的 Pod）、main 容器的 `image` 和 `message`。当 DaemonSet 应放置实例的每台节点都运行着已更新且可用的实例时（包括没有节点匹配时），Task 为 `Running`；否则为 `Pending`，message 例如 `3 of 4 instances updated, 3 available`，或第一个失败实例的原因。Task 不会因为实例而变为 `Failed`，所以节点加入、离开或故障都不会让 Job 失败。新加入或失联的节点会让 Task 以及 Job 保持 `Pending`，直到其实例就绪或节点离开该类别。
+- **状态**：`status.instances` 列出每个实例的 `node`、Pod `name`、`phase`（Pod 运行且就绪为 `Running`；容器无法启动或反复崩溃为 `Failed`；其余为 `Pending`）、main 容器的 `image` 和 `message`；所在节点不是 Ready 的实例，message 为 `node not ready`。
+- **阶段**：只计 Ready 节点上的实例。它们都运行当前版本且就绪时（包括一个都没有时），Task 为 `Running`；其中有实例正在更新、正在启动（例如新节点在拉镜像）或反复失败时为 `Pending`，message 例如 `2 of 3 instances on ready nodes updated and available`，或失败实例的原因。关机的节点、已加入但尚未 Ready 的节点会列出，但不改变阶段，所以机器人关机时 Job 不会变成 `Pending`；此时 message 写明有几个实例所在节点不是 Ready。任何实例都不会让 Task 变为 `Failed`，所以节点加入、离开或故障都不会让 Job 失败。
 - **当前限制**：更新使用 DaemonSet 的滚动更新；只在工作负载报告空闲时才更新实例的能力尚未实现。
 
 ### 任务角色

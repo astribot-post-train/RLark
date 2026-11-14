@@ -40,7 +40,7 @@ func perNodePod(daemonSet *appsv1.DaemonSet, node string, ready bool, waiting st
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: daemonSet.Name + "-" + node, Namespace: daemonSet.Namespace, UID: types.UID("pod-" + node),
-			Labels:          map[string]string{ManagementTaskUIDLabel: daemonSet.Spec.Selector.MatchLabels[ManagementTaskUIDLabel]},
+			Labels:          map[string]string{ManagementTaskUIDLabel: daemonSet.Spec.Selector.MatchLabels[ManagementTaskUIDLabel], "pod-template-generation": "1"},
 			OwnerReferences: []metav1.OwnerReference{{APIVersion: "apps/v1", Kind: "DaemonSet", Name: daemonSet.Name, UID: daemonSet.UID, Controller: &controller}},
 		},
 		Spec:   corev1.PodSpec{NodeName: node, Containers: []corev1.Container{{Name: "main", Image: "station:v1"}}},
@@ -59,7 +59,8 @@ func perNodePod(daemonSet *appsv1.DaemonSet, node string, ready bool, waiting st
 // TestPerNodeTaskFollowsItsNodes runs a per-node Task through the Agent: the
 // pull reconcile renders a DaemonSet, and each DaemonSet change the push
 // controller sees is projected into the Task's phase and per-node instances as
-// nodes join, fail and leave. The Task is never Failed.
+// nodes join, switch off, fail and leave. Only instances on Ready nodes count
+// toward the phase, and the Task is never Failed.
 func TestPerNodeTaskFollowsItsNodes(t *testing.T) {
 	scheme := executionScheme(t)
 	task := perNodeExecutionTask()
@@ -68,6 +69,7 @@ func TestPerNodeTaskFollowsItsNodes(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: task.Name, Namespace: tenant.DefaultNamespace, UID: "daemonset-uid", ResourceVersion: "1", Generation: 1, Annotations: map[string]string{
 			ManagementTaskNameAnnotation: task.Name, ManagementTaskNamespaceAnnotation: task.Namespace,
 			ManagementTaskUIDAnnotation: string(task.UID), ManagementTaskGenerationAnnotation: fmt.Sprintf("%d", task.Generation),
+			appsv1.DeprecatedTemplateGeneration: "1",
 		}},
 		Spec: appsv1.DaemonSetSpec{Selector: selector, Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: selector.MatchLabels}, Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "main", Image: "station:v1"}}}}},
 	}
@@ -94,17 +96,36 @@ func TestPerNodeTaskFollowsItsNodes(t *testing.T) {
 		t.Fatalf("rendered DaemonSet spec=%#v", daemonSet.Spec)
 	}
 
-	// observe stands in for the DaemonSet controller: it sets the DaemonSet's
-	// counts and the Pods on the nodes, then lets the push and pull controllers
-	// report them.
-	observe := func(desired, updated, available int32, pods ...*corev1.Pod) rlarkv1alpha1.TaskStatus {
+	// observe stands in for the kubelets and the DaemonSet controller: it sets
+	// the nodes of the class (name -> Ready) and the Pods on them, then lets the
+	// push and pull controllers report them.
+	observe := func(nodes map[string]bool, pods ...*corev1.Pod) rlarkv1alpha1.TaskStatus {
 		t.Helper()
-		var list corev1.PodList
-		if err := local.List(context.Background(), &list); err != nil {
+		var podList corev1.PodList
+		if err := local.List(context.Background(), &podList); err != nil {
 			t.Fatal(err)
 		}
-		for i := range list.Items {
-			if err := local.Delete(context.Background(), &list.Items[i]); err != nil {
+		for i := range podList.Items {
+			if err := local.Delete(context.Background(), &podList.Items[i]); err != nil {
+				t.Fatal(err)
+			}
+		}
+		var nodeList corev1.NodeList
+		if err := local.List(context.Background(), &nodeList); err != nil {
+			t.Fatal(err)
+		}
+		for i := range nodeList.Items {
+			if err := local.Delete(context.Background(), &nodeList.Items[i]); err != nil {
+				t.Fatal(err)
+			}
+		}
+		for name, ready := range nodes {
+			status := corev1.ConditionUnknown
+			if ready {
+				status = corev1.ConditionTrue
+			}
+			node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: name}, Status: corev1.NodeStatus{Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: status}}}}
+			if err := local.Create(context.Background(), node); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -116,7 +137,7 @@ func TestPerNodeTaskFollowsItsNodes(t *testing.T) {
 		if err := local.Get(context.Background(), client.ObjectKeyFromObject(existing), &daemonSet); err != nil {
 			t.Fatal(err)
 		}
-		daemonSet.Status = appsv1.DaemonSetStatus{ObservedGeneration: daemonSet.Generation, DesiredNumberScheduled: desired, CurrentNumberScheduled: desired, UpdatedNumberScheduled: updated, NumberReady: available, NumberAvailable: available, NumberUnavailable: desired - available}
+		daemonSet.Status = appsv1.DaemonSetStatus{ObservedGeneration: daemonSet.Generation, DesiredNumberScheduled: int32(len(nodes))}
 		if err := local.Status().Update(context.Background(), &daemonSet); err != nil {
 			t.Fatal(err)
 		}
@@ -140,39 +161,48 @@ func TestPerNodeTaskFollowsItsNodes(t *testing.T) {
 	running := func(node string) rlarkv1alpha1.TaskInstanceStatus {
 		return rlarkv1alpha1.TaskInstanceStatus{Node: node, Name: "task-" + node, Phase: rlarkv1alpha1.TaskInstanceRunning, Image: "station:v1"}
 	}
+	pod := func(node string) *corev1.Pod { return perNodePod(&daemonSet, node, true, "") }
 
-	status := observe(2, 2, 2, perNodePod(&daemonSet, "robot-a", true, ""), perNodePod(&daemonSet, "robot-b", true, ""))
+	status := observe(map[string]bool{"robot-a": true, "robot-b": true}, pod("robot-a"), pod("robot-b"))
 	if status.Phase != rlarkv1alpha1.TaskPhaseRunning || !reflect.DeepEqual(status.ObservedNodes, []string{"robot-a", "robot-b"}) ||
 		!reflect.DeepEqual(status.Instances, []rlarkv1alpha1.TaskInstanceStatus{running("robot-a"), running("robot-b")}) {
 		t.Fatalf("two nodes: status=%#v", status)
 	}
 
-	// A node joins the class: its instance is starting, the Task waits for it.
-	status = observe(3, 3, 2, perNodePod(&daemonSet, "robot-c", false, "ContainerCreating"), perNodePod(&daemonSet, "robot-a", true, ""), perNodePod(&daemonSet, "robot-b", true, ""))
+	// A robot is switched off: its node is not Ready and its Pod no longer
+	// ready. It is listed, but the Task stays Running.
+	status = observe(map[string]bool{"robot-a": true, "robot-b": false}, pod("robot-a"), perNodePod(&daemonSet, "robot-b", false, ""))
+	off := rlarkv1alpha1.TaskInstanceStatus{Node: "robot-b", Name: "task-robot-b", Phase: rlarkv1alpha1.TaskInstancePending, Image: "station:v1", Message: "node not ready"}
+	if status.Phase != rlarkv1alpha1.TaskPhaseRunning || status.Message != "1 of 2 instances on nodes that are not ready" ||
+		!reflect.DeepEqual(status.Instances, []rlarkv1alpha1.TaskInstanceStatus{running("robot-a"), off}) {
+		t.Fatalf("node switched off: status=%#v", status)
+	}
+
+	// A node joins the class but is not Ready yet: still Running.
+	status = observe(map[string]bool{"robot-a": true, "robot-b": true, "robot-c": false}, pod("robot-a"), pod("robot-b"), perNodePod(&daemonSet, "robot-c", false, "ContainerCreating"))
+	if status.Phase != rlarkv1alpha1.TaskPhaseRunning || status.Instances[2].Message != "node not ready" {
+		t.Fatalf("node joining: status=%#v", status)
+	}
+
+	// The joined node is Ready and pulls the image: real work, so Pending.
+	status = observe(map[string]bool{"robot-a": true, "robot-b": true, "robot-c": true}, pod("robot-a"), pod("robot-b"), perNodePod(&daemonSet, "robot-c", false, "ContainerCreating"))
 	joining := rlarkv1alpha1.TaskInstanceStatus{Node: "robot-c", Name: "task-robot-c", Phase: rlarkv1alpha1.TaskInstancePending, Image: "station:v1", Message: "ContainerCreating"}
-	if status.Phase != rlarkv1alpha1.TaskPhasePending || status.Message != "3 of 3 instances updated, 2 available" ||
+	if status.Phase != rlarkv1alpha1.TaskPhasePending || status.Message != "2 of 3 instances on ready nodes updated and available" ||
 		!reflect.DeepEqual(status.Instances, []rlarkv1alpha1.TaskInstanceStatus{running("robot-a"), running("robot-b"), joining}) {
 		t.Fatalf("node joined: status=%#v", status)
 	}
 
 	// Its instance keeps crashing: the instance is Failed, the Task only Pending.
-	status = observe(3, 3, 2, perNodePod(&daemonSet, "robot-a", true, ""), perNodePod(&daemonSet, "robot-b", true, ""), perNodePod(&daemonSet, "robot-c", false, "CrashLoopBackOff"))
+	status = observe(map[string]bool{"robot-a": true, "robot-b": true, "robot-c": true}, pod("robot-a"), pod("robot-b"), perNodePod(&daemonSet, "robot-c", false, "CrashLoopBackOff"))
 	failing := rlarkv1alpha1.TaskInstanceStatus{Node: "robot-c", Name: "task-robot-c", Phase: rlarkv1alpha1.TaskInstanceFailed, Image: "station:v1", Message: "pod task-robot-c container main: CrashLoopBackOff"}
 	if status.Phase != rlarkv1alpha1.TaskPhasePending || status.Message != failing.Message ||
 		!reflect.DeepEqual(status.Instances, []rlarkv1alpha1.TaskInstanceStatus{running("robot-a"), running("robot-b"), failing}) {
 		t.Fatalf("node failing: status=%#v", status)
 	}
 
-	// A node that stops reporting keeps its Pod, which is no longer ready.
-	unreachable := perNodePod(&daemonSet, "robot-b", false, "")
-	status = observe(3, 3, 2, perNodePod(&daemonSet, "robot-a", true, ""), unreachable, perNodePod(&daemonSet, "robot-c", true, ""))
-	if status.Phase != rlarkv1alpha1.TaskPhasePending || status.Instances[1].Phase != rlarkv1alpha1.TaskInstancePending || status.Instances[1].Message != "not ready" {
-		t.Fatalf("node unreachable: status=%#v", status)
-	}
-
 	// The node leaves the class and takes its instance with it.
-	status = observe(2, 2, 2, perNodePod(&daemonSet, "robot-a", true, ""), perNodePod(&daemonSet, "robot-c", true, ""))
-	if status.Phase != rlarkv1alpha1.TaskPhaseRunning || !reflect.DeepEqual(status.Instances, []rlarkv1alpha1.TaskInstanceStatus{running("robot-a"), running("robot-c")}) {
+	status = observe(map[string]bool{"robot-a": true, "robot-b": true}, pod("robot-a"), pod("robot-b"))
+	if status.Phase != rlarkv1alpha1.TaskPhaseRunning || status.Message != "" || !reflect.DeepEqual(status.Instances, []rlarkv1alpha1.TaskInstanceStatus{running("robot-a"), running("robot-b")}) {
 		t.Fatalf("node left: status=%#v", status)
 	}
 }

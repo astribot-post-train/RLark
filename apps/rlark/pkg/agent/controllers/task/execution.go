@@ -37,14 +37,17 @@ func instanceNodes(instances agentruntime.InstanceSnapshot) []string {
 // perNodeInstances projects a per-node Task's observed Pods into its status
 // instances, sorted by node. An instance is Running when its Pod runs and is
 // ready, Failed when a container cannot start or keeps crashing, and Pending
-// otherwise, which includes a Pod on a node that stopped reporting.
+// otherwise. An instance on a node that is not Ready says so in its message:
+// it does not count toward the Task's phase.
 func perNodeInstances(instances agentruntime.InstanceSnapshot) []rlarkv1alpha1.TaskInstanceStatus {
 	result := make([]rlarkv1alpha1.TaskInstanceStatus, 0, len(instances.Instances))
 	for _, instance := range instances.Instances {
 		status := rlarkv1alpha1.TaskInstanceStatus{Name: instance.Name, Phase: rlarkv1alpha1.TaskInstancePending}
-		ready, waiting := false, ""
+		ready, nodeReady, waiting := false, true, ""
 		for _, condition := range instance.Conditions {
 			switch {
+			case condition.Scope == "node" && condition.Reason == "NotReady":
+				nodeReady = false
 			case condition.Scope == "node":
 				status.Node = condition.Subject
 			case condition.Scope == "image" && condition.Subject == "main":
@@ -66,6 +69,9 @@ func perNodeInstances(instances agentruntime.InstanceSnapshot) []rlarkv1alpha1.T
 			status.Message = waiting
 		} else if instance.Phase == agentruntime.InstancePhase(corev1.PodRunning) {
 			status.Message = "not ready"
+		}
+		if !nodeReady {
+			status.Message = "node not ready"
 		}
 		result = append(result, status)
 	}

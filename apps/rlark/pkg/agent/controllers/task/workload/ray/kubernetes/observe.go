@@ -45,24 +45,52 @@ func StatefulSetStatusPhase(statefulSet *appsv1.StatefulSet) rlarkv1alpha1.TaskP
 	return rlarkv1alpha1.TaskPhasePending
 }
 
-// DaemonSetStatusPhase projects a per-node Task's DaemonSet. The Task is
-// Running when every node the DaemonSet places an instance on runs an updated,
-// available one, which holds when no node matches as well; it is Pending
-// otherwise. It is never Failed: a node joining, leaving or going down changes
-// only which instances should exist, and one node's failing instance is that
-// node's, which the DaemonSet keeps restarting.
-func DaemonSetStatusPhase(daemonSet *appsv1.DaemonSet) (rlarkv1alpha1.TaskPhase, string) {
+// DaemonSetStatusPhase projects a per-node Task's DaemonSet and its instances.
+// Only instances on Ready nodes count: the Task is Running when each of them
+// runs the current template and is ready, which holds when there are none as
+// well, and Pending while one is still being updated, started or keeps
+// failing. An instance on a node that is switched off or still joining is
+// listed in the Task's instances but does not hold the Task back, and no
+// instance ever fails it: the DaemonSet keeps restarting a failing one.
+func DaemonSetStatusPhase(daemonSet *appsv1.DaemonSet, instances agentruntime.InstanceSnapshot) (rlarkv1alpha1.TaskPhase, string) {
 	if daemonSet.Status.ObservedGeneration < daemonSet.Generation {
 		return rlarkv1alpha1.TaskPhasePending, ""
 	}
-	desired := daemonSet.Status.DesiredNumberScheduled
-	if desired == 0 {
+	generation := daemonSet.Annotations[appsv1.DeprecatedTemplateGeneration]
+	counted, current, offline := 0, 0, 0
+	for _, instance := range instances.Instances {
+		nodeReady, updated, ready := true, false, false
+		for _, condition := range instance.Conditions {
+			switch {
+			case condition.Scope == "node" && condition.Reason == "NotReady":
+				nodeReady = false
+			case condition.Scope == "revision":
+				updated = condition.Message == generation
+			case condition.Scope == "instance" && condition.Reason == "Ready":
+				ready = true
+			}
+		}
+		if !nodeReady {
+			offline++
+			continue
+		}
+		if failure, found := InstanceFailureMessage(agentruntime.InstanceSnapshot{Instances: []agentruntime.Instance{instance}}); found {
+			return rlarkv1alpha1.TaskPhasePending, failure
+		}
+		counted++
+		if updated && ready {
+			current++
+		}
+	}
+	switch {
+	case current < counted:
+		return rlarkv1alpha1.TaskPhasePending, fmt.Sprintf("%d of %d instances on ready nodes updated and available", current, counted)
+	case offline > 0:
+		return rlarkv1alpha1.TaskPhaseRunning, fmt.Sprintf("%d of %d instances on nodes that are not ready", offline, len(instances.Instances))
+	case daemonSet.Status.DesiredNumberScheduled == 0:
 		return rlarkv1alpha1.TaskPhaseRunning, "no node matches the Task's node selector"
 	}
-	if daemonSet.Status.UpdatedNumberScheduled == desired && daemonSet.Status.NumberAvailable == desired {
-		return rlarkv1alpha1.TaskPhaseRunning, ""
-	}
-	return rlarkv1alpha1.TaskPhasePending, fmt.Sprintf("%d of %d instances updated, %d available", daemonSet.Status.UpdatedNumberScheduled, desired, daemonSet.Status.NumberAvailable)
+	return rlarkv1alpha1.TaskPhaseRunning, ""
 }
 
 var abnormalReasons = map[string]struct{}{"ImagePullBackOff": {}, "ErrImagePull": {}, "InvalidImageName": {}, "CreateContainerConfigError": {}, "CreateContainerError": {}, "CrashLoopBackOff": {}, "OOMKilled": {}, "ContainerCannotRun": {}, "DeadlineExceeded": {}}
