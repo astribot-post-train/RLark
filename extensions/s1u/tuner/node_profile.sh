@@ -116,6 +116,10 @@ UNIT
   # /etc/kubernetes/kubelet.conf.d (below): where its unit does not say so (a robot enrolled before RLark's
   # installer did), its start line is repeated here with --config-dir.
   local unit start
+  # systemd's view of kubelet's unit as it is on disk: a drop-in that removes itself at kubelet's start (an
+  # uninstall's, this script's or Fleet's before it) is still loaded until a reload, and `systemctl cat` fails on it
+  # (s1u-01 11-14, after the cutover's kubelet restart: install failed at every start of the tuner).
+  systemctl daemon-reload
   for unit in $(kubernetes_units); do
     start=
     if [[ $unit == kubelet ]]; then
