@@ -268,6 +268,9 @@ class Orin:
     def reconcile(self):
         """One pass; the state's new fields, ``label`` among them."""
         if not os.path.exists(ACCESS + "/password"):
+            # Without the login nothing was ever placed on an Orin whose host key was never trusted.
+            if os.environ["S1U_NODE_WANTED"] == "removed" and self.known()[0] is None:
+                return dict(label="removed", error=None, waiting=None)
             return dict(label="no_access", reachable=False, error="the Addon's orinAccessSecret is not in the cluster")
         scanned = self.scan()
         if scanned is None:

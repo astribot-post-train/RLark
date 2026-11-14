@@ -572,6 +572,12 @@ def test_removing_takes_back_what_the_orin_got_and_sends_nothing_to_one_never_tr
     monkeypatch.setattr(robot, "api", lambda *arguments: patched.append(arguments))
     monkeypatch.setattr(robot, "known", lambda: (None, None))
     assert robot.reconcile()["label"] == "removed" and not sent and not patched  # never trusted: never touched
+    # Without the login: removed where no host key was ever trusted, else it cannot say.
+    (tmp_path / "password").unlink()
+    assert robot.reconcile()["label"] == "removed" and not sent
+    monkeypatch.setattr(robot, "known", lambda: ("ssh-ed25519 KEY", {"fingerprint": "SHA256:key"}))
+    assert robot.reconcile()["label"] == "no_access" and not sent
+    (tmp_path / "password").write_text("p\n")
     monkeypatch.setattr(robot, "known", lambda: ("ssh-ed25519 KEY", {"fingerprint": "SHA256:key"}))
     (tmp_path / "in-use").mkdir()
     (tmp_path / "in-use/fleet-station").write_text("attached\n")
