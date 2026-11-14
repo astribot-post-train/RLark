@@ -34,7 +34,7 @@ the cluster the result, with no shell on the box:
   on its Node: label rlark.io/rollout-state, annotation rlark.io/rollout. "paused" holds every robot, "all" is no
   waves. The Pods themselves are replaced on every robot at once: what is held back is the acting, not the version;
 - publishes whether the whole node conforms to the S1U node's specification and its fingerprints (node_spec.py),
-  and which body the box drives, as the vendor's file on the box says: annotations rlark.io/robot-body-serial and
+  and which body the box drives, as the vendor's file on the box says: annotations rlark.io/body-serial and
   s1u.rlark.io/body-parameters (the file's digest).
 
 With S1U_NODE_WANTED "removed" (the Addon's parameter profile, before the Addon itself is uninstalled) it takes the
@@ -72,7 +72,7 @@ REQUEST, REQUESTED = "rlark.io/restart-request", "rlark.io/restart-request-state
 # "state": done | acting | waiting | paused | failed, "since", "why"}, and the label repeats the state.
 WAVE, ROLLOUT, ROLLOUT_STATE = "rlark.io/rollout-wave", "rlark.io/rollout", "rlark.io/rollout-state"
 ATTEMPTS, RESTART_SECONDS = 3, 300  # tries of a restart that does not happen, and how long one may take
-SERIAL, PARAMETERS = "rlark.io/robot-body-serial", "s1u.rlark.io/body-parameters"
+SERIAL, PARAMETERS = "rlark.io/body-serial", "s1u.rlark.io/body-parameters"
 
 
 def host(*arguments, quiet=False):

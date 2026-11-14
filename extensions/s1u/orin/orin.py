@@ -217,6 +217,12 @@ class Orin:
         record = dict(fingerprint=fingerprint, at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), how=how)
         self.api("PATCH", "/api/v1/nodes/" + self.node,
                  {"metadata": {"annotations": {HOST_KEY: key, TRUST: json.dumps(record), CONFIRM: None}}})
+        # The robot's copy follows at once: a pass while the cluster is away must not hold the earlier key.
+        self.kept = dict(key=key, trust=record, serial=self.serial)
+        try:
+            Path(KEPT).write_text(json.dumps(self.kept))
+        except OSError as error:
+            print("The Orin's record is not kept on the robot: %s" % error, flush=True)
         self.event("OrinHostKeyTrusted", "%s: the Orin's ssh host key %s trusted (%s)" % (self.node, fingerprint, how))
         print("Trusted the Orin's host key %s (%s)" % (fingerprint, how), flush=True)
         return record
@@ -354,17 +360,21 @@ class Orin:
             retire = "".join("systemctl disable --now --quiet %s.service; rm -f /etc/systemd/system/%s.service; " % (unit, unit)
                              for unit in read["retired"].split())
             steps.append(self.upload(key, "~/rl/.s1u-orin-uplink.sh", uplink_setup().encode()))
-            steps.append(self.sudo(key, "sh -c '%ssh ~%s/rl/.s1u-orin-uplink.sh && systemctl restart %s'" % (
-                retire, self.user, UPLINK)))
+            # The setup script starts the unit when it changed or does not run; a restart beyond that would run its
+            # stop step and drop the x86's forwarding for a moment. Only after a retired unit's stop, which deleted
+            # the rules both hold, is it started again.
+            again = " && systemctl restart %s" % UPLINK if read["retired"] else ""
+            steps.append(self.sudo(key, "sh -c '%ssh ~%s/rl/.s1u-orin-uplink.sh%s'" % (retire, self.user, again)))
             print("The x86's uplink placed and started on the Orin%s" % (
                 " (retired: %s)" % read["retired"] if read["retired"] else ""), flush=True)
         uid = self.ssh(key, "id -u").stdout.decode().strip()
         rule = 'SUBSYSTEM=="usb", ATTR{idVendor}=="%s", OWNER="%s", MODE="0660"' % (CAMERA_VENDOR, uid)
         if read["camera"] != rule:
             steps.append(self.upload(key, "~/rl/.s1u-camera.rules", rule.encode() + b"\n"))
+            # Taken out again when udev did not take it: the next pass sees no rule and tries again.
             steps.append(self.sudo(key, "sh -c 'install -m 644 ~%s/rl/.s1u-camera.rules %s && udevadm control "
-                                        "--reload-rules && udevadm trigger --subsystem-match=usb --attr-match=idVendor=%s'"
-                                   % (self.user, CAMERA_RULE, CAMERA_VENDOR)))
+                                        "--reload-rules && udevadm trigger --subsystem-match=usb --attr-match=idVendor=%s "
+                                        "|| { rm -f %s; exit 1; }'" % (self.user, CAMERA_RULE, CAMERA_VENDOR, CAMERA_RULE)))
         return steps
 
     def place(self, key, steps, result):
@@ -435,7 +445,8 @@ class Orin:
             except Exception as error:  # the API server or ssh itself: reported like any other failure
                 result = dict(label="failed", error="%s: %s" % (type(error).__name__, error))
             before = self.state.get("label")
-            good = result["label"] in ("ok", "updating", "removing", "removed")
+            # A host key that changed waits for a person, not for a retry: its confirmation is read every minute.
+            good = result["label"] in ("ok", "updating", "removing", "removed", "identity_changed")
             self.state = dict(self.state, **result, failures=0 if good else self.state["failures"] + 1, since=(
                 self.state.get("since") if before == result["label"] else time.time()), checked_at=time.time())
             if before != result["label"]:  # one line per change, none while an Orin stays off

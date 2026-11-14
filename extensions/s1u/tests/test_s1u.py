@@ -464,6 +464,8 @@ def test_a_payload_has_one_version_of_its_files_and_a_changed_host_key_stops_eve
     assert robot.reconcile()["label"] == "identity_changed" and not trusted
     robot.confirm = "SHA256:new"
     monkeypatch.setattr(robot, "root", lambda key, result: [])
+    # Waiting for a person is no failure: the next look is a minute later, not backed off.
+    robot.state["failures"] = 0
     monkeypatch.setattr(robot, "place", lambda key, steps, result: "")
     assert robot.reconcile()["label"] == "ok" and trusted == [("ssh-ed25519 NEW", "SHA256:new", "confirmed")]
     stopped = PROFILE["S1U_ORIN_STOPPED"].strip('"')
@@ -544,9 +546,17 @@ def test_the_uplink_is_one_file_its_setup_script_is_the_addons_and_a_retired_uni
     assert "sudo sh -c 'systemctl disable --now --quiet fleet-orin-uplink.service; rm -f /etc/systemd/system/fleet-orin-uplink.service; " \
            "sh ~astribot/rl/.s1u-orin-uplink.sh && systemctl restart s1u-orin-uplink.service'" in sent
     assert (tmp_path / "orin_addresses").read_text() == "192.168.31.5\n"
-    assert any(line.startswith("sudo sh -c 'install -m 644 ~astribot/rl/.s1u-camera.rules") for line in sent)
+    camera = next(line for line in sent if line.startswith("sudo sh -c 'install -m 644 ~astribot/rl/.s1u-camera.rules"))
+    assert camera.endswith("|| { rm -f /etc/udev/rules.d/70-s1u-camera.rules; exit 1; }'")  # retried while udev did not take it
+    # A unit not there yet is placed by its setup script, which starts it: no restart beyond that (its stop step would
+    # drop the x86's forwarding for a moment).
+    there.update(unit="", retired="")
+    sent.clear()
+    robot.root("KEY", {})
+    assert "sudo sh -c 'sh ~astribot/rl/.s1u-orin-uplink.sh'" in sent
     # Nothing to retire, the unit as it is, the rule there: nothing as root.
-    there.update(retired="", camera='SUBSYSTEM=="usb", ATTR{idVendor}=="2bc5", OWNER="1000", MODE="0660"')
+    there.update(unit=hashlib.sha256(unit.encode()).hexdigest(), retired="",
+                 camera='SUBSYSTEM=="usb", ATTR{idVendor}=="2bc5", OWNER="1000", MODE="0660"')
     sent.clear()
     robot.root("KEY", {})
     assert not [line for line in sent if line.startswith("sudo")]
@@ -628,3 +638,15 @@ def test_the_orin_resets_the_cameras_usb_once_per_request_of_the_device_layer_an
     said = subprocess.run([sys.executable, "-c", script, "2bc5"], capture_output=True, text=True, check=True).stdout
     assert said == "bus 002 dev 008\n" and (tmp_path / "dev/002-008").read_bytes() == b"reset"
     assert not (tmp_path / "dev/001-003").exists()
+
+
+def test_a_trusted_host_key_is_kept_on_the_robot_at_once(tmp_path, monkeypatch):
+    robot = make_orin(tmp_path, monkeypatch)
+    monkeypatch.setattr(orin, "KEPT", str(tmp_path / "orin_trust.json"))
+    calls = []
+    monkeypatch.setattr(robot, "api", lambda *arguments, **options: calls.append(arguments) or {})
+    robot.serial = "17"
+    record = robot.trust("ssh-ed25519 NEW", "SHA256:new", "confirmed")
+    kept = json.loads((tmp_path / "orin_trust.json").read_text())
+    assert kept == dict(key="ssh-ed25519 NEW", trust=record, serial="17") and record["how"] == "confirmed"
+    assert calls[0][2]["metadata"]["annotations"][orin.CONFIRM] is None  # the confirmation is used up
