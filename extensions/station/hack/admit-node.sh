@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Admit a machine as a node of a registered cluster and print what to run on
-# it: one command, and before it, for a machine of a site whose leaves stand
-# behind a device of their own (the site's leafUplink.setup), the command that
-# makes that device let the machine out. Run where the management plane's
-# kubeconfig is.
+# Admit a machine as a node of a registered cluster and print the one line to
+# run on it. For a machine of a site whose leaves stand behind a device of
+# their own (the site's leafUplink.setup), the line first makes that device
+# let the machine out (it asks for the device's password), then installs.
+# Run where the management plane's kubeconfig is.
 #
 #   admit-node.sh CLUSTER_ID NODE_NAME API_SERVER STATION_API [label=value ...]
 #
@@ -71,8 +71,10 @@ for site in spec["sites"]:
     uplink = site.get("leafUplink", {})
     if (site["name"] == named if named else cluster in site.get("clusters", [])) and "setup" in uplink:
         print(uplink["gateway"], uplink["setup"]["login"])' "$CLUSTER" "$NODE" "${SITE:-}") || true
+# One line for the operator either way: on such a site it lets the machine out through its device first, then installs.
+first=
 if [[ -n ${gateway:-} ]]; then
   digest=$(curl -fsS --cacert "$CA" "https://$STATION_API/b/$code/uplink" | sha256sum | cut -d' ' -f1)
-  echo "ssh -t $login@$gateway 'f=\$(mktemp) $trust/uplink -o \$f && echo \"$digest  \$f\" | sha256sum -c - && sudo sh \$f'"
+  first="ssh -t $login@$gateway 'f=\$(mktemp) $trust/uplink -o \$f && echo \"$digest  \$f\" | sha256sum -c - && sudo sh \$f' && "
 fi
-echo "$trust | sudo sh"
+echo "$first$trust | sudo sh"
