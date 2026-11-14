@@ -324,7 +324,7 @@ facts() {
     | sed -n 's/^resolvConf: *"\{0,1\}\([^"]*\)"\{0,1\}$/\1/p' | tail -1)" | xargs)"
   echo "site image registry=$S1U_IMAGE_REGISTRY"
   echo "site gateway=$S1U_SITE_GATEWAY"
-  echo "site time source=$S1U_SITE_TIME_SOURCE"
+  echo "site time source=${S1U_SITE_TIME_SOURCE:-}"  # none declared: no variable at all (set -u)
   echo "body grippers=$(sed -n '/^gripper_version:/,/^[^ ]/ s/^  *\(left\|right\): */\1 /p' "$body" | xargs)"
   echo "body motors=$(sed -n 's/^motor_version: *\([^ ]*\).*/\1/p' "$body")"
   echo "record firmware=$(cat /sys/class/dmi/id/bios_version)"

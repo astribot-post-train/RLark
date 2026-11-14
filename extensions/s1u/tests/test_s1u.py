@@ -654,3 +654,14 @@ def test_a_trusted_host_key_is_kept_on_the_robot_at_once(tmp_path, monkeypatch):
     kept = json.loads((tmp_path / "orin_trust.json").read_text())
     assert kept == dict(key="ssh-ed25519 NEW", trust=record, serial="17") and record["how"] == "confirmed"
     assert calls[0][2]["metadata"]["annotations"][orin.CONFIRM] is None  # the confirmation is used up
+
+
+def test_the_facts_need_no_time_source_variable(tmp_path):
+    """11-14: Fleet's v0.11.7 tuner still restarted on a robot without a time source: its facts step (set -u) read the
+    variable RLark does not render for an empty timeSource, printed nothing, and the tuner's KeyError followed."""
+    script = (TUNER / "node_profile.sh").read_text()
+    facts = script[script.index("facts() {"):script.index("\nshares() {")]
+    line = next(line for line in facts.splitlines() if "site time source=" in line)
+    said = subprocess.run(["bash", "-c", "set -u; %s" % line], capture_output=True, text=True,
+                          env={"PATH": "/usr/bin:/bin"})
+    assert said.returncode == 0 and said.stdout == "site time source=\n"
