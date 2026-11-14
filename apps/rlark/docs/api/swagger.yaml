@@ -178,6 +178,7 @@ paths:
                       address: {type: string}
                       tunnel_address: {type: string}
                       link_summary: {type: string, description: 'For a leaf, what the hubs it dials see of it, in one line; empty while every link is connected'}
+                      public_key: {type: string, description: 'The WireGuard public key the node enrolled with; the private key never leaves the machine'}
                       links:
                         type: array
                         items:
@@ -192,6 +193,100 @@ paths:
         '409': {description: Ambiguous cluster namespace or node binding}
         '502': {description: Management API request failed}
         '503': {description: Station API unavailable}
+  /api/v1/station/node-admissions:
+    get:
+      tags: [Station]
+      summary: List the node admissions of a cluster (administrator only); never the codes
+      parameters:
+        - {name: cluster_id, in: query, required: true, schema: {type: string}}
+      responses:
+        '200':
+          description: Admissions, newest code first
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items: {type: array, items: {$ref: '#/components/schemas/NodeAdmission'}}
+        '400': {description: Missing cluster ID}
+        '404': {description: Cluster not found}
+        '502': {description: Management API request failed}
+    post:
+      tags: [Station]
+      summary: Admit a machine as a node and give out its one-time join code (administrator only)
+      description: >-
+        The answer carries the code and the one line to run as root on the machine, once; the
+        management plane keeps only the code's SHA-256. A node that has an admission keeps it as what
+        declares its tunnel address: a new code for it replaces what the admission declares, labels
+        included, and opens it again. Who gave the code out and when is recorded on the admission.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [cluster_id, node_name, api_server]
+              additionalProperties: false
+              properties:
+                cluster_id: {type: string}
+                node_name: {type: string, description: The Node name the machine joins as}
+                api_server: {type: string, description: "host:port of the cluster's API as the machine reaches it"}
+                site: {type: string, description: "The site the machine stands in, when it is not its cluster's"}
+                address: {type: string, description: Pins the tunnel address; empty lets station-controller allocate one}
+                uplink: {type: string, description: "The gateway of a machine whose default route does not lead out, where its site declares no leafUplink"}
+                taints: {type: array, maxItems: 8, items: {type: string, description: "key[=value]:Effect"}}
+                labels: {type: object, maxProperties: 32, additionalProperties: {type: string}}
+                ttl_seconds: {type: integer, minimum: 600, maximum: 604800, description: Default 7200}
+      responses:
+        '200': {description: A new code for an existing admission, content: {application/json: {schema: {$ref: '#/components/schemas/IssuedNodeAdmission'}}}}
+        '201': {description: Admitted, content: {application/json: {schema: {$ref: '#/components/schemas/IssuedNodeAdmission'}}}}
+        '400': {description: Invalid request or unknown site}
+        '404': {description: Cluster not found}
+        '409': {description: The admission changed meanwhile}
+        '502': {description: Management API or Station API request failed}
+        '503': {description: Join codes are not configured on this Gateway}
+  /api/v1/station/node-admissions/{name}/reissue:
+    post:
+      tags: [Station]
+      summary: Give out a new code for what an admission declares (administrator only); the earlier code stops working
+      parameters:
+        - {name: name, in: path, required: true, schema: {type: string}}
+        - {name: cluster_id, in: query, required: true, schema: {type: string}}
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                ttl_seconds: {type: integer, minimum: 600, maximum: 604800, description: Default 7200}
+      responses:
+        '200': {description: The new code, content: {application/json: {schema: {$ref: '#/components/schemas/IssuedNodeAdmission'}}}}
+        '400': {description: Invalid request}
+        '404': {description: Cluster or admission not found}
+        '409': {description: The admission changed meanwhile}
+        '502': {description: Management API or Station API request failed}
+        '503': {description: Join codes are not configured on this Gateway}
+  /api/v1/station/node-admissions/{name}/revoke:
+    post:
+      tags: [Station]
+      summary: Withdraw an admission's code before a machine redeems it (administrator only); its expiry becomes now
+      parameters:
+        - {name: name, in: path, required: true, schema: {type: string}}
+        - {name: cluster_id, in: query, required: true, schema: {type: string}}
+      responses:
+        '200':
+          description: The code no longer works
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  admission: {$ref: '#/components/schemas/NodeAdmission'}
+        '404': {description: Cluster or admission not found}
+        '409': {description: A machine has redeemed the code}
+        '502': {description: Management API request failed}
   /api/v1/secrets:
     get:
       tags: [Secrets]
@@ -1515,6 +1610,33 @@ components:
         type: string
 
   schemas:
+    NodeAdmission:
+      type: object
+      required: [cluster_id, node_name, state, api_server, expires_at]
+      properties:
+        cluster_id: {type: string}
+        node_name: {type: string}
+        state: {type: string, enum: [Pending, Redeemed, Joined, Expired], description: 'Pending: the code is open; Redeemed: a machine took it and is joining; Expired: also a code withdrawn before it was used'}
+        reason: {type: string, description: "station-controller's reason, when it holds the node back"}
+        api_server: {type: string}
+        site: {type: string}
+        address: {type: string, description: The pinned tunnel address}
+        uplink: {type: string}
+        labels: {type: object, additionalProperties: {type: string}}
+        taints: {type: array, items: {type: string}}
+        expires_at: {type: string, format: date-time}
+        issued_by: {type: string, description: The authenticated identity that gave out the current code}
+        issued_at: {type: string, format: date-time}
+        redeemed_at: {type: string, format: date-time}
+        public_key: {type: string, description: The WireGuard public key of the machine that redeemed the code}
+        tunnel_address: {type: string, description: The tunnel address station-controller gave the machine}
+    IssuedNodeAdmission:
+      type: object
+      required: [admission, code, command]
+      properties:
+        admission: {$ref: '#/components/schemas/NodeAdmission'}
+        code: {type: string, description: The one-time code; answered here only}
+        command: {type: string, description: The one line to run as root on the machine}
     LogEntry:
       type: object
       additionalProperties: true

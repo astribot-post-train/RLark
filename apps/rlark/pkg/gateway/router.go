@@ -49,6 +49,13 @@ func (g *Gateway) RegisterRoutes(r gin.IRouter) {
 		stationNodeOperations.GET("/:name", g.handleGetNodeOperation)
 	}
 	adminAPI.GET("/station/observations", g.handleListStationObservations)
+	nodeAdmissions := adminAPI.Group("/station/node-admissions")
+	{
+		nodeAdmissions.GET("", g.handleListNodeAdmissions)
+		nodeAdmissions.POST("", g.handleIssueNodeAdmission)
+		nodeAdmissions.POST("/:name/reissue", g.handleReissueNodeAdmission)
+		nodeAdmissions.POST("/:name/revoke", g.handleRevokeNodeAdmission)
+	}
 	api.GET("/node-networks/:name", g.handleNodeNetwork)
 	api.GET("/site-nodes", g.handleListSiteNodes)
 	api.GET("/site-nodes/:name", g.handleGetSiteNode)

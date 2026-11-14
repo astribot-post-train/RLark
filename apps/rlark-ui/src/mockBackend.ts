@@ -347,7 +347,7 @@ export function installMockBackend() {
 
     if (method === "GET" && path === "/api/v1/clusters")
       return json({ data: clusterPayload() });
-    if (path.startsWith("/api/v1/station/"))
+    if (path.startsWith("/api/v1/station/") || path.startsWith("/api/v1/site-nodes"))
       return json({ error: "Station is unavailable in mock mode" }, 503);
     if (method === "GET" && path.startsWith("/api/v1/clusters/")) {
       const id = decodeURIComponent(path.split("/").pop()!);

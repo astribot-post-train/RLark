@@ -83,6 +83,15 @@ spec:
                 description: ExpiresAt ends the time in which the code can be redeemed.
                 format: date-time
                 type: string
+              issuedAt:
+                format: date-time
+                type: string
+              issuedBy:
+                description: |-
+                  IssuedBy and IssuedAt are who gave out the current code and when: the
+                  authenticated identity at the Gateway, never a value the request names.
+                maxLength: 256
+                type: string
               labels:
                 additionalProperties:
                   type: string

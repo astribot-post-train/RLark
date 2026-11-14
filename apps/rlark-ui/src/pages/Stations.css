@@ -483,3 +483,54 @@
     max-width: none;
   }
 }
+
+/* Join codes: the admission records under the table and the drawer that
+   shows a code once. */
+.station-admissions {
+  margin-top: 16px;
+}
+
+.station-admissions .station-operation-history-heading {
+  display: grid;
+  gap: 4px;
+  padding: 12px 14px;
+}
+
+.station-admission-actions {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.join-code-result {
+  display: grid;
+  gap: 14px;
+}
+
+.join-code-field {
+  display: grid;
+  gap: 6px;
+  justify-items: start;
+}
+
+.join-code-value {
+  font-size: 18px;
+  letter-spacing: 0.08em;
+}
+
+.join-code-line {
+  width: 100%;
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--panel);
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.join-node-advanced summary {
+  cursor: pointer;
+  margin-bottom: 8px;
+}

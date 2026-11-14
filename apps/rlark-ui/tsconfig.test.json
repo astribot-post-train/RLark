@@ -33,6 +33,7 @@
     "src/utils/resourceAvailability.ts",
     "src/utils/route.ts",
     "src/utils/stationDisplay.ts",
+    "src/utils/siteNodeDisplay.ts",
     "src/utils/sshKeys.ts",
     "src/utils/storageClass.ts",
     "src/utils/terminalKeyboard.ts",

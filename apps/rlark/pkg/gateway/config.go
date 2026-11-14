@@ -39,6 +39,11 @@ type Config struct {
 	StationAPIAddress            string
 	StationAPICAFile             string
 	StationGatewayCredentialFile string
+	// StationAPIBootstrapURL is the HTTPS origin of Station API as a machine
+	// that joins reaches it (the api-url station-agent has); with it the
+	// Gateway gives out join codes. StationAPIAddress is where the Gateway
+	// itself reaches Station API, which may be another address.
+	StationAPIBootstrapURL string
 }
 
 // DefaultConfig returns a Config with sensible defaults.
@@ -64,6 +69,7 @@ func (c *Config) SetupFlags(fs *pflag.FlagSet) {
 	fs.StringVar(&c.StationAPIAddress, "station-api-address", "", "Optional Station API HTTPS origin for node network summaries")
 	fs.StringVar(&c.StationAPICAFile, "station-api-ca-file", "", "Station API CA bundle")
 	fs.StringVar(&c.StationGatewayCredentialFile, "station-gateway-credential-file", "", "Dedicated Station API network summary credential file")
+	fs.StringVar(&c.StationAPIBootstrapURL, "station-api-bootstrap-url", "", "Station API HTTPS origin as machines that join reach it; enables join codes (needs --station-api-address and --station-api-ca-file)")
 
 	c.KubeClientConfig.SetupFlags(fs)
 }

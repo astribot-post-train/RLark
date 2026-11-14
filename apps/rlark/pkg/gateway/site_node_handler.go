@@ -58,6 +58,9 @@ type siteNodeNetwork struct {
 	// Address is the one address every other member reaches the node at.
 	Address       string `json:"address,omitempty"`
 	TunnelAddress string `json:"tunnel_address,omitempty"`
+	// PublicKey is the WireGuard public key the node enrolled with; its
+	// private key never leaves the machine.
+	PublicKey string `json:"public_key,omitempty"`
 	// Links is, for a leaf, what each hub it dials sees of it, and
 	// LinkSummary the line to show for them: empty while all are connected.
 	Links       []siteNodeLink `json:"links,omitempty"`
@@ -128,6 +131,7 @@ func (g *Gateway) siteNodes(c *gin.Context, clusterID, namespace string) ([]site
 				status, _, _ := unstructured.NestedMap(enrollment.Object, "status")
 				text := func(key string) string { value, _ := status[key].(string); return value }
 				result.Network = &siteNodeNetwork{State: text("phase"), Site: text("site"), Role: text("role"), Address: text("address"), TunnelAddress: text("tunnelAddress"), LinkSummary: text("linkSummary")}
+				result.Network.PublicKey, _, _ = unstructured.NestedString(enrollment.Object, "spec", "publicKey")
 				links, _ := status["links"].([]interface{})
 				for _, raw := range links {
 					link, _ := raw.(map[string]interface{})

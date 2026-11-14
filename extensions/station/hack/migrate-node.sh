@@ -8,7 +8,9 @@
 #
 #   migrate-node.sh OLD_KUBECONFIG NEW_KUBECONFIG NEW_CLUSTER_ID NODE API_SERVER STATION_API IMAGE [label=value ...]
 #
-# Environment: KCP (management kubeconfig), CA (Station API's CA file), TAINTS,
+# Environment: KCP (management kubeconfig), CA (Station API's CA file),
+# RLARK_URL and RLARK_TOKEN_FILE (the Gateway that gives out the admission's
+# code, and an administrator service account's token: admit-node.sh), TAINTS,
 # PULL_SECRET and JOB_NAMESPACE (where it is and the Job runs; kube-system),
 # TIMEOUT (seconds to Ready in the new cluster; 600). A cluster's control-plane
 # node does not move: its cluster would end with it.
@@ -46,7 +48,7 @@ for n in json.load(sys.stdin)["spec"]["nodes"]:
 [[ $old_cluster != "$CLUSTER" ]] || { echo "$NODE is a node of $CLUSTER already. A cluster whose control plane moves to another machine keeps its nodes where they are (the installer's control-plane mode, FROM_SNAPSHOT)" >&2; exit 1; }
 stamp "$NODE: $old_cluster -> $CLUSTER, keeps $address${uplink:+ uplink $uplink}"
 
-command=$(KCP=$KCP CA=$CA ADDRESS=$address UPLINK=$uplink TAINTS=${TAINTS:-} "$HERE/admit-node.sh" "$CLUSTER" "$NODE" "$API_SERVER" "$STATION_API" "$@")
+command=$(ADDRESS=$address UPLINK=$uplink TAINTS=${TAINTS:-} "$HERE/admit-node.sh" "$CLUSTER" "$NODE" "$API_SERVER" "$@")
 code=$(echo "$command" | tail -1 | sed -n 's#.*/b/\([a-z0-9]*\) .*#\1#p')
 name=$(echo "node-migrate-$NODE" | cut -c1-63)
 old -n "$NS" delete job "$name" --ignore-not-found >/dev/null

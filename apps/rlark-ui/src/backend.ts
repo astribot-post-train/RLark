@@ -1,4 +1,5 @@
 import { request, requestJson, withQuery, type LoginResponse } from "./api.js";
+import type { IssuedNodeAdmission, NodeAdmission, SiteNode } from "./utils/siteNodeDisplay.js";
 import type {
   AgentCertListItem,
   CRDDomain,
@@ -549,6 +550,54 @@ export const stationsApi = {
     return requestJson<NodeOperation>(
       `/api/v1/station/node-operations/${encodeURIComponent(name)}?${query}`,
       { signal },
+    );
+  },
+};
+
+export const siteNodesApi = {
+  list(clusterID: string, signal?: AbortSignal) {
+    return requestJson<{ items: SiteNode[] }>(
+      withQuery("/api/v1/site-nodes", { cluster_id: clusterID }),
+      { signal },
+    );
+  },
+};
+
+// Join codes. The code is in the answer of issue and reissue only; the
+// management plane keeps its hash.
+export const nodeAdmissionsApi = {
+  list(clusterID: string, signal?: AbortSignal) {
+    return requestJson<{ items: NodeAdmission[] }>(
+      withQuery("/api/v1/station/node-admissions", { cluster_id: clusterID }),
+      { signal },
+    );
+  },
+  issue(input: {
+    cluster_id: string;
+    node_name: string;
+    api_server: string;
+    site?: string;
+    address?: string;
+    uplink?: string;
+    labels?: Record<string, string>;
+    taints?: string[];
+    ttl_seconds?: number;
+  }) {
+    return requestJson<IssuedNodeAdmission>("/api/v1/station/node-admissions", {
+      method: "POST",
+      body: input,
+    });
+  },
+  reissue(name: string, clusterID: string, ttlSeconds?: number) {
+    return requestJson<IssuedNodeAdmission>(
+      withQuery(`/api/v1/station/node-admissions/${encodeURIComponent(name)}/reissue`, { cluster_id: clusterID }),
+      { method: "POST", body: ttlSeconds ? { ttl_seconds: ttlSeconds } : {} },
+    );
+  },
+  revoke(name: string, clusterID: string) {
+    return requestJson<{ admission: NodeAdmission }>(
+      withQuery(`/api/v1/station/node-admissions/${encodeURIComponent(name)}/revoke`, { cluster_id: clusterID }),
+      { method: "POST" },
     );
   },
 };

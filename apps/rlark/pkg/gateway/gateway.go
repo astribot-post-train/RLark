@@ -34,7 +34,9 @@ type Gateway struct {
 	rawClient      kubernetes.Interface
 	stationClient  dynamic.Interface
 	networkSummary nodeNetworkSummaryClient
-	nodeLister     nodeLister
+	// stationBootstrap is set when the Gateway gives out join codes.
+	stationBootstrap stationBootstrap
+	nodeLister       nodeLister
 
 	// podLister is a cached view of rlark Pod CRs, backed by a shared
 	// informer. It is used by the TensorBoard proxy handler to look up
@@ -128,6 +130,12 @@ func (g *Gateway) init(ctx context.Context) error {
 		g.networkSummary, err = newStationNetworkClient(g.config.StationAPIAddress, g.config.StationAPICAFile, g.config.StationGatewayCredentialFile)
 		if err != nil {
 			return fmt.Errorf("configure Station network summaries: %w", err)
+		}
+	}
+	if g.config.StationAPIBootstrapURL != "" {
+		g.stationBootstrap, err = newStationBootstrapClient(g.config.StationAPIBootstrapURL, g.config.StationAPIAddress, g.config.StationAPICAFile)
+		if err != nil {
+			return fmt.Errorf("configure join codes: %w", err)
 		}
 	}
 	g.users = secretUserProvider{client: g.rawClient, namespace: g.managementNamespace()}

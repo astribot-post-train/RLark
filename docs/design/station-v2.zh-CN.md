@@ -206,6 +206,7 @@ controller 每次算完都沿着算出来的配置检查任意两台之间有没
 
 | 事情 | 怎么发生 | 管理员做什么 |
 |---|---|---|
+| 一台全新的机器 | 控制台“场站节点 → 加入节点”或 `extensions/station/hack/admit-node.sh` 调 Gateway `POST /api/v1/station/node-admissions`：Gateway 写 `NodeAdmission`（只存码的 SHA-256，记发码人和时间），把码和机器上执行的那一行命令只回答这一次；机器执行后自己生成私钥、凭码换到隧道配置和 kubeadm 引导凭据 | 发码（只有管理员）；丢了码就重发（`/reissue`），没用过的码可以作废（`/revoke`：把过期时间设成现在） |
 | 新叶子入网 | 打标签后 pod 起来，自动登记、分配地址、下发（实测 16 s 连上第一台枢纽，28 s 连上全部） | 给节点打 `station.rlark.io/network=enabled`（这就是审批） |
 | 新枢纽、新端点、新网段、转发 | 在 `SiteNetwork.spec.nodes` 声明 | 审：这些会改别的节点的路由，节点自己报不了 |
 | 新场站、新成员集群 | 在 `SiteNetwork.spec.sites` 声明；集群注册沿用现有流程 | 审 |
@@ -291,7 +292,9 @@ liangcai 现有的件：
 | agent 登记 | `apps/rlark/pkg/stationidentity/agent_enrollment.go` | 登记、校验 hash、原子写；pending / 拒绝 / 出错都保留上一份 |
 | 网关 | `extensions/station-gateway` | 配置来源的先后；对端增删改是增量；真实内核（一次性网络命名空间，含他原有的两个内核测试）上加入、离开、删路由 |
 | 两个模块之间的文件格式 | `extensions/station-gateway/testdata/computed-s1u-01-x86.json` | 计算侧必须产出它，网关侧必须能解析它 |
-| 只读接口 | `apps/rlark/pkg/gateway/site_node_handler.go` | 身份 + 网络 + 机器人标签；心跳、隧道、节点就绪、开机时间分开返回；重绑后不返回旧地址 |
+| 只读接口 | `apps/rlark/pkg/gateway/site_node_handler.go` | 身份 + 网络 + 机器人标签 + 登记的 WireGuard 公钥；心跳、隧道、节点就绪、开机时间分开返回；重绑后不返回旧地址 |
+| 发码 | `apps/rlark/pkg/gateway/node_admission_handler.go`（Gateway 参数 `--station-api-bootstrap-url`：机器到达 Station API 的 HTTPS 地址，即 station-agent 的 api-url） | 只存哈希、码不进列表；命令里的 CA 摘要和设备上联脚本摘要由 Gateway 经自己验证过的连接读；重发保留声明、清掉兑换；同名重新发码整体替换标签；已兑换的码不能作废；参数校验 |
+| 场站节点页 | `apps/rlark-ui/src/pages/Stations.tsx`、`JoinNodeDrawer.tsx` | 入网状态、公钥开头、机型、重启次数；“加入节点”表单；入网记录（重发、作废）；码只显示一次 |
 | 隧道探测 | `apps/rlark/pkg/stationidentity/agent_enrollment.go`（`probePeers`） | 按配置里的对端逐个探测；没有配置就不报 |
 | 隧道判定和重启留痕 | `extensions/station/controller/station_reconciler.go` | 在线的对端连不上是 failed，对端自己离线不算；校时不算重启，短于心跳窗口的重启被记下 |
 | 只连场站入口的拓扑 | `extensions/station/network`（`LeavesViaRelay`） | 96+1+3 台是 99 条隧道、机器人 1 个对端、任意两台可达 |
@@ -304,7 +307,6 @@ liangcai 现有的件：
 - 按场站分别设 Tunnel / Routed（现在是整张网一个模式）。
 - 密钥轮换的审计事件。
 - CRD 组改名的迁移（1.3）。
-- 入网状态在界面上的显示（现在用 `kubectl get netenroll -A` 和 `kubectl get sitenet`）。
 
 1.7 的隧道探测和重启留痕、`leavesViaRelay` 是端到端演练之后加的，只有单测：再跑端到端要等 3090 能起 5 个 kind 节点。
 

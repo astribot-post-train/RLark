@@ -7,6 +7,7 @@ import {
   CircleX,
   Copy as CopyIcon,
   Fingerprint,
+  KeyRound,
   ListFilter,
   MonitorSmartphone,
   Network,
@@ -19,6 +20,8 @@ import {
 } from "lucide-react";
 import {
   clustersApi,
+  nodeAdmissionsApi,
+  siteNodesApi,
   stationsApi,
   type StationItem,
   type StationObservationItem,
@@ -41,6 +44,16 @@ import {
   stationUptime,
   type StationNetworkState,
 } from "../utils/stationDisplay";
+import {
+  admissionStateClass,
+  admissionStateLabel,
+  keyFingerprint,
+  machineModel,
+  type IssuedNodeAdmission,
+  type NodeAdmission,
+  type SiteNode,
+} from "../utils/siteNodeDisplay";
+import { JoinNodeDrawer } from "./JoinNodeDrawer";
 import "./Stations.css";
 
 function CopyValue({ value, zh }: { value?: string; zh: boolean }) {
@@ -135,6 +148,12 @@ export function StationsPage({ copy: c }: { copy: Copy }) {
   });
   const activeRequest = useRef<AbortController | null>(null);
   const observationRequest = useRef<AbortController | null>(null);
+  // Per "<clusterID>/<nodeName>": the Gateway's site-node view and admission.
+  const [siteNodes, setSiteNodes] = useState<Record<string, SiteNode>>({});
+  const [admissions, setAdmissions] = useState<NodeAdmission[]>([]);
+  const [admissionError, setAdmissionError] = useState("");
+  const [admissionPending, setAdmissionPending] = useState("");
+  const [joinCode, setJoinCode] = useState<{ issued?: IssuedNodeAdmission }>();
 
   useEffect(() => () => observationRequest.current?.abort(), []);
 
@@ -156,6 +175,7 @@ export function StationsPage({ copy: c }: { copy: Copy }) {
       ), clustersApi.list<ClusterSummary>()]);
       if (controller.signal.aborted) return;
       setClusters(latestClusters);
+      if (!append) void loadSiteData(latestClusters, controller.signal);
       setItems((current) => (append ? [...current, ...response.items] : response.items));
       setContinueToken(response.continue ?? "");
       if (!append && selectedID && !response.items.some((item) => `${item.metadata.namespace}/${item.metadata.name}` === selectedID)) {
@@ -172,6 +192,57 @@ export function StationsPage({ copy: c }: { copy: Copy }) {
         setLoadingMore(false);
         setRefreshing(false);
       }
+    }
+  };
+
+  // One call per cluster for its site nodes and one for its admissions; a
+  // cluster whose Station API does not answer just shows no network facts.
+  const loadSiteData = async (latestClusters: ClusterSummary[], signal: AbortSignal) => {
+    const targets = latestClusters.filter((cluster) => (!clusterID || cluster.id === clusterID) && !cluster.agentNamespaceConflict);
+    const results = await Promise.all(targets.map(async (cluster) => {
+      const [nodes, admitted] = await Promise.allSettled([siteNodesApi.list(cluster.id, signal), nodeAdmissionsApi.list(cluster.id, signal)]);
+      return { nodes: nodes.status === "fulfilled" ? nodes.value.items : [], admitted };
+    }));
+    if (signal.aborted) return;
+    const nextNodes: Record<string, SiteNode> = {};
+    const nextAdmissions: NodeAdmission[] = [];
+    let failure = "";
+    for (const { nodes, admitted } of results) {
+      for (const node of nodes) nextNodes[`${node.cluster_id}/${node.node_name}`] = node;
+      if (admitted.status === "fulfilled") nextAdmissions.push(...admitted.value.items);
+      else failure = admitted.reason instanceof Error ? admitted.reason.message : String(admitted.reason);
+    }
+    setSiteNodes(nextNodes);
+    setAdmissions(nextAdmissions);
+    setAdmissionError(failure);
+  };
+
+  const reissue = async (admission: NodeAdmission) => {
+    if (admissionPending) return;
+    setAdmissionPending(admission.node_name);
+    setAdmissionError("");
+    try {
+      const issued = await nodeAdmissionsApi.reissue(admission.node_name, admission.cluster_id);
+      setJoinCode({ issued });
+      void load(false);
+    } catch (reason) {
+      setAdmissionError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setAdmissionPending("");
+    }
+  };
+
+  const revoke = async (admission: NodeAdmission) => {
+    if (admissionPending || !window.confirm(zh ? `作废 ${admission.node_name} 的入网码？` : `Revoke the join code of ${admission.node_name}?`)) return;
+    setAdmissionPending(admission.node_name);
+    setAdmissionError("");
+    try {
+      const { admission: revoked } = await nodeAdmissionsApi.revoke(admission.node_name, admission.cluster_id);
+      setAdmissions((current) => current.map((item) => item.cluster_id === revoked.cluster_id && item.node_name === revoked.node_name ? revoked : item));
+    } catch (reason) {
+      setAdmissionError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setAdmissionPending("");
     }
   };
 
@@ -567,8 +638,11 @@ export function StationsPage({ copy: c }: { copy: Copy }) {
             {clusters.map((cluster) => <option key={cluster.id} value={cluster.id}>{cluster.name} ({cluster.agentNamespace})</option>)}
           </select>
         </label>
+        <button type="button" className="primary-button station-join-code" onClick={() => setJoinCode({})} disabled={!clusters.length}>
+          <KeyRound size={15} />{zh ? "加入节点" : "Add node"}
+        </button>
         <button type="button" className="secondary-button station-add-node" onClick={openJoin} disabled={!clusters.length}>
-          <Plus size={15} />{zh ? "接入新节点" : "Add node"}
+          <Plus size={15} />{zh ? "SSH 接入" : "Join over SSH"}
         </button>
         <button type="button" className="icon-button station-operation-history" onClick={() => setShowNodeOperations((value) => !value)} disabled={!clusterID} aria-label={zh ? "查看节点操作" : "View node operations"} title={zh ? "节点操作历史" : "Node operation history"}>
           <ListFilter size={16} />
@@ -615,6 +689,10 @@ export function StationsPage({ copy: c }: { copy: Copy }) {
               <th>{zh ? "节点" : "Node"}</th>
               <th>{zh ? "状态" : "Phase"}</th>
               <th>{zh ? "网络" : "Network"}</th>
+              <th>{zh ? "入网" : "Admission"}</th>
+              <th title={zh ? "与机器上 wg show <接口> public-key 的开头一致" : "The beginning of wg show <interface> public-key on the machine"}>{zh ? "WireGuard 公钥" : "WireGuard key"}</th>
+              <th>{zh ? "机型" : "Model"}</th>
+              <th>{zh ? "重启" : "Reboots"}</th>
               <th>{zh ? "运行时间" : "Uptime"}</th>
               <th>{zh ? "最近上报" : "Last seen"}</th>
             </tr></thead>
@@ -622,6 +700,10 @@ export function StationsPage({ copy: c }: { copy: Copy }) {
               {visible.map((item) => {
                 const key = `${item.metadata.namespace}/${item.metadata.name}`;
                 const itemPhase = stationPhase(item);
+                const itemClusterID = clusterForStation(clusters, item.metadata.namespace)?.id;
+                const siteNode = siteNodes[`${itemClusterID}/${item.spec.binding.nodeName}`];
+                const admission = admissions.find((entry) => entry.cluster_id === itemClusterID && entry.node_name === item.spec.binding.nodeName);
+                const publicKey = siteNode?.network?.public_key ?? admission?.public_key;
                 return (
                   <tr key={key} className={`clickable-row${selectedID === key ? " selected" : ""}`} onClick={() => setSelectedID(key)}>
                     <td className="stations-name-cell">
@@ -637,6 +719,10 @@ export function StationsPage({ copy: c }: { copy: Copy }) {
                     </td>
                     <td><span className={`status ${stationStatusClass(itemPhase)}`}><i />{phaseLabel(itemPhase)}</span></td>
                     <td><NetworkBadge state={stationNetworkState(item)} zh={zh} /></td>
+                    <td>{admission ? <span className={`status ${admissionStateClass(admission.state)}`} title={admission.reason}><i />{admissionStateLabel(admission.state, zh)}</span> : <span className="muted">{zh ? "未用入网码" : "no code"}</span>}</td>
+                    <td>{publicKey ? <code className="inline-code" title={publicKey}>{keyFingerprint(publicKey)}</code> : <span className="muted">—</span>}</td>
+                    <td>{machineModel(siteNode?.labels ?? admission?.labels) || <span className="muted">—</span>}</td>
+                    <td>{siteNode ? siteNode.reboots : <span className="muted">—</span>}</td>
                     <td><small>{itemPhase === "Bound" ? stationUptime(item.status?.bootTime, now, zh) : "—"}</small></td>
                     <td><small title={formatTime(item.status?.lastSeenTime)}>{formatRelativeTime(item.status?.lastSeenTime, now, zh)}</small></td>
                   </tr>
@@ -648,6 +734,57 @@ export function StationsPage({ copy: c }: { copy: Copy }) {
         <RefreshOverlay visible={refreshing} label={zh ? "刷新中" : "Refreshing"} />
       </div>
       {continueToken && <button className="secondary-button stations-more" type="button" onClick={() => void load(true)} disabled={loadingMore}>{loadingMore ? (zh ? "正在加载…" : "Loading…") : (zh ? "加载更多" : "Load more")}</button>}
+
+      <section className="table-panel station-admissions" aria-label={zh ? "入网记录" : "Admission records"}>
+        <div className="station-operation-history-heading">
+          <strong><KeyRound size={14} /> {zh ? "入网记录" : "Admission records"}</strong>
+          <small className="muted">{zh ? "每台用入网码加入的节点一条：码是否已用、谁发的、何时过期。码本身不保存。" : "One per node that joined by a code: whether the code was used, who issued it, when it expires. The code itself is not kept."}</small>
+        </div>
+        {admissionError && <div className="cert-error" role="alert">{admissionError}</div>}
+        {admissions.length === 0 ? <div className="stations-state muted">{zh ? "没有入网记录" : "No admission records"}</div> : (
+          <table className="stations-table">
+            <thead><tr>
+              <th>{zh ? "节点" : "Node"}</th>
+              <th>{zh ? "集群" : "Cluster"}</th>
+              <th>{zh ? "状态" : "State"}</th>
+              <th>{zh ? "发码人" : "Issued by"}</th>
+              <th>{zh ? "发码时间" : "Issued"}</th>
+              <th>{zh ? "过期时间" : "Expires"}</th>
+              <th>{zh ? "WireGuard 公钥" : "WireGuard key"}</th>
+              <th>{zh ? "隧道地址" : "Tunnel address"}</th>
+              <th />
+            </tr></thead>
+            <tbody>
+              {admissions.map((admission) => (
+                <tr key={`${admission.cluster_id}/${admission.node_name}`}>
+                  <td><strong>{admission.node_name}</strong></td>
+                  <td>{clusters.find((cluster) => cluster.id === admission.cluster_id)?.name ?? admission.cluster_id}</td>
+                  <td><span className={`status ${admissionStateClass(admission.state)}`} title={admission.reason}><i />{admissionStateLabel(admission.state, zh)}</span></td>
+                  <td>{admission.issued_by || <span className="muted">—</span>}</td>
+                  <td><small>{formatTime(admission.issued_at)}</small></td>
+                  <td><small>{formatTime(admission.expires_at)}</small></td>
+                  <td>{admission.public_key ? <code className="inline-code" title={admission.public_key}>{keyFingerprint(admission.public_key)}</code> : <span className="muted">—</span>}</td>
+                  <td>{admission.tunnel_address || <span className="muted">—</span>}</td>
+                  <td className="station-admission-actions">
+                    <button type="button" className="table-action-button" onClick={() => void reissue(admission)} disabled={!!admissionPending}>{zh ? "重发" : "Reissue"}</button>
+                    {admission.state === "Pending" && <button type="button" className="table-action-button danger" onClick={() => void revoke(admission)} disabled={!!admissionPending}>{zh ? "作废" : "Revoke"}</button>}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </section>
+
+      {joinCode && <JoinNodeDrawer
+        zh={zh}
+        clusters={clusters.filter((cluster) => !cluster.agentNamespaceConflict)}
+        clusterID={clusterID}
+        apiServerHints={Object.fromEntries([...admissions].reverse().map((admission) => [admission.cluster_id, admission.api_server]))}
+        issued={joinCode.issued}
+        onIssued={() => void load(false)}
+        onClose={() => setJoinCode(undefined)}
+      />}
 
       {selected && <>
         <div className="addon-drawer-overlay" onClick={closeDrawer} />

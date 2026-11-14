@@ -59,6 +59,11 @@ type NodeAdmissionSpec struct {
 	PublicKey string `json:"publicKey,omitempty"`
 	// RedeemedAt is when Station API accepted the code.
 	RedeemedAt *metav1.Time `json:"redeemedAt,omitempty"`
+	// IssuedBy and IssuedAt are who gave out the current code and when: the
+	// authenticated identity at the Gateway, never a value the request names.
+	// +kubebuilder:validation:MaxLength=256
+	IssuedBy string       `json:"issuedBy,omitempty"`
+	IssuedAt *metav1.Time `json:"issuedAt,omitempty"`
 }
 
 // +kubebuilder:validation:Enum=Pending;Redeemed;Joined;Expired
