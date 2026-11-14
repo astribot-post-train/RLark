@@ -400,6 +400,31 @@ apply() {
   while read -r unit shares; do
     [[ $(cat "$(shares_of "$unit")" 2>/dev/null) == "$shares" ]] || systemctl set-property --runtime "$unit" CPUShares="$shares"
   done < <(shares)
+  # What Fleet left on the host before RLark (S1U_RETIRED_*): taken off once, reported by status while any is left.
+  local unit path
+  for unit in $S1U_RETIRED_UNITS; do
+    if [[ -e /etc/systemd/system/$unit.service ]]; then
+      systemctl disable --now --quiet "$unit.service"
+      rm -rf "/etc/systemd/system/$unit.service" "/etc/systemd/system/$unit.service.d"
+      systemctl daemon-reload
+      echo "retired $unit.service"
+    fi
+    if [[ $(systemctl show -p ActiveState --value "$unit.service") == failed ]]; then
+      systemctl reset-failed "$unit.service"
+    fi
+  done
+  for path in $S1U_RETIRED_PATHS; do
+    if [[ -e $path ]]; then
+      rm -rf "$path"
+      echo "removed $path"
+    fi
+  done
+  for path in $S1U_RETIRED_DIRECTORIES; do
+    if [[ -d $path ]] && ! mountpoint -q "$path" && [[ -z $(ls -A "$path") ]]; then
+      rmdir "$path"
+      echo "removed $path"
+    fi
+  done
   echo "$S1U_SCHEDULER_PERIOD_NS" > $SCHEDULER/latency_ns
   echo "$S1U_SCHEDULER_SLICE_NS" > $SCHEDULER/min_granularity_ns
   echo "$S1U_SCHEDULER_WAKEUP_NS" > $SCHEDULER/wakeup_granularity_ns
@@ -408,6 +433,17 @@ apply() {
 
 driver_runs() {
   pgrep -x "$S1U_VENDOR_DRIVER" > /dev/null
+}
+
+retired() {  # what of the profile's retired units, paths and directories is still on the host, one a line
+  local unit path
+  for unit in $S1U_RETIRED_UNITS; do
+    [[ ! -e /etc/systemd/system/$unit.service && $(systemctl show -p ActiveState --value "$unit.service") != failed ]] \
+      || echo "$unit.service"
+  done
+  for path in $S1U_RETIRED_PATHS $S1U_RETIRED_DIRECTORIES; do
+    [[ ! -e $path ]] || echo "$path$(mountpoint -q "$path" && echo " (mounted)")"
+  done
 }
 
 status() {
@@ -453,6 +489,7 @@ status() {
     "$(cat $SCHEDULER/latency_ns) $(cat $SCHEDULER/min_granularity_ns) $(cat $SCHEDULER/wakeup_granularity_ns) $(tr ' ' '\n' < $SCHEDULER/features | grep -x -e HRTICK -e NO_HRTICK)" \
     "$S1U_SCHEDULER_PERIOD_NS $S1U_SCHEDULER_SLICE_NS $S1U_SCHEDULER_WAKEUP_NS HRTICK"
   rule "local ports kept from outgoing connections" "$(sysctl -n net.ipv4.ip_local_reserved_ports)" "$S1U_LOCAL_PORTS"
+  rule "what Fleet left on the host before RLark" "$(retired | xargs)" ""
   # The vendor's units: every thread on the host's CPUs or, pinned there by the driver itself, the isolated ones.
   for unit in $S1U_VENDOR_UNITS; do
     # Each thread on all of the host's CPUs, or pinned by the vendor driver within its realtime ones. A process
