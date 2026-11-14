@@ -13,6 +13,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
+	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
@@ -150,7 +151,13 @@ func (r *Reconciler) Reconcile(ctx context.Context, _ reconcile.Request) (reconc
 	existing := &appsv1.DaemonSet{ObjectMeta: metav1.ObjectMeta{Name: Name, Namespace: r.Namespace}}
 	return reconcile.Result{}, r.apply(ctx, existing, func() {
 		existing.Labels = mergeLabels(existing.Labels, daemonSet.Labels)
-		existing.Spec = daemonSet.Spec
+		// The API server fills in what the rendering leaves out, so the stored spec never equals the
+		// rendered one. Replace it only when it lacks something rendered or keeps a selector key the
+		// declaration dropped; an unchanged declaration then writes nothing.
+		if !equality.Semantic.DeepDerivative(daemonSet.Spec, existing.Spec) ||
+			!equality.Semantic.DeepEqual(daemonSet.Spec.Template.Spec.NodeSelector, existing.Spec.Template.Spec.NodeSelector) {
+			existing.Spec = daemonSet.Spec
+		}
 	})
 }
 

@@ -188,6 +188,24 @@ func TestReconcileCreatesUpdatesAndRemoves(t *testing.T) {
 		}
 	}
 
+	// Reconciling an unchanged declaration again writes nothing, even after the API server filled in
+	// defaults the rendering leaves out.
+	ds.Spec.RevisionHistoryLimit = new(int32(10))
+	ds.Spec.Template.Spec.RestartPolicy = corev1.RestartPolicyAlways
+	if err := r.Local.Update(ctx, &ds); err != nil {
+		t.Fatal(err)
+	}
+	defaulted := ds.ResourceVersion
+	if _, err := r.Reconcile(ctx, reconcile.Request{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Local.Get(ctx, client.ObjectKey{Namespace: namespace, Name: Name}, &ds); err != nil {
+		t.Fatal(err)
+	}
+	if ds.ResourceVersion != defaulted {
+		t.Fatalf("an unchanged declaration rewrote the DaemonSet (resourceVersion %s -> %s)", defaulted, ds.ResourceVersion)
+	}
+
 	// A new agent image (the cluster Agent restarted with it) rolls the node Agents.
 	r.Connection.Image = "registry.local/rlark:v2"
 	if _, err := r.Reconcile(ctx, reconcile.Request{}); err != nil {
@@ -209,8 +227,8 @@ func TestReconcileCreatesUpdatesAndRemoves(t *testing.T) {
 	if err := r.Local.Get(ctx, client.ObjectKey{Namespace: namespace, Name: Name}, &ds); err != nil {
 		t.Fatal(err)
 	}
-	if ds.Spec.Template.Spec.NodeSelector["rlark.io/node-category"] != "robot" {
-		t.Fatalf("nodeSelector = %v", ds.Spec.Template.Spec.NodeSelector)
+	if len(ds.Spec.Template.Spec.NodeSelector) != 1 || ds.Spec.Template.Spec.NodeSelector["rlark.io/node-category"] != "robot" {
+		t.Fatalf("nodeSelector = %v, want only the declared key", ds.Spec.Template.Spec.NodeSelector)
 	}
 
 	// Disabled: everything the controller made goes.
