@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -163,9 +164,20 @@ func kubeClientset() (kubernetes.Interface, error) {
 // registry objects.
 func registryLogin(ctx context.Context, clientset kubernetes.Interface, server string) (string, string, error) {
 	host := strings.TrimSuffix(strings.TrimPrefix(strings.TrimPrefix(strings.TrimSpace(server), "https://"), "http://"), "/")
-	secrets, err := clientset.CoreV1().Secrets(metav1.NamespaceAll).List(ctx, metav1.ListOptions{LabelSelector: common.ImageRegistryReplicationLabel + "=true"})
-	if err != nil {
-		return "", "", err
+	secrets := &corev1.SecretList{}
+	if id := os.Getenv("RLARK_REGISTRY_CREDENTIAL"); id != "" {
+		// A pusher's kubeconfig may be allowed to read only this one object (RBAC resourceNames), not to list secrets.
+		secret, err := clientset.CoreV1().Secrets(metav1.NamespaceDefault).Get(ctx, id+"-replication", metav1.GetOptions{})
+		if err != nil {
+			return "", "", err
+		}
+		secrets.Items = append(secrets.Items, *secret)
+	} else {
+		list, err := clientset.CoreV1().Secrets(metav1.NamespaceAll).List(ctx, metav1.ListOptions{LabelSelector: common.ImageRegistryReplicationLabel + "=true"})
+		if err != nil {
+			return "", "", err
+		}
+		secrets = list
 	}
 	for _, secret := range secrets.Items {
 		var credential struct{ Registry, Username, Password string }

@@ -35,6 +35,11 @@ func TestRegistryLoginPicksTheCredentialOfTheServer(t *testing.T) {
 	if _, _, err := registryLogin(context.Background(), clientset, "elsewhere:5000"); err == nil || !strings.Contains(err.Error(), "credentials not found") {
 		t.Fatalf("unknown server: %v", err)
 	}
+	// A pusher allowed to read only its own credential object names it and does not list.
+	t.Setenv("RLARK_REGISTRY_CREDENTIAL", "ir-new")
+	if user, password, err := registryLogin(context.Background(), clientset, "registry.rlark.internal:5443"); err != nil || user != "rlark" || password != "p-new" {
+		t.Fatalf("by name: %q %q %v", user, password, err)
+	}
 }
 
 // The private directory skopeo runs with names the helper but holds no secret.
