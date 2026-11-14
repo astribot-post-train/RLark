@@ -564,7 +564,10 @@ func (r *pullReconciler) checkReady(ctx context.Context, mgmtAddon *rlarkv1alpha
 		if ds.Status.DesiredNumberScheduled == 0 && len(pod.NodeSelector) == 0 && (pod.Affinity == nil || pod.Affinity.NodeAffinity == nil) {
 			return false, fmt.Sprintf("DaemonSet %s: no nodes scheduled", ds.Name), nil
 		}
-		if ds.Status.UpdatedNumberScheduled < ds.Status.DesiredNumberScheduled || ds.Status.NumberReady < ds.Status.DesiredNumberScheduled {
+		// Under OnDelete the Pods take a new template only when someone replaces them (csi-driver-rclone keeps
+		// a node's mounts that way), so not-yet-updated Pods are what was asked for, not an unfinished rollout.
+		rolling := ds.Spec.UpdateStrategy.Type != appsv1.OnDeleteDaemonSetStrategyType
+		if (rolling && ds.Status.UpdatedNumberScheduled < ds.Status.DesiredNumberScheduled) || ds.Status.NumberReady < ds.Status.DesiredNumberScheduled {
 			waiting, err := r.daemonSetWaitingOn(ctx, &ds)
 			if err != nil {
 				return false, "", err

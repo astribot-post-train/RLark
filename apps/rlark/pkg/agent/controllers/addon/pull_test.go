@@ -629,3 +629,26 @@ func TestCheckReadySaysWhyInTheWorkloadsWords(t *testing.T) {
 		t.Fatalf("checkReady = %v, %q, %v; want %q", ready, msg, err, want)
 	}
 }
+
+// csi-driver-rclone on the cloud keeps its node plugins with OnDelete (a node's mounts are not cut by a new
+// template): ready, old-template Pods are what was asked for. Under RollingUpdate they are an unfinished rollout.
+func TestCheckReadyOnDeleteDaemonSetIsReadyWithOldPods(t *testing.T) {
+	ctx := context.Background()
+	addon := &rlarkv1alpha1.Addon{ObjectMeta: metav1.ObjectMeta{Name: "a", UID: "u"}}
+	for _, tt := range []struct {
+		strategy appsv1.DaemonSetUpdateStrategyType
+		ready    bool
+	}{{appsv1.OnDeleteDaemonSetStrategyType, true}, {appsv1.RollingUpdateDaemonSetStrategyType, false}} {
+		ds := &appsv1.DaemonSet{
+			ObjectMeta: metav1.ObjectMeta{Name: "node", Namespace: "rlark-system", Generation: 2, Labels: map[string]string{"rlark.io/addon-name": "a"}},
+			Spec:       appsv1.DaemonSetSpec{UpdateStrategy: appsv1.DaemonSetUpdateStrategy{Type: tt.strategy}, Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": "node"}}},
+			Status:     appsv1.DaemonSetStatus{ObservedGeneration: 2, DesiredNumberScheduled: 2, NumberReady: 2, UpdatedNumberScheduled: 0},
+		}
+		cl := fake.NewClientBuilder().WithScheme(clientgoscheme.Scheme).WithObjects(ds).WithStatusSubresource(ds).Build()
+		r := &pullReconciler{c: &Controller{Controller: base.Controller{LocalKubeClient: cl}}}
+		ready, msg, err := r.checkReady(ctx, addon)
+		if err != nil || ready != tt.ready {
+			t.Fatalf("%s: checkReady = %v %q %v, want %v", tt.strategy, ready, msg, err, tt.ready)
+		}
+	}
+}
