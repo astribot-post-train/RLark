@@ -4,6 +4,8 @@ RLark supports batch upgrades of data-plane clusters. By creating an upgrade job
 
 An administrator must explicitly set the management Cluster annotation `rlark.io/upgrade-driver: stock` before selecting a standard installation for batch upgrade. Clusters without this annotation and clusters that declare managed node Agents are ineligible for the stock installer. Verify that the standard installer can reproduce the member's deployment before opting in. For Astribot installations with custom workloads, use their dedicated release procedure.
 
+Astribot managed members require explicit site activation. For a mixed batch, enter a `BatchDeployConfig` in the same Deploy Config field. Stock and managed members receive independent child configurations. A rolled-back child counts toward the failure tolerance. See [mixed-batch activation](../developer-guide/astribot-upstream-upgrade.md#mixed-batch-activation).
+
 ## Create an Upgrade Job
 
 Navigate to **Admin Console → Cluster Upgrades** and click **Create Upgrade Job**.

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -25,6 +26,8 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 	ktesting "k8s.io/client-go/testing"
 	"k8s.io/utils/ptr"
+	runtimeclient "sigs.k8s.io/controller-runtime/pkg/client"
+	runtimefake "sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
 const brokerDigest = "@sha256:1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
@@ -139,6 +142,71 @@ func TestNodeImageBrokerScopesWritesAndRejectsForwardReplay(t *testing.T) {
 	require.NoError(t, err)
 	_, err = client.call(ctx, ReadNodeImage)
 	require.ErrorIs(t, err, ErrTargetChanged)
+
+	// Exercise automatic issuance with the same live verifier fixture and
+	// a management child whose spec must agree with the owned parent.
+	id.ChildName = "batch-lab"
+	lease.Spec.HolderIdentity = ptr.To("upgrade-job/" + id.ChildUID)
+	_, err = member.CoordinationV1().Leases(Namespace).Update(ctx, lease, metav1.UpdateOptions{})
+	require.NoError(t, err)
+	current, err = clusters.Get(ctx, "lab", metav1.GetOptions{})
+	require.NoError(t, err)
+	annotations := current.GetAnnotations()
+	delete(annotations, NodeImageGrantAnnotation)
+	annotations[ManagedBatchAnnotation] = "enabled"
+	current.SetAnnotations(annotations)
+	require.NoError(t, unstructured.SetNestedField(current.Object, "lab", "spec", "agentNamespace"))
+	_, err = clusters.Update(ctx, current, metav1.UpdateOptions{})
+	require.NoError(t, err)
+	ds.Spec.Template.Spec.Containers[0].Image = grant.Before
+	_, err = member.AppsV1().DaemonSets(Namespace).Update(ctx, ds, metav1.UpdateOptions{})
+	require.NoError(t, err)
+	scheme := runtime.NewScheme()
+	require.NoError(t, rlark.AddToScheme(scheme))
+	deployConfig := "apiVersion: rlark.io/v1alpha1\nkind: DeployConfig\nplane: data\nkubernetes:\n  agent-image: " +
+		grant.Deployment.Agent + "\n  image: " + grant.Deployment.Tools + "\n  node-agent-image: " + grant.Target + "\n"
+	parent := &rlark.UpgradeJob{
+		ObjectMeta: metav1.ObjectMeta{Name: "batch", UID: "real-parent"},
+		Spec: rlark.UpgradeJobSpec{Image: "stock-upgrader", ClusterNames: []string{"lab"},
+			ConfigPatch: "apiVersion: astribot.rlark.io/v1alpha1\nkind: BatchDeployConfig\nmanaged:\n  executorImage: " + grant.ExecutorImage +
+				"\n  deployConfig: |\n    " + strings.ReplaceAll(strings.TrimSuffix(deployConfig, "\n"), "\n", "\n    ") + "\n",
+			Strategy: rlark.UpgradeStrategy{TimeoutSeconds: 120, AutoRollback: true}},
+	}
+	child := &rlark.ClusterUpgradeJob{
+		ObjectMeta: metav1.ObjectMeta{Name: id.ChildName, Namespace: "lab", UID: types.UID(id.ChildUID),
+			Annotations:     map[string]string{ChildClusterUIDAnnotation: string(grant.ClusterUID)},
+			Labels:          map[string]string{"rlark.io/cluster": "lab"},
+			OwnerReferences: []metav1.OwnerReference{*metav1.NewControllerRef(parent, rlark.GroupVersion.WithKind("UpgradeJob"))}},
+		Spec: rlark.ClusterUpgradeJobSpec{UpgradeJobName: parent.Name, Image: grant.ExecutorImage, ConfigPatch: deployConfig + "# edited child\n", TimeoutSeconds: 120, AutoRollback: true},
+	}
+	management := runtimefake.NewClientBuilder().WithScheme(scheme).WithObjects(parent, child).Build()
+	issuer := BatchGrantIssuer{
+		Management:       management,
+		ApprovedExecutor: func(string, types.UID) (string, bool) { return grant.ExecutorImage, true },
+		CheckControllerOwnership: func(_ context.Context, namespace, childName, parentName string) error {
+			require.Equal(t, "lab", namespace)
+			require.Equal(t, child.Name, childName)
+			require.Equal(t, parent.Name, parentName)
+			return nil
+		},
+	}
+	broker.Issuer = &issuer
+	_, err = broker.Execute(ctx, "lab", id, "bound-token", ReadNodeImage)
+	require.ErrorIs(t, err, ErrNodeImageGrant, "member cannot change the approved child spec")
+	require.NoError(t, management.Get(ctx, runtimeclient.ObjectKeyFromObject(child), child))
+	child.Spec.ConfigPatch = deployConfig
+	require.NoError(t, management.Update(ctx, child))
+
+	result, err := broker.Execute(ctx, "lab", id, "bound-token", ReadNodeImage)
+	require.NoError(t, err)
+	require.Equal(t, NodeImageApproved, result.Phase)
+	require.Equal(t, grant.Before, result.Before)
+	persisted, err := clusters.Get(ctx, "lab", metav1.GetOptions{})
+	require.NoError(t, err)
+	record, err := currentNodeImageGrant(persisted, id)
+	require.NoError(t, err)
+	require.Equal(t, grant.DaemonSetUID, record.DaemonSetUID)
+	require.Equal(t, grant.Target, record.Target)
 }
 
 func TestVerifyManagedCompletionRequiresAppliedAttemptAndSameReadyDaemonSet(t *testing.T) {

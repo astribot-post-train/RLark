@@ -250,7 +250,7 @@ func (d *K8sDriver) StartUpgrade(ctx context.Context, job *rlarkv1alpha1.Cluster
 	if d.policy != nil {
 		k8sJob.Spec.Template.Spec.Volumes = volumes[:1]
 		k8sJob.Spec.Template.Spec.Containers[0].VolumeMounts = volumeMounts[:1]
-		clusterupgrade.ConfigureExecutor(k8sJob, *d.policy, string(job.UID), d.managementCluster)
+		clusterupgrade.ConfigureExecutor(k8sJob, *d.policy, string(job.UID), job.Name, d.managementCluster)
 	}
 
 	if err := d.client.Create(ctx, k8sJob); err != nil {

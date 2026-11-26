@@ -3,8 +3,10 @@
 package upgrade
 
 import (
+	"cmp"
 	"context"
 	"fmt"
+	"reflect"
 	"slices"
 	"time"
 
@@ -88,7 +90,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 func (r *Reconciler) reconcileDeletion(ctx context.Context, job *rlarkv1alpha1.UpgradeJob) (ctrl.Result, error) {
 	if controllerutil.ContainsFinalizer(job, FinalizerName) {
 		// Delete all ClusterUpgradeJobs owned by this UpgradeJob
-		if err := r.deleteClusterUpgradeJobs(ctx, job.Name); err != nil {
+		if err := r.deleteClusterUpgradeJobs(ctx, job); err != nil {
 			return ctrl.Result{}, err
 		}
 
@@ -103,16 +105,8 @@ func (r *Reconciler) reconcileDeletion(ctx context.Context, job *rlarkv1alpha1.U
 // reconcileClusterUpgradeJobs creates ClusterUpgradeJob for target clusters,
 // respecting the concurrency limit in the upgrade strategy.
 func (r *Reconciler) reconcileClusterUpgradeJobs(ctx context.Context, job *rlarkv1alpha1.UpgradeJob) error {
-	// If any cluster failed and failure tolerance is 0 (default), stop creating.
-	// If failure tolerance is > 0, check whether the rate exceeds the threshold.
-	if job.Status.FailedClusters > 0 {
-		if job.Spec.Strategy.FailureTolerate == 0 {
-			return nil
-		}
-		failureRate := float64(job.Status.FailedClusters) / float64(job.Status.TotalClusters)
-		if failureRate > job.Spec.Strategy.FailureTolerate {
-			return nil
-		}
+	if job.Status.CompletionTime != nil || exceedsFailureTolerance(job) {
+		return nil
 	}
 
 	clusters, err := r.getTargetClusters(ctx, job)
@@ -128,6 +122,9 @@ func (r *Reconciler) reconcileClusterUpgradeJobs(ctx context.Context, job *rlark
 	existingByCluster := make(map[string]struct{}, len(existingJobs.Items))
 	active := 0
 	for _, cuj := range existingJobs.Items {
+		if !isOwnedUpgradeChild(job, &cuj) {
+			continue
+		}
 		existingByCluster[cuj.Labels["rlark.io/cluster"]] = struct{}{}
 		if !isTerminalPhase(cuj.Status.Phase) {
 			active++
@@ -137,6 +134,9 @@ func (r *Reconciler) reconcileClusterUpgradeJobs(ctx context.Context, job *rlark
 	if hasRejectedTarget(job) {
 		return nil
 	}
+	targets := make(map[string]clusterupgrade.BatchTarget, len(clusters))
+	targetUIDs := make(map[string]string, len(clusters))
+	plan, planErr := clusterupgrade.ParseBatchPlan(job.Spec)
 	for _, name := range clusters {
 		if _, exists := existingByCluster[name]; exists {
 			continue
@@ -149,7 +149,11 @@ func (r *Reconciler) reconcileClusterUpgradeJobs(ctx context.Context, job *rlark
 		case err != nil:
 			return fmt.Errorf("read upgrade target %s: %w", name, err)
 		default:
-			err = clusterupgrade.ValidateStockTarget(cluster)
+			err = planErr
+			if err == nil {
+				targets[name], err = plan.ForCluster(cluster)
+				targetUIDs[name] = string(cluster.UID)
+			}
 		}
 		if err != nil {
 			job.Status.Conditions = append(job.Status.Conditions, clusterupgrade.RejectedTargetCondition(name, job.Spec.Image, err))
@@ -168,6 +172,7 @@ func (r *Reconciler) reconcileClusterUpgradeJobs(ctx context.Context, job *rlark
 			continue
 		}
 
+		target := targets[clusterName]
 		clusterUpgradeJobName := fmt.Sprintf("%s-%s", job.Name, clusterName)
 		clusterNamespace := clusterName
 
@@ -182,11 +187,17 @@ func (r *Reconciler) reconcileClusterUpgradeJobs(ctx context.Context, job *rlark
 			},
 			Spec: rlarkv1alpha1.ClusterUpgradeJobSpec{
 				UpgradeJobName: job.Name,
-				Image:          job.Spec.Image,
-				ConfigPatch:    job.Spec.ConfigPatch,
+				Image:          target.ExecutorImage,
+				ConfigPatch:    target.DeployConfig,
 				TimeoutSeconds: job.Spec.Strategy.TimeoutSeconds,
 				AutoRollback:   job.Spec.Strategy.AutoRollback,
 			},
+		}
+
+		if target.Managed {
+			clusterUpgradeJob.Annotations = map[string]string{
+				clusterupgrade.ChildClusterUIDAnnotation: targetUIDs[clusterName],
+			}
 		}
 
 		if err := controllerutil.SetControllerReference(job, clusterUpgradeJob, r.Scheme); err != nil {
@@ -218,7 +229,14 @@ func hasRejectedTarget(job *rlarkv1alpha1.UpgradeJob) bool {
 	})
 }
 
+func isOwnedUpgradeChild(parent *rlarkv1alpha1.UpgradeJob, child *rlarkv1alpha1.ClusterUpgradeJob) bool {
+	owner := metav1.GetControllerOf(child)
+	return parent.UID != "" && owner != nil && owner.UID == parent.UID &&
+		owner.Kind == "UpgradeJob" && owner.APIVersion == rlarkv1alpha1.GroupVersion.String()
+}
+
 func (r *Reconciler) aggregateStatus(ctx context.Context, job *rlarkv1alpha1.UpgradeJob) (ctrl.Result, error) {
+	before := job.Status.DeepCopy()
 	var clusterUpgradeJobs rlarkv1alpha1.ClusterUpgradeJobList
 	if err := r.List(ctx, &clusterUpgradeJobs, client.MatchingLabels{
 		"rlark.io/upgrade-job": job.Name,
@@ -227,7 +245,7 @@ func (r *Reconciler) aggregateStatus(ctx context.Context, job *rlarkv1alpha1.Upg
 	}
 
 	var upgraded, failed, rolledBack, upgrading int32
-	conditions := make([]rlarkv1alpha1.UpgradeJobCondition, 0, len(clusterUpgradeJobs.Items))
+	var conditions []rlarkv1alpha1.UpgradeJobCondition
 	rejected := hasRejectedTarget(job)
 	for _, condition := range job.Status.Conditions {
 		if condition.Type == clusterupgrade.TargetRejected {
@@ -236,6 +254,9 @@ func (r *Reconciler) aggregateStatus(ctx context.Context, job *rlarkv1alpha1.Upg
 		}
 	}
 	for _, cuj := range clusterUpgradeJobs.Items {
+		if !isOwnedUpgradeChild(job, &cuj) {
+			continue
+		}
 		clusterName := cuj.Labels["rlark.io/cluster"]
 		conditions = append(conditions, rlarkv1alpha1.UpgradeJobCondition{
 			Type:        "ClusterUpgrade",
@@ -271,6 +292,9 @@ func (r *Reconciler) aggregateStatus(ctx context.Context, job *rlarkv1alpha1.Upg
 	job.Status.UpgradedClusters = upgraded
 	job.Status.FailedClusters = failed
 	job.Status.RollbackClusters = rolledBack
+	slices.SortStableFunc(conditions, func(a, b rlarkv1alpha1.UpgradeJobCondition) int {
+		return cmp.Compare(a.Cluster, b.Cluster)
+	})
 	job.Status.Conditions = conditions
 
 	if rejected && upgrading == 0 {
@@ -283,6 +307,9 @@ func (r *Reconciler) aggregateStatus(ctx context.Context, job *rlarkv1alpha1.Upg
 		r.updatePhase(job)
 	}
 
+	if reflect.DeepEqual(*before, job.Status) {
+		return ctrl.Result{}, nil
+	}
 	return ctrl.Result{}, r.Status().Update(ctx, job)
 }
 
@@ -316,20 +343,25 @@ func (r *Reconciler) getTargetClusters(ctx context.Context, job *rlarkv1alpha1.U
 		clusterNames = append(clusterNames, cluster.Name)
 	}
 
+	slices.Sort(clusterNames)
 	return clusterNames, nil
 }
 
 // deleteClusterUpgradeJobs deletes all ClusterUpgradeJobs for an UpgradeJob.
-func (r *Reconciler) deleteClusterUpgradeJobs(ctx context.Context, upgradeJobName string) error {
+func (r *Reconciler) deleteClusterUpgradeJobs(ctx context.Context, parent *rlarkv1alpha1.UpgradeJob) error {
 	var clusterUpgradeJobs rlarkv1alpha1.ClusterUpgradeJobList
 	if err := r.List(ctx, &clusterUpgradeJobs, client.MatchingLabels{
-		"rlark.io/upgrade-job": upgradeJobName,
+		"rlark.io/upgrade-job": parent.Name,
 	}); err != nil {
 		return err
 	}
 
 	for i := range clusterUpgradeJobs.Items {
-		if err := r.Delete(ctx, &clusterUpgradeJobs.Items[i]); err != nil {
+		child := &clusterUpgradeJobs.Items[i]
+		if !isOwnedUpgradeChild(parent, child) {
+			continue
+		}
+		if err := r.Delete(ctx, child, client.Preconditions{UID: &child.UID}); err != nil {
 			if !apierrors.IsNotFound(err) {
 				return err
 			}
@@ -337,6 +369,12 @@ func (r *Reconciler) deleteClusterUpgradeJobs(ctx context.Context, upgradeJobNam
 	}
 
 	return nil
+}
+
+// A rollback recovered the cluster but still consumed a failed attempt.
+func exceedsFailureTolerance(job *rlarkv1alpha1.UpgradeJob) bool {
+	failed := job.Status.FailedClusters + job.Status.RollbackClusters
+	return job.Status.TotalClusters > 0 && float64(failed)/float64(job.Status.TotalClusters) > job.Spec.Strategy.FailureTolerate
 }
 
 // updatePhase updates the overall phase based on aggregated status.
@@ -359,18 +397,21 @@ func (r *Reconciler) updatePhase(job *rlarkv1alpha1.UpgradeJob) {
 		} else {
 			job.Status.Phase = rlarkv1alpha1.UpgradeJobSucceeded
 		}
-		job.Status.CompletionTime = &metav1.Time{Time: time.Now()}
+		if job.Status.CompletionTime == nil {
+			now := metav1.Now()
+			job.Status.CompletionTime = &now
+		}
 		return
 	}
 
 	// Check failure tolerance
-	if job.Status.FailedClusters > 0 && job.Status.TotalClusters > 0 {
-		failureRate := float64(job.Status.FailedClusters) / float64(job.Status.TotalClusters)
-		if failureRate > job.Spec.Strategy.FailureTolerate {
-			job.Status.Phase = rlarkv1alpha1.UpgradeJobFailed
-			job.Status.CompletionTime = &metav1.Time{Time: time.Now()}
-			return
+	if exceedsFailureTolerance(job) {
+		job.Status.Phase = rlarkv1alpha1.UpgradeJobFailed
+		if job.Status.CompletionTime == nil {
+			now := metav1.Now()
+			job.Status.CompletionTime = &now
 		}
+		return
 	}
 
 	// Some clusters completed but none are actively upgrading

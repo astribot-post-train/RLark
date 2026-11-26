@@ -54,6 +54,16 @@ Gateway、管理面控制器和升级后的成员 Agent 都要求集群明确设
 
 隔离子任务的本地 `rlark-agent-upgrade-policy` ConfigMap 设置 `mode=astribot-managed-node`、`deployment`、摘要固定的 `executorImage`、HTTPS `brokerOrigin` 和可信 PEM `brokerCA`。托管模式的 DeployConfig 要求 `kubernetes.agent-image`、`kubernetes.image` 和 `kubernetes.node-agent-image` 都固定到镜像摘要。可信管理面运维人员在启动该子任务前为 Cluster 写入 `rlark.io/node-image-upgrade-grant`。这份 JSON 授权包含 `ClusterUID`、`DaemonSetUID`、`ChildUID`、`Before`（已观测且固定摘要的节点 Agent 镜像）、`Target`（节点 Agent 目标）、`Deployment`（批准的 `Agent` 和 `Tools` 摘要）、`ExecutorImage`、`Expires`（RFC 3339，晚于 Job 截止时间以覆盖回滚）和初始值为 `Approved` 的 `Phase`。不要替换仍在使用的授权。Job 使用绑定 Pod、可轮换的专用受众令牌；代理通过同一次 Cluster 资源版本检查提交镜像和授权阶段，迟到的正向请求无法撤销回滚。代理核验同一托管 DaemonSet UID、预期模板镜像、已观测代际、已更新节点数和可用节点数。隔离模式要求所有已调度节点收敛。
 
-批量入口仍未开放自动签发授权和混合驱动路由。隔离授权流程不用于生产批量升级。托管 Job 被清理后，恢复流程会核验本轮子任务的完成检查点、实际集群 Agent Deployment、托管节点 DaemonSet 和 Cluster 上已应用的授权。过期授权仍可作为本轮只读证据。证据缺失或发生变化时，报告结果无法核验。开放批量升级前，用标准与托管成员完成混合批次验收，覆盖授权过期、资源替换、成员租约冲突、部分滚动和回滚，并确认成员无法变更其他 Cluster 或已批准镜像以外的字段。
+托管 Job 被清理后，恢复流程会核验本轮子任务的完成检查点、实际集群 Agent Deployment、托管节点 DaemonSet 和 Cluster 上已应用的授权。过期授权仍可作为本轮只读证据。证据缺失或发生变化时，报告结果无法核验。开放批量升级前，用标准与托管成员完成混合批次验收，覆盖授权过期、资源替换、成员租约冲突、部分滚动和回滚，并确认成员无法变更其他 Cluster 或已批准镜像以外的字段。
 
 独立 Kind 用例以真实 Kubernetes Job 运行托管执行器，使用投射的 Pod 绑定令牌、独立 HTTPS 代理和受限验证凭据。测试夹具将已授权的声明传给真实 DaemonSet，Job 等待滚动状态。故意停止同步后，滚动超时，执行器恢复原声明、保留节点选择器并释放成员租约。该用例尚未覆盖完整的 Astribot 节点 Agent 调谐器、生产 kcp 接入和混合批次调度。
+
+### 混合批次入口
+
+混合批次继续用共享的 `UpgradeJob`，在 `spec.configPatch` 中填写 Astribot `BatchDeployConfig` YAML，`apiVersion` 为 `astribot.rlark.io/v1alpha1`，`kind` 为 `BatchDeployConfig`。将 `stockDeployConfig` 设为上游 Kubernetes DeployConfig 全文，或显式设为空字符串以复用标准成员保存的配置。标准成员使用 `spec.image`。`managed` 下填写 `executorImage` 和 `deployConfig`，后者为包含三个已批准镜像的 YAML 字符串。控制器为每个集群创建上游子资源，子任务只收到自己驱动的配置和镜像。已回滚的升级也计入失败阈值。旧的标准升级请求继续接受原有 DeployConfig。
+
+托管批量调度要求可信 Cluster 声明 `rlark.io/upgrade-driver: astribot-image-only` 和 `rlark.io/managed-upgrade-batch: enabled`。声明前先升级成员 Agent、配置托管策略、重新接入并确认可访问代理。代理配置设置 `autoIssueBatchGrants: true`，并在每个成员条目固定 `executorImage` 摘要。代理管理面身份还需要读取 UpgradeJob 和已选成员的 ClusterUpgradeJob，并能创建 SubjectAccessReview。首次收到持有成员租约的已认证请求时，代理核验成员有效权限、父子任务归属、配置及目标 Cluster UID，再根据实际已收敛的节点 Agent 基线签发授权。同一个子任务无法重新领授权。成员 Agent 只读子任务 Spec，可写状态；若旧 Role 仍可修改子任务 Spec，自动授权会被拦截。
+
+本次变更没有为生产集群自动开启批量入口。仍需验真实 kcp workspace、完整节点 Agent 调谐器以及标准与托管成员的混合批次，再启用生产托管注解。
+
+Kind 混合批次用例对标准和托管 Cluster 记录运行了真实控制面调谐器，验证子任务收到不同的配置，并使用真实 TokenReview 和 SubjectAccessReview 自动签发授权。托管 Job 完成了夹具 DaemonSet 滚动，并在第二次滚动超时后恢复声明。标准子任务已核验分发，尚未运行标准安装器。完整 Astribot 调谐器和生产 kcp workspace 仍需独立验收。Gateway 的机器准入已将请求校验、型号匹配和持久化委托给 Astribot stations 包。 独立 kcp v0.30.0 workspace 还验证了 SubjectAccessReview 能识别旧 Agent 的子任务 Spec 写权限，并在收紧 Role 后确认写请求无权执行。

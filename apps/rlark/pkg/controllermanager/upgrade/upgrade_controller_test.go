@@ -2,8 +2,10 @@ package upgrade
 
 import (
 	"context"
+	"strings"
 	"testing"
 
+	"github.com/rlinf/rlark/apps/rlark/astribot/clusterupgrade"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -19,7 +21,24 @@ func setupTestReconciler(objs ...runtime.Object) *Reconciler {
 	scheme := runtime.NewScheme()
 	_ = rlarkv1alpha1.AddToScheme(scheme)
 
-	client := fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(objs...).WithStatusSubresource(&rlarkv1alpha1.UpgradeJob{}).Build()
+	parents := map[string]*rlarkv1alpha1.UpgradeJob{}
+	for _, object := range objs {
+		if job, ok := object.(*rlarkv1alpha1.UpgradeJob); ok {
+			if job.UID == "" {
+				job.UID = types.UID(job.Name + "-uid")
+			}
+			parents[job.Name] = job
+		}
+	}
+	for _, object := range objs {
+		if child, ok := object.(*rlarkv1alpha1.ClusterUpgradeJob); ok && len(child.OwnerReferences) == 0 {
+			if parent := parents[child.Labels["rlark.io/upgrade-job"]]; parent != nil {
+				child.OwnerReferences = []metav1.OwnerReference{*metav1.NewControllerRef(parent, rlarkv1alpha1.GroupVersion.WithKind("UpgradeJob"))}
+			}
+		}
+	}
+
+	client := fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(objs...).WithStatusSubresource(&rlarkv1alpha1.UpgradeJob{}, &rlarkv1alpha1.ClusterUpgradeJob{}).Build()
 
 	reconciler := &Reconciler{
 		Client: client,
@@ -393,8 +412,8 @@ func TestReconcileRejectsBatchWithUnmarkedTarget(t *testing.T) {
 	job := &rlarkv1alpha1.UpgradeJob{
 		ObjectMeta: metav1.ObjectMeta{Name: "mixed-upgrade"},
 		Spec: rlarkv1alpha1.UpgradeJobSpec{
-			ClusterNames: []string{"stock", "legacy"},
-			Strategy:     rlarkv1alpha1.UpgradeStrategy{Concurrency: 2, FailureTolerate: 1},
+			Image: "stock-upgrader", ClusterNames: []string{"stock", "legacy"},
+			Strategy: rlarkv1alpha1.UpgradeStrategy{Concurrency: 2, FailureTolerate: 1},
 		},
 	}
 	legacy := &rlarkv1alpha1.Cluster{ObjectMeta: metav1.ObjectMeta{Name: "legacy"}}
@@ -409,4 +428,74 @@ func TestReconcileRejectsBatchWithUnmarkedTarget(t *testing.T) {
 	require.Len(t, updated.Status.Conditions, 1)
 	assert.Equal(t, "legacy", updated.Status.Conditions[0].Cluster)
 	assert.Contains(t, updated.Status.Conditions[0].Reason, "explicitly declare")
+}
+
+func TestMixedBatchDispatchAndRollbackStopsFurtherScheduling(t *testing.T) {
+	const digest = "@sha256:1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
+	const managedImage = "registry.example/managed-upgrade" + digest
+	const managedConfig = "apiVersion: rlark.io/v1alpha1\nkind: DeployConfig\nplane: data\nkubernetes:\n" +
+		"  agent-image: registry.example/agent" + digest + "\n  image: registry.example/tools" + digest + "\n  node-agent-image: registry.example/node" + digest + "\n"
+	patch := "apiVersion: astribot.rlark.io/v1alpha1\nkind: BatchDeployConfig\nstockDeployConfig: ''\nmanaged:\n  executorImage: " + managedImage + "\n  deployConfig: |\n    " + strings.ReplaceAll(strings.TrimSuffix(managedConfig, "\n"), "\n", "\n    ") + "\n"
+	job := &rlarkv1alpha1.UpgradeJob{
+		ObjectMeta: metav1.ObjectMeta{Name: "mixed-upgrade", UID: "batch-uid"},
+		Spec: rlarkv1alpha1.UpgradeJobSpec{
+			Image: "stock-upgrader", ConfigPatch: patch,
+			ClusterNames: []string{"stock-one", "managed", "stock-queued"},
+			Strategy:     rlarkv1alpha1.UpgradeStrategy{Concurrency: 2, TimeoutSeconds: 120, AutoRollback: true},
+		},
+	}
+	managed := &rlarkv1alpha1.Cluster{
+		ObjectMeta: metav1.ObjectMeta{Name: "managed", UID: "managed-cluster-uid", Annotations: map[string]string{
+			clusterupgrade.DriverAnnotation: clusterupgrade.DriverImageOnly, clusterupgrade.ManagedBatchAnnotation: "enabled",
+		}},
+		Spec: rlarkv1alpha1.ClusterSpec{AgentNamespace: "managed", NodeAgents: &rlarkv1alpha1.ClusterNodeAgents{Enabled: true, Image: "registry.example/node-old" + digest}},
+	}
+	r := setupTestReconciler(job, stockCluster("stock-one"), managed, stockCluster("stock-queued"))
+	require.NoError(t, reconcileN(r, job.Name, 2))
+	var children rlarkv1alpha1.ClusterUpgradeJobList
+	require.NoError(t, r.List(t.Context(), &children))
+	require.Len(t, children.Items, 2)
+	for n := range children.Items {
+		child := &children.Items[n]
+		assert.Equal(t, int64(120), child.Spec.TimeoutSeconds)
+		assert.True(t, child.Spec.AutoRollback)
+		switch child.Namespace {
+		case "managed":
+			assert.Equal(t, managedImage, child.Spec.Image)
+			assert.Equal(t, managedConfig, child.Spec.ConfigPatch)
+			assert.Equal(t, string(managed.UID), child.Annotations[clusterupgrade.ChildClusterUIDAnnotation])
+			require.True(t, metav1.IsControlledBy(child, job))
+			child.Status.Phase = rlarkv1alpha1.ClusterUpgradeJobRolledBack
+		case "stock-one":
+			assert.Equal(t, "stock-upgrader", child.Spec.Image)
+			assert.Empty(t, child.Spec.ConfigPatch)
+			child.Status.Phase = rlarkv1alpha1.ClusterUpgradeJobSucceeded
+		default:
+			t.Fatalf("unexpected child %s", child.Namespace)
+		}
+		require.NoError(t, r.Status().Update(t.Context(), child))
+	}
+	require.NoError(t, reconcileN(r, job.Name, 2))
+	require.NoError(t, r.List(t.Context(), &children))
+	require.Len(t, children.Items, 2, "a rollback must consume the failure budget")
+	var updated rlarkv1alpha1.UpgradeJob
+	require.NoError(t, r.Get(t.Context(), types.NamespacedName{Name: job.Name}, &updated))
+	require.Equal(t, rlarkv1alpha1.UpgradeJobFailed, updated.Status.Phase)
+}
+
+func TestDeletingBatchLeavesChildrenOfReplacedParent(t *testing.T) {
+	const name = "batch"
+	current := &rlarkv1alpha1.UpgradeJob{ObjectMeta: metav1.ObjectMeta{Name: name, UID: "current"}}
+	old := &rlarkv1alpha1.UpgradeJob{ObjectMeta: metav1.ObjectMeta{Name: name, UID: "old"}}
+	child := &rlarkv1alpha1.ClusterUpgradeJob{
+		ObjectMeta: metav1.ObjectMeta{Name: "old-child", Namespace: "member", UID: "old-child-uid",
+			Labels:          map[string]string{"rlark.io/upgrade-job": name},
+			OwnerReferences: []metav1.OwnerReference{*metav1.NewControllerRef(old, rlarkv1alpha1.GroupVersion.WithKind("UpgradeJob"))}},
+	}
+	r := setupTestReconciler(current, child)
+	require.NoError(t, r.deleteClusterUpgradeJobs(t.Context(), current))
+	var remaining rlarkv1alpha1.ClusterUpgradeJobList
+	require.NoError(t, r.List(t.Context(), &remaining))
+	require.Len(t, remaining.Items, 1)
+	assert.Equal(t, child.UID, remaining.Items[0].UID)
 }

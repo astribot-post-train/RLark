@@ -58,7 +58,7 @@ func main() {
 		}
 		err = clusterupgrade.RunInCluster(ctx, clusterupgrade.JobRequest{
 			JobUID: os.Getenv("RLARK_UPGRADE_JOB_UID"), PodName: os.Getenv("POD_NAME"), PodUID: os.Getenv("POD_UID"),
-			Mode: mode, Cluster: os.Getenv("RLARK_UPGRADE_CLUSTER"),
+			Mode: mode, Cluster: os.Getenv("RLARK_UPGRADE_CLUSTER"), ChildName: os.Getenv("RLARK_UPGRADE_CHILD_NAME"),
 			Deployment: os.Getenv("RLARK_UPGRADE_DEPLOYMENT"), DeployConfig: string(data),
 			AutoRollback: utils.GetEnvBool("AUTO_ROLLBACK", true), HealthTimeout: utils.GetEnvDuration("HEALTH_CHECK_TIMEOUT", 5*time.Minute),
 		})

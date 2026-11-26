@@ -23,7 +23,7 @@ var ErrUnverifiedExecutor = errors.New("upgrade executor identity could not be v
 func JobName(childUID string) string { return "upgrade-attempt-" + childUID }
 
 type ExecutorIdentity struct {
-	ChildUID, PodName, PodUID string
+	ChildUID, ChildName, PodName, PodUID string
 }
 
 func readExecutor(ctx context.Context, member kubernetes.Interface, identity ExecutorIdentity) (*corev1.Pod, error) {

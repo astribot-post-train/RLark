@@ -145,6 +145,10 @@ func (a *BrokerNodeImages) call(ctx context.Context, action NodeImageAction) (No
 	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode != http.StatusOK {
 		switch response.StatusCode {
+		case http.StatusPreconditionFailed:
+			return NodeImageResult{}, ErrBatchAuthority
+		case http.StatusUnprocessableEntity:
+			return NodeImageResult{}, ErrManagedBaseline
 		case http.StatusUnauthorized:
 			return NodeImageResult{}, ErrUnverifiedExecutor
 		case http.StatusForbidden:

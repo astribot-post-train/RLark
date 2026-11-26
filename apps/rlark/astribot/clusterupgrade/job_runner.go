@@ -18,7 +18,7 @@ import (
 type JobRequest struct {
 	JobUID, PodName, PodUID, Deployment string
 	DeployConfig                        string
-	Mode, Cluster                       string
+	Mode, Cluster, ChildName            string
 	AutoRollback                        bool
 	HealthTimeout                       time.Duration
 }
@@ -61,7 +61,7 @@ func runImageJob(ctx context.Context, member kubernetes.Interface, reader client
 		return err
 	}
 	pods := member.CoreV1().Pods(Namespace)
-	identity := ExecutorIdentity{ChildUID: request.JobUID, PodName: request.PodName, PodUID: request.PodUID}
+	identity := ExecutorIdentity{ChildUID: request.JobUID, ChildName: request.ChildName, PodName: request.PodName, PodUID: request.PodUID}
 	pod, err := readExecutor(ctx, member, identity)
 	if err != nil {
 		return err
@@ -163,6 +163,10 @@ func WriteJobDiagnostic(err error) {
 		diagnostic.Kind = "rollback-conflict"
 	case errors.Is(err, ErrRolledBack):
 		diagnostic.Kind = "rollout-failed"
+	case errors.Is(err, ErrBatchAuthority):
+		diagnostic.Kind = "managed-authority"
+	case errors.Is(err, ErrManagedBaseline):
+		diagnostic.Kind = "managed-baseline"
 	}
 	data, marshalErr := json.Marshal(diagnostic)
 	if marshalErr == nil {

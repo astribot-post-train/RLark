@@ -39,6 +39,10 @@ func PublicMessage(raw string) string {
 		return "the target cluster is held by another upgrade or release"
 	case "rollout-failed":
 		return "the updated Agent failed to become ready"
+	case "managed-authority":
+		return "member upgrade permissions must be verified before approving the managed job"
+	case "managed-baseline":
+		return "wait for the current node Agent rollout to converge"
 	case "rollback-conflict":
 		return "rollback stopped because the target changed during the upgrade"
 	}

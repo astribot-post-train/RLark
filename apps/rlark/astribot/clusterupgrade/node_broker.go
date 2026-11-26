@@ -58,6 +58,7 @@ var ErrNodeImageGrant = errors.New("no matching active node Agent image grant")
 // It is never returned to, or constructed from credentials provided by, the Job.
 type NodeImageBroker struct {
 	Clusters dynamic.ResourceInterface
+	Issuer   *BatchGrantIssuer
 	Member   func(context.Context, string, types.UID) (kubernetes.Interface, error)
 }
 
@@ -73,7 +74,7 @@ type NodeImageResult struct {
 // Execute re-reads and authorizes every operation. The worker supplies identity
 // and direction only. The approved images never come from a worker request.
 func (b NodeImageBroker) Execute(ctx context.Context, cluster string, identity ExecutorIdentity, token string, action NodeImageAction) (NodeImageResult, error) {
-	if action != ApplyNodeImage && action != RestoreNodeImage {
+	if action == ObserveNodeRollout {
 		return b.execute(ctx, cluster, identity, token, action)
 	}
 	var result NodeImageResult
@@ -93,15 +94,27 @@ func (b NodeImageBroker) execute(ctx context.Context, cluster string, identity E
 	if err != nil {
 		return NodeImageResult{}, err
 	}
-	grant, err := currentNodeImageGrant(object, identity)
+	grant, grantErr := currentNodeImageGrant(object, identity)
+	issue := action == ReadNodeImage && b.Issuer != nil && errors.Is(grantErr, ErrNodeImageGrant) && mayIssueGrant(object, identity)
+	if grantErr != nil && !issue {
+		return NodeImageResult{}, grantErr
+	}
+	member, err := b.Member(ctx, cluster, object.GetUID())
 	if err != nil {
 		return NodeImageResult{}, err
 	}
-	member, err := b.Member(ctx, cluster, grant.ClusterUID)
-	if err != nil {
-		return NodeImageResult{}, err
-	}
-	if err := VerifyExecutor(ctx, member, token, grant.ExecutorImage, identity); err != nil {
+	if issue {
+		grant, err = b.Issuer.approve(ctx, object, member, identity, token)
+		if err != nil {
+			return NodeImageResult{}, err
+		}
+		if err := VerifyExecutor(ctx, member, token, grant.ExecutorImage, identity); err != nil {
+			return NodeImageResult{}, err
+		}
+		if err := b.storeGrant(ctx, object, grant, grant.Before); err != nil {
+			return NodeImageResult{}, err
+		}
+	} else if err := VerifyExecutor(ctx, member, token, grant.ExecutorImage, identity); err != nil {
 		return NodeImageResult{}, err
 	}
 	daemonSet, err := member.AppsV1().DaemonSets(Namespace).Get(ctx, nodeagent.Name, metav1.GetOptions{})
@@ -187,6 +200,10 @@ func (b NodeImageBroker) change(ctx context.Context, object *unstructured.Unstru
 		}
 		grant.Phase, image = NodeImageRolledBack, grant.Before
 	}
+	return b.storeGrant(ctx, object, grant, image)
+}
+
+func (b NodeImageBroker) storeGrant(ctx context.Context, object *unstructured.Unstructured, grant NodeImageGrant, image string) error {
 	updated := object.DeepCopy()
 	if err := unstructured.SetNestedField(updated.Object, image, "spec", "nodeAgents", "image"); err != nil {
 		return err

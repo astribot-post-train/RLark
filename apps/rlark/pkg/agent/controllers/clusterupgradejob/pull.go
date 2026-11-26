@@ -61,6 +61,16 @@ func (r *pullReconciler) newDriver(ctx context.Context, job *rlarkv1alpha1.Clust
 			return nil, err
 		}
 	}
+	if targetUID := job.Annotations[clusterupgrade.ChildClusterUIDAnnotation]; targetUID != "" {
+		var cluster rlarkv1alpha1.Cluster
+		if err := r.c.ManagementClient.Get(ctx, client.ObjectKey{Name: r.c.ManagementNamespace}, &cluster); err != nil {
+			return nil, fmt.Errorf("verify managed upgrade cluster: %w", err)
+		}
+		if policy == nil || policy.Mode != clusterupgrade.ManagedNodeMode || targetUID != string(cluster.UID) ||
+			cluster.Annotations[clusterupgrade.ManagedBatchAnnotation] != "enabled" {
+			return nil, fmt.Errorf("managed upgrade policy or cluster identity does not match the approved child")
+		}
+	}
 	driver.policy = policy
 	return driver, nil
 }

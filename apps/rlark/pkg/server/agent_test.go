@@ -60,6 +60,9 @@ func TestRegisterAgentGrantsDeliverySecretAndStatusPermissions(t *testing.T) {
 	assert.True(t, ruleAllows(role.Rules, "", "configmaps", "get", "list", "watch", "create", "update", "patch", "delete"))
 	assert.True(t, ruleAllows(role.Rules, "rlinf.io", "clusterupgradejobs", "get", "list", "watch"))
 	assert.True(t, ruleAllows(role.Rules, "rlinf.io", "clusterupgradejobs/status", "get", "update", "patch"))
+	for _, verb := range []string{"create", "update", "patch", "delete"} {
+		assert.False(t, ruleAllows(role.Rules, "rlinf.io", "clusterupgradejobs", verb))
+	}
 
 	require.NoError(t, server.registerAgent(ctx, "cluster-a"))
 	role, err = client.RbacV1().Roles(namespace).Get(ctx, apis.RLarkAgentServiceAccountName, metav1.GetOptions{})
@@ -67,6 +70,9 @@ func TestRegisterAgentGrantsDeliverySecretAndStatusPermissions(t *testing.T) {
 	assert.True(t, ruleAllows(role.Rules, "", "secrets", "patch"))
 	assert.True(t, ruleAllows(role.Rules, "rlinf.io", "clusterupgradejobs", "get", "list", "watch"))
 	assert.True(t, ruleAllows(role.Rules, "rlinf.io", "clusterupgradejobs/status", "get", "update", "patch"))
+	for _, verb := range []string{"create", "update", "patch", "delete"} {
+		assert.False(t, ruleAllows(role.Rules, "rlinf.io", "clusterupgradejobs", verb))
+	}
 }
 
 func TestAgentConnectionMigratesLegacyCluster(t *testing.T) {

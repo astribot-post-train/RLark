@@ -9,7 +9,7 @@ import (
 
 // ConfigureExecutor applies the member policy to the launcher's single-container
 // image-only Job. The launcher attaches only the immutable DeployConfig volume.
-func ConfigureExecutor(job *batchv1.Job, policy JobPolicy, childUID, cluster string) {
+func ConfigureExecutor(job *batchv1.Job, policy JobPolicy, childUID, childName, cluster string) {
 	metav1.SetMetaDataLabel(&job.ObjectMeta, ChildUIDLabel, childUID)
 	pod := &job.Spec.Template.Spec
 	executor := &pod.Containers[0]
@@ -40,5 +40,8 @@ func ConfigureExecutor(job *batchv1.Job, policy JobPolicy, childUID, cluster str
 		},
 	})
 	executor.VolumeMounts = append(executor.VolumeMounts, corev1.VolumeMount{Name: volume, MountPath: BrokerTokenMount, ReadOnly: true})
-	executor.Env = append(executor.Env, corev1.EnvVar{Name: "RLARK_UPGRADE_CLUSTER", Value: cluster})
+	executor.Env = append(executor.Env,
+		corev1.EnvVar{Name: "RLARK_UPGRADE_CLUSTER", Value: cluster},
+		corev1.EnvVar{Name: "RLARK_UPGRADE_CHILD_NAME", Value: childName},
+	)
 }

@@ -61,7 +61,8 @@ func (s *Server) registerAgent(ctx context.Context, agentID string) error {
 	// 3. 创建 RBAC 规则
 	// 每个 agent 有自己的 RoleBinding（名称含 agentID），避免多 agent 接入时互相覆盖 subject
 	rules := []rbacv1.PolicyRule{
-		{APIGroups: []string{"rlinf.io"}, Resources: []string{"nodes", "tasks", "pods", "addons", "clusterupgradejobs"}, Verbs: []string{"get", "list", "watch", "create", "update", "patch", "delete"}},
+		{APIGroups: []string{"rlinf.io"}, Resources: []string{"nodes", "tasks", "pods", "addons"}, Verbs: []string{"get", "list", "watch", "create", "update", "patch", "delete"}},
+		{APIGroups: []string{"rlinf.io"}, Resources: []string{"clusterupgradejobs"}, Verbs: []string{"get", "list", "watch"}},
 		{APIGroups: []string{"rlinf.io"}, Resources: []string{"nodes/status", "tasks/status", "pods/status", "addons/status", "clusterupgradejobs/status"}, Verbs: []string{"get", "update", "patch"}},
 		{APIGroups: []string{"rlinf.io"}, Resources: []string{"domainpeers"}, Verbs: []string{"get", "list", "watch"}},
 		{APIGroups: []string{""}, Resources: []string{"secrets"}, Verbs: []string{"get", "list", "watch", "update", "patch"}},

@@ -36,6 +36,10 @@ func ValidateStockTarget(cluster rlark.Cluster) error {
 // Preflight validates the same named/selector precedence as the upstream
 // controller and stops an Astribot target before the stock installer can run.
 func Preflight(spec rlark.UpgradeJobSpec, clusters []rlark.Cluster) error {
+	plan, err := ParseBatchPlan(spec)
+	if err != nil {
+		return err
+	}
 	candidates := make(map[string]rlark.Cluster, len(clusters))
 	for _, cluster := range clusters {
 		candidates[cluster.Name] = cluster
@@ -65,18 +69,8 @@ func Preflight(spec rlark.UpgradeJobSpec, clusters []rlark.Cluster) error {
 		if !ok {
 			return fmt.Errorf("upgrade target cluster %s does not exist", name)
 		}
-		switch cluster.Annotations[DriverAnnotation] {
-		case DriverImageOnly:
-			if _, err := ParseImages(spec.ConfigPatch); err != nil {
-				return fmt.Errorf("upgrade target %s: %w", name, err)
-			}
-			// The Job launcher and scoped node-agent endpoint are a separate
-			// activation gate. Never send an image-only target to stock execution.
-			return fmt.Errorf("upgrade target %s: the Astribot upgrade executor is not enabled", name)
-		default:
-			if err := ValidateStockTarget(cluster); err != nil {
-				return err
-			}
+		if _, err := plan.ForCluster(cluster); err != nil {
+			return fmt.Errorf("upgrade target %s: %w", name, err)
 		}
 	}
 	return nil

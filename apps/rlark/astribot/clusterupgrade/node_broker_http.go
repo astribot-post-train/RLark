@@ -41,6 +41,7 @@ func (b NodeImageBroker) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		len(validation.IsDNS1123Subdomain(request.Cluster)) != 0 ||
 		len(validation.IsDNS1123Subdomain(request.Executor.PodName)) != 0 ||
 		len(validation.IsDNS1123Label(request.Executor.ChildUID)) != 0 ||
+		(request.Executor.ChildName != "" && len(validation.IsDNS1123Subdomain(request.Executor.ChildName)) != 0) ||
 		len(validation.IsDNS1123Label(request.Executor.PodUID)) != 0 {
 		http.Error(w, "invalid node image operation", http.StatusBadRequest)
 		return
@@ -51,6 +52,10 @@ func (b NodeImageBroker) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		var conflict *LeaseConflict
 		switch {
+		case errors.Is(err, ErrBatchAuthority):
+			http.Error(w, "member upgrade authority could not be verified", http.StatusPreconditionFailed)
+		case errors.Is(err, ErrManagedBaseline):
+			http.Error(w, "node Agent baseline has not converged", http.StatusUnprocessableEntity)
 		case errors.Is(err, ErrUnverifiedExecutor):
 			http.Error(w, "upgrade executor authentication failed", http.StatusUnauthorized)
 		case errors.Is(err, ErrNodeImageGrant), apierrors.IsNotFound(err):

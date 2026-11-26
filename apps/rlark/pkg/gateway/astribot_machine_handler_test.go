@@ -87,7 +87,7 @@ func TestMachinesAreListedAndAdmittedEachForItself(t *testing.T) {
 	status, body = nodeAdmissionCall(t, g.handleAdmitMachines, "POST", "/api/v1/station/machines/admit", "",
 		`{"cluster_id":"cluster-a","machines":["lab-01","lab-02","lab-03","lab-04","lab-99"],"labels":{"rlark.io/robot-body":"s1u_observer"}}`)
 	var answer struct {
-		Machines []admittedMachine `json:"machines"`
+		Machines []stations.MachineAdmissionResult `json:"machines"`
 	}
 	_ = json.Unmarshal(body, &answer)
 	admitted := ""

@@ -16,6 +16,7 @@ func TestPreflightKeepsStockTargetsAndRefusesUnsafeFallback(t *testing.T) {
 	}}
 	clusters := []rlark.Cluster{standard, astribot}
 	spec := rlark.UpgradeJobSpec{
+		Image:           "stock-upgrader",
 		ClusterNames:    []string{"standard"},
 		ClusterSelector: &metav1.LabelSelector{MatchLabels: map[string]string{"role": "robot"}},
 	}
@@ -28,13 +29,13 @@ func TestPreflightKeepsStockTargetsAndRefusesUnsafeFallback(t *testing.T) {
 		t.Fatalf("forbidden field was not reported: %v", err)
 	}
 	spec.ConfigPatch = imagesConfig
-	if err := Preflight(spec, clusters); err == nil || !strings.Contains(err.Error(), "executor is not enabled") {
+	if err := Preflight(spec, clusters); err == nil || !strings.Contains(err.Error(), "requires an Astribot BatchDeployConfig") {
 		t.Fatalf("the image-only target could reach the stock installer: %v", err)
 	}
 }
 
 func TestPreflightRejectsLegacyAndManagedTargets(t *testing.T) {
-	spec := rlark.UpgradeJobSpec{ClusterNames: []string{"member"}}
+	spec := rlark.UpgradeJobSpec{Image: "stock-upgrader", ClusterNames: []string{"member"}}
 	member := rlark.Cluster{ObjectMeta: metav1.ObjectMeta{Name: "member"}}
 	if err := Preflight(spec, []rlark.Cluster{member}); err == nil || !strings.Contains(err.Error(), "explicitly declare") {
 		t.Fatalf("unmarked target was not rejected: %v", err)
