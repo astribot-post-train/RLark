@@ -92,7 +92,7 @@ func (g *Gateway) startAstribot(ctx context.Context) error {
 	if err := g.interruptNodeJoins(ctx); err != nil {
 		return err
 	}
-	go g.sweepRobotClaims(ctx)
+	go g.robotControlRoutes().SweepClaims(ctx)
 	return nil
 }
 

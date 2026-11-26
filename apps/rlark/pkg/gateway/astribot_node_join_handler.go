@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/rlinf/rlark/apps/rlark/astribot/provisioning"
 	"net"
 	"net/http"
 	"slices"
@@ -25,6 +26,28 @@ import (
 
 // nodeJoinClusterLabel holds a NodeJoin's cluster, by which a cluster's joins are listed.
 const nodeJoinClusterLabel = "rlark.io/cluster"
+
+// requestError is a request refused: its status, what it says, and for the
+// console a reason it acts on and what the machine printed.
+type requestError struct {
+	status int
+	reason string
+	err    error
+	output string
+}
+
+func (e *requestError) Error() string { return e.err.Error() }
+
+func (e *requestError) respond(c *gin.Context) {
+	body := gin.H{"error": e.err.Error()}
+	if e.reason != "" {
+		body["reason"] = e.reason
+	}
+	if e.output != "" {
+		body["output"] = e.output
+	}
+	c.JSON(e.status, body)
+}
 
 type createNodeJoinRequest struct {
 	ClusterID        string            `json:"cluster_id"`
@@ -75,7 +98,7 @@ func (g *Gateway) handleCreateNodeJoin(c *gin.Context) {
 	request.TunnelEndpoint = strings.TrimSpace(request.TunnelEndpoint)
 	if request.ClusterID == "" || request.Address == "" || net.ParseIP(request.Address) == nil && len(validation.IsDNS1123Subdomain(request.Address)) > 0 ||
 		request.Port < 1 || request.Port > 65535 || request.User == "" || len(request.User) > 64 || strings.ContainsAny(request.User, " \t\r\n\x00'\"\\$`") ||
-		len(password) == 0 || len(password) > 4096 || len(sudoPassword) > 4096 || request.TunnelEndpoint != "" && !validTunnelEndpoint(request.TunnelEndpoint) {
+		len(password) == 0 || len(password) > 4096 || len(sudoPassword) > 4096 || request.TunnelEndpoint != "" && !provisioning.ValidTunnelEndpoint(request.TunnelEndpoint) {
 		clear(password)
 		clear(sudoPassword)
 		c.JSON(http.StatusBadRequest, gin.H{"error": "cluster_id, address (an IP address or host name), port, user and password are required; tunnel_endpoint is an IPv4 ip:port"})
@@ -147,7 +170,7 @@ func (g *Gateway) handleCreateNodeJoin(c *gin.Context) {
 	ctx := c.Request.Context()
 	login, cancel := context.WithTimeout(ctx, time.Minute)
 	defer cancel()
-	var machine provisionMachine
+	var machine provisioning.Machine
 	var hostKey string
 	if candidate != nil {
 		annotations, annotationErr := nodeJoinAnnotations(request, request.HostKey)
@@ -513,15 +536,15 @@ func (g *Gateway) clearUnredeemedJoin(ctx context.Context, j *rlarkv1alpha1.Node
 		if err != nil {
 			return err
 		}
-		nodes, _, _ := unstructured.NestedSlice(network.object.Object, "spec", "nodes")
+		nodes, _, _ := unstructured.NestedSlice(network.Object.Object, "spec", "nodes")
 		nodes = slices.DeleteFunc(nodes, func(raw interface{}) bool {
 			entry, _ := raw.(map[string]interface{})
 			return entry["clusterID"] == j.Spec.ClusterID && entry["nodeName"] == j.Spec.NodeName
 		})
-		if err := unstructured.SetNestedSlice(network.object.Object, nodes, "spec", "nodes"); err != nil {
+		if err := unstructured.SetNestedSlice(network.Object.Object, nodes, "spec", "nodes"); err != nil {
 			return err
 		}
-		_, err = g.stationClient.Resource(siteNetworkGVR).Namespace("station-system").Update(ctx, network.object, metav1.UpdateOptions{})
+		_, err = g.stationClient.Resource(siteNetworkGVR).Namespace("station-system").Update(ctx, network.Object, metav1.UpdateOptions{})
 		return err
 	})
 	if err != nil {

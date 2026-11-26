@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"github.com/rlinf/rlark/apps/rlark/astribot/storageconfig"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -28,7 +29,7 @@ func TestRerenderStorageClassesRewritesOnlyStaleRenders(t *testing.T) {
 		astribotStorageClassRequest: astribotStorageClassRequest{Type: "smb", Host: "nas.example.com", Share: "group", Username: "user", Password: "stored-password"},
 	})
 	require.NoError(t, err)
-	stale, err := buildAstribotStorageReplicationSecret("management", "sc-0123456789abcdef", object)
+	stale, err := storageconfig.RenderReplication("management", "sc-0123456789abcdef", object)
 	require.NoError(t, err)
 	// The render of an earlier Gateway: the class kept its volumes.
 	var objects []json.RawMessage
@@ -40,7 +41,7 @@ func TestRerenderStorageClassesRewritesOnlyStaleRenders(t *testing.T) {
 	delivery.Data["manifests"] = bytes.Replace(delivery.Data["manifests"], []byte("reclaimPolicy: Delete"), []byte("reclaimPolicy: Retain"), 1)
 	stale.Data["manifests"], err = yaml.Marshal([]any{delivery, objects[1]})
 	require.NoError(t, err)
-	current, err := buildAstribotStorageReplicationSecret("management", "sc-fedcba9876543210", share)
+	current, err := storageconfig.RenderReplication("management", "sc-fedcba9876543210", share)
 	require.NoError(t, err)
 	// A declaration stored with its fields in another order is the same render.
 	var fields map[string]any

@@ -3,6 +3,7 @@ package gateway
 import (
 	"context"
 	"fmt"
+	"github.com/rlinf/rlark/apps/rlark/astribot/provisioning"
 	"net"
 	"net/http"
 	"slices"
@@ -73,7 +74,7 @@ func (g *Gateway) handleCreateClusterProvision(c *gin.Context) {
 	}
 	req.TunnelEndpoint = strings.TrimSpace(req.TunnelEndpoint)
 	if req.TunnelEndpoint == "" {
-		req.TunnelEndpoint = net.JoinHostPort(req.Address, strconv.Itoa(provisionTunnelPort))
+		req.TunnelEndpoint = net.JoinHostPort(req.Address, strconv.Itoa(provisioning.TunnelPort))
 	}
 	switch {
 	case !slices.Contains(clusterTypes, req.Type):
@@ -94,7 +95,7 @@ func (g *Gateway) handleCreateClusterProvision(c *gin.Context) {
 	case req.Port < 1 || req.Port > 65535:
 		respondError(c, http.StatusBadRequest, CodeInvalidRequest, "port must be 1-65535")
 		return
-	case !validTunnelEndpoint(req.TunnelEndpoint):
+	case !provisioning.ValidTunnelEndpoint(req.TunnelEndpoint):
 		respondError(c, http.StatusBadRequest, CodeInvalidRequest, "tunnel_endpoint must be an IPv4 ip:port (the address is a host name: give it)")
 		return
 	}
@@ -119,7 +120,7 @@ func (g *Gateway) handleCreateClusterProvision(c *gin.Context) {
 		respondError(c, http.StatusServiceUnavailable, CodeNotConfigured, err.Error())
 		return
 	}
-	if network.hasSite(req.Site) || network.siteOf(req.Cluster) != "" {
+	if network.HasSite(req.Site) || network.SiteOf(req.Cluster) != "" {
 		respondError(c, http.StatusConflict, CodeResourceAlreadyExists, "the SiteNetwork already has site "+req.Site+" or cluster "+req.Cluster)
 		return
 	}

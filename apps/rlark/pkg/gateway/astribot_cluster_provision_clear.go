@@ -3,6 +3,7 @@ package gateway
 import (
 	"context"
 	"fmt"
+	"github.com/rlinf/rlark/apps/rlark/astribot/provisioning"
 	"net/http"
 	"slices"
 	"strings"
@@ -32,7 +33,7 @@ type clearClusterProvisionRequest struct {
 // this script and the shells it runs under hold the installer's name in their own command lines and are left out.
 // The machine keeps its tunnel key and the installer: a making that starts over finds the same machine.
 const clearMachineScript = `set -eu
-B=` + provisionBootstrapDir + `
+B=` + provisioning.BootstrapDir + `
 mine=" "; p=$$; while [ "$p" -gt 1 ]; do mine="$mine$p "; p=$(awk '{print $4}' /proc/$p/stat); done
 for p in $(pgrep -f 'control-plane\.sh|station-bootstrap control-plane' || true); do
   case "$mine" in *" $p "*) ;; *) kill "$p" 2>/dev/null || true ;; esac
@@ -114,7 +115,7 @@ func (g *Gateway) clearProvision(ctx context.Context, p *rlarkv1alpha1.ClusterPr
 		if err != nil {
 			return steps, fmt.Errorf("put the machine back: %w", err)
 		}
-		steps = append(steps, "机器 "+p.Spec.Machine.Address+"：撤掉这次建的控制面和隧道（"+lastLine(out, "control plane")+"）；隧道密钥和安装包留在机器上")
+		steps = append(steps, "机器 "+p.Spec.Machine.Address+"：撤掉这次建的控制面和隧道（"+provisioning.LastLine(out, "control plane")+"）；隧道密钥和安装包留在机器上")
 	} else {
 		steps = append(steps, "机器 "+p.Spec.Machine.Address+" 没动（没给密码或已不在）：它要再用，先在机器上撤掉旧控制面")
 	}
@@ -164,15 +165,15 @@ func (g *Gateway) clearProvision(ctx context.Context, p *rlarkv1alpha1.ClusterPr
 		if err != nil {
 			return err
 		}
-		object := network.object
+		object := network.Object
 		var names, sites, nodes []interface{}
-		for _, entry := range network.list("spec", "names") {
+		for _, entry := range network.Entries("spec", "names") {
 			if entry["name"] != controlPlaneName {
 				names = append(names, entry)
 			}
 		}
 		// The site goes with its only cluster; a site that has others keeps them.
-		for _, entry := range network.list("spec", "sites") {
+		for _, entry := range network.Entries("spec", "sites") {
 			clusters, _, _ := unstructured.NestedStringSlice(entry, "clusters")
 			if !slices.Contains(clusters, p.Name) {
 				sites = append(sites, entry)
@@ -183,7 +184,7 @@ func (g *Gateway) clearProvision(ctx context.Context, p *rlarkv1alpha1.ClusterPr
 				sites = append(sites, entry)
 			}
 		}
-		for _, entry := range network.list("spec", "nodes") {
+		for _, entry := range network.Entries("spec", "nodes") {
 			if entry["clusterID"] != p.Name {
 				nodes = append(nodes, entry)
 			}

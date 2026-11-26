@@ -3,6 +3,7 @@ package gateway
 import (
 	"context"
 	"encoding/json"
+	"github.com/rlinf/rlark/apps/rlark/astribot/storageconfig"
 	"net/http"
 	"testing"
 
@@ -62,7 +63,7 @@ func replicationView(t *testing.T, secret *v1.Secret) (storageref.View, []string
 
 func endpointSecrets(t *testing.T, g *Gateway) []v1.Secret {
 	t.Helper()
-	list, err := g.rawClient.CoreV1().Secrets("management").List(context.Background(), metav1.ListOptions{LabelSelector: storageClassEndpointLabel})
+	list, err := g.rawClient.CoreV1().Secrets("management").List(context.Background(), metav1.ListOptions{LabelSelector: storageconfig.EndpointLabel})
 	require.NoError(t, err)
 	return list.Items
 }
@@ -151,7 +152,7 @@ func TestStorageRenameKeepsIDAndRejectsTakenName(t *testing.T) {
 	view, _ := replicationView(t, after)
 	assert.Equal(t, "ks3", view.Name)
 	for _, part := range endpointSecrets(t, g) {
-		if part.Labels[storageClassEndpointLabel] == before.Name[:len(before.Name)-len("-replication")] {
+		if part.Labels[storageconfig.EndpointLabel] == before.Name[:len(before.Name)-len("-replication")] {
 			partView, _ := replicationView(t, &part)
 			assert.Equal(t, "ks3", partView.Name, "the endpoint declaration's View follows the rename")
 		}
@@ -191,7 +192,7 @@ func TestHostPathStorageDeliversNodeDirectoryStorageClasses(t *testing.T) {
 	for i, profile := range []string{"default", "read"} {
 		class := objects[i]
 		assert.Equal(t, "StorageClass", class.GetKind())
-		assert.Equal(t, profile, class.GetAnnotations()[annoStorageProfile])
+		assert.Equal(t, profile, class.GetAnnotations()[storageconfig.ProfileAnnotation])
 		assert.Equal(t, nodepath.Name, nestedString(t, class.Object, "provisioner"))
 		assert.Equal(t, "WaitForFirstConsumer", nestedString(t, class.Object, "volumeBindingMode"))
 		assert.Equal(t, "/mnt/xc_kpfs/regular/post_train", nestedString(t, class.Object, "parameters", "root"))

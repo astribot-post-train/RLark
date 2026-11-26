@@ -43,6 +43,9 @@ const (
 	NotFound
 	UpstreamUnavailable
 	InvalidRequest
+	InvalidBody
+	Forbidden
+	RobotBusy
 )
 
 func (r ObservationRoutes) Register(admin *gin.RouterGroup) {

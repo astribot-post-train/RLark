@@ -3,6 +3,7 @@ package gateway
 import (
 	"context"
 	"encoding/json"
+	"github.com/rlinf/rlark/apps/rlark/astribot/storageconfig"
 	"net"
 	"net/http"
 	"strings"
@@ -87,7 +88,7 @@ func TestBuildSMBStorageClassRendersRcloneSMBRemote(t *testing.T) {
 	assert.Empty(t, stored.Provider)
 	assert.Empty(t, stored.Bucket)
 
-	secret, err := buildAstribotStorageReplicationSecret("management", "sc-0123456789abcdef", stored)
+	secret, err := storageconfig.RenderReplication("management", "sc-0123456789abcdef", stored)
 	require.NoError(t, err)
 	storageSecret, storageClass := smbDeliveryObjects(t, secret)
 
@@ -126,7 +127,7 @@ func TestBuildSMBStorageClassWithoutSubPathOrDomain(t *testing.T) {
 	req.SubPath, req.Domain = "", ""
 	stored, err := normalizeStorageClass(req)
 	require.NoError(t, err)
-	secret, err := buildAstribotStorageReplicationSecret("management", "sc-0123456789abcdef", stored)
+	secret, err := storageconfig.RenderReplication("management", "sc-0123456789abcdef", stored)
 	require.NoError(t, err)
 	storageSecret, _ := smbDeliveryObjects(t, secret)
 	stringData, _, err := unstructured.NestedStringMap(storageSecret.Object, "stringData")
@@ -174,7 +175,7 @@ func TestNormalizeSMBStorageClassValidation(t *testing.T) {
 func TestListSMBStorageClassOmitsPassword(t *testing.T) {
 	stored, err := normalizeStorageClass(smbTestRequest())
 	require.NoError(t, err)
-	secret, err := buildAstribotStorageReplicationSecret("management", "sc-0123456789abcdef", stored)
+	secret, err := storageconfig.RenderReplication("management", "sc-0123456789abcdef", stored)
 	require.NoError(t, err)
 	gateway := newSMBTestGateway(t, secret)
 	router := gin.New()
@@ -223,7 +224,7 @@ func TestUpdateSMBStorageClassRetainsStoredPassword(t *testing.T) {
 	validated := stubStorageValidation(t)
 	initial, err := normalizeStorageClass(smbTestRequest())
 	require.NoError(t, err)
-	secret, err := buildAstribotStorageReplicationSecret("management", "sc-0123456789abcdef", initial)
+	secret, err := storageconfig.RenderReplication("management", "sc-0123456789abcdef", initial)
 	require.NoError(t, err)
 	gateway := newSMBTestGateway(t, secret)
 	router := gin.New()
@@ -249,7 +250,7 @@ func TestUpdateStorageClassRejectsTypeChange(t *testing.T) {
 	stubStorageValidation(t)
 	initial, err := normalizeStorageClass(smbTestRequest())
 	require.NoError(t, err)
-	secret, err := buildAstribotStorageReplicationSecret("management", "sc-0123456789abcdef", initial)
+	secret, err := storageconfig.RenderReplication("management", "sc-0123456789abcdef", initial)
 	require.NoError(t, err)
 	gateway := newSMBTestGateway(t, secret)
 	router := gin.New()
@@ -266,7 +267,7 @@ func TestUpdateStorageClassRejectsTypeChange(t *testing.T) {
 func TestSMBStorageClassFileBrowsingIsUnsupported(t *testing.T) {
 	stored, err := normalizeStorageClass(smbTestRequest())
 	require.NoError(t, err)
-	secret, err := buildAstribotStorageReplicationSecret("management", "sc-0123456789abcdef", stored)
+	secret, err := storageconfig.RenderReplication("management", "sc-0123456789abcdef", stored)
 	require.NoError(t, err)
 	gateway := newSMBTestGateway(t, secret)
 	router := gin.New()

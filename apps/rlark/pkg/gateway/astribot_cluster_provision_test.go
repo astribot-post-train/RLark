@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"github.com/rlinf/rlark/apps/rlark/astribot/provisioning"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -73,7 +74,7 @@ func provisionTestNetwork(declared ...map[string]interface{}) *unstructured.Unst
 			"sites": []interface{}{map[string]interface{}{"name": "office", "clusters": []interface{}{"rlark-local-dev-gpu"}, "mesh": true}},
 			"names": []interface{}{
 				map[string]interface{}{"name": "rlark-server", "address": "10.254.240.1"},
-				map[string]interface{}{"name": originName, "address": "10.0.2.57"},
+				map[string]interface{}{"name": provisioning.OriginName, "address": "10.0.2.57"},
 				map[string]interface{}{"name": "cp.rlark-robot-s1u-01.rlark.internal", "address": "10.254.240.2"},
 			},
 			"nodes": []interface{}{map[string]interface{}{"clusterID": "rlark-ksyun-gpu", "nodeName": "10-0-2-57", "role": "Hub", "address": "10.254.240.3",
@@ -119,18 +120,18 @@ func provisionGateway(t *testing.T, network *unstructured.Unstructured, objects 
 
 func TestChooseSubnetsTakesTheFirstPairFreeOfEveryNetwork(t *testing.T) {
 	taken := []netip.Prefix{netip.MustParsePrefix("10.200.0.0/16"), netip.MustParsePrefix("10.203.4.0/24"), netip.MustParsePrefix("10.0.0.0/8")}
-	if _, _, err := chooseSubnets(taken); err == nil {
+	if _, _, err := provisioning.ChooseSubnets(taken); err == nil {
 		t.Fatal("10.0.0.0/8 covers every candidate; want an error")
 	}
-	pod, service, err := chooseSubnets(taken[:2])
+	pod, service, err := provisioning.ChooseSubnets(taken[:2])
 	if err != nil || pod != "10.204.0.0/16" || service != "10.205.0.0/16" {
 		t.Fatalf("subnets = %s %s %v, want 10.204.0.0/16 10.205.0.0/16 (10.200 and 10.203 are taken)", pod, service, err)
 	}
 }
 
 func TestAllocateTakesTheLowestFreeAddressAfterTheManagementMachine(t *testing.T) {
-	network := provisionNetwork{provisionTestNetwork()}
-	address, err := network.allocate([]string{"10.254.240.4"})
+	network := provisioning.Network{Object: provisionTestNetwork()}
+	address, err := network.AllocateAddress([]string{"10.254.240.4"})
 	if err != nil || address != "10.254.240.5" {
 		t.Fatalf("address = %s %v, want 10.254.240.5 (.1 is the management machine; .2 a name, .3 a node, .4 another provision)", address, err)
 	}
@@ -218,17 +219,17 @@ func TestDeclareAddsTheSiteItsNamesAndTheHubKeepingTheRest(t *testing.T) {
 		t.Fatalf("readback = %q", readback)
 	}
 	network, _ := g.provisionNetwork(context.Background())
-	if network.name(facts.ControlPlaneName) != "10.254.240.5" || network.name("rlark-server") != "10.254.240.1" || network.siteOf("rlark-baidu-gpu") != "baidu" || network.siteOf("rlark-local-dev-gpu") != "office" {
-		t.Fatalf("names and sites = %v", network.object.Object["spec"])
+	if network.NameAddress(facts.ControlPlaneName) != "10.254.240.5" || network.NameAddress("rlark-server") != "10.254.240.1" || network.SiteOf("rlark-baidu-gpu") != "baidu" || network.SiteOf("rlark-local-dev-gpu") != "office" {
+		t.Fatalf("names and sites = %v", network.Object.Object["spec"])
 	}
-	sites := network.list("spec", "sites")
+	sites := network.Entries("spec", "sites")
 	if sites[1]["mesh"] != true {
 		t.Fatalf("the new site %v is not a mesh: its later hubs would not reach the control plane on its first hub's tunnel", sites[1])
 	}
 	if names, _, _ := unstructured.NestedSlice(sites[1], "names"); len(names) != 1 || names[0].(map[string]interface{})["address"] != "10.0.2.57" {
 		t.Fatalf("the new site's registry name = %v, want origin's address", names)
 	}
-	nodes := network.list("spec", "nodes")
+	nodes := network.Entries("spec", "nodes")
 	hub := nodes[1]
 	// Behind one address its cloud forwards UDP 8100 to it: it listens there, other sites dial the address's 8100,
 	// its own site its private address.
@@ -243,8 +244,8 @@ func TestDeclareAddsTheSiteItsNamesAndTheHubKeepingTheRest(t *testing.T) {
 		t.Fatal(err)
 	}
 	network, _ = g.provisionNetwork(context.Background())
-	if len(network.list("spec", "nodes")) != 2 || len(network.list("spec", "sites")) != 2 || len(network.list("spec", "names")) != 4 {
-		t.Fatalf("declared twice: %v", network.object.Object["spec"])
+	if len(network.Entries("spec", "nodes")) != 2 || len(network.Entries("spec", "sites")) != 2 || len(network.Entries("spec", "names")) != 4 {
+		t.Fatalf("declared twice: %v", network.Object.Object["spec"])
 	}
 }
 
@@ -414,12 +415,12 @@ func TestStationMemberSecretNameIsStationControllers(t *testing.T) {
 
 func TestControlPlaneScriptGivesTheInstallerTheChoicesAndTheCacheVolume(t *testing.T) {
 	facts := rlarkv1alpha1.ClusterProvisionFacts{NodeName: "bd-gpu-1", ControlPlaneName: "cp.rlark-baidu-gpu.rlark.internal", PodSubnet: "10.202.0.0/16", ServiceSubnet: "10.203.0.0/16"}
-	script := controlPlaneScript(facts)
+	script := provisioning.ControlPlaneScript(facts)
 	if !strings.Contains(script, "CONTROL_PLANE_NAME=cp.rlark-baidu-gpu.rlark.internal POD_SUBNET=10.202.0.0/16 SERVICE_SUBNET=10.203.0.0/16 NODE_NAME=bd-gpu-1 WORKLOADS=yes ./station-bootstrap control-plane") || strings.Contains(script, "NODE_VOLUMES") {
 		t.Fatal(script)
 	}
 	facts.CacheVolume = true
-	if !strings.Contains(controlPlaneScript(facts), "NODE_VOLUMES="+provisionCacheVolume) {
+	if !strings.Contains(provisioning.ControlPlaneScript(facts), "NODE_VOLUMES="+provisioning.CacheVolume) {
 		t.Fatal("a machine with room for the cache gets its volume")
 	}
 }
@@ -468,7 +469,7 @@ func TestAMakingThatStoppedIsClearedAndItsNameMadeAgain(t *testing.T) {
 	}
 	machine := &fakeMachine{answers: map[string]string{"control-plane undo": "12:00:00 the control plane is removed\nDone.\ncleared=yes"}}
 	var shown string
-	g.provisionDial = func(_ context.Context, _ rlarkv1alpha1.ClusterProvisionMachine, _ []byte, hostKey string) (provisionMachine, string, error) {
+	g.provisionDial = func(_ context.Context, _ rlarkv1alpha1.ClusterProvisionMachine, _ []byte, hostKey string) (provisioning.Machine, string, error) {
 		shown = hostKey
 		return machine, hostKey, nil
 	}
@@ -505,8 +506,8 @@ func TestAMakingThatStoppedIsClearedAndItsNameMadeAgain(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if after.hasSite("baidu") || after.name("cp.rlark-baidu-gpu.rlark.internal") != "" || len(after.nodes()) != 1 || !after.hasSite("office") || after.name(originName) == "" {
-		t.Fatalf("the SiteNetwork after clearing: %v", after.object.Object["spec"])
+	if after.HasSite("baidu") || after.NameAddress("cp.rlark-baidu-gpu.rlark.internal") != "" || len(after.Nodes()) != 1 || !after.HasSite("office") || after.NameAddress(provisioning.OriginName) == "" {
+		t.Fatalf("the SiteNetwork after clearing: %v", after.Object.Object["spec"])
 	}
 	if _, err := g.kubeClient.RlinfV1alpha1().ClusterProvisions().Get(ctx, "rlark-baidu-gpu", metav1.GetOptions{}); !apierrors.IsNotFound(err) {
 		t.Fatalf("the record of the making: %v", err)
@@ -518,7 +519,7 @@ func TestClearingLeavesAListedClusterAndAMachineThatIsGone(t *testing.T) {
 	made := &rlarkv1alpha1.ClusterProvision{ObjectMeta: metav1.ObjectMeta{Name: "rlark-baidu-gpu"}, Spec: rlarkv1alpha1.ClusterProvisionSpec{Site: "baidu"},
 		Status: rlarkv1alpha1.ClusterProvisionStatus{Phase: rlarkv1alpha1.ClusterProvisionSucceeded, Stages: []rlarkv1alpha1.ClusterProvisionStage{{Name: stageBundle, State: rlarkv1alpha1.ClusterProvisionStageDone}}}}
 	g := provisionGateway(t, provisionTestNetwork(), made, &rlarkv1alpha1.Cluster{ObjectMeta: metav1.ObjectMeta{Name: "rlark-baidu-gpu"}})
-	g.provisionDial = func(context.Context, rlarkv1alpha1.ClusterProvisionMachine, []byte, string) (provisionMachine, string, error) {
+	g.provisionDial = func(context.Context, rlarkv1alpha1.ClusterProvisionMachine, []byte, string) (provisioning.Machine, string, error) {
 		t.Fatal("a machine that is gone is not logged in to")
 		return nil, "", nil
 	}

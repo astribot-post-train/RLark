@@ -258,7 +258,7 @@ func (r *provisionRun) station(ctx context.Context, p *rlarkv1alpha1.ClusterProv
 		if err != nil {
 			return readback, err
 		}
-		if phase == "Enrolled" && network.declared(p.Name, facts.NodeName) == "" {
+		if phase == "Enrolled" && network.Declared(p.Name, facts.NodeName) == "" {
 			return readback + "; " + facts.NodeName + " Enrolled", nil
 		}
 	}

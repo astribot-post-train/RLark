@@ -1,7 +1,7 @@
 package gateway
 
 import (
-	"encoding/json"
+	"github.com/rlinf/rlark/apps/rlark/astribot/stations"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -11,7 +11,7 @@ import (
 )
 
 // A Node's robot power, its robot claim and its display name are set through their own endpoints
-// (astribot_robot_power_handler.go, astribot_robot_claim_handler.go, astribot_node_display_name_handler.go), which
+// (the Astribot station routes and node-display-name handler), which
 // check and audit them. The generic Node update and patch may not change them; each answers the request when it
 // refuses.
 
@@ -22,28 +22,8 @@ func nodeUpdateAllowed(c *gin.Context, a *resourceAccessor, namespace, name stri
 		respondKubeError(c, err.Error(), err)
 		return false
 	}
-	labels := any(existing).(metav1.Object).GetLabels()
-	if value, _ := robotPowerIn(body); value != labels[robotPowerLabel] {
-		respondError(c, http.StatusBadRequest, CodeInvalidRequest, robotPowerRefused)
-		return false
-	}
-	annotations := existing.(metav1.Object).GetAnnotations()
-	if value, _ := robotLabelIn(body, robotClaimLabel); value != labels[robotClaimLabel] ||
-		nodeAnnotations(body)[robotClaimSetAnnotation] != annotations[robotClaimSetAnnotation] {
-		respondError(c, http.StatusBadRequest, CodeInvalidRequest, robotClaimRefused)
-		return false
-	}
-	if nodeAnnotations(body)[robotRestartAnnotation] != annotations[robotRestartAnnotation] {
-		respondError(c, http.StatusBadRequest, CodeInvalidRequest, robotRestartRefused)
-		return false
-	}
-	if value, _ := robotLabelIn(body, stationMarkLabel); value != labels[stationMarkLabel] ||
-		nodeAnnotations(body)[stationMarkAnnotation] != annotations[stationMarkAnnotation] {
-		respondError(c, http.StatusBadRequest, CodeInvalidRequest, stationMarkRefused)
-		return false
-	}
-	if value, _ := robotLabelIn(body, stationLabel); value != labels[stationLabel] {
-		respondError(c, http.StatusBadRequest, CodeInvalidRequest, stationLabelRefused)
+	if reason := stations.ControlUpdateConflict(existing.(metav1.Object), body); reason != "" {
+		respondError(c, http.StatusBadRequest, CodeInvalidRequest, reason)
 		return false
 	}
 	if value, _ := displayNameIn(body); value != existing.(*rlarkiov1alpha1.Node).Spec.DisplayName {
@@ -55,26 +35,8 @@ func nodeUpdateAllowed(c *gin.Context, a *resourceAccessor, namespace, name stri
 
 // nodePatchAllowed: a Node's patch names neither power nor claim, and names the display name only as it is.
 func nodePatchAllowed(c *gin.Context, a *resourceAccessor, namespace, name string, body []byte) bool {
-	if _, named := robotPowerIn(body); named {
-		respondError(c, http.StatusBadRequest, CodeInvalidRequest, robotPowerRefused)
-		return false
-	}
-	_, claimed := robotLabelIn(body, robotClaimLabel)
-	if _, annotated := nodeAnnotations(body)[robotClaimSetAnnotation]; claimed || annotated {
-		respondError(c, http.StatusBadRequest, CodeInvalidRequest, robotClaimRefused)
-		return false
-	}
-	if _, annotated := nodeAnnotations(body)[robotRestartAnnotation]; annotated {
-		respondError(c, http.StatusBadRequest, CodeInvalidRequest, robotRestartRefused)
-		return false
-	}
-	_, marked := robotLabelIn(body, stationMarkLabel)
-	if _, annotated := nodeAnnotations(body)[stationMarkAnnotation]; marked || annotated {
-		respondError(c, http.StatusBadRequest, CodeInvalidRequest, stationMarkRefused)
-		return false
-	}
-	if _, named := robotLabelIn(body, stationLabel); named {
-		respondError(c, http.StatusBadRequest, CodeInvalidRequest, stationLabelRefused)
+	if reason := stations.ControlPatchConflict(body); reason != "" {
+		respondError(c, http.StatusBadRequest, CodeInvalidRequest, reason)
 		return false
 	}
 	value, named := displayNameIn(body)
@@ -91,14 +53,4 @@ func nodePatchAllowed(c *gin.Context, a *resourceAccessor, namespace, name strin
 		return false
 	}
 	return true
-}
-
-func nodeAnnotations(body []byte) map[string]string {
-	var object struct {
-		Metadata struct {
-			Annotations map[string]string `json:"annotations"`
-		} `json:"metadata"`
-	}
-	_ = json.Unmarshal(body, &object)
-	return object.Metadata.Annotations
 }

@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"github.com/rlinf/rlark/apps/rlark/astribot/storageconfig"
 	"testing"
 
 	"github.com/rlinf/rlark/apps/rlark/pkg/distribution"
@@ -25,7 +26,7 @@ func TestStorageClassPrefixAndVFSCacheMode(t *testing.T) {
 	base.VFSCacheMode = "off"
 	stored, err := normalizeStorageClass(base)
 	require.NoError(t, err)
-	decl, err := buildAstribotStorageReplicationSecret("management", "sc-0123456789abcdef", stored)
+	decl, err := storageconfig.RenderReplication("management", "sc-0123456789abcdef", stored)
 	require.NoError(t, err)
 	replication, err := distribution.Parse(decl.Data)
 	require.NoError(t, err)

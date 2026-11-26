@@ -5,12 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/rlinf/rlark/apps/rlark/astribot/provisioning"
 	"net"
 	"net/http"
 	"net/netip"
 	"net/url"
 	"slices"
-	"strconv"
 	"strings"
 	"time"
 
@@ -21,130 +21,15 @@ import (
 	"sigs.k8s.io/yaml"
 )
 
-// originName is the global name of the registry every site's registry is a copy of: a new site pulls from it
-// through the tunnel until it has a cache of its own (site-registry, role=cache).
-const originName = "origin.rlark.internal"
-
-// siteNetworkNode is what a cluster's provision reads of a node the SiteNetwork declares.
-type siteNetworkNode struct {
-	ClusterID string   `json:"clusterID"`
-	NodeName  string   `json:"nodeName"`
-	Address   string   `json:"address"`
-	Advertise []string `json:"-"`
-}
-
-// provisionNetwork is the one SiteNetwork, read for a cluster's provision. It is changed as the object it is, so
-// that whatever else it holds stays as it is.
-type provisionNetwork struct{ object *unstructured.Unstructured }
-
-func (g *Gateway) provisionNetwork(ctx context.Context) (provisionNetwork, error) {
+func (g *Gateway) provisionNetwork(ctx context.Context) (provisioning.Network, error) {
 	object, err := g.siteNetwork(ctx)
 	if err != nil {
-		return provisionNetwork{}, fmt.Errorf("read the SiteNetwork: %w", err)
+		return provisioning.Network{}, fmt.Errorf("read the SiteNetwork: %w", err)
 	}
 	if object.GetName() == "" {
-		return provisionNetwork{}, errors.New("there is no SiteNetwork (station-system/default): a new site is declared in it")
+		return provisioning.Network{}, errors.New("there is no SiteNetwork (station-system/default): a new site is declared in it")
 	}
-	return provisionNetwork{object}, nil
-}
-
-func (n provisionNetwork) list(path ...string) []map[string]interface{} {
-	raw, _, _ := unstructured.NestedSlice(n.object.Object, path...)
-	out := make([]map[string]interface{}, 0, len(raw))
-	for _, item := range raw {
-		if entry, ok := item.(map[string]interface{}); ok {
-			out = append(out, entry)
-		}
-	}
-	return out
-}
-
-func (n provisionNetwork) nodes() []siteNetworkNode {
-	var out []siteNetworkNode
-	for _, entry := range n.list("spec", "nodes") {
-		node := siteNetworkNode{}
-		node.ClusterID, _ = entry["clusterID"].(string)
-		node.NodeName, _ = entry["nodeName"].(string)
-		node.Address, _ = entry["address"].(string)
-		advertise, _, _ := unstructured.NestedSlice(entry, "advertise")
-		for _, raw := range advertise {
-			if a, ok := raw.(map[string]interface{}); ok {
-				if cidr, _ := a["cidr"].(string); cidr != "" {
-					node.Advertise = append(node.Advertise, cidr)
-				}
-			}
-		}
-		out = append(out, node)
-	}
-	return out
-}
-
-// name is the address the global names give name, if any.
-func (n provisionNetwork) name(name string) string {
-	for _, entry := range n.list("spec", "names") {
-		if entry["name"] == name {
-			address, _ := entry["address"].(string)
-			return address
-		}
-	}
-	return ""
-}
-
-// siteOf is the site that has cluster, if any.
-func (n provisionNetwork) siteOf(cluster string) string {
-	for _, entry := range n.list("spec", "sites") {
-		clusters, _, _ := unstructured.NestedStringSlice(entry, "clusters")
-		if slices.Contains(clusters, cluster) {
-			name, _ := entry["name"].(string)
-			return name
-		}
-	}
-	return ""
-}
-
-func (n provisionNetwork) hasSite(site string) bool {
-	return slices.ContainsFunc(n.list("spec", "sites"), func(entry map[string]interface{}) bool { return entry["name"] == site })
-}
-
-// declared is the first tunnel document station-controller published for a node declared with its key, until
-// the node is enrolled.
-func (n provisionNetwork) declared(cluster, node string) string {
-	for _, entry := range n.list("status", "declared") {
-		if entry["clusterID"] == cluster && entry["nodeName"] == node {
-			config, _ := entry["config"].(string)
-			return config
-		}
-	}
-	return ""
-}
-
-// allocate is the lowest free tunnel address of the pool that neither the SiteNetwork nor others (the node
-// admissions', other makings') hold. The pool's first address is the management machine's.
-func (n provisionNetwork) allocate(others []string) (string, error) {
-	pool, _, _ := unstructured.NestedString(n.object.Object, "spec", "pool")
-	prefix, err := netip.ParsePrefix(pool)
-	if err != nil {
-		return "", fmt.Errorf("the SiteNetwork's pool %q: %w", pool, err)
-	}
-	taken := map[string]bool{}
-	for _, node := range n.nodes() {
-		taken[node.Address] = true
-	}
-	for _, entry := range n.list("spec", "names") {
-		address, _ := entry["address"].(string)
-		taken[address] = true
-	}
-	for _, address := range others {
-		taken[address] = true
-	}
-	prefix = prefix.Masked()
-	address := prefix.Addr().Next().Next()
-	for ; prefix.Contains(address) && prefix.Contains(address.Next()); address = address.Next() {
-		if !taken[address.String()] {
-			return address.String(), nil
-		}
-	}
-	return "", fmt.Errorf("the SiteNetwork's pool %s has no free address", pool)
+	return provisioning.Network{Object: object}, nil
 }
 
 // admissionAddresses are the tunnel addresses the node admissions hold (pinned, or allocated by station-controller):
@@ -163,18 +48,6 @@ func (g *Gateway) admissionAddresses(ctx context.Context) ([]string, error) {
 		}
 	}
 	return out, nil
-}
-
-// chooseSubnets is the first pair of /16 Pod and Service subnets, from 10.200.0.0 on, that overlaps none of taken.
-func chooseSubnets(taken []netip.Prefix) (string, string, error) {
-	for second := 200; second+1 < 256; second += 2 {
-		pod := netip.PrefixFrom(netip.AddrFrom4([4]byte{10, byte(second), 0, 0}), 16)
-		service := netip.PrefixFrom(netip.AddrFrom4([4]byte{10, byte(second + 1), 0, 0}), 16)
-		if !slices.ContainsFunc(taken, pod.Overlaps) && !slices.ContainsFunc(taken, service.Overlaps) {
-			return pod.String(), service.String(), nil
-		}
-	}
-	return "", "", errors.New("no pair of /16 in 10.200.0.0–10.255.255.255 is free of every cluster's and the machine's networks")
 }
 
 // clusterNetworks are the Pod and Service networks of a cluster, as its API shows them: kubeadm's configuration
@@ -311,39 +184,39 @@ func (r *provisionRun) declare(ctx context.Context, p *rlarkv1alpha1.ClusterProv
 		if err != nil {
 			return err
 		}
-		if site := network.siteOf(p.Name); site != "" && site != p.Spec.Site {
+		if site := network.SiteOf(p.Name); site != "" && site != p.Spec.Site {
 			return fmt.Errorf("the SiteNetwork already has %s in site %s", p.Name, site)
 		}
-		if network.siteOf(p.Name) == "" && network.hasSite(p.Spec.Site) {
+		if network.SiteOf(p.Name) == "" && network.HasSite(p.Spec.Site) {
 			return fmt.Errorf("the SiteNetwork already has a site %s", p.Spec.Site)
 		}
-		origin := network.name(originName)
+		origin := network.NameAddress(provisioning.OriginName)
 		if origin == "" {
-			return fmt.Errorf("the SiteNetwork's names have no %s: a new site pulls its images from it", originName)
+			return fmt.Errorf("the SiteNetwork's names have no %s: a new site pulls its images from it", provisioning.OriginName)
 		}
-		if network.name(server.Hostname()) == "" {
+		if network.NameAddress(server.Hostname()) == "" {
 			return fmt.Errorf("the SiteNetwork's names have no %s: a new cluster's agent reaches RLark by it", server.Hostname())
 		}
 		if facts.TunnelAddress == "" {
-			for _, node := range network.nodes() {
+			for _, node := range network.Nodes() {
 				if node.ClusterID == p.Name && node.NodeName == facts.NodeName {
 					facts.TunnelAddress = node.Address
 				}
 			}
 		}
 		if facts.TunnelAddress == "" {
-			if facts.TunnelAddress, err = network.allocate(otherAddresses); err != nil {
+			if facts.TunnelAddress, err = network.AllocateAddress(otherAddresses); err != nil {
 				return err
 			}
 		}
 		if facts.PodSubnet == "" {
 			networkTaken := slices.Clone(taken)
-			if pool, _, _ := unstructured.NestedString(network.object.Object, "spec", "pool"); pool != "" {
+			if pool, _, _ := unstructured.NestedString(network.Object.Object, "spec", "pool"); pool != "" {
 				if prefix, err := netip.ParsePrefix(pool); err == nil {
 					networkTaken = append(networkTaken, prefix)
 				}
 			}
-			for _, node := range network.nodes() {
+			for _, node := range network.Nodes() {
 				for _, cidr := range node.Advertise {
 					if prefix, err := netip.ParsePrefix(cidr); err == nil {
 						networkTaken = append(networkTaken, prefix)
@@ -355,21 +228,21 @@ func (r *provisionRun) declare(ctx context.Context, p *rlarkv1alpha1.ClusterProv
 					networkTaken = append(networkTaken, prefix)
 				}
 			}
-			if facts.PodSubnet, facts.ServiceSubnet, err = chooseSubnets(networkTaken); err != nil {
+			if facts.PodSubnet, facts.ServiceSubnet, err = provisioning.ChooseSubnets(networkTaken); err != nil {
 				return err
 			}
 		}
 		facts.ControlPlaneName = "cp." + p.Name + ".rlark.internal"
-		if address := network.name(facts.ControlPlaneName); address != "" && address != facts.TunnelAddress {
+		if address := network.NameAddress(facts.ControlPlaneName); address != "" && address != facts.TunnelAddress {
 			return fmt.Errorf("the SiteNetwork's names give %s the address %s, not this cluster's control plane's", facts.ControlPlaneName, address)
 		}
-		object := network.object
+		object := network.Object
 		names, _, _ := unstructured.NestedSlice(object.Object, "spec", "names")
-		if network.name(facts.ControlPlaneName) == "" {
+		if network.NameAddress(facts.ControlPlaneName) == "" {
 			names = append(names, map[string]interface{}{"name": facts.ControlPlaneName, "address": facts.TunnelAddress})
 		}
 		sites, _, _ := unstructured.NestedSlice(object.Object, "spec", "sites")
-		if !network.hasSite(p.Spec.Site) {
+		if !network.HasSite(p.Spec.Site) {
 			// Mesh: the site's later hubs reach its control plane, which is on its first hub's tunnel address.
 			sites = append(sites, map[string]interface{}{
 				"name": p.Spec.Site, "clusters": []interface{}{p.Name}, "mesh": true,
@@ -377,7 +250,7 @@ func (r *provisionRun) declare(ctx context.Context, p *rlarkv1alpha1.ClusterProv
 			})
 		}
 		nodes, _, _ := unstructured.NestedSlice(object.Object, "spec", "nodes")
-		nodes = withHub(nodes, hubEntry(p.Name, facts.NodeName, facts.TunnelAddress, facts.PrivateAddress, facts.PublicKey, p.Spec.Machine.TunnelEndpoint))
+		nodes = provisioning.WithHub(nodes, provisioning.HubEntry(p.Name, facts.NodeName, facts.TunnelAddress, facts.PrivateAddress, facts.PublicKey, p.Spec.Machine.TunnelEndpoint))
 		for path, value := range map[string][]interface{}{"names": names, "sites": sites, "nodes": nodes} {
 			if err := unstructured.SetNestedSlice(object.Object, value, "spec", path); err != nil {
 				return err
@@ -402,41 +275,6 @@ func (r *provisionRun) declare(ctx context.Context, p *rlarkv1alpha1.ClusterProv
 	return readback + "; status.declared holds its tunnel document", nil
 }
 
-// hubEntry is the SiteNetwork's declaration of a hub by its key: a machine that reaches Station API only through its
-// tunnel. It listens on its tunnel endpoint's port; other sites dial the endpoint, and the machines of its own site
-// its private address at that port (a cloud's machines behind one address do not reach each other at it).
-func hubEntry(cluster, node, tunnelAddress, privateAddress, publicKey, endpoint string) map[string]interface{} {
-	_, port, _ := net.SplitHostPort(endpoint)
-	listen, _ := strconv.ParseInt(port, 10, 32)
-	return map[string]interface{}{
-		"clusterID": cluster, "nodeName": node, "role": "Hub", "address": tunnelAddress,
-		"nodeAddress": privateAddress, "publicKey": publicKey, "listenPort": listen,
-		"endpoints": []interface{}{
-			map[string]interface{}{"address": endpoint, "scope": "Public"},
-			map[string]interface{}{"address": net.JoinHostPort(privateAddress, port), "scope": "Site"},
-		},
-	}
-}
-
-// validTunnelEndpoint is an IPv4 ip:port with a port, as a SiteNetwork endpoint is.
-func validTunnelEndpoint(endpoint string) bool {
-	parsed, err := netip.ParseAddrPort(endpoint)
-	return err == nil && parsed.Addr().Is4() && parsed.Port() != 0
-}
-
-// withHub is nodes with the hub's entry in place of an earlier one of the same node.
-func withHub(nodes []interface{}, hub map[string]interface{}) []interface{} {
-	i := slices.IndexFunc(nodes, func(raw interface{}) bool {
-		entry, _ := raw.(map[string]interface{})
-		return entry["clusterID"] == hub["clusterID"] && entry["nodeName"] == hub["nodeName"]
-	})
-	if i < 0 {
-		return append(nodes, hub)
-	}
-	nodes[i] = hub
-	return nodes
-}
-
 // declareHub declares a machine of a cluster's site as a hub by its key, at a tunnel address of its own (the one it
 // has, or the lowest free), and answers that address and the SiteNetwork's generation that holds the declaration.
 func (g *Gateway) declareHub(ctx context.Context, cluster, node, privateAddress, publicKey, endpoint string) (string, int64, error) {
@@ -451,25 +289,25 @@ func (g *Gateway) declareHub(ctx context.Context, cluster, node, privateAddress,
 		if err != nil {
 			return err
 		}
-		if network.siteOf(cluster) == "" {
+		if network.SiteOf(cluster) == "" {
 			return fmt.Errorf("no site of the SiteNetwork has the cluster %s", cluster)
 		}
 		address = ""
-		for _, entry := range network.nodes() {
+		for _, entry := range network.Nodes() {
 			if entry.ClusterID == cluster && entry.NodeName == node {
 				address = entry.Address
 			}
 		}
 		if address == "" {
-			if address, err = network.allocate(admitted); err != nil {
+			if address, err = network.AllocateAddress(admitted); err != nil {
 				return err
 			}
 		}
-		nodes, _, _ := unstructured.NestedSlice(network.object.Object, "spec", "nodes")
-		if err := unstructured.SetNestedSlice(network.object.Object, withHub(nodes, hubEntry(cluster, node, address, privateAddress, publicKey, endpoint)), "spec", "nodes"); err != nil {
+		nodes, _, _ := unstructured.NestedSlice(network.Object.Object, "spec", "nodes")
+		if err := unstructured.SetNestedSlice(network.Object.Object, provisioning.WithHub(nodes, provisioning.HubEntry(cluster, node, address, privateAddress, publicKey, endpoint)), "spec", "nodes"); err != nil {
 			return err
 		}
-		written, err := g.stationClient.Resource(siteNetworkGVR).Namespace("station-system").Update(ctx, network.object, metav1.UpdateOptions{})
+		written, err := g.stationClient.Resource(siteNetworkGVR).Namespace("station-system").Update(ctx, network.Object, metav1.UpdateOptions{})
 		if err == nil {
 			generation = written.GetGeneration()
 		}
@@ -485,7 +323,7 @@ func (g *Gateway) declaredDocument(ctx context.Context, cluster, node string) (s
 		if err != nil {
 			return "", err
 		}
-		if document := network.declared(cluster, node); document != "" {
+		if document := network.Declared(cluster, node); document != "" {
 			return document, nil
 		}
 	}

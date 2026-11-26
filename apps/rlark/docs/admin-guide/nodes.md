@@ -183,6 +183,8 @@ In Administrator Console → Site Nodes → Add node, choose a target cluster an
 - Manual rows are SSH joins that are running or stopped; **Open SSH record** selects that record in the SSH method. **Add computer/GPU** opens the SSH form. A submitted SSH join appears under Manual. Ordinary x86/GPU servers are not discovered by the site scanner; use SSH or a join code.
 - The operations rail follows batch, SSH, and code joins independently of the browser. At wide widths it is the right-hand column; at narrower widths it follows the workspace. SSH retry and cleanup stay on the SSH record, and a waiting code can be revoked. Server-side joins continue when the page is left.
 
+Join codes default to two hours. When issuing or reissuing a code, an explicit lifetime must be between 10 minutes and 7 days.
+
 ## Site Discovery Settings
 
 Open **Administrator Console → Site Nodes → Discovery Settings** (`/admin/stations/network`), or select **Discovery Settings** from **Add node**. The page is administrator-only: the Gateway rejects reading and saving with `403`, and the console shows a read-only notice. A `404` means the site network has yet to be initialized.

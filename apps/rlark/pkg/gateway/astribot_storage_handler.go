@@ -47,32 +47,6 @@ type astribotStorageClassData struct {
 	DefaultProfile string            `json:"default_profile"`
 }
 
-// astribotStoredStorageClass is embedded in storedStorageClass. Every field is
-// optional, so the record stays on version v1.
-type astribotStoredStorageClass struct {
-	// Type is "s3", "smb" or "host-path". A record without it is "s3".
-	Type          string `json:"type,omitempty"`
-	MountEndpoint string `json:"mount_endpoint,omitempty"`
-	// ClusterMountEndpoints gives a cluster its own mount endpoint, for
-	// example a cloud's internal address for the clusters in that cloud.
-	ClusterMountEndpoints map[string]string `json:"cluster_mount_endpoints,omitempty"`
-	Prefix                string            `json:"prefix,omitempty"`
-	VFSCacheMode          string            `json:"vfs_cache_mode,omitempty"`
-	MountProfile          string            `json:"mount_profile,omitempty"`
-	MountOptions          []string          `json:"mount_options,omitempty"`
-	Host                  string            `json:"host,omitempty"`
-	Share                 string            `json:"share,omitempty"`
-	SubPath               string            `json:"sub_path,omitempty"`
-	Username              string            `json:"username,omitempty"`
-	Password              string            `json:"password,omitempty"`
-	Domain                string            `json:"domain,omitempty"`
-	// Path and FSType describe a host-path storage: the directory the nodes
-	// that have the storage have mounted, and the type of the file system it
-	// must be on. Which nodes have it the driver's node plugin finds out.
-	Path   string `json:"path,omitempty"`
-	FSType string `json:"fs_type,omitempty"`
-}
-
 // astribotStorageClassRequest is embedded in CreateStorageClassRequest. Type
 // selects the storage: "s3" (default) for S3-compatible object storage, "smb"
 // for an SMB/CIFS share, "host-path" for a directory the nodes have mounted.
@@ -110,12 +84,6 @@ const (
 	storageTypeHostPath = storageref.TypeHostPath
 )
 
-// s3MountOptions and smbMountOptions are rclone VFS flags for the CSI mount.
-// fast-list only applies to bucket-based remotes, so SMB omits it.
-var (
-	smbMountOptions = []string{"vfs-cache-mode=writes", "dir-cache-time=5m", "attr-timeout=1m", "poll-interval=5s", "vfs-write-back=1s", "vfs-cache-max-age=10m", "buffer-size=64M", "transfers=8", "checkers=8"}
-)
-
 func effectiveVFSCacheMode(mode string) string {
 	if mode == "" {
 		return "writes"
@@ -142,7 +110,7 @@ func (g *Gateway) rerenderStorageClasses(ctx context.Context) {
 			logger.Error(err, "skip re-rendering storage class", "secret", secret.Name)
 			continue
 		}
-		rebuilt, err := buildAstribotStorageReplicationSecret(secret.Namespace, id, stored)
+		rebuilt, err := storageconfig.RenderReplication(secret.Namespace, id, stored)
 		if err != nil {
 			logger.Error(err, "re-render storage class", "storage", stored.Name)
 			continue
@@ -150,7 +118,7 @@ func (g *Gateway) rerenderStorageClasses(ctx context.Context) {
 		if err := g.syncStorageEndpointSecrets(ctx, id, &stored, secret); err != nil {
 			logger.Error(err, "re-render storage endpoint declarations", "storage", stored.Name)
 		}
-		if storageClassRenderKey(secret.Data) == storageClassRenderKey(rebuilt.Data) {
+		if storageconfig.RenderKey(secret.Data) == storageconfig.RenderKey(rebuilt.Data) {
 			continue
 		}
 		secret.Data = rebuilt.Data
@@ -168,7 +136,7 @@ func describeAstribotStorage(c *gin.Context, entry *StorageClassData, id string,
 	entry.Type, entry.MountEndpoint, entry.Prefix, entry.VFSCacheMode = stored.Type, stored.MountEndpoint, stored.Prefix, effectiveVFSCacheMode(stored.VFSCacheMode)
 	entry.Host, entry.Share, entry.SubPath, entry.Username, entry.Domain = stored.Host, stored.Share, stored.SubPath, stored.Username, stored.Domain
 	entry.Path, entry.FSType, entry.ClusterMountEndpoints = stored.Path, stored.FSType, stored.ClusterMountEndpoints
-	view, err := storageView(id, stored)
+	view, err := storageconfig.View(id, stored)
 	if err != nil {
 		respondError(c, http.StatusInternalServerError, CodeInternalError, "invalid storage mount policy")
 		return false

@@ -12,18 +12,9 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
-	"text/template"
 
 	"github.com/gin-gonic/gin"
 )
-
-// smbRemotePath is the rclone path for an smb remote: "share" or "share/sub".
-func smbRemotePath(stored storedStorageClass) string {
-	if stored.SubPath == "" {
-		return stored.Share
-	}
-	return stored.Share + "/" + stored.SubPath
-}
 
 // validateSMBReachable only proves the SMB port accepts connections; the
 // gateway has no SMB client, so credentials are checked when the CSI driver
@@ -112,18 +103,3 @@ func respondStorageClientError(c *gin.Context, err error) {
 	}
 	respondError(c, http.StatusInternalServerError, CodeUpstreamUnavailable, err.Error())
 }
-
-// smbSecretTemplate is the rclone smb remote config. Pass must already be in
-// rclone's obscured form.
-const smbSecretTemplate = `
-[smb]
-type = smb
-host = {{ .Host }}
-user = {{ .User }}
-pass = {{ .Pass }}
-{{- if .Domain }}
-domain = {{ .Domain }}
-{{- end }}
-`
-
-var smbSecretTmpl = template.Must(template.New("smb-secret").Parse(smbSecretTemplate))

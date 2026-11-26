@@ -3,6 +3,7 @@ package gateway
 import (
 	"context"
 	"encoding/json"
+	"github.com/rlinf/rlark/apps/rlark/astribot/stations"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -17,8 +18,8 @@ func TestStationMarkReleasesTheClaimAndBlocksNewClaimsUntilCleared(t *testing.T)
 	gin.SetMode(gin.TestMode)
 	node := &rlarkv1alpha1.Node{ObjectMeta: metav1.ObjectMeta{
 		Name: "s1u-01-x86", Namespace: "robots", ResourceVersion: "7",
-		Labels:      map[string]string{"rlark.io/robot-id": "s1u_01", robotClaimLabel: "run_old"},
-		Annotations: map[string]string{robotClaimSetAnnotation: `{"holder":"run_old"}`},
+		Labels:      map[string]string{"rlark.io/robot-id": "s1u_01", stations.RobotClaimLabel: "run_old"},
+		Annotations: map[string]string{stations.RobotClaimSetAnnotation: `{"holder":"run_old"}`},
 	}}
 	var patches int
 	g := &Gateway{accessors: map[string]*resourceAccessor{"nodes": {
@@ -72,18 +73,18 @@ func TestStationMarkReleasesTheClaimAndBlocksNewClaimsUntilCleared(t *testing.T)
 			t.Fatalf("set mark: %d %s", response.Code, response.Body)
 		}
 	}
-	if patches != 1 || node.Labels[stationMarkLabel] != "repair" || node.Labels[robotClaimLabel] != "" || node.Annotations[robotClaimSetAnnotation] != "" {
+	if patches != 1 || node.Labels[stations.StationMarkLabel] != "repair" || node.Labels[stations.RobotClaimLabel] != "" || node.Annotations[stations.RobotClaimSetAnnotation] != "" {
 		t.Fatalf("mark and release should be one versioned write: %+v", node.ObjectMeta)
 	}
-	var mark stationMark
-	if err := json.Unmarshal([]byte(node.Annotations[stationMarkAnnotation]), &mark); err != nil || mark.Reason != "camera" || mark.By != "operator" || mark.At.IsZero() {
+	var mark stations.StationMark
+	if err := json.Unmarshal([]byte(node.Annotations[stations.StationMarkAnnotation]), &mark); err != nil || mark.Reason != "camera" || mark.By != "operator" || mark.At.IsZero() {
 		t.Fatalf("mark must include the reason, actor and time: %+v, %v", mark, err)
 	}
 	claim := `{"holder":"run_new","leaseSeconds":30}`
 	if response := request("robot-claim", "user", claim); response.Code != 409 {
 		t.Fatalf("marked station accepted a claim: %d %s", response.Code, response.Body)
 	}
-	if response := request("station-mark", roleAdmin, `{"mark":""}`); response.Code != 200 || node.Annotations[stationMarkAnnotation] != "" {
+	if response := request("station-mark", roleAdmin, `{"mark":""}`); response.Code != 200 || node.Annotations[stations.StationMarkAnnotation] != "" {
 		t.Fatalf("clear mark: %d %s", response.Code, response.Body)
 	}
 	if response := request("robot-claim", "user", claim); response.Code != 200 {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/rlinf/rlark/apps/rlark/astribot/provisioning"
 	"slices"
 	"strings"
 	"sync"
@@ -47,7 +48,7 @@ type provisionRun struct {
 	name     string
 	password []byte
 
-	machine provisionMachine
+	machine provisioning.Machine
 	// admin reaches the new cluster's API with its administrator's credential, read from the machine.
 	admin *rest.Config
 	// progress is the latest line of a long stage, written into the status now and then.
@@ -228,7 +229,7 @@ func (r *provisionRun) line(ctx context.Context, stage, text string) {
 }
 
 // needMachine logs in to the machine, once in a run. The host must show the key it showed the first time.
-func (r *provisionRun) needMachine(ctx context.Context, p *rlarkv1alpha1.ClusterProvision) (provisionMachine, error) {
+func (r *provisionRun) needMachine(ctx context.Context, p *rlarkv1alpha1.ClusterProvision) (provisioning.Machine, error) {
 	if r.machine != nil {
 		return r.machine, nil
 	}

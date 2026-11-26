@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/rlinf/rlark/apps/rlark/astribot/provisioning"
+	"github.com/rlinf/rlark/apps/rlark/astribot/stationidentity"
 	"net"
 	"regexp"
 	"slices"
@@ -62,7 +64,7 @@ const (
 const tunnelScript = `set -eu
 umask 077
 cat > /etc/rlark/station/bootstrap.json
-` + provisionBootstrapDir + `/station-bootstrap tunnel 2>&1
+` + provisioning.BootstrapDir + `/station-bootstrap tunnel 2>&1
 `
 
 // joinStageFuncs are the stages' work. Each returns what it read back, or skipped with why it had nothing to do; it
@@ -91,7 +93,7 @@ type nodeJoinRun struct {
 	namespace    string
 	password     []byte
 	sudoPassword []byte
-	machine      provisionMachine
+	machine      provisioning.Machine
 
 	progressSent time.Time
 }
@@ -222,7 +224,7 @@ func joinMachine(j *rlarkv1alpha1.NodeJoin) rlarkv1alpha1.ClusterProvisionMachin
 }
 
 // needMachine logs in to the machine, once in a run. The host must show the key it showed the first time.
-func (r *nodeJoinRun) needMachine(ctx context.Context, j *rlarkv1alpha1.NodeJoin) (provisionMachine, error) {
+func (r *nodeJoinRun) needMachine(ctx context.Context, j *rlarkv1alpha1.NodeJoin) (provisioning.Machine, error) {
 	if r.machine != nil {
 		return r.machine, nil
 	}
@@ -241,9 +243,9 @@ func (r *nodeJoinRun) needMachine(ctx context.Context, j *rlarkv1alpha1.NodeJoin
 func joinTunnelEndpoint(j *rlarkv1alpha1.NodeJoin) (string, error) {
 	endpoint := j.Spec.Machine.TunnelEndpoint
 	if endpoint == "" {
-		endpoint = net.JoinHostPort(j.Spec.Machine.Address, strconv.Itoa(provisionTunnelPort))
+		endpoint = net.JoinHostPort(j.Spec.Machine.Address, strconv.Itoa(provisioning.TunnelPort))
 	}
-	if !validTunnelEndpoint(endpoint) {
+	if !provisioning.ValidTunnelEndpoint(endpoint) {
 		return "", fmt.Errorf("机器要经自己的隧道入网，%s 不是 IPv4 ip:port：用主机名登录的机器要给出隧道端点", endpoint)
 	}
 	return endpoint, nil
@@ -270,7 +272,7 @@ func (r *nodeJoinRun) precheck(ctx context.Context, j *rlarkv1alpha1.NodeJoin) (
 	if err != nil {
 		return "", err
 	}
-	read, readback, err := readMachine(ctx, machine, joinDiskFloor)
+	read, readback, err := provisioning.ReadMachine(ctx, machine, joinDiskFloor)
 	facts := &j.Status.Facts
 	facts.OS, facts.Kernel, facts.GPUs, facts.DiskFree, facts.PrivateAddress = read.OS, read.Kernel, read.GPUs, read.DiskFree, read.PrivateAddress
 	facts.BundleSHA256, facts.PublicKey = read.BundleSHA256, read.PublicKey
@@ -294,14 +296,14 @@ func (r *nodeJoinRun) precheck(ctx context.Context, j *rlarkv1alpha1.NodeJoin) (
 	declared := address == r.g.stationBootstrap.TunnelAddress()
 	declaredKey := ""
 	if declared {
-		for _, entry := range (provisionNetwork{network}).list("spec", "nodes") {
+		for _, entry := range (provisioning.Network{Object: network}).Entries("spec", "nodes") {
 			if entry["clusterID"] == cluster && entry["nodeName"] == node {
 				declaredKey, _ = entry["publicKey"].(string)
 			}
 		}
 	}
 	out, err := machine.Run(ctx, "curl --connect-timeout 10 -sk -o /dev/null -w 'code=%{http_code}\\n' https://"+address+"/v1/bootstrap/ca || echo code=000", nil, nil)
-	reached := err == nil && provisionValues(out)["code"] == "200"
+	reached := err == nil && provisioning.OutputValues(out)["code"] == "200"
 	want, err := r.g.stationBootstrap.BundleDigest(ctx)
 	if err != nil {
 		return login, fmt.Errorf("read the installer's sha256 from Station API: %w", err)
@@ -381,14 +383,14 @@ func (r *nodeJoinRun) declare(ctx context.Context, j *rlarkv1alpha1.NodeJoin) (s
 	if err != nil {
 		return "", err
 	}
-	readback := fmt.Sprintf("站点 %s 的 Hub，隧道地址 %s，端点 %s", network.siteOf(cluster), address, endpoint)
+	readback := fmt.Sprintf("站点 %s 的 Hub，隧道地址 %s，端点 %s", network.SiteOf(cluster), address, endpoint)
 	for deadline := time.Now().Add(2 * time.Minute); time.Now().Before(deadline); time.Sleep(joinWaitStep) {
 		network, err := r.g.provisionNetwork(ctx)
 		if err != nil {
 			return readback, err
 		}
-		observed, _, _ := unstructured.NestedInt64(network.object.Object, "status", "observedGeneration")
-		if document := network.declared(cluster, node); document != "" && observed >= generation {
+		observed, _, _ := unstructured.NestedInt64(network.Object.Object, "status", "observedGeneration")
+		if document := network.Declared(cluster, node); document != "" && observed >= generation {
 			addTiming(facts, "status.declared", time.Now())
 			sum := sha256.Sum256([]byte(document))
 			return fmt.Sprintf("%s；status.declared 的文档 %s…（声明后 %s 发布）", readback, hex.EncodeToString(sum[:])[:12], time.Since(declaredAt).Round(time.Second)), nil
@@ -409,7 +411,7 @@ func (r *nodeJoinRun) install(ctx context.Context, j *rlarkv1alpha1.NodeJoin) (s
 	if err != nil {
 		return "", err
 	}
-	state := provisionValues(out)
+	state := provisioning.OutputValues(out)
 	switch {
 	case state["active"] == "yes":
 		// A join this NodeJoin started that is still running on the machine (the Gateway restarted): followed again.
@@ -423,8 +425,8 @@ func (r *nodeJoinRun) install(ctx context.Context, j *rlarkv1alpha1.NodeJoin) (s
 		if model := j.Annotations[nodeJoinModelAnnotation]; model != "" {
 			machineIntent["model"] = model
 		}
-		issued, _, refused := r.g.admitNode(ctx, j.Spec.RequestedBy, r.namespace, &issueNodeAdmissionRequest{ClusterID: cluster, NodeName: node, Labels: joinLabels, Machine: machineIntent},
-			map[string]string{nodeAdmissionSSHLoginAnnotation: login, nodeAdmissionSSHHostKeyAnnotation: j.Status.HostKey})
+		issued, _, refused := r.g.admissionService().Issue(ctx, j.Spec.RequestedBy, r.namespace, &stationidentity.IssueAdmissionRequest{ClusterID: cluster, NodeName: node, Labels: joinLabels, Machine: machineIntent},
+			map[string]string{stationidentity.AdmissionSSHLoginAnnotation: login, stationidentity.AdmissionSSHHostKeyAnnotation: j.Status.HostKey})
 		if refused != nil {
 			return "", fmt.Errorf("发入网码：%w", refused)
 		}
@@ -475,7 +477,7 @@ func (r *nodeJoinRun) installReadback(ctx context.Context, admission types.Names
 	if err != nil {
 		return ended
 	}
-	view := nodeAdmissionView(object, time.Now())
+	view := stationidentity.AdmissionView(object, time.Now())
 	readback := fmt.Sprintf("码由 %s 于 %s 发出", view.IssuedBy, view.IssuedAt)
 	if view.RedeemedAt != "" {
 		readback += fmt.Sprintf("；%s 兑换（admission %s，隧道 %s）", view.RedeemedAt, view.State, view.TunnelAddress)
@@ -489,7 +491,7 @@ func (g *Gateway) markInstallFailure(admission types.NamespacedName, failure str
 	if len(failure) > 1000 {
 		failure = failure[:1000]
 	}
-	patch := []byte(fmt.Sprintf(`{"metadata":{"annotations":{%q:%q}}}`, nodeAdmissionInstallFailureAnnotation, failure))
+	patch := []byte(fmt.Sprintf(`{"metadata":{"annotations":{%q:%q}}}`, stationidentity.AdmissionInstallFailureAnnotation, failure))
 	if _, err := g.stationClient.Resource(nodeAdmissionGVR).Namespace(admission.Namespace).Patch(ctx, admission.Name, types.MergePatchType, patch, metav1.PatchOptions{}); err != nil {
 		log.FromContext(ctx).WithName("node-join").Error(err, "mark the install failure on the admission", "admission", admission.String())
 	}
@@ -539,7 +541,7 @@ func (r *nodeJoinRun) station(ctx context.Context, j *rlarkv1alpha1.NodeJoin) (s
 			return "", err
 		}
 		if err == nil {
-			state = nodeAdmissionView(admission, time.Now()).State
+			state = stationidentity.AdmissionView(admission, time.Now()).State
 		}
 		if phase == "Enrolled" && state == "Joined" {
 			return fmt.Sprintf("Enrolled %s；admission Joined", address), nil
@@ -573,7 +575,7 @@ func (r *nodeJoinRun) gpu(ctx context.Context, j *rlarkv1alpha1.NodeJoin) (strin
 	if err != nil {
 		return fmt.Sprintf("%s=nvidia；%d nvidia.com/gpu", acceleratorLabel, got), err
 	}
-	return fmt.Sprintf("%s=nvidia；%d nvidia.com/gpu 可分配（%s）", acceleratorLabel, got, describeGPUs(facts.GPUs)), nil
+	return fmt.Sprintf("%s=nvidia；%d nvidia.com/gpu 可分配（%s）", acceleratorLabel, got, provisioning.DescribeGPUs(facts.GPUs)), nil
 }
 
 // loginRefused is a refused login or sudo as an answer: 422 for a password the machine refuses (not 401, which would

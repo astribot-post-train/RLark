@@ -22,7 +22,7 @@ func TestStorageMountPolicyRenderBackendAndRoundTrip(t *testing.T) {
 	s, err := normalizeStorageClass(CreateStorageClassRequest{Name: "archive", Clusters: []string{"cloud"}, Provider: "Other", Endpoint: "https://s3.example.com", Bucket: "bucket", AccessKeySecret: "secret", astribotStorageClassRequest: astribotStorageClassRequest{MountProfile: "archive", MountOptions: &options}})
 	require.NoError(t, err)
 	require.Equal(t, "off", s.VFSCacheMode)
-	declaration, err := buildAstribotStorageReplicationSecret("default", "sc-0123456789abcdef", s)
+	declaration, err := storageconfig.RenderReplication("default", "sc-0123456789abcdef", s)
 	require.NoError(t, err)
 	_, decoded, err := storageClassFromSecret(declaration)
 	require.NoError(t, err)
@@ -39,7 +39,7 @@ func TestStorageClassRemoteNameIsStable(t *testing.T) {
 		Bucket: "bucket", AccessKeySecret: "archive-secret", astribotStorageClassRequest: astribotStorageClassRequest{MountProfile: "archive"},
 	})
 	require.NoError(t, err)
-	secret, err := buildAstribotStorageReplicationSecret("default", "sc-archive", archive)
+	secret, err := storageconfig.RenderReplication("default", "sc-archive", archive)
 	require.NoError(t, err)
 	manifest := parseStorageClassObjects(t, secret)
 	config := nestedString(t, manifest[0].Object, "stringData", "configData")

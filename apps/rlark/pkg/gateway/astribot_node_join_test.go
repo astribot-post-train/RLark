@@ -6,6 +6,8 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"github.com/rlinf/rlark/apps/rlark/astribot/provisioning"
+	"github.com/rlinf/rlark/apps/rlark/astribot/stationidentity"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -124,7 +126,7 @@ func newJoinScene(t *testing.T, network *unstructured.Unstructured, rlark ...run
 	s.g = &Gateway{kubeClient: clientset.NewSimpleClientset(rlark...), rawClient: kubefake.NewSimpleClientset(provisionTestRecord()), astribotState: astribotState{stationClient: station, stationBootstrap: s.bootstrap}}
 	s.g.config.KubeClientConfig.Namespace = "default"
 	s.box = &joinBox{answer: s.answer}
-	s.g.provisionDial = func(_ context.Context, _ rlarkv1alpha1.ClusterProvisionMachine, password []byte, _ string) (provisionMachine, string, error) {
+	s.g.provisionDial = func(_ context.Context, _ rlarkv1alpha1.ClusterProvisionMachine, password []byte, _ string) (provisioning.Machine, string, error) {
 		if string(password) != joinPassword {
 			return nil, "", &nodessh.Error{Reason: nodessh.LoginRejected, Err: errors.New("the machine refused the password")}
 		}
@@ -302,7 +304,7 @@ func TestAMachineThatReachesStationAPIJoinsInStages(t *testing.T) {
 	stored, _ := json.Marshal(j)
 	admission, _ := s.g.stationClient.Resource(nodeAdmissionGVR).Namespace("agent-a").Get(context.Background(), "box", metav1.GetOptions{})
 	marks, _ := json.Marshal(admission.Object)
-	if strings.Contains(string(stored), joinPassword) || strings.Contains(string(marks), joinPassword) || admission.GetAnnotations()[nodeAdmissionSSHHostKeyAnnotation] != "SHA256:box" {
+	if strings.Contains(string(stored), joinPassword) || strings.Contains(string(marks), joinPassword) || admission.GetAnnotations()[stationidentity.AdmissionSSHHostKeyAnnotation] != "SHA256:box" {
 		t.Fatalf("the password is kept, or the host key is not: %s %s", stored, marks)
 	}
 	for _, script := range s.box.ran {
@@ -427,7 +429,7 @@ func TestTheTunnelIsWaitedForOnTheEvidenceAndTheInstallersFailureStopsTheJoin(t 
 		t.Fatalf("rounds %d", s.rounds)
 	}
 	admission, _ := s.g.stationClient.Resource(nodeAdmissionGVR).Namespace("agent-a").Get(context.Background(), "box", metav1.GetOptions{})
-	if !strings.Contains(admission.GetAnnotations()[nodeAdmissionInstallFailureAnnotation], "FAILED: kubeadm join") {
+	if !strings.Contains(admission.GetAnnotations()[stationidentity.AdmissionInstallFailureAnnotation], "FAILED: kubeadm join") {
 		t.Fatalf("annotations %v", admission.GetAnnotations())
 	}
 	if line := s.box.scripts("systemd-run"); len(line) != 1 || !strings.Contains(line[0], "https://10.254.240.1:18443/b/") {
@@ -572,7 +574,7 @@ func TestAJoinThatStoppedAtItsTunnelIsCleared(t *testing.T) {
 		t.Fatalf("clear = %d %v", code, out)
 	}
 	network, _ := s.g.provisionNetwork(context.Background())
-	if nodes := network.nodes(); len(nodes) != 1 || nodes[0].NodeName != "10-0-2-57" {
+	if nodes := network.Nodes(); len(nodes) != 1 || nodes[0].NodeName != "10-0-2-57" {
 		t.Fatalf("nodes %v", nodes)
 	}
 	if _, err := s.g.kubeClient.RlinfV1alpha1().NodeJoins().Get(context.Background(), "cluster-a.box", metav1.GetOptions{}); !apierrors.IsNotFound(err) {

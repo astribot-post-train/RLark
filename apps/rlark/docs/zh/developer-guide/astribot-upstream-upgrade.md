@@ -13,9 +13,9 @@ Astribot 标准发布在 `crds-rbac` 阶段应用 CRD 和生成的管理面角�
 
 ## 兼容分支实现进度
 
-Astribot 专用实现放在 `apps/rlark/astribot/`、`apps/rlark-ui/src/astribot/` 和 `astribot/`。已归拢 Addon 定义、Station API 客户端、型号目录、运行镜像、本体状态、相机和日志代理、手动扫描、Agent 就绪判定、节点服务代理、逐节点任务状态转换，存储挂载和编码规则，以及 OCI 镜像仓库清单校验。前端默认测试命令也会运行 `apps/rlark-ui/tests/astribot/` 下的测试。
+机器人操作、场站观测、相机和日志代理、手动扫描及型号目录在 `apps/rlark/astribot/stations/`。入网码签发和撤销、有效期校验、安装命令和记录转换在 `stationidentity/`。成员集群网络规划和机器安装脚本在 `provisioning/`。专用 Addon 目录、Agent 就绪判定、节点服务代理、任务适配器、存储声明渲染和 OCI 清单校验已归入相应的 Astribot 包。控制台扩展和测试分别位于 `apps/rlark-ui/src/astribot/` 和 `apps/rlark-ui/tests/astribot/`。
 
-CRD 字段与生成产物、共享角色、HTTP 鉴权和错误转换、组件接线及其集成测试随共享契约维护。已有安装通过同名同版本的 `csi-driver-rclone` 使用 Astribot 参数，因此该扩展仍在原 Addon 定义内。Gateway 的入网、集群配置、机器人操作、仓库与存储编排，依赖控制器内部状态的 Agent 和 provider 适配，以及剩余页面接入仍待迁移。审查时逐项核对这些例外。
+CRD 字段与生成产物、共享角色、鉴权和错误转换、组件接线及其集成测试随共享契约维护。已有安装通过同名同版本的 `csi-driver-rclone` 使用 Astribot 参数，因此该扩展仍在原 Addon 定义内。共享包中还包含SSH 加入流程、建站编排、仓库访问与存储持久化和同步，以及依赖控制器内部状态的 Agent 和 provider 实现。
 
 兼容分支已纳入 v1.7.3 发布构建使用的 S1U 遥测源码。Gateway 内嵌的硬件能力定义与 S1U 镜像复制的文件相同。使用该分支发布前，在测试环境验收本体状态、两路相机及其延迟指标和手动扫描。
 

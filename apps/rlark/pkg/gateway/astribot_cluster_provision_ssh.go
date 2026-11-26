@@ -3,6 +3,7 @@ package gateway
 import (
 	"context"
 	"fmt"
+	"github.com/rlinf/rlark/apps/rlark/astribot/provisioning"
 	"io"
 	"strings"
 
@@ -21,7 +22,7 @@ type provisionSSH struct {
 }
 
 // dialProvisionMachine logs in and checks the account may use sudo.
-func dialProvisionMachine(ctx context.Context, machine rlarkv1alpha1.ClusterProvisionMachine, password []byte, hostKey string) (provisionMachine, string, error) {
+func dialProvisionMachine(ctx context.Context, machine rlarkv1alpha1.ClusterProvisionMachine, password []byte, hostKey string) (provisioning.Machine, string, error) {
 	client, shown, dialErr := nodessh.Dial(ctx, machine.Address, int(machine.Port), machine.User, hostKey, password)
 	if dialErr != nil {
 		return nil, "", dialErr
@@ -33,7 +34,7 @@ func dialProvisionMachine(ctx context.Context, machine rlarkv1alpha1.ClusterProv
 	return &provisionSSH{client: client, user: machine.User, password: password, sudoPassword: password}, shown, nil
 }
 
-func dialProvisionMachinePinned(ctx context.Context, machine rlarkv1alpha1.ClusterProvisionMachine, password, sudoPassword []byte, hostKey, hostKeyAlgorithm string, relayEndpoint, relayToken string) (provisionMachine, string, error) {
+func dialProvisionMachinePinned(ctx context.Context, machine rlarkv1alpha1.ClusterProvisionMachine, password, sudoPassword []byte, hostKey, hostKeyAlgorithm string, relayEndpoint, relayToken string) (provisioning.Machine, string, error) {
 	client, shown, dialErr := nodessh.DialPinned(ctx, machine.Address, int(machine.Port), machine.User, hostKey, hostKeyAlgorithm, password)
 	if dialErr != nil && dialErr.Reason == nodessh.Unreachable && ctx.Err() == nil && relayEndpoint != "" && relayToken != "" {
 		return dialProvisionMachineRelay(ctx, machine, password, sudoPassword, hostKey, hostKeyAlgorithm, relayEndpoint, relayToken)
@@ -51,7 +52,7 @@ func dialProvisionMachinePinned(ctx context.Context, machine rlarkv1alpha1.Clust
 	return &provisionSSH{client: client, user: machine.User, password: sudoPassword, sudoPassword: sudoPassword}, shown, nil
 }
 
-func dialProvisionMachineRelay(ctx context.Context, machine rlarkv1alpha1.ClusterProvisionMachine, password, sudoPassword []byte, hostKey, hostKeyAlgorithm, relayEndpoint, relayToken string) (provisionMachine, string, error) {
+func dialProvisionMachineRelay(ctx context.Context, machine rlarkv1alpha1.ClusterProvisionMachine, password, sudoPassword []byte, hostKey, hostKeyAlgorithm, relayEndpoint, relayToken string) (provisioning.Machine, string, error) {
 	client, shown, dialErr := nodessh.DialRelay(ctx, relayEndpoint, machine.Address, int(machine.Port), machine.User, hostKey, hostKeyAlgorithm, relayToken, password)
 	if dialErr != nil {
 		return nil, "", dialErr

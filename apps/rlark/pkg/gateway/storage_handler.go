@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	stderrors "errors"
 	"fmt"
+	"github.com/rlinf/rlark/apps/rlark/astribot/storageconfig"
 	"net/http"
 	"regexp"
 	"slices"
@@ -145,44 +146,31 @@ func (g *Gateway) listProvider(c *gin.Context) {
 
 // annoStorageClassDescription is the annotation key under which a human-readable
 // description of a rlark-managed StorageClass is stored.
-const annoStorageClassDescription = "rlark.io/description"
+const annoStorageClassDescription = storageconfig.DescriptionAnnotation
 
-const annoStorageClassName = "rlark.io/name"
+const annoStorageClassName = storageconfig.NameAnnotation
 
 const (
 	storageClassVersion           = "v1"
 	storageClassCreateAttempts    = 3
 	storageClassValidationTimeout = 10 * time.Second
 	storageClassNamespacePrefix   = "rlark-"
-	storageClassReplicationLabel  = "rlark.io/storageclass-replication"
-	storageClassDeliveryLabel     = "rlark.io/storageclass-delivery"
+	storageClassReplicationLabel  = storageconfig.ReplicationLabel
+	storageClassDeliveryLabel     = storageconfig.DeliveryLabel
 
 	CodeStorageClassRequiredFields = "STORAGE_CLASS_REQUIRED_FIELDS"
 )
 
 var storageClassIDPattern = regexp.MustCompile(`^sc-[0-9a-f]{16}$`)
 
-type storedStorageClass struct {
-	Version     string   `json:"version"`
-	Name        string   `json:"name"`
-	Description string   `json:"description"`
-	Clusters    []string `json:"clusters"`
-	Provider    string   `json:"provider"`
-	Endpoint    string   `json:"endpoint"`
-	AccessKeyID string   `json:"access_key_id"`
-	AccessKey   string   `json:"access_key_secret"`
-	Bucket      string   `json:"bucket"`
-	Region      string   `json:"region"`
-	PathStyle   bool     `json:"path_style"`
-	astribotStoredStorageClass
-}
+type storedStorageClass = storageconfig.StoredClass
 
 func newStorageClassID() string {
 	return "sc-" + strings.ReplaceAll(uuid.NewString(), "-", "")[:16]
 }
 
-func storageClassReplicationName(id string) string { return id + "-replication" }
-func storageClassDeliveryName(id string) string    { return id + "-delivery" }
+func storageClassReplicationName(id string) string { return storageconfig.ReplicationName(id) }
+func storageClassDeliveryName(id string) string    { return storageconfig.DeliveryName(id) }
 
 func parseStorageClassID(name string) (string, bool) {
 	const suffix = "-replication"
@@ -213,23 +201,7 @@ type CreateStorageClassRequest struct {
 	astribotStorageClassRequest
 }
 
-// ssSecretTemplate is the rclone remote config rendered into the StorageClass
-// Secret from a CreateStorageClassRequest.
-const ssSecretTemplate = `
-[s3]
-type = s3
-provider = {{ .Provider }}
-endpoint = {{ .Endpoint }}
-access_key_id = {{ .AccessKeyId }}
-secret_access_key = {{ .AccessKeySecret }}
-{{- if .Region }}
-region = {{ .Region}}
-{{- end }}
-force_path_style = {{ .PathStyle }}
-no_check_bucket = true
-`
-
-var ssSecretTmpl = template.Must(template.New("ss-secret").Parse(ssSecretTemplate))
+var ssSecretTmpl = template.Must(template.New("ss-secret").Parse(storageconfig.S3SecretTemplate))
 
 // createStorageClass stores a Replication declaration. The Replication and
 // Delivery controllers apply the StorageClass bundle to selected clusters.
@@ -256,7 +228,7 @@ func (g *Gateway) createStorageClass(c *gin.Context) {
 	}
 	for range storageClassCreateAttempts {
 		id := newStorageClassID()
-		secret, err := buildAstribotStorageReplicationSecret(g.managementNamespace(), id, stored)
+		secret, err := storageconfig.RenderReplication(g.managementNamespace(), id, stored)
 		if err != nil {
 			respondError(c, http.StatusInternalServerError, CodeInternalError, err.Error())
 			return
@@ -596,7 +568,7 @@ func (g *Gateway) updateStorageClassByName(ctx context.Context, name string, sto
 		if err != nil {
 			return errors.NewNotFound(v1.Resource("secrets"), secret.Name)
 		}
-		rebuilt, err := buildAstribotStorageReplicationSecret(secret.Namespace, id, stored)
+		rebuilt, err := storageconfig.RenderReplication(secret.Namespace, id, stored)
 		if err != nil {
 			return err
 		}

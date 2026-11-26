@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/rlinf/rlark/apps/rlark/astribot/provisioning"
 	"strings"
 	"time"
 
@@ -30,7 +31,7 @@ func (r *nodeJoinRun) tunnel(ctx context.Context, j *rlarkv1alpha1.NodeJoin) (st
 	if err != nil {
 		return "", err
 	}
-	document := network.declared(j.Spec.ClusterID, j.Spec.NodeName)
+	document := network.Declared(j.Spec.ClusterID, j.Spec.NodeName)
 	if document == "" {
 		return "", fmt.Errorf("SiteNetwork 的 status.declared 里没有 %s 的隧道文档：station-controller 还没接受这条声明", j.Spec.NodeName)
 	}
@@ -42,7 +43,7 @@ func (r *nodeJoinRun) tunnel(ctx context.Context, j *rlarkv1alpha1.NodeJoin) (st
 	if err != nil {
 		return "", err
 	}
-	started := lastLine(out, "tunnel service started")
+	started := provisioning.LastLine(out, "tunnel service started")
 	since, declared := timingOf(j.Status.Facts, "status.declared")
 	if !declared {
 		since = joinClock()
@@ -59,7 +60,7 @@ func (r *nodeJoinRun) tunnel(ctx context.Context, j *rlarkv1alpha1.NodeJoin) (st
 // again, which it stops doing 90 s after an unanswered try. It fails on what stationidentity.JudgePropagation reads
 // from that evidence, and after PropagationLongest and tunnelAnswerWithin from since whatever it reads; it records
 // when each step was seen in facts.Timings and says where the wait stands.
-func (g *Gateway) awaitTunnel(ctx context.Context, machine provisionMachine, self, document, endpoint string, since time.Time,
+func (g *Gateway) awaitTunnel(ctx context.Context, machine provisioning.Machine, self, document, endpoint string, since time.Time,
 	facts *rlarkv1alpha1.NodeJoinFacts, say func(string)) (string, error) {
 	address := g.stationBootstrap.TunnelAddress()
 	state := stationidentity.PropagationState{Since: since}
@@ -73,7 +74,7 @@ curl --connect-timeout 5 -sk -o /dev/null -w 'code=%{http_code}\n' https://` + a
 		if err != nil {
 			return "", err
 		}
-		values := provisionValues(out)
+		values := provisioning.OutputValues(out)
 		var status struct {
 			Peers []struct {
 				PublicKey     string     `json:"publicKey"`

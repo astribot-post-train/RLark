@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"github.com/rlinf/rlark/apps/rlark/astribot/stations"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -15,7 +16,7 @@ import (
 
 func TestAPoseHoldReachesTheRobotsPowerServiceThroughItsNodeAgent(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	node := &rlarkv1alpha1.Node{ObjectMeta: metav1.ObjectMeta{Namespace: "rlark-robot", Name: "s1u-03-x86", Labels: map[string]string{robotPowerStateLabel: "ready"}}}
+	node := &rlarkv1alpha1.Node{ObjectMeta: metav1.ObjectMeta{Namespace: "rlark-robot", Name: "s1u-03-x86", Labels: map[string]string{stations.RobotPowerStateLabel: "ready"}}}
 	var paths, users, bodies []string
 	answer := `{"pose":"home","moving":true,"started":true,"vendor":{"code":0}}`
 	status := http.StatusOK
@@ -36,7 +37,7 @@ func TestAPoseHoldReachesTheRobotsPowerServiceThroughItsNodeAgent(t *testing.T) 
 		c.Set(authSubjectKey, "alice")
 		c.Request = httptest.NewRequest(http.MethodPost, "/api/v1/rlinf.io/v1alpha1/nodes/s1u-03-x86/robot-pose?namespace=rlark-robot", strings.NewReader(body))
 		c.Request.Header.Set("Content-Type", "application/json")
-		g.handleRobotPose(c)
+		g.robotControlRoutes().Pose(c)
 		return recorder.Code, recorder.Body.String()
 	}
 
@@ -60,7 +61,7 @@ func TestAPoseHoldReachesTheRobotsPowerServiceThroughItsNodeAgent(t *testing.T) 
 			t.Fatalf("%s: %d", body, code)
 		}
 	}
-	delete(node.Labels, robotPowerStateLabel)
+	delete(node.Labels, stations.RobotPowerStateLabel)
 	if code, _ := call(`{"pose":"home","action":"hold"}`); code != http.StatusBadRequest || len(paths) != 3 {
 		t.Fatalf("not a robot: %d", code)
 	}

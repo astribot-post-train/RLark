@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/rlinf/rlark/apps/rlark/astribot/provisioning"
 	"maps"
 	"net"
 	"slices"
@@ -178,7 +179,7 @@ func (r *provisionRun) siteCache(ctx context.Context, p *rlarkv1alpha1.ClusterPr
 	done, err := r.g.installProvisionAddon(ctx, p.Name, release, provisionAddon{name: "site-registry", sited: map[string]string{
 		"role": "cache", "listen": net.JoinHostPort(facts.PrivateAddress, port),
 		"nodeSelector": "kubernetes.io/hostname=" + facts.NodeName,
-		"upstream":     "https://" + net.JoinHostPort(originName, port), "caCert": facts.RegistryCA,
+		"upstream":     "https://" + net.JoinHostPort(provisioning.OriginName, port), "caCert": facts.RegistryCA,
 		"secret": siteRegistrySecret,
 		// Each site's own (no release states them): a new site's first cache pulls them from the origin, not through itself.
 		"image": release.Images["site-registry"], "relayImage": release.Images["site-registry-relay"],
@@ -192,7 +193,7 @@ func (r *provisionRun) siteCache(ctx context.Context, p *rlarkv1alpha1.ClusterPr
 		if err != nil {
 			return err
 		}
-		sites, _, _ := unstructured.NestedSlice(network.object.Object, "spec", "sites")
+		sites, _, _ := unstructured.NestedSlice(network.Object.Object, "spec", "sites")
 		for _, raw := range sites {
 			site, _ := raw.(map[string]interface{})
 			if site["name"] != p.Spec.Site {
@@ -206,10 +207,10 @@ func (r *provisionRun) siteCache(ctx context.Context, p *rlarkv1alpha1.ClusterPr
 			}
 			site["names"] = names
 		}
-		if err := unstructured.SetNestedSlice(network.object.Object, sites, "spec", "sites"); err != nil {
+		if err := unstructured.SetNestedSlice(network.Object.Object, sites, "spec", "sites"); err != nil {
 			return err
 		}
-		_, err = r.g.stationClient.Resource(siteNetworkGVR).Namespace("station-system").Update(ctx, network.object, metav1.UpdateOptions{})
+		_, err = r.g.stationClient.Resource(siteNetworkGVR).Namespace("station-system").Update(ctx, network.Object, metav1.UpdateOptions{})
 		return err
 	})
 	if err != nil {
@@ -333,7 +334,7 @@ func (r *provisionRun) accept(ctx context.Context, p *rlarkv1alpha1.ClusterProvi
 	output := ""
 	for deadline := time.Now().Add(10 * time.Minute); time.Now().Before(deadline); time.Sleep(5 * time.Second) {
 		if output = r.g.jobOutput(ctx, name); strings.Contains(output, want) {
-			return fmt.Sprintf("Job %s on %s printed %q; deleted", name, facts.NodeName, lastLine(output, want)), nil
+			return fmt.Sprintf("Job %s on %s printed %q; deleted", name, facts.NodeName, provisioning.LastLine(output, want)), nil
 		}
 	}
 	if output == "" {

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/rlinf/rlark/apps/rlark/astribot/provisioning"
 	"net"
 	"strconv"
 
@@ -91,7 +92,7 @@ func (g *Gateway) clearMachineAdmission(ctx context.Context, name, clusterID, ac
 	return err
 }
 
-func (g *Gateway) dialNodeJoinMachine(ctx context.Context, j *rlarkv1alpha1.NodeJoin, password, sudoPassword []byte) (provisionMachine, string, error) {
+func (g *Gateway) dialNodeJoinMachine(ctx context.Context, j *rlarkv1alpha1.NodeJoin, password, sudoPassword []byte) (provisioning.Machine, string, error) {
 	annotations := j.GetAnnotations()
 	hostKey := annotations[nodeJoinHostKeyAnnotation]
 	if hostKey == "" || annotations[nodeJoinMachineAnnotation] == "" {

@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	clientset "github.com/rlinf/rlark/api/kubeclients/clientset/versioned/fake"
+	"github.com/rlinf/rlark/apps/rlark/astribot/stationidentity"
 	"io"
 	"net/http/httptest"
 	"strings"
@@ -97,11 +98,11 @@ func TestIssueNodeAdmissionStoresOnlyTheHashAndAnswersTheCommandOnce(t *testing.
 	if status != 201 {
 		t.Fatalf("status %d: %s", status, body)
 	}
-	var issued issuedNodeAdmission
+	var issued stationidentity.IssuedAdmission
 	if err := json.Unmarshal(body, &issued); err != nil {
 		t.Fatal(err)
 	}
-	if len(issued.Code) != joinCodeLength || strings.Trim(issued.Code, "abcdefghijklmnopqrstuvwxyz0123456789") != "" {
+	if len(issued.Code) != stationidentity.JoinCodeLength || strings.Trim(issued.Code, "abcdefghijklmnopqrstuvwxyz0123456789") != "" {
 		t.Fatalf("code %q", issued.Code)
 	}
 	want := `c=$(mktemp) && curl --connect-timeout 15 -fsSk https://10.11.14.128:18443/v1/bootstrap/ca -o $c && echo "cadigest  $c" | sha256sum -c - && curl -fsS --cacert $c https://10.11.14.128:18443/b/` + issued.Code + ` | sudo sh`
@@ -140,7 +141,7 @@ func TestIssueNodeAdmissionBehindADeviceLetsTheMachineOutFirst(t *testing.T) {
 	g, bootstrap := nodeAdmissionGateway()
 	status, body := nodeAdmissionCall(t, g.handleIssueNodeAdmission, "POST", "/api/v1/station/node-admissions", "",
 		`{"cluster_id":"cluster-a","node_name":"s1u-10-x86","site":"farm","node_class":"s1u"}`)
-	var issued issuedNodeAdmission
+	var issued stationidentity.IssuedAdmission
 	_ = json.Unmarshal(body, &issued)
 	if status != 201 || !strings.HasPrefix(issued.Command, `ssh -t nvidia@192.168.0.11 'f=$(mktemp) c=$(mktemp) && `) ||
 		!strings.Contains(issued.Command, `/b/`+issued.Code+`/uplink -o $f && echo "uplinkdigest  $f" | sha256sum -c - && sudo sh $f' && c=$(mktemp)`) {
@@ -194,7 +195,7 @@ func TestNewCodeForAnAdmittedNodeOpensItAgain(t *testing.T) {
 	}
 	// Reissue keeps what the admission declares and clears the redemption.
 	status, body = nodeAdmissionCall(t, g.handleReissueNodeAdmission, "POST", "/api/v1/station/node-admissions/s1u-01-x86/reissue?cluster_id=cluster-a", "s1u-01-x86", "")
-	var issued issuedNodeAdmission
+	var issued stationidentity.IssuedAdmission
 	_ = json.Unmarshal(body, &issued)
 	if status != 200 || issued.Admission.State != "Pending" || issued.Admission.IssuedBy != "alice" || issued.Admission.Address != "10.254.240.9" || issued.Admission.Labels["old"] != "label" || issued.Admission.PublicKey != "" {
 		t.Fatalf("reissue %d: %s", status, body)
@@ -251,7 +252,7 @@ func TestIssueNodeAdmissionForADeclaredKeyRedeemsThroughTheTunnel(t *testing.T) 
 	for node, address := range map[string]string{"gpu-2": "10.254.240.1:18443", "gpu-3": "10.11.14.128:18443"} {
 		status, body := nodeAdmissionCall(t, g.handleIssueNodeAdmission, "POST", "/api/v1/station/node-admissions", "",
 			`{"cluster_id":"cluster-a","node_name":"`+node+`"}`)
-		var issued issuedNodeAdmission
+		var issued stationidentity.IssuedAdmission
 		if err := json.Unmarshal(body, &issued); status != 201 || err != nil {
 			t.Fatalf("status %d: %s", status, body)
 		}
