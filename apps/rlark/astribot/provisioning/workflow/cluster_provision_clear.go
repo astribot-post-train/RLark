@@ -9,12 +9,16 @@ import (
 
 	"github.com/gin-gonic/gin"
 	rlarkv1alpha1 "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
+	"github.com/rlinf/rlark/apps/rlark/astribot/nodessh"
 	"github.com/rlinf/rlark/apps/rlark/astribot/provisioning"
+	"github.com/rlinf/rlark/apps/rlark/astribot/provisioning/ownership"
 	"github.com/rlinf/rlark/apps/rlark/astribot/release"
+	"github.com/rlinf/rlark/apps/rlark/astribot/stationidentity"
 	"github.com/rlinf/rlark/apps/rlark/astribot/stationmember"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/util/retry"
 )
 
@@ -33,7 +37,7 @@ type clearClusterProvisionRequest struct {
 // this script and the shells it runs under hold the installer's name in their own command lines and are left out.
 // The machine keeps its tunnel key and the installer: a making that starts over finds the same machine.
 const clearMachineScript = `set -eu
-B=` + provisioning.BootstrapDir + `
+marker=` + provisionHostMarker + "\n" + verifyHostMarker + verifyProvisionHostCluster + `B=` + provisioning.BootstrapDir + `
 mine=" "; p=$$; while [ "$p" -gt 1 ]; do mine="$mine$p "; p=$(awk '{print $4}' /proc/$p/stat); done
 for p in $(pgrep -f 'control-plane\.sh|station-bootstrap control-plane' || true); do
   case "$mine" in *" $p "*) ;; *) kill "$p" 2>/dev/null || true ;; esac
@@ -45,8 +49,7 @@ rm -f /etc/systemd/system/rlark-station-gateway.service /etc/rlark/station/boots
 rm -rf /var/lib/station/wg
 ip link del st-wg0 2>/dev/null || true
 systemctl daemon-reload
-echo cleared=yes
-`
+` + finishHostCleanup
 
 // HandleClearClusterProvision answers POST /api/v1/cluster-provisions/:name/clear: a making that stopped half way,
 // or the record of one whose cluster was deleted, is taken away so that the site, the cluster's name and the machine
@@ -65,16 +68,23 @@ func (g *Service) HandleClearClusterProvision(c *gin.Context) {
 		g.http.RespondKubeError(c, "get cluster provision: "+err.Error(), err)
 		return
 	}
-	_, err = g.kubeClient.RlinfV1alpha1().Clusters().Get(ctx, p.Name, metav1.GetOptions{})
+	cluster, err := g.kubeClient.RlinfV1alpha1().Clusters().Get(ctx, p.Name, metav1.GetOptions{})
 	if err != nil && !apierrors.IsNotFound(err) {
 		g.http.RespondKubeError(c, err.Error(), err)
 		return
 	}
 	listed := err == nil
 	reached := slices.ContainsFunc(p.Status.Stages, func(s rlarkv1alpha1.ClusterProvisionStage) bool {
-		return s.Name == stageBundle && s.State != rlarkv1alpha1.ClusterProvisionStagePending
+		return s.Name == stageControlPlane && s.State != rlarkv1alpha1.ClusterProvisionStagePending
 	})
 	switch {
+	case p.UID == "":
+		g.http.RespondError(c, http.StatusConflict, g.http.CodeResourceConflict, "the provision has no UID")
+		return
+	case listed && (cluster.UID == "" || string(cluster.UID) != p.Annotations[provisionClusterReceipt] ||
+		cluster.Annotations[ownership.ProvisionUID] != string(p.UID)):
+		g.http.RespondError(c, http.StatusConflict, g.http.CodeResourceConflict, "the live Cluster UID is not bound to this provision")
+		return
 	case p.Status.Phase == rlarkv1alpha1.ClusterProvisionSucceeded && listed:
 		g.http.RespondError(c, http.StatusConflict, g.http.CodeResourceConflict, "cluster "+p.Name+" is made and listed: delete the cluster first; clearing then takes away what its making declared")
 		return
@@ -91,26 +101,40 @@ func (g *Service) HandleClearClusterProvision(c *gin.Context) {
 	if user := strings.TrimSpace(req.User); user != "" {
 		p.Spec.Machine.User = user
 	}
-	steps, err := g.clearProvision(ctx, p, password, listed)
+	if p.Status.Phase == rlarkv1alpha1.ClusterProvisionRunning {
+		g.http.RespondError(c, http.StatusConflict, g.http.CodeResourceConflict, "the provision is running")
+		return
+	}
+	var clusterUID types.UID
+	if listed {
+		clusterUID = cluster.UID
+	}
+	if !reached {
+		password = nil
+	}
+	steps, err := g.clearProvision(ctx, p, password, clusterUID)
 	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"success": false, "message": err.Error(), "steps": steps})
+		status := http.StatusBadGateway
+		if apierrors.IsConflict(err) {
+			status = http.StatusConflict
+		}
+		c.JSON(status, gin.H{"success": false, "message": err.Error(), "steps": steps})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "steps": steps})
 }
 
-// clearProvision takes away, in the order that leaves nothing pointing at what is gone: the machine's control plane
-// and tunnel, the Cluster a making that did not finish listed, the credentials the management plane reaches the
-// cluster with, the SiteNetwork's declarations of the making, and the record itself.
-func (g *Service) clearProvision(ctx context.Context, p *rlarkv1alpha1.ClusterProvision, password []byte, listed bool) ([]string, error) {
+// clearProvision releases verified host and management state, then removes
+// the original Cluster and provisioning record with delete preconditions.
+func (g *Service) clearProvision(ctx context.Context, p *rlarkv1alpha1.ClusterProvision, password []byte, clusterUID types.UID) ([]string, error) {
 	var steps []string
 	facts := p.Status.Facts
-	if len(password) > 0 {
+	if len(password) > 0 && p.UID != "" && p.Status.HostKey != "" {
 		machine, _, err := g.provisionDial(ctx, p.Spec.Machine, password, p.Status.HostKey)
 		if err != nil {
 			return steps, fmt.Errorf("log in to %s@%s: %w", p.Spec.Machine.User, p.Spec.Machine.Address, err)
 		}
-		out, err := machine.Run(ctx, clearMachineScript, nil, nil)
+		out, err := machine.Run(ctx, "owner="+nodessh.Quote(string(p.UID))+"\n"+clearMachineScript, nil, nil)
 		_ = machine.Close()
 		if err != nil {
 			return steps, fmt.Errorf("put the machine back: %w", err)
@@ -119,73 +143,70 @@ func (g *Service) clearProvision(ctx context.Context, p *rlarkv1alpha1.ClusterPr
 	} else {
 		steps = append(steps, "机器 "+p.Spec.Machine.Address+" 没动（没给密码或已不在）：它要再用，先在机器上撤掉旧控制面")
 	}
-	if listed {
-		if err := g.kubeClient.RlinfV1alpha1().Clusters().Delete(ctx, p.Name, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
-			return steps, fmt.Errorf("delete the Cluster the making listed: %w", err)
+	credentials := []struct{ namespace, name string }{
+		{stationMemberCredentialNamespace, stationmember.SecretName(p.Name)},
+		{stationOperationCredentialNamespace, stationmember.SecretName(p.Name)},
+		{release.CredentialNamespace, release.CredentialName(p.Name)},
+		{g.namespace, "rlark-agent-cert-" + provisionAgentID(p.Name)},
+	}
+	for _, credential := range credentials {
+		namespace, name := credential.namespace, credential.name
+		client := g.rawClient.CoreV1().Secrets(namespace)
+		secret, err := client.Get(ctx, name, metav1.GetOptions{})
+		if apierrors.IsNotFound(err) {
+			continue
 		}
-		steps = append(steps, "删掉没建完就登记了的集群 "+p.Name)
-	}
-	secrets := map[string]string{
-		stationMemberCredentialNamespace:    stationmember.SecretName(p.Name),
-		stationOperationCredentialNamespace: stationmember.SecretName(p.Name),
-		release.CredentialNamespace:         release.CredentialName(p.Name),
-		g.namespace:                         "rlark-agent-cert-" + provisionAgentID(p.Name),
-	}
-	for namespace, name := range secrets {
-		if err := g.rawClient.CoreV1().Secrets(namespace).Delete(ctx, name, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
+		if err != nil {
+			return steps, fmt.Errorf("read credential %s/%s: %w", namespace, name, err)
+		}
+		if !ownership.CredentialMatches(secret, p.UID) {
+			steps = append(steps, fmt.Sprintf("保留凭据 %s/%s：没有匹配的 UID 归属记录", namespace, name))
+			continue
+		}
+		opts := metav1.DeleteOptions{Preconditions: &metav1.Preconditions{UID: &secret.UID, ResourceVersion: &secret.ResourceVersion}}
+		if err := client.Delete(ctx, name, opts); err != nil && !apierrors.IsNotFound(err) {
 			return steps, fmt.Errorf("delete the credential %s/%s: %w", namespace, name, err)
 		}
+		steps = append(steps, fmt.Sprintf("删掉本次创建的凭据 %s/%s", namespace, name))
 	}
-	steps = append(steps, "删掉管理面到这个集群的凭据（Station、节点操作、发布、agent 证书）")
-	// What Station keeps of the cluster's nodes: a cluster made again under the name has nodes of the same names
-	// with other UIDs, which the records of the earlier ones would hold in Conflict, and admissions hold keys and
-	// tunnel addresses.
-	records, err := g.stationClient.Resource(networkEnrollmentGVR).Namespace(p.Name).List(ctx, metav1.ListOptions{})
-	if err != nil {
-		return steps, fmt.Errorf("list the cluster's site nodes: %w", err)
-	}
-	for i := range records.Items {
-		if err := g.stationClient.Resource(networkEnrollmentGVR).Namespace(p.Name).Delete(ctx, records.Items[i].GetName(), metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
-			return steps, fmt.Errorf("delete the site node %s: %w", records.Items[i].GetName(), err)
-		}
-	}
-	admissions, err := g.stationClient.Resource(nodeAdmissionGVR).Namespace(p.Name).List(ctx, metav1.ListOptions{})
-	if err != nil {
-		return steps, fmt.Errorf("list the cluster's node admissions: %w", err)
-	}
-	for i := range admissions.Items {
-		if err := g.stationClient.Resource(nodeAdmissionGVR).Namespace(p.Name).Delete(ctx, admissions.Items[i].GetName(), metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
-			return steps, fmt.Errorf("delete the node admission %s: %w", admissions.Items[i].GetName(), err)
-		}
-	}
-	steps = append(steps, fmt.Sprintf("删掉这个集群的 %d 条场站节点记录和它的入网许可（公钥和隧道地址放出）", len(records.Items)))
+	// Station admissions and enrollments belong to individual nodes.
+	// Provisioning does not own that namespace's records.
 	controlPlaneName := "cp." + p.Name + ".rlark.internal"
-	err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
-		network, err := g.provisionNetwork(ctx)
+	clearedSite := false
+	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		object, err := stationidentity.ReadSiteNetwork(ctx, g.stationClient)
 		if err != nil {
 			return err
 		}
-		object := network.Object
+		receiptKey := siteProvisionAnnotation(p.Name)
+		annotations := object.GetAnnotations()
+		if p.UID == "" || object.GetUID() == "" || annotations[receiptKey] !=
+			siteProvisionReceipt(p.UID, object.GetUID(), controlPlaneName, facts.NodeName, facts.TunnelAddress, facts.PublicKey, p.Spec.Site) {
+			return nil
+		}
+		network := provisioning.Network{Object: object}
 		var names, sites, nodes []interface{}
 		for _, entry := range network.Entries("spec", "names") {
-			if entry["name"] != controlPlaneName {
+			if entry["name"] != controlPlaneName || entry["address"] != facts.TunnelAddress {
 				names = append(names, entry)
 			}
 		}
-		// The site goes with its only cluster; a site that has others keeps them.
 		for _, entry := range network.Entries("spec", "sites") {
 			clusters, _, _ := unstructured.NestedStringSlice(entry, "clusters")
-			if !slices.Contains(clusters, p.Name) {
+			if entry["name"] != p.Spec.Site || !slices.Contains(clusters, p.Name) {
 				sites = append(sites, entry)
 				continue
 			}
 			if clusters = slices.DeleteFunc(clusters, func(cluster string) bool { return cluster == p.Name }); len(clusters) > 0 {
-				_ = unstructured.SetNestedStringSlice(entry, clusters, "clusters")
+				if err := unstructured.SetNestedStringSlice(entry, clusters, "clusters"); err != nil {
+					return err
+				}
 				sites = append(sites, entry)
 			}
 		}
 		for _, entry := range network.Entries("spec", "nodes") {
-			if entry["clusterID"] != p.Name {
+			if entry["clusterID"] != p.Name || entry["nodeName"] != facts.NodeName || entry["publicKey"] != facts.PublicKey ||
+				entry["address"] != facts.TunnelAddress {
 				nodes = append(nodes, entry)
 			}
 		}
@@ -194,15 +215,30 @@ func (g *Service) clearProvision(ctx context.Context, p *rlarkv1alpha1.ClusterPr
 				return err
 			}
 		}
+		delete(annotations, receiptKey)
+		object.SetAnnotations(annotations)
 		_, err = g.stationClient.Resource(siteNetworkGVR).Namespace("station-system").Update(ctx, object, metav1.UpdateOptions{})
+		clearedSite = err == nil
 		return err
 	})
 	if err != nil {
 		return steps, fmt.Errorf("take the making's declarations out of the SiteNetwork: %w", err)
 	}
-	steps = append(steps, fmt.Sprintf("SiteNetwork：去掉场地 %s、名字 %s、%s 的节点声明（隧道地址 %s 放出）", p.Spec.Site, controlPlaneName, p.Name, facts.TunnelAddress))
-	if err := g.kubeClient.RlinfV1alpha1().ClusterProvisions().Delete(ctx, p.Name, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
+	if clearedSite {
+		steps = append(steps, "SiteNetwork：已清理本次创建的站点声明")
+	} else {
+		steps = append(steps, "SiteNetwork：没有匹配的 UID 归属记录，保留现有声明")
+	}
+	if clusterUID != "" {
+		opts := metav1.DeleteOptions{Preconditions: &metav1.Preconditions{UID: &clusterUID}}
+		if err := g.kubeClient.RlinfV1alpha1().Clusters().Delete(ctx, p.Name, opts); err != nil && !apierrors.IsNotFound(err) {
+			return steps, fmt.Errorf("delete the Cluster the making listed: %w", err)
+		}
+		steps = append(steps, "删掉本次创建的集群 "+p.Name)
+	}
+	opts := metav1.DeleteOptions{Preconditions: &metav1.Preconditions{UID: &p.UID, ResourceVersion: &p.ResourceVersion}}
+	if err := g.kubeClient.RlinfV1alpha1().ClusterProvisions().Delete(ctx, p.Name, opts); err != nil && !apierrors.IsNotFound(err) {
 		return steps, fmt.Errorf("delete the record of the making: %w", err)
 	}
-	return append(steps, "删掉这次新建的记录：场地、集群名和机器可以重新用"), nil
+	return append(steps, "删掉这次新建的记录"), nil
 }

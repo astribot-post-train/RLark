@@ -14,14 +14,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/rlinf/rlark/apps/rlark/astribot/release"
+	"github.com/rlinf/rlark/apps/rlark/pkg/addons"
 	"github.com/spf13/cobra"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
-
-	"github.com/rlinf/rlark/apps/rlark/astribot/release"
-	"github.com/rlinf/rlark/apps/rlark/pkg/addons"
 )
 
 // Commands are our rlarkctl commands, added to its root.
@@ -211,7 +210,7 @@ its server where the administrator reaches the API: at the address the SiteNetwo
 				return err
 			}
 			cmd.SilenceUsage = true
-			if err := release.IssueMemberCredential(cmd.Context(), member, memberDynamic, managementCore, cluster, server, serverName, []byte(tree.Files["release-member-rbac.yaml"])); err != nil {
+			if err := release.IssueMemberCredential(cmd.Context(), member, memberDynamic, managementCore, cluster, server, serverName, []byte(tree.Files["release-member-rbac.yaml"]), ""); err != nil {
 				return err
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "cluster %s: the release's credential is %s/%s, its server %s (verified as %q)\n", cluster, release.CredentialNamespace, release.CredentialName(cluster), server, serverName)

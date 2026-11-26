@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/rlinf/rlark/apps/rlark/astribot/provisioning/ownership"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -51,6 +52,7 @@ type Registration struct {
 	// Cluster is the cluster's name; APIName the name the API's certificate holds (the control plane's name in the
 	// SiteNetwork's names), which the credentials verify it by.
 	Cluster, APIName string
+	ProvisionUID     types.UID
 	// StationAPIURL is Station API as the cluster's agents reach it (https://host:port); StationAPICA its CA.
 	StationAPIURL string
 	StationAPICA  []byte
@@ -99,7 +101,7 @@ func Register(ctx context.Context, m *Member, management kubernetes.Interface, r
 	}
 	name := SecretName(r.Cluster)
 	annotations := map[string]string{"station.rlark.io/cluster-id": r.Cluster}
-	if err := PutSecret(ctx, management, &corev1.Secret{
+	if err := putProvisionCredential(ctx, management, r.ProvisionUID, &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: credentialNamespace, Annotations: annotations},
 		Data: map[string][]byte{
 			"kubeconfig": readerConfig, "service-account-namespace": []byte(Namespace), "service-account-name": []byte("station-agent"),
@@ -119,7 +121,7 @@ func Register(ctx context.Context, m *Member, management kubernetes.Interface, r
 	if err != nil {
 		return err
 	}
-	if err := PutSecret(ctx, management, &corev1.Secret{
+	if err := putProvisionCredential(ctx, management, r.ProvisionUID, &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: operationCredentialNamespace, Annotations: annotations},
 		Data:       map[string][]byte{"kubeconfig": operatorConfig},
 	}); err != nil {
@@ -268,4 +270,14 @@ func (m *Member) DaemonSetReady(ctx context.Context, namespace, name string, wit
 		return "", fmt.Errorf("DaemonSet %s/%s is not there after %s", namespace, name, within)
 	}
 	return "", fmt.Errorf("DaemonSet %s/%s is %d/%d ready after %s", namespace, name, ds.Status.NumberReady, ds.Status.DesiredNumberScheduled, within)
+}
+
+func putProvisionCredential(ctx context.Context, management kubernetes.Interface, owner types.UID, secret *corev1.Secret) error {
+	if owner == "" {
+		return PutSecret(ctx, management, secret)
+	}
+	if _, err := management.CoreV1().Namespaces().Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: secret.Namespace}}, metav1.CreateOptions{}); err != nil && !apierrors.IsAlreadyExists(err) {
+		return err
+	}
+	return ownership.WriteCredential(ctx, management.CoreV1().Secrets(secret.Namespace), secret, owner)
 }

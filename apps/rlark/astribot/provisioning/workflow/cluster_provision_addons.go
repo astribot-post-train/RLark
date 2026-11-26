@@ -95,6 +95,9 @@ func (g *Service) installProvisionAddon(ctx context.Context, cluster string, rel
 }
 
 func (r *provisionRun) addons(ctx context.Context, p *rlarkv1alpha1.ClusterProvision) (string, error) {
+	if err := r.g.checkProvisionCluster(ctx, p, types.UID(p.Annotations[provisionClusterReceipt])); err != nil {
+		return "", err
+	}
 	release, err := r.g.currentRelease(ctx)
 	if err != nil {
 		return "", err
@@ -246,6 +249,9 @@ func (g *Service) addClusterToSiteStorage(ctx context.Context, cluster string) (
 // accept runs a small Job on the new cluster's node and reads what it printed: the GPUs it was given, or its
 // host's name. Its image is the release's cluster-check. The Job is deleted once its output is read.
 func (r *provisionRun) accept(ctx context.Context, p *rlarkv1alpha1.ClusterProvision) (string, error) {
+	if err := r.g.checkProvisionCluster(ctx, p, types.UID(p.Annotations[provisionClusterReceipt])); err != nil {
+		return "", err
+	}
 	release, err := r.g.currentRelease(ctx)
 	if err != nil {
 		return "", err

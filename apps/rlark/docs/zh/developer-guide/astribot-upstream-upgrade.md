@@ -80,7 +80,9 @@ Kind 混合批次用例对标准和托管 Cluster 记录运行了真实控制面
 - `astribot/storageconfig/` 负责存储声明校验、渲染、Secret 持久化、端点协调，以及为新集群接入共享 S3 存储。Gateway 保留现有路由、HTTP 错误映射和对象浏览客户端缓存。集群创建因部分写入而重试时会补齐缺失的端点声明。Astribot 复用上游 `pkg/gateway/storage` 的提供商目录和 S3 客户端。
 - Gateway 接入共用的 JWT 和管理员鉴权，提供操作人身份和 Station 命名空间解析，并注入现有证书服务、Kubernetes 代理、镜像仓库凭据、Addon 发布、任务密钥分发及日志访问。这些接入点复用 Gateway 的已认证客户端。CRD 和生成客户端仍归 API 层维护。
 
-旧版清理流程仍以名称定位部分集群资源，并以节点名为中断的 SSH 入网提交移除操作。存在同名重建时，执行清理前须核对目标归属原操作。为这些资源记录可持久化的归属凭据需要单独处理兼容性。
+集群创建在 Agent 注册前预留管理面 Cluster 并记录其 UID。存在同名 Cluster，但 UID 与原记录不符，或者历史记录缺少绑定 UID 时，清理在执行前返回 HTTP 409。如果原 Cluster 已删除，仍可清理遗留的创建记录。清理只移除能核对原 Secret UID 的凭据，以及能核对创建操作和 SiteNetwork UID 的原声明。场站入网许可和节点登记须各自核实后处理。宿主机回退校验创建操作标记，已安装 Kubernetes 时还会校验原 `kube-system` 命名空间 UID。无法验证宿主机原身份时，先由运维核实并单独处理，再使用 `machine_gone`。
+
+SSH 入网通过安装机上的原安装进程取得原生 Kubernetes Node UID。清理已进入安装阶段的中断记录时，提交绑定该 UID 的 Remove 操作。HTTP 200 表示已提交，具体结果由 Station 的操作状态报告。历史记录或中断记录缺少原生 UID 时返回 HTTP 409，并保留记录供排查。当前同名节点的 UID 不会用于补写旧记录。清理已成功的入网只移除历史记录。先更新 Station Controller 并发布新的 Station 安装包，再启用更新后的 Gateway，使 SSH 移除的各阶段都执行新的身份校验。
 
 ### Server 隧道验收
 

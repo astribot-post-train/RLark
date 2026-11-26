@@ -22,6 +22,8 @@ var ErrNodeDeclaredInSiteNetwork = errors.New("the SiteNetwork declares this nod
 // not that node any more.
 const RemovedNodeAnnotation = "station.rlark.io/removed-node-uid"
 
+const sshJoinUIDAnnotation = "station.rlark.io/ssh-join-uid"
+
 // AdmissionNodeRemoved says whether the node an admission made was removed
 // and no machine has redeemed it since.
 func AdmissionNodeRemoved(admission *stationv1alpha1.NodeAdmission) bool {
@@ -68,6 +70,23 @@ func (s StationTunnelRelease) Remove(ctx context.Context, op *stationv1alpha1.No
 	if err != nil && !apierrors.IsNotFound(err) {
 		return false, fmt.Errorf("read NetworkEnrollment %s: %w", op.Spec.NodeName, err)
 	}
+	joinUID := op.Annotations[sshJoinUIDAnnotation]
+	if joinUID != "" {
+		if op.Spec.NodeUID == "" || err == nil && enrollment.Spec.NodeUID != op.Spec.NodeUID {
+			return false, ErrNodeIdentityChanged
+		}
+		member, err := s.Members.Client(ctx, op.Spec.ClusterID)
+		if err != nil {
+			return false, err
+		}
+		node, err := member.CoreV1().Nodes().Get(ctx, op.Spec.NodeName, metav1.GetOptions{})
+		if err != nil {
+			return false, err
+		}
+		if string(node.UID) != op.Spec.NodeUID || node.DeletionTimestamp != nil {
+			return false, ErrNodeIdentityChanged
+		}
+	}
 	// A name with no Node in its cluster: the record of it is of no live node.
 	recorded := err == nil && (op.Spec.NodeUID == "" || enrollment.Spec.NodeUID == op.Spec.NodeUID)
 	if recorded && !enrollment.Spec.Retired {
@@ -92,7 +111,8 @@ func (s StationTunnelRelease) Remove(ctx context.Context, op *stationv1alpha1.No
 		if err := s.Writer.Delete(ctx, admission, client.Preconditions{UID: &admission.UID}); err != nil && !apierrors.IsNotFound(err) {
 			return false, fmt.Errorf("clear the unfinished NodeAdmission %s: %w", admission.Name, err)
 		}
-	case err == nil && (admission.Spec.PublicKey != "" || admission.Annotations[RemovedNodeAnnotation] != removed):
+	case err == nil && (joinUID == "" || admission.Annotations[sshJoinUIDAnnotation] == joinUID) &&
+		(admission.Spec.PublicKey != "" || admission.Annotations[RemovedNodeAnnotation] != removed):
 		forgotten := admission.DeepCopy()
 		forgotten.Spec.PublicKey, forgotten.Spec.RedeemedAt = "", nil
 		if forgotten.Annotations == nil {

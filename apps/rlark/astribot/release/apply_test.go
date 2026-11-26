@@ -15,9 +15,7 @@ import (
 	"testing"
 	"time"
 
-	"k8s.io/client-go/rest"
-	"k8s.io/client-go/tools/clientcmd"
-
+	"github.com/rlinf/rlark/apps/rlark/pkg/addons"
 	appsv1 "k8s.io/api/apps/v1"
 	coordinationv1 "k8s.io/api/coordination/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -32,9 +30,9 @@ import (
 	dynamicfake "k8s.io/client-go/dynamic/fake"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/fake"
+	"k8s.io/client-go/rest"
 	k8stesting "k8s.io/client-go/testing"
-
-	"github.com/rlinf/rlark/apps/rlark/pkg/addons"
+	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/utils/ptr"
 )
 
@@ -1145,7 +1143,7 @@ func TestTheReleaseReachesAMemberByItsCredential(t *testing.T) {
 	// The token the cluster fills in for the ServiceAccount.
 	s.create(s.members["lab"], &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Namespace: "rlark-system", Name: "rlark-release-token"},
 		Data: map[string][]byte{"token": []byte("the-token"), "ca.crt": []byte("the-ca")}})
-	if err := IssueMemberCredential(context.Background(), s.members["lab"], s.memberDefinitions["lab"], s.mcore, "lab", server, serverName, rbac); err != nil {
+	if err := IssueMemberCredential(context.Background(), s.members["lab"], s.memberDefinitions["lab"], s.mcore, "lab", server, serverName, rbac, ""); err != nil {
 		t.Fatal(err)
 	}
 	if !slices.Contains(s.writes, "lab definition clusterroles rlark-release") || !slices.Contains(s.writes, "lab definition secrets rlark-release-token") {
@@ -1163,14 +1161,14 @@ func TestTheReleaseReachesAMemberByItsCredential(t *testing.T) {
 		t.Errorf("the credential: %+v %+v", api, config.AuthInfos)
 	}
 	// Issued again (a token replaced): the same Secret, updated.
-	if err := IssueMemberCredential(context.Background(), s.members["lab"], s.memberDefinitions["lab"], s.mcore, "lab", server, serverName, rbac); err != nil {
+	if err := IssueMemberCredential(context.Background(), s.members["lab"], s.memberDefinitions["lab"], s.mcore, "lab", server, serverName, rbac, ""); err != nil {
 		t.Fatal(err)
 	}
 
 	if _, err := MemberConfigs(context.Background(), s.management, s.mcore); err == nil || !strings.Contains(err.Error(), "cluster office has no credential of the release") {
 		t.Errorf("a cluster without its credential: %v", err)
 	}
-	if err := IssueMemberCredential(context.Background(), s.members["lab"], s.memberDefinitions["lab"], s.mcore, "office", "https://10.11.14.128:6443", "", rbac); err != nil {
+	if err := IssueMemberCredential(context.Background(), s.members["lab"], s.memberDefinitions["lab"], s.mcore, "office", "https://10.11.14.128:6443", "", rbac, ""); err != nil {
 		t.Fatal(err)
 	}
 	configs, err := MemberConfigs(context.Background(), s.management, s.mcore)

@@ -19,6 +19,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/util/retry"
 )
 
@@ -97,6 +98,10 @@ func registryOf(dockerConfigJSON string) string {
 }
 
 func (r *provisionRun) agent(ctx context.Context, p *rlarkv1alpha1.ClusterProvision) (string, error) {
+	clusterUID, err := r.g.reserveProvisionCluster(ctx, p)
+	if err != nil {
+		return "", err
+	}
 	admin, err := r.needAdmin(ctx, p)
 	if err != nil {
 		return "", err
@@ -114,7 +119,7 @@ func (r *provisionRun) agent(ctx context.Context, p *rlarkv1alpha1.ClusterProvis
 	if err != nil {
 		return "", fmt.Errorf("sign the agent's certificate: %w", err)
 	}
-	if err := r.g.hooks.StoreOwnedAgentCertSecret(ctx, agentID, caPEM, []byte(certPEM), []byte(keyPEM)); err != nil {
+	if err := r.g.hooks.StoreProvisionAgentCertSecret(ctx, agentID, caPEM, []byte(certPEM), []byte(keyPEM), p.UID); err != nil {
 		return "", err
 	}
 	pulls, err := r.g.hooks.ImagePullSecretsOf(ctx, agentID)
@@ -150,6 +155,9 @@ func (r *provisionRun) agent(ctx context.Context, p *rlarkv1alpha1.ClusterProvis
 		if err != nil {
 			return err
 		}
+		if cluster.UID != clusterUID || cluster.DeletionTimestamp != nil {
+			return fmt.Errorf("the provisioned Cluster was replaced")
+		}
 		cluster.Spec.NodeAgents = &rlarkv1alpha1.ClusterNodeAgents{Enabled: true, Image: rel.Images["node-agent"]}
 		metav1.SetMetaDataLabel(&cluster.ObjectMeta, provisioning.ClusterTypeLabel, p.Labels[provisioning.ClusterTypeLabel])
 		_, err = r.g.kubeClient.RlinfV1alpha1().Clusters().Update(ctx, cluster, metav1.UpdateOptions{})
@@ -172,7 +180,10 @@ func (r *provisionRun) agent(ctx context.Context, p *rlarkv1alpha1.ClusterProvis
 
 	// The release reaches the cluster with an account of its own, which the release's tree states, at the address
 	// the site's names give the control plane's name (release.ReachedAs).
-	if err := release.IssueMemberCredential(ctx, m.Client, m.Dynamic, r.g.rawClient, p.Name, admin.Host, p.Status.Facts.ControlPlaneName, []byte(rel.Files[releaseFileReleaseMemberRBAC])); err != nil {
+	if err := r.g.checkProvisionCluster(ctx, p, clusterUID); err != nil {
+		return readback, err
+	}
+	if err := release.IssueMemberCredential(ctx, m.Client, m.Dynamic, r.g.rawClient, p.Name, admin.Host, p.Status.Facts.ControlPlaneName, []byte(rel.Files[releaseFileReleaseMemberRBAC]), p.UID); err != nil {
 		return readback, fmt.Errorf("the release's credential: %w", err)
 	}
 	return readback + "; the release's credential stored (" + release.CredentialNamespace + "/" + release.CredentialName(p.Name) + ")", nil
@@ -200,6 +211,9 @@ func (g *Service) waitCluster(ctx context.Context, name string, within time.Dura
 // plane reaches its API. The tunnel of a node the installer made is a host service (station.rlark.io/network=host,
 // which the installer gives the node), so the node runs station-agent-host.
 func (r *provisionRun) station(ctx context.Context, p *rlarkv1alpha1.ClusterProvision) (string, error) {
+	if err := r.g.checkProvisionCluster(ctx, p, types.UID(p.Annotations[provisionClusterReceipt])); err != nil {
+		return "", err
+	}
 	admin, err := r.needAdmin(ctx, p)
 	if err != nil {
 		return "", err
@@ -233,7 +247,7 @@ func (r *provisionRun) station(ctx context.Context, p *rlarkv1alpha1.ClusterProv
 	}
 	facts := p.Status.Facts
 	if err := stationmember.Register(ctx, m, r.g.rawClient, stationmember.Registration{
-		Cluster: p.Name, APIName: facts.ControlPlaneName,
+		Cluster: p.Name, APIName: facts.ControlPlaneName, ProvisionUID: p.UID,
 		StationAPIURL: "https://" + r.g.stationBootstrap.TunnelAddress(), StationAPICA: ca,
 		AgentImage: release.Images["station-agent"], WireguardImage: release.Images["station-wireguard"], PullSecret: pull,
 		Manifests: stationmember.Manifests{

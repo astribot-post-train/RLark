@@ -18,6 +18,8 @@ import (
 )
 
 const (
+	nodeJoinMachineClaim               = "station.rlark.io/ssh-join-machine-claim"
+	nodeJoinMachineUID                 = "station.rlark.io/ssh-join-machine-uid"
 	nodeJoinMachineAnnotation          = "station.rlark.io/machine"
 	nodeJoinTypeAnnotation             = "station.rlark.io/machine-type"
 	NodeJoinModelAnnotation            = "station.rlark.io/machine-model"
@@ -62,10 +64,13 @@ func (g *Service) clearNodeJoinMachineAdmission(ctx context.Context, j *rlarkv1a
 	if name == "" {
 		return nil
 	}
-	return g.clearMachineAdmission(ctx, name, j.Spec.ClusterID, j.Spec.RequestedBy)
+	return g.clearMachineAdmission(ctx, name, j.Spec.ClusterID, j.Spec.RequestedBy, types.UID(j.Annotations[nodeJoinMachineUID]), j.Annotations[nodeJoinMachineClaim])
 }
 
-func (g *Service) clearMachineAdmission(ctx context.Context, name, clusterID, actor string) error {
+func (g *Service) clearMachineAdmission(ctx context.Context, name, clusterID, actor string, uid types.UID, claim string) error {
+	if uid == "" || claim == "" {
+		return nil
+	}
 	resource := g.stationClient.Resource(machineGVR).Namespace(machineNamespace)
 	object, err := resource.Get(ctx, name, metav1.GetOptions{})
 	if apierrors.IsNotFound(err) {
@@ -73,6 +78,9 @@ func (g *Service) clearMachineAdmission(ctx context.Context, name, clusterID, ac
 	}
 	if err != nil {
 		return err
+	}
+	if object.GetUID() != uid || object.GetAnnotations()[nodeJoinMachineClaim] != claim {
+		return nil
 	}
 	admit, found, err := unstructured.NestedMap(object.Object, "spec", "admit")
 	if err != nil || !found {
@@ -82,7 +90,7 @@ func (g *Service) clearMachineAdmission(ctx context.Context, name, clusterID, ac
 		return fmt.Errorf("Machine %s admission changed; it was left in place", name)
 	}
 	patch, err := json.Marshal(map[string]interface{}{
-		"metadata": map[string]string{"resourceVersion": object.GetResourceVersion()},
+		"metadata": map[string]interface{}{"resourceVersion": object.GetResourceVersion(), "annotations": map[string]interface{}{nodeJoinMachineClaim: nil}},
 		"spec":     map[string]interface{}{"admit": nil},
 	})
 	if err != nil {

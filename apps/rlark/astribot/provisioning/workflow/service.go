@@ -3,15 +3,16 @@ package workflow
 
 import (
 	"context"
-	"github.com/rlinf/rlark/apps/rlark/astribot/registry"
 	"io"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
 	"github.com/rlinf/rlark/api/kubeclients/clientset/versioned"
 	"github.com/rlinf/rlark/apps/rlark/astribot/provisioning"
+	"github.com/rlinf/rlark/apps/rlark/astribot/registry"
 	"github.com/rlinf/rlark/apps/rlark/astribot/stationidentity"
 	"github.com/rlinf/rlark/apps/rlark/pkg/addons"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 )
@@ -25,14 +26,14 @@ type Bootstrap interface {
 
 // Hooks are the cross-feature infrastructure needed by the provisioning stages.
 type Hooks struct {
-	GetKCPAdminCerts          func() (certPEM, keyPEM, caPEM []byte, err error)
-	SignCertViaServer         func(clusterID string) (certPEM, keyPEM string, err error)
-	StoreOwnedAgentCertSecret func(context.Context, string, []byte, []byte, []byte) error
-	ImagePullSecretsOf        func(context.Context, string) ([]registry.ImagePullSecret, error)
-	ProxyKubeRequest          func(context.Context, string, string, string, []byte) (*http.Response, error)
-	PublishAddonPackage       func(context.Context, string, string, string) (addons.ItemMeta, int, error)
-	FetchPodLogs              func(context.Context, string, string, string) (string, error)
-	DistributeJobSecret       func(context.Context, string, string) error
+	GetKCPAdminCerts              func() (certPEM, keyPEM, caPEM []byte, err error)
+	SignCertViaServer             func(clusterID string) (certPEM, keyPEM string, err error)
+	StoreProvisionAgentCertSecret func(context.Context, string, []byte, []byte, []byte, types.UID) error
+	ImagePullSecretsOf            func(context.Context, string) ([]registry.ImagePullSecret, error)
+	ProxyKubeRequest              func(context.Context, string, string, string, []byte) (*http.Response, error)
+	PublishAddonPackage           func(context.Context, string, string, string) (addons.ItemMeta, int, error)
+	FetchPodLogs                  func(context.Context, string, string, string) (string, error)
+	DistributeJobSecret           func(context.Context, string, string) error
 }
 
 // HTTP keeps the Gateway's existing API envelopes, actor identity and cluster namespace mapping.

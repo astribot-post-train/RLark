@@ -9,18 +9,20 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/rlinf/rlark/apps/rlark/astribot/registry"
 	"io"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/rlinf/rlark/apps/rlark/astribot/provisioning/ownership"
+	"github.com/rlinf/rlark/apps/rlark/astribot/registry"
 	"github.com/rlinf/rlark/apps/rlark/pkg/common"
 	"github.com/rlinf/rlark/apps/rlark/pkg/log"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/util/retry"
 )
 
@@ -55,6 +57,10 @@ func (g *Gateway) respondAgentCertStored(c *gin.Context, cert signAgentCertRespo
 // storeOwnedAgentCertSecret creates the cluster's agent certificate Secret, or replaces the certificate in the one
 // that is already this cluster's; a Secret of that name which is not is left alone and reported.
 func (g *Gateway) storeOwnedAgentCertSecret(ctx context.Context, clusterID string, caCert, agentCert, agentKey []byte) error {
+	return g.storeProvisionAgentCertSecret(ctx, clusterID, caCert, agentCert, agentKey, "")
+}
+
+func (g *Gateway) storeProvisionAgentCertSecret(ctx context.Context, clusterID string, caCert, agentCert, agentKey []byte, provisionUID types.UID) error {
 	if g.rawClient == nil {
 		return fmt.Errorf("raw kubernetes client not initialized")
 	}
@@ -78,6 +84,9 @@ func (g *Gateway) storeOwnedAgentCertSecret(ctx context.Context, clusterID strin
 		},
 	}
 	secrets := g.rawClient.CoreV1().Secrets(namespace)
+	if provisionUID != "" {
+		return ownership.WriteCredential(ctx, secrets, secret, provisionUID)
+	}
 	_, err := secrets.Create(ctx, secret, metav1.CreateOptions{})
 	if err == nil {
 		return nil
@@ -99,6 +108,7 @@ func (g *Gateway) storeOwnedAgentCertSecret(ctx context.Context, clusterID strin
 		for k, v := range secret.Data {
 			existing.Data[k] = v
 		}
+		ownership.UnbindCredential(existing)
 		_, err = secrets.Update(ctx, existing, metav1.UpdateOptions{})
 		return err
 	})

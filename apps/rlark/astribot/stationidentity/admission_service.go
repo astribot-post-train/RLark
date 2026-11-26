@@ -180,10 +180,13 @@ func (svc AdmissionService) newJoinCodeFor(ctx context.Context) (network *unstru
 	return network, caDigest, code, codeHash, nil
 }
 
+// SSHJoinUIDAnnotation associates the code or removal with an SSH join attempt.
+const SSHJoinUIDAnnotation = "station.rlark.io/ssh-join-uid"
+
 // dropJoinMarks drops the marks of how the admission's machine was joined (a new code drops them) and sets marks.
 func dropJoinMarks(admission *unstructured.Unstructured, marks map[string]string) {
 	annotations := admission.GetAnnotations()
-	for _, key := range []string{AdmissionSSHLoginAnnotation, AdmissionSSHHostKeyAnnotation, AdmissionInstallFailureAnnotation, JoinTokenIssuedAnnotation, SelfHealedAnnotation} {
+	for _, key := range []string{AdmissionSSHLoginAnnotation, AdmissionSSHHostKeyAnnotation, AdmissionInstallFailureAnnotation, JoinTokenIssuedAnnotation, SelfHealedAnnotation, SSHJoinUIDAnnotation} {
 		delete(annotations, key)
 	}
 	if len(marks) > 0 && annotations == nil {
