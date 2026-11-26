@@ -32,8 +32,8 @@ func setupTestGateway(objs ...runtime.Object) *Gateway {
 
 func TestCreateUpgradeJob(t *testing.T) {
 	g := setupTestGateway(
-		&rlarkv1alpha1.Cluster{ObjectMeta: metav1.ObjectMeta{Name: "beijing", Labels: map[string]string{"region": "north"}}},
-		&rlarkv1alpha1.Cluster{ObjectMeta: metav1.ObjectMeta{Name: "shanghai"}},
+		&rlarkv1alpha1.Cluster{ObjectMeta: metav1.ObjectMeta{Name: "beijing", Annotations: map[string]string{"rlark.io/upgrade-driver": "stock"}, Labels: map[string]string{"region": "north"}}},
+		&rlarkv1alpha1.Cluster{ObjectMeta: metav1.ObjectMeta{Name: "shanghai", Annotations: map[string]string{"rlark.io/upgrade-driver": "stock"}}},
 	)
 
 	router := gin.Default()

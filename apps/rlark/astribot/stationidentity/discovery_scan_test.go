@@ -59,6 +59,14 @@ func TestDiscoveryScanReportsRequireTargetProofAndFinalBatch(t *testing.T) {
 	if response := request(other, check, ""); response.Code != http.StatusNoContent {
 		t.Fatalf("another site's poll got %d", response.Code)
 	}
+	polled, err := client.Resource(networkEnrollmentGVR).Namespace("robots").Get(t.Context(), "first", metav1.GetOptions{})
+	if err != nil || !DiscoveryScanHubReady(polled, now) || DiscoveryScanHubReady(polled, now.Add(discoveryScanPollLifetime)) {
+		t.Fatalf("authenticated polling must record a bounded capability: %v", err)
+	}
+	_ = unstructured.SetNestedField(polled.Object, "rotated", "status", "publicKey")
+	if DiscoveryScanHubReady(polled, now) {
+		t.Fatal("a rotated key must poll again")
+	}
 	final := `,"scan_id":"` + id + `","final":true,"hosts":[]`
 	if response := request(other, report, final); response.Code != http.StatusConflict {
 		t.Fatalf("another site cannot complete the scan, got %d", response.Code)

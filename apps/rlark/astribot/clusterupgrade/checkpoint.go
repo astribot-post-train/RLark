@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	core "k8s.io/client-go/kubernetes/typed/core/v1"
@@ -25,15 +26,23 @@ func (s ConfigMapCheckpoint) Load(ctx context.Context) (Checkpoint, bool, error)
 	if err != nil {
 		return Checkpoint{}, false, err
 	}
-	if object.Data["jobUID"] != s.JobUID {
+	return ReadCheckpoint(object, s.JobUID)
+}
+
+// ReadCheckpoint decodes a checkpoint only for the supplied attempt UID.
+func ReadCheckpoint(object *corev1.ConfigMap, jobUID string) (Checkpoint, bool, error) {
+	if jobUID == "" || object.Data["jobUID"] != jobUID {
 		return Checkpoint{}, false, nil
 	}
 	var value Checkpoint
-	err = json.Unmarshal([]byte(object.Data["snapshot.json"]), &value)
+	err := json.Unmarshal([]byte(object.Data["snapshot.json"]), &value)
 	return value, err == nil, err
 }
 
 func (s ConfigMapCheckpoint) Save(ctx context.Context, state Checkpoint) error {
+	if state.Completed && state.RollingBack {
+		return fmt.Errorf("a rolling back upgrade cannot be completed")
+	}
 	if s.JobUID == "" {
 		return fmt.Errorf("upgrade job UID is required")
 	}
@@ -50,7 +59,7 @@ func (s ConfigMapCheckpoint) Save(ctx context.Context, state Checkpoint) error {
 			return err
 		}
 		if before.Deployment != state.Deployment || before.Target != state.Target || before.NodeAgent != state.NodeAgent ||
-			(before.RollingBack && !state.RollingBack) {
+			(before.RollingBack && !state.RollingBack) || (before.Completed && !state.Completed) {
 			return fmt.Errorf("upgrade checkpoint cannot be replaced")
 		}
 	}

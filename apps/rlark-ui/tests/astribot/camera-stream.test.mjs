@@ -32,9 +32,17 @@ test("split multipart parts preserve JPEG bytes and repeated frames compare equa
   for await (const frame of readCameraFrames(response(Buffer.concat([part(first, "X-Camera-Capture-Ms: 1795000000000.123\r\n"), part(first), part(second)])))) frames.push(frame);
   assert.deepEqual(frames.map((frame) => Buffer.from(frame.jpeg)), [first, first, second]);
   assert.deepEqual(frames.map((frame) => frame.capturedAtMs), [1795000000000.123, undefined, undefined]);
-  assert.equal(sameCameraFrame(undefined, frames[0].jpeg), false);
-  assert.equal(sameCameraFrame(frames[0].jpeg, frames[1].jpeg), true);
-  assert.equal(sameCameraFrame(frames[1].jpeg, frames[2].jpeg), false);
+  assert.equal(sameCameraFrame(undefined, frames[0]), false);
+  assert.equal(sameCameraFrame(frames[0], frames[1]), false);
+  assert.equal(sameCameraFrame(frames[1], frames[2]), false);
+});
+
+test("identical JPEGs with updated capture times are new frames", () => {
+  const jpeg = Buffer.from("same image");
+  const first = { jpeg, capturedAtMs: 1000 };
+  assert.equal(sameCameraFrame(first, { jpeg, capturedAtMs: 1033 }), false);
+  assert.equal(sameCameraFrame(first, { jpeg, capturedAtMs: 1000 }), true);
+  assert.equal(sameCameraFrame({ jpeg }, { jpeg }), true);
 });
 
 test("truncated streams and invalid part sizes fail so the preview can retry", async () => {

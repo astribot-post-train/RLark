@@ -62,7 +62,7 @@ func TestReconcile_CreateClusterUpgradeJobs(t *testing.T) {
 		},
 	}
 
-	r := setupTestReconciler(job)
+	r := setupTestReconciler(job, stockCluster("beijing"), stockCluster("shanghai"))
 
 	// Need 4 reconciles: 1 for finalizer, 3 for creating 2 ClusterUpgradeJobs
 	// (first reconcile creates 1, second detects active=1 and creates 1 more,
@@ -151,6 +151,7 @@ func TestReconcile_AllSucceeded(t *testing.T) {
 			Name: "upgrade-v0.2.0-beijing",
 			Labels: map[string]string{
 				"rlark.io/upgrade-job": "upgrade-v0.2.0",
+				"rlark.io/cluster":     "beijing",
 			},
 		},
 		Status: rlarkv1alpha1.ClusterUpgradeJobStatus{
@@ -163,6 +164,7 @@ func TestReconcile_AllSucceeded(t *testing.T) {
 			Name: "upgrade-v0.2.0-shanghai",
 			Labels: map[string]string{
 				"rlark.io/upgrade-job": "upgrade-v0.2.0",
+				"rlark.io/cluster":     "shanghai",
 			},
 		},
 		Status: rlarkv1alpha1.ClusterUpgradeJobStatus{
@@ -202,6 +204,7 @@ func TestReconcile_OneFailed(t *testing.T) {
 			Name: "upgrade-v0.2.0-beijing",
 			Labels: map[string]string{
 				"rlark.io/upgrade-job": "upgrade-v0.2.0",
+				"rlark.io/cluster":     "beijing",
 			},
 		},
 		Status: rlarkv1alpha1.ClusterUpgradeJobStatus{
@@ -214,6 +217,7 @@ func TestReconcile_OneFailed(t *testing.T) {
 			Name: "upgrade-v0.2.0-shanghai",
 			Labels: map[string]string{
 				"rlark.io/upgrade-job": "upgrade-v0.2.0",
+				"rlark.io/cluster":     "shanghai",
 			},
 		},
 		Status: rlarkv1alpha1.ClusterUpgradeJobStatus{
@@ -252,6 +256,7 @@ func TestReconcile_RolledBack(t *testing.T) {
 			Name: "upgrade-v0.2.0-beijing",
 			Labels: map[string]string{
 				"rlark.io/upgrade-job": "upgrade-v0.2.0",
+				"rlark.io/cluster":     "beijing",
 			},
 		},
 		Status: rlarkv1alpha1.ClusterUpgradeJobStatus{
@@ -264,6 +269,7 @@ func TestReconcile_RolledBack(t *testing.T) {
 			Name: "upgrade-v0.2.0-shanghai",
 			Labels: map[string]string{
 				"rlark.io/upgrade-job": "upgrade-v0.2.0",
+				"rlark.io/cluster":     "shanghai",
 			},
 		},
 		Status: rlarkv1alpha1.ClusterUpgradeJobStatus{
@@ -375,4 +381,32 @@ func TestGetTargetClusters(t *testing.T) {
 			assert.ElementsMatch(t, tt.want, got)
 		})
 	}
+}
+
+func stockCluster(name string) *rlarkv1alpha1.Cluster {
+	return &rlarkv1alpha1.Cluster{ObjectMeta: metav1.ObjectMeta{
+		Name: name, Annotations: map[string]string{"rlark.io/upgrade-driver": "stock"},
+	}}
+}
+
+func TestReconcileRejectsBatchWithUnmarkedTarget(t *testing.T) {
+	job := &rlarkv1alpha1.UpgradeJob{
+		ObjectMeta: metav1.ObjectMeta{Name: "mixed-upgrade"},
+		Spec: rlarkv1alpha1.UpgradeJobSpec{
+			ClusterNames: []string{"stock", "legacy"},
+			Strategy:     rlarkv1alpha1.UpgradeStrategy{Concurrency: 2, FailureTolerate: 1},
+		},
+	}
+	legacy := &rlarkv1alpha1.Cluster{ObjectMeta: metav1.ObjectMeta{Name: "legacy"}}
+	r := setupTestReconciler(job, stockCluster("stock"), legacy)
+	require.NoError(t, reconcileN(r, job.Name, 3))
+	var children rlarkv1alpha1.ClusterUpgradeJobList
+	require.NoError(t, r.List(t.Context(), &children))
+	require.Empty(t, children.Items)
+	var updated rlarkv1alpha1.UpgradeJob
+	require.NoError(t, r.Get(t.Context(), types.NamespacedName{Name: job.Name}, &updated))
+	require.Equal(t, rlarkv1alpha1.UpgradeJobFailed, updated.Status.Phase)
+	require.Len(t, updated.Status.Conditions, 1)
+	assert.Equal(t, "legacy", updated.Status.Conditions[0].Cluster)
+	assert.Contains(t, updated.Status.Conditions[0].Reason, "explicitly declare")
 }

@@ -5,6 +5,7 @@ package upgrade
 import (
 	"context"
 	"fmt"
+	"slices"
 	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -18,11 +19,13 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	rlarkv1alpha1 "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
+	"github.com/rlinf/rlark/apps/rlark/astribot/clusterupgrade"
 )
 
 const (
 	// FinalizerName is the finalizer for UpgradeJob cleanup.
-	FinalizerName = "upgradejobs.rlinf.io/cleanup"
+	FinalizerName  = "upgradejobs.rlinf.io/cleanup"
+	targetRejected = "TargetRejected"
 )
 
 // Reconciler reconciles UpgradeJob resources.
@@ -132,6 +135,32 @@ func (r *Reconciler) reconcileClusterUpgradeJobs(ctx context.Context, job *rlark
 		}
 	}
 
+	if hasRejectedTarget(job) {
+		return nil
+	}
+	for _, name := range clusters {
+		if _, exists := existingByCluster[name]; exists {
+			continue
+		}
+		var cluster rlarkv1alpha1.Cluster
+		err := r.Get(ctx, client.ObjectKey{Name: name}, &cluster)
+		switch {
+		case apierrors.IsNotFound(err):
+			err = fmt.Errorf("upgrade target cluster %s does not exist", name)
+		case err != nil:
+			return fmt.Errorf("read upgrade target %s: %w", name, err)
+		default:
+			err = clusterupgrade.ValidateStockTarget(cluster)
+		}
+		if err != nil {
+			job.Status.Conditions = append(job.Status.Conditions, rlarkv1alpha1.UpgradeJobCondition{
+				Type: targetRejected, Cluster: name, Status: string(rlarkv1alpha1.ClusterUpgradeJobFailed),
+				Reason: err.Error(), TargetImage: job.Spec.Image,
+			})
+			return r.Status().Update(ctx, job)
+		}
+	}
+
 	remaining := max(0, int(job.Spec.Strategy.Concurrency)-active)
 
 	for _, clusterName := range clusters {
@@ -187,6 +216,12 @@ func isTerminalPhase(phase rlarkv1alpha1.ClusterUpgradeJobPhase) bool {
 		phase == rlarkv1alpha1.ClusterUpgradeJobRolledBack
 }
 
+func hasRejectedTarget(job *rlarkv1alpha1.UpgradeJob) bool {
+	return slices.ContainsFunc(job.Status.Conditions, func(condition rlarkv1alpha1.UpgradeJobCondition) bool {
+		return condition.Type == targetRejected
+	})
+}
+
 func (r *Reconciler) aggregateStatus(ctx context.Context, job *rlarkv1alpha1.UpgradeJob) (ctrl.Result, error) {
 	var clusterUpgradeJobs rlarkv1alpha1.ClusterUpgradeJobList
 	if err := r.List(ctx, &clusterUpgradeJobs, client.MatchingLabels{
@@ -197,6 +232,13 @@ func (r *Reconciler) aggregateStatus(ctx context.Context, job *rlarkv1alpha1.Upg
 
 	var upgraded, failed, rolledBack, upgrading int32
 	conditions := make([]rlarkv1alpha1.UpgradeJobCondition, 0, len(clusterUpgradeJobs.Items))
+	rejected := hasRejectedTarget(job)
+	for _, condition := range job.Status.Conditions {
+		if condition.Type == targetRejected {
+			conditions = append(conditions, condition)
+			failed++
+		}
+	}
 	for _, cuj := range clusterUpgradeJobs.Items {
 		clusterName := cuj.Labels["rlark.io/cluster"]
 		conditions = append(conditions, rlarkv1alpha1.UpgradeJobCondition{
@@ -217,6 +259,10 @@ func (r *Reconciler) aggregateStatus(ctx context.Context, job *rlarkv1alpha1.Upg
 			rolledBack++
 		case rlarkv1alpha1.ClusterUpgradeJobUpgrading:
 			upgrading++
+		case "", rlarkv1alpha1.ClusterUpgradeJobPending:
+			if rejected {
+				upgrading++
+			}
 		}
 	}
 
@@ -231,7 +277,15 @@ func (r *Reconciler) aggregateStatus(ctx context.Context, job *rlarkv1alpha1.Upg
 	job.Status.RollbackClusters = rolledBack
 	job.Status.Conditions = conditions
 
-	r.updatePhase(job)
+	if rejected && upgrading == 0 {
+		job.Status.Phase = rlarkv1alpha1.UpgradeJobFailed
+		if job.Status.CompletionTime == nil {
+			now := metav1.Now()
+			job.Status.CompletionTime = &now
+		}
+	} else {
+		r.updatePhase(job)
+	}
 
 	return ctrl.Result{}, r.Status().Update(ctx, job)
 }

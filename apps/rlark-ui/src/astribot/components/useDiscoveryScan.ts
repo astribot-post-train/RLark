@@ -62,7 +62,7 @@ export function useDiscoveryScan(site: string, zh: boolean) {
       setLoadError("");
     } catch (reason) {
       if (reason instanceof ApiError && reason.status === 409) {
-        setStartError(zh ? "站点还没有可扫描的 Hub。请检查扫描设置，等待配置下发后重试。" : "No Hub is ready to scan. Check the site settings and retry after they apply.");
+        setStartError(zh ? "站点还没有可执行手动扫描的 Hub。请确认 Hub 在线、支持手动扫描并已收到扫描配置。" : "No Hub is ready for a manual scan. Check that a Hub is online, supports manual scans, and has received the scan settings.");
       } else {
         setStartError(zh ? "发起扫描失败，请重试。" : "Could not start the scan. Try again.");
       }

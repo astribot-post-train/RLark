@@ -70,6 +70,14 @@ func TestClusterOnlyRunnerChecksPodIdentityAndKeepsTemplate(t *testing.T) {
 		container.Args[1] != "--image=registry.example/tools@"+digest || container.Args[2] != "--external-config=keep" {
 		t.Fatalf("unexpected template %+v", got.Spec.Template.Spec)
 	}
+	record, err := members.CoreV1().ConfigMaps(Namespace).Get(t.Context(), CheckpointConfigMap, metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	completion, found, err := ReadCheckpoint(record, childUID)
+	if err != nil || !found || !completion.Completed || completion.RollingBack || completion.Deployment.UID != object.UID {
+		t.Fatalf("completed attempt was not recorded: %+v, found=%v, err=%v", completion, found, err)
+	}
 	read, err := members.CoordinationV1().Leases(Namespace).Get(t.Context(), LeaseName, metav1.GetOptions{})
 	if err != nil || read.Spec.HolderIdentity != nil {
 		t.Fatalf("member lease was not released: %v, %v", read, err)
@@ -89,7 +97,7 @@ func TestClusterOnlyPolicyRejectsNodeAgentDaemonSet(t *testing.T) {
 	}
 }
 
-func TestUnconfiguredMembersKeepStockModeOnlyWithoutAstribotLease(t *testing.T) {
+func TestUnconfiguredMembersResolveNoPolicyOnlyWithoutAstribotLease(t *testing.T) {
 	scheme := runtime.NewScheme()
 	for _, register := range []func(*runtime.Scheme) error{corev1.AddToScheme, coordinationv1.AddToScheme} {
 		if err := register(scheme); err != nil {
@@ -98,7 +106,7 @@ func TestUnconfiguredMembersKeepStockModeOnlyWithoutAstribotLease(t *testing.T) 
 	}
 	standard := runtimefake.NewClientBuilder().WithScheme(scheme).Build()
 	if policy, err := ResolveJobPolicy(t.Context(), standard); policy != nil || err != nil {
-		t.Fatalf("stock mode was lost: %v, %v", policy, err)
+		t.Fatalf("unexpected member policy: %v, %v", policy, err)
 	}
 	managed := runtimefake.NewClientBuilder().WithScheme(scheme).WithObjects(&coordinationv1.Lease{
 		ObjectMeta: metav1.ObjectMeta{Name: LeaseName, Namespace: Namespace},

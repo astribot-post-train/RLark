@@ -143,13 +143,14 @@ func (r DiscoveryScanRoutes) Handle(c *gin.Context) {
 			var document struct {
 				Discovery json.RawMessage `json:"discovery"`
 			}
-			if stationidentity.DiscoveryScanHubSite(hub) == site && json.Unmarshal([]byte(config), &document) == nil &&
+			if stationidentity.DiscoveryScanHubSite(hub) == site && stationidentity.DiscoveryScanHubReady(hub, now) &&
+				json.Unmarshal([]byte(config), &document) == nil &&
 				len(document.Discovery) > 0 && string(document.Discovery) != "null" {
 				scan.Hubs = append(scan.Hubs, hub.GetUID())
 			}
 		}
 		if len(scan.Hubs) == 0 {
-			rejected = "no enrolled Hub has received discovery settings for this site"
+			rejected = "no enrolled Hub with a recent manual scan poll has received discovery settings for this site"
 			return nil
 		}
 		if err := stationidentity.StoreDiscoveryScan(network, site, scan); err != nil {

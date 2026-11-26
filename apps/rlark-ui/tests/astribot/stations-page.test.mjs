@@ -174,7 +174,7 @@ test("the camera dialog streams at the selected rate and returns focus to its bu
   assert.match(dialog, /addEventListener\("close"/);
   assert.match(dialog, /cameraStreamPath\(node, namespace, view, fps\)/);
   assert.match(dialog, /FPS_OPTIONS = \[5, 10, 15, 30\]/);
-  assert.match(dialog, /sameCameraFrame\(lastFrame, jpeg\)/);
+  assert.match(dialog, /sameCameraFrame\(lastFrame, received\)/);
   assert.match(dialog, /active\?\.abort\(\)/);
   assert.match(card, /setInterval\(\(\) => void ask\(\), 5000\)/);
   assert.match(card, /readCameraAge\(response\.headers\.get\("X-Age-Seconds"\)\)/);

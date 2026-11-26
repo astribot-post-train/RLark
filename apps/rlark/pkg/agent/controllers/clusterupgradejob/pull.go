@@ -9,6 +9,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	rlarkv1alpha1 "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
 	"github.com/rlinf/rlark/apps/rlark/astribot/clusterupgrade"
@@ -44,6 +45,15 @@ func (r *pullReconciler) newDriver(ctx context.Context, job *rlarkv1alpha1.Clust
 	policy, err := clusterupgrade.ResolveJobPolicy(ctx, r.c.LocalKubeClient)
 	if err != nil {
 		return nil, err
+	}
+	if policy == nil {
+		var cluster rlarkv1alpha1.Cluster
+		if err := r.c.ManagementClient.Get(ctx, client.ObjectKey{Name: r.c.ManagementNamespace}, &cluster); err != nil {
+			return nil, fmt.Errorf("verify stock upgrade eligibility: %w", err)
+		}
+		if err := clusterupgrade.ValidateStockTarget(cluster); err != nil {
+			return nil, err
+		}
 	}
 	driver.policy = policy
 	return driver, nil
@@ -117,7 +127,7 @@ func (r *pullReconciler) startUpgrade(ctx context.Context, job *rlarkv1alpha1.Cl
 	}
 
 	newConfig := job.Spec.ConfigPatch
-	if newConfig == "" {
+	if newConfig == "" && !r.driver.SnapshotsLiveState() {
 		newConfig = currentConfig
 	}
 
@@ -173,6 +183,19 @@ func (r *pullReconciler) monitorUpgrade(ctx context.Context, job *rlarkv1alpha1.
 // handleJobNotFound determines the outcome when the upgrade job disappears
 // before we can read its status (e.g. TTL-cleared or manually deleted).
 func (r *pullReconciler) handleJobNotFound(ctx context.Context, job *rlarkv1alpha1.ClusterUpgradeJob) (ctrl.Result, error) {
+	if r.driver.SnapshotsLiveState() {
+		verified, err := r.driver.VerifyMissingJobSuccess(ctx, job)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+		if verified {
+			return r.handleUpgradeSuccess(ctx, job)
+		}
+		return r.handleUpgradeFailure(ctx, job, JobResult{
+			ExitCode: -1,
+			Message:  "the upgrade Job disappeared and its outcome could not be verified for this attempt",
+		})
+	}
 	r.log.Info("upgrade job not found, determining result from spec image", "name", job.Name)
 
 	observed := job.Spec.Image

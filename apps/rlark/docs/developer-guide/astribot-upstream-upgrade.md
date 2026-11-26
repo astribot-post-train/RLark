@@ -35,3 +35,5 @@ References
 - [Node management](../admin-guide/nodes.md)
 - [Jobs](../user-guide/jobs.md)
 - [Agent](../admin-guide/agent.md)
+
+The Gateway, management controller, and updated member Agent require `rlark.io/upgrade-driver: stock` for the stock installer. A managed node Agent declaration rules out stock execution even with explicit opt-in. The Agent also requires that the member have no Astribot lease without an executor policy. For the isolated-test image-only mode, the Job writes a completion checkpoint under the member lease after the target is ready. If the local Job disappears, the Agent checks that the checkpoint belongs to this child UID and that the same Deployment is ready with both requested image digests. An absent or mismatched checkpoint is reported as an unverified outcome.

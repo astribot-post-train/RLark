@@ -2,8 +2,10 @@ package clusterupgradejob
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
+	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -42,6 +44,34 @@ func (d *K8sDriver) StateStore() StateStore {
 }
 
 func (d *K8sDriver) SnapshotsLiveState() bool { return d.policy != nil }
+
+func (d *K8sDriver) VerifyMissingJobSuccess(ctx context.Context, job *rlarkv1alpha1.ClusterUpgradeJob) (bool, error) {
+	images, err := clusterupgrade.ParseImages(job.Spec.ConfigPatch)
+	if err != nil {
+		return false, nil
+	}
+	var object corev1.ConfigMap
+	if err := d.client.Get(ctx, client.ObjectKey{Namespace: d.namespace, Name: clusterupgrade.CheckpointConfigMap}, &object); err != nil {
+		return false, client.IgnoreNotFound(err)
+	}
+	checkpoint, found, err := clusterupgrade.ReadCheckpoint(&object, string(job.UID))
+	if err != nil {
+		return false, fmt.Errorf("read upgrade checkpoint: %w", err)
+	}
+	if !found || !checkpoint.Completed || checkpoint.RollingBack || checkpoint.Target != images ||
+		checkpoint.NodeAgent.ClusterUID != "" || checkpoint.Deployment.UID == "" {
+		return false, nil
+	}
+	var deployment appsv1.Deployment
+	if err := d.client.Get(ctx, client.ObjectKey{Namespace: d.namespace, Name: checkpoint.Deployment.Name}, &deployment); err != nil {
+		return false, client.IgnoreNotFound(err)
+	}
+	ready, err := clusterupgrade.DeploymentAtTarget(&deployment, checkpoint.Deployment, images)
+	if errors.Is(err, clusterupgrade.ErrTargetChanged) {
+		return false, nil
+	}
+	return ready, err
+}
 
 const childUIDLabel = "rlark.io/cluster-upgrade-job-uid"
 

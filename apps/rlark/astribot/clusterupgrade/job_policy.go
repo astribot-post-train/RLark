@@ -27,8 +27,8 @@ type JobPolicy struct {
 	Deployment    string
 }
 
-// ResolveJobPolicy chooses stock execution only in members that have neither
-// the Astribot member lease nor an upgrade policy provisioned.
+// ResolveJobPolicy returns a nil policy when the member has neither the Astribot
+// lease nor an executor policy. The caller still has to check stock eligibility.
 func ResolveJobPolicy(ctx context.Context, kube client.Reader) (*JobPolicy, error) {
 	var config corev1.ConfigMap
 	err := kube.Get(ctx, client.ObjectKey{Namespace: Namespace, Name: PolicyConfigMap}, &config)

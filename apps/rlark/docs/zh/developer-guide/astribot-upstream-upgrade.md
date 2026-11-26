@@ -35,3 +35,5 @@ CRD 字段与生成产物、共享角色、鉴权和错误转换、组件接线�
 - [节点管理](../admin-guide/nodes.md)
 - [任务](../user-guide/jobs.md)
 - [Agent](../admin-guide/agent.md)
+
+Gateway、管理面控制器和升级后的成员 Agent 都要求集群明确设置 `rlark.io/upgrade-driver: stock` 后才允许使用上游安装器。声明了托管节点 Agent 的集群无法使用该安装器。若成员已有 Astribot 发布租约但未配置执行策略，Agent 同样拒绝启动。隔离测试的仅镜像模式在目标就绪后由 Job 持成员租约写入完成检查点。若本地 Job 消失，Agent 会确认检查点属于本轮子任务 UID，并核验相同 Deployment 的两个目标镜像摘要及实际就绪状态。找不到匹配的检查点时会报告结果无法确认。

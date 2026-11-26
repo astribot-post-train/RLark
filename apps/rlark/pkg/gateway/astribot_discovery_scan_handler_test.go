@@ -20,14 +20,22 @@ func TestDiscoveryScanRequestsAreSiteScopedAndCoalesced(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	g, network := siteNetworkGateway()
 	client := g.stationClient.(*dynamicfake.FakeDynamicClient)
-	hub := func(name, site string) *unstructured.Unstructured {
-		return &unstructured.Unstructured{Object: map[string]any{
+	hub := func(name, site string, lastPoll time.Time) *unstructured.Unstructured {
+		object := &unstructured.Unstructured{Object: map[string]any{
 			"apiVersion": "station.rlark.io/v1alpha1", "kind": "NetworkEnrollment",
 			"metadata": map[string]any{"namespace": "station-nodes", "name": name, "uid": name},
-			"status":   map[string]any{"phase": "Enrolled", "role": "Hub", "site": site, "tunnelAddress": "10.254.240.2", "config": `{"discovery":{}}`},
+			"status":   map[string]any{"publicKey": name + "-key", "phase": "Enrolled", "role": "Hub", "site": site, "tunnelAddress": "10.254.240.2", "config": `{"discovery":{}}`},
 		}}
+		if !lastPoll.IsZero() {
+			object.SetAnnotations(map[string]string{stationidentity.DiscoveryScanPollAnnotation: name + "/" + name + "-key " + lastPoll.Format(time.RFC3339Nano)})
+		}
+		return object
 	}
-	for _, object := range []*unstructured.Unstructured{hub("office-hub", "office"), hub("lab-hub", "lab")} {
+	now := time.Now()
+	for _, object := range []*unstructured.Unstructured{
+		hub("office-hub", "office", now), hub("legacy-hub", "office", time.Time{}),
+		hub("offline-hub", "office", now.Add(-5*time.Minute)), hub("lab-hub", "lab", now),
+	} {
 		if err := client.Tracker().Add(object); err != nil {
 			t.Fatal(err)
 		}

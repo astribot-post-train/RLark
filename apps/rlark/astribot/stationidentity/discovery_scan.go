@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"slices"
+	"strings"
 	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -18,6 +19,9 @@ const (
 	// DiscoveryScanLifetime bounds the time Hubs have to return a scan.
 	DiscoveryScanLifetime         = 5 * time.Minute
 	discoveryScanPrefix           = "discovery-scan.station.rlark.io/"
+	discoveryScanPollInterval     = 30 * time.Second
+	discoveryScanPollLifetime     = 2 * time.Minute
+	DiscoveryScanPollAnnotation   = "station.rlark.io/discovery-scan-poll"
 	discoveryScanResultAnnotation = "station.rlark.io/discovery-scan-result"
 )
 
@@ -74,21 +78,58 @@ func DiscoveryScanHubResult(hub *unstructured.Unstructured, id string) (done, fa
 	return value == id+":ok" || value == id+":failed", value == id+":failed"
 }
 
-func (d *NetworkDocuments) pendingDiscoveryScan(ctx context.Context, key string) (DiscoveryScan, *unstructured.Unstructured, error) {
+// DiscoveryScanHubReady reports whether the current enrollment key recently polled
+// the authenticated manual scan endpoint.
+func DiscoveryScanHubReady(hub *unstructured.Unstructured, now time.Time) bool {
+	at := discoveryScanPollTime(hub)
+	return !at.IsZero() && !at.After(now) && now.Sub(at) < discoveryScanPollLifetime
+}
+
+func discoveryScanPollIdentity(hub *unstructured.Unstructured) string {
+	key, _, _ := unstructured.NestedString(hub.Object, "status", "publicKey")
+	if key == "" || hub.GetUID() == "" {
+		return ""
+	}
+	return string(hub.GetUID()) + "/" + key
+}
+
+func discoveryScanPollTime(hub *unstructured.Unstructured) time.Time {
+	identity, stamp, _ := strings.Cut(hub.GetAnnotations()[DiscoveryScanPollAnnotation], " ")
+	if identity == "" || identity != discoveryScanPollIdentity(hub) {
+		return time.Time{}
+	}
+	at, _ := time.Parse(time.RFC3339Nano, stamp)
+	return at
+}
+
+func (d *NetworkDocuments) verifiedDiscoveryHub(ctx context.Context, key string) (*unstructured.Unstructured, error) {
 	index, err := d.Enrolled.Lookup(ctx, key)
 	if err != nil || index[key] == nil {
-		return DiscoveryScan{}, nil, err
+		return nil, err
 	}
 	indexed := index[key]
 	hub, err := d.Client.Resource(networkEnrollmentGVR).Namespace(indexed.GetNamespace()).Get(ctx, indexed.GetName(), metav1.GetOptions{})
 	if err != nil {
-		return DiscoveryScan{}, nil, err
+		return nil, err
 	}
 	currentKey, _, _ := unstructured.NestedString(hub.Object, "status", "publicKey")
 	site := DiscoveryScanHubSite(hub)
 	if site == "" || hub.GetUID() != indexed.GetUID() || currentKey != key {
-		return DiscoveryScan{}, nil, nil
+		return nil, nil
 	}
+	return hub, nil
+}
+
+func (d *NetworkDocuments) pendingDiscoveryScan(ctx context.Context, key string) (DiscoveryScan, *unstructured.Unstructured, error) {
+	hub, err := d.verifiedDiscoveryHub(ctx, key)
+	if err != nil || hub == nil {
+		return DiscoveryScan{}, nil, err
+	}
+	return d.discoveryScanForHub(ctx, hub)
+}
+
+func (d *NetworkDocuments) discoveryScanForHub(ctx context.Context, hub *unstructured.Unstructured) (DiscoveryScan, *unstructured.Unstructured, error) {
+	site := DiscoveryScanHubSite(hub)
 	network, err := d.Client.Resource(siteNetworkGVR).Namespace("station-system").Get(ctx, "default", metav1.GetOptions{})
 	if err != nil {
 		return DiscoveryScan{}, nil, err
@@ -119,7 +160,21 @@ func (d *NetworkDocuments) ServeDiscoveryScan(w http.ResponseWriter, r *http.Req
 	if !decodeBody(w, r, &request) || !d.proven(w, request) {
 		return
 	}
-	scan, _, err := d.pendingDiscoveryScan(r.Context(), request.PublicKey)
+	ctx := r.Context()
+	hub, err := d.verifiedDiscoveryHub(ctx, request.PublicKey)
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "discovery scan storage unavailable")
+		return
+	}
+	if hub == nil {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	if err := d.recordDiscoveryPoll(ctx, hub, request.PublicKey); err != nil {
+		writeError(w, http.StatusServiceUnavailable, "discovery scan storage unavailable")
+		return
+	}
+	scan, _, err := d.discoveryScanForHub(ctx, hub)
 	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, "discovery scan storage unavailable")
 		return
@@ -135,6 +190,39 @@ func (d *NetworkDocuments) ServeDiscoveryScan(w http.ResponseWriter, r *http.Req
 }
 
 var errDiscoveryHubChanged = errors.New("the discovery Hub enrollment changed")
+
+func (d *NetworkDocuments) recordDiscoveryPoll(ctx context.Context, hub *unstructured.Unstructured, key string) error {
+	now := clock(d.Now).UTC()
+	fresh := func(object *unstructured.Unstructured) bool {
+		at := discoveryScanPollTime(object)
+		return !at.IsZero() && !at.After(now) && now.Sub(at) < discoveryScanPollInterval
+	}
+	if fresh(hub) {
+		return nil
+	}
+	enrollments := d.Client.Resource(networkEnrollmentGVR).Namespace(hub.GetNamespace())
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		current, err := enrollments.Get(ctx, hub.GetName(), metav1.GetOptions{})
+		if err != nil {
+			return err
+		}
+		currentKey, _, _ := unstructured.NestedString(current.Object, "status", "publicKey")
+		if current.GetUID() != hub.GetUID() || currentKey != key || DiscoveryScanHubSite(current) != DiscoveryScanHubSite(hub) {
+			return errDiscoveryHubChanged
+		}
+		if fresh(current) {
+			return nil
+		}
+		annotations := current.GetAnnotations()
+		if annotations == nil {
+			annotations = map[string]string{}
+		}
+		annotations[DiscoveryScanPollAnnotation] = discoveryScanPollIdentity(current) + " " + now.Format(time.RFC3339Nano)
+		current.SetAnnotations(annotations)
+		_, err = enrollments.Update(ctx, current, metav1.UpdateOptions{})
+		return err
+	})
+}
 
 func (d *NetworkDocuments) finishDiscoveryScan(ctx context.Context, hub *unstructured.Unstructured, key, id string, failed bool) error {
 	enrollments := d.Client.Resource(networkEnrollmentGVR).Namespace(hub.GetNamespace())

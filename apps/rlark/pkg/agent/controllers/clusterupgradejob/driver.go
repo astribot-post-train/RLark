@@ -21,6 +21,9 @@ type UpgradeDriver interface {
 	// SnapshotsLiveState reports whether the Job captures its own rollback baseline.
 	SnapshotsLiveState() bool
 
+	// VerifyMissingJobSuccess checks durable evidence for an attempt that captured live state.
+	VerifyMissingJobSuccess(context.Context, *rlarkv1alpha1.ClusterUpgradeJob) (bool, error)
+
 	// PrepareConfig persists the deploy config for an upgrade attempt.
 	// It returns an opaque configRef that is passed to StartUpgrade.
 	// The driver decides how to store it (e.g. ConfigMap in K8s mode).

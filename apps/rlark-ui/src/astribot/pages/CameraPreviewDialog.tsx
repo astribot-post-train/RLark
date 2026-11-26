@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Camera } from "lucide-react";
 import { request } from "../../api";
 import { cameraStreamPath, type CameraCell, type CameraView } from "../lib/cameras";
-import { readCameraFrames, sameCameraFrame } from "../lib/cameraStream";
+import { readCameraFrames, sameCameraFrame, type CameraFrame } from "../lib/cameraStream";
 import { cameraDisplayLatency } from "../lib/cameraLatency";
 import { useCameraClock } from "../components/useCameraClock";
 import "./CameraPreviewDialog.css";
@@ -57,7 +57,7 @@ export function CameraPreviewDialog({ node, namespace, view, cell, zh, onDismiss
       const controller = new AbortController();
       connection = controller;
       let watchdog = 0;
-      let lastFrame: Uint8Array | undefined;
+      let lastFrame: CameraFrame | undefined;
       let distinct = 0;
       let measuredAt = performance.now();
       const resetWatchdog = () => {
@@ -76,12 +76,13 @@ export function CameraPreviewDialog({ node, namespace, view, cell, zh, onDismiss
           distinct = 0;
           measuredAt = now;
         }, 1000);
-        for await (const { jpeg, capturedAtMs } of readCameraFrames(response)) {
+        for await (const received of readCameraFrames(response)) {
           if (connection !== controller || controller.signal.aborted) break;
           resetWatchdog();
           setReconnecting(false);
-          if (sameCameraFrame(lastFrame, jpeg)) continue;
-          lastFrame = jpeg;
+          if (sameCameraFrame(lastFrame, received)) continue;
+          lastFrame = received;
+          const { jpeg, capturedAtMs } = received;
           distinct++;
           if (previousUrl) URL.revokeObjectURL(previousUrl);
           previousUrl = url;

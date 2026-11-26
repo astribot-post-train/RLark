@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	appsv1 "k8s.io/api/apps/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
 	apps "k8s.io/client-go/kubernetes/typed/apps/v1"
@@ -18,6 +19,7 @@ type Checkpoint struct {
 	Target      Images
 	NodeAgent   NodeAgentTarget
 	RollingBack bool
+	Completed   bool
 }
 
 type NodeAgentTarget struct {
@@ -83,8 +85,34 @@ func (e Executor) Run(ctx context.Context, target Images, autoRollback bool) err
 		return e.rollback(ctx, checkpoint, nil)
 	}
 
+	if checkpoint.Completed {
+		deployment, err := e.Deployments.Get(ctx, checkpoint.Deployment.Name, metav1.GetOptions{})
+		if err != nil {
+			return err
+		}
+		ready, err := DeploymentAtTarget(deployment, checkpoint.Deployment, target)
+		if err != nil {
+			return err
+		}
+		if !ready {
+			return ErrTargetChanged
+		}
+		if checkpoint.NodeAgent.ClusterUID != "" {
+			health, cancel := context.WithTimeout(ctx, e.HealthTimeout)
+			defer cancel()
+			return e.NodeAgents.WaitReady(health, checkpoint.NodeAgent, target.Agent)
+		}
+		return nil
+	}
 	err = e.apply(ctx, checkpoint, checkpoint.Deployment.Before, target, checkpoint.NodeAgent.Before, target.Agent)
-	if err == nil || !autoRollback {
+	if err == nil {
+		checkpoint.Completed = true
+		if err := e.Checkpoints.Save(ctx, checkpoint); err != nil {
+			return fmt.Errorf("record completed upgrade: %w", err)
+		}
+		return nil
+	}
+	if !autoRollback {
 		return err
 	}
 	if leaseErr := e.CheckLease(ctx); leaseErr != nil {
@@ -118,19 +146,7 @@ func (e Executor) apply(ctx context.Context, checkpoint Checkpoint, from, to Ima
 		if err != nil {
 			return false, err
 		}
-		if deployment.UID != checkpoint.Deployment.UID || deployment.DeletionTimestamp != nil {
-			return false, ErrTargetChanged
-		}
-		for _, container := range deployment.Spec.Template.Spec.Containers {
-			if container.Name == checkpoint.Deployment.Container {
-				_, tools, ok := argument(container.Args, "--image", "")
-				if !ok || (Images{Agent: container.Image, Tools: tools}) != to {
-					return false, ErrTargetChanged
-				}
-				return DeploymentReady(deployment), nil
-			}
-		}
-		return false, ErrTargetChanged
+		return DeploymentAtTarget(deployment, checkpoint.Deployment, to)
 	})
 	if err != nil {
 		return fmt.Errorf("wait for cluster Agent rollout: %w", err)
@@ -145,4 +161,21 @@ func (e Executor) apply(ctx context.Context, checkpoint Checkpoint, from, to Ima
 		return err
 	}
 	return e.NodeAgents.WaitReady(health, checkpoint.NodeAgent, nodeImage)
+}
+
+// DeploymentAtTarget checks the original workload identity, image pair, and rollout status.
+func DeploymentAtTarget(deployment *appsv1.Deployment, target DeploymentTarget, images Images) (bool, error) {
+	if deployment.UID != target.UID || deployment.DeletionTimestamp != nil {
+		return false, ErrTargetChanged
+	}
+	for _, container := range deployment.Spec.Template.Spec.Containers {
+		if container.Name == target.Container {
+			_, tools, ok := argument(container.Args, "--image", "")
+			if !ok || (Images{Agent: container.Image, Tools: tools}) != images {
+				return false, ErrTargetChanged
+			}
+			return DeploymentReady(deployment), nil
+		}
+	}
+	return false, ErrTargetChanged
 }

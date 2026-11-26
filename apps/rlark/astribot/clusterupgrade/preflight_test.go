@@ -9,7 +9,7 @@ import (
 )
 
 func TestPreflightKeepsStockTargetsAndRefusesUnsafeFallback(t *testing.T) {
-	standard := rlark.Cluster{ObjectMeta: metav1.ObjectMeta{Name: "standard", Labels: map[string]string{"role": "worker"}}}
+	standard := rlark.Cluster{ObjectMeta: metav1.ObjectMeta{Name: "standard", Annotations: map[string]string{DriverAnnotation: DriverStock}, Labels: map[string]string{"role": "worker"}}}
 	astribot := rlark.Cluster{ObjectMeta: metav1.ObjectMeta{
 		Name: "astribot", Labels: map[string]string{"role": "robot"},
 		Annotations: map[string]string{DriverAnnotation: DriverImageOnly},
@@ -30,5 +30,18 @@ func TestPreflightKeepsStockTargetsAndRefusesUnsafeFallback(t *testing.T) {
 	spec.ConfigPatch = imagesConfig
 	if err := Preflight(spec, clusters); err == nil || !strings.Contains(err.Error(), "executor is not enabled") {
 		t.Fatalf("the image-only target could reach the stock installer: %v", err)
+	}
+}
+
+func TestPreflightRejectsLegacyAndManagedTargets(t *testing.T) {
+	spec := rlark.UpgradeJobSpec{ClusterNames: []string{"member"}}
+	member := rlark.Cluster{ObjectMeta: metav1.ObjectMeta{Name: "member"}}
+	if err := Preflight(spec, []rlark.Cluster{member}); err == nil || !strings.Contains(err.Error(), "explicitly declare") {
+		t.Fatalf("unmarked target was not rejected: %v", err)
+	}
+	member.Annotations = map[string]string{DriverAnnotation: DriverStock}
+	member.Spec.NodeAgents = &rlark.ClusterNodeAgents{}
+	if err := Preflight(spec, []rlark.Cluster{member}); err == nil || !strings.Contains(err.Error(), "managed node Agents") {
+		t.Fatalf("managed target was not rejected: %v", err)
 	}
 }

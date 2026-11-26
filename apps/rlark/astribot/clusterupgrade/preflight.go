@@ -9,6 +9,20 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 )
 
+const DriverStock = "stock"
+
+// ValidateStockTarget requires an explicit opt-in because older Astribot
+// installations may have no driver annotation or local upgrade policy.
+func ValidateStockTarget(cluster rlark.Cluster) error {
+	if cluster.Spec.NodeAgents != nil {
+		return fmt.Errorf("upgrade target %s has managed node Agents and cannot use the stock installer", cluster.Name)
+	}
+	if cluster.Annotations[DriverAnnotation] != DriverStock {
+		return fmt.Errorf("upgrade target %s must explicitly declare %s=%s to use the stock installer", cluster.Name, DriverAnnotation, DriverStock)
+	}
+	return nil
+}
+
 // Preflight validates the same named/selector precedence as the upstream
 // controller and stops an Astribot target before the stock installer can run.
 func Preflight(spec rlark.UpgradeJobSpec, clusters []rlark.Cluster) error {
@@ -41,8 +55,7 @@ func Preflight(spec rlark.UpgradeJobSpec, clusters []rlark.Cluster) error {
 		if !ok {
 			return fmt.Errorf("upgrade target cluster %s does not exist", name)
 		}
-		switch driver := cluster.Annotations[DriverAnnotation]; driver {
-		case "":
+		switch cluster.Annotations[DriverAnnotation] {
 		case DriverImageOnly:
 			if _, err := ParseImages(spec.ConfigPatch); err != nil {
 				return fmt.Errorf("upgrade target %s: %w", name, err)
@@ -51,7 +64,9 @@ func Preflight(spec rlark.UpgradeJobSpec, clusters []rlark.Cluster) error {
 			// activation gate. Never send an image-only target to stock execution.
 			return fmt.Errorf("upgrade target %s: the Astribot upgrade executor is not enabled", name)
 		default:
-			return fmt.Errorf("upgrade target %s has an unsupported upgrade driver", name)
+			if err := ValidateStockTarget(cluster); err != nil {
+				return err
+			}
 		}
 	}
 	return nil

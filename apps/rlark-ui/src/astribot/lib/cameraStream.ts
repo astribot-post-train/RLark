@@ -2,9 +2,14 @@ const MAX_HEADER_BYTES = 8192;
 const MAX_JPEG_BYTES = 16 * 1024 * 1024;
 const LF = 10;
 
+export interface CameraFrame {
+  jpeg: Uint8Array<ArrayBuffer>;
+  capturedAtMs?: number;
+}
+
 // The camera service sends a Content-Length for every JPEG. Reading exactly
 // that many bytes also allows boundary-like bytes inside the JPEG.
-export async function* readCameraFrames(response: Response) {
+export async function* readCameraFrames(response: Response): AsyncGenerator<CameraFrame> {
   const contentType = response.headers.get("Content-Type") ?? "";
   const boundary = /;\s*boundary\s*=\s*(?:"([^"]+)"|([^;\s]+))/i.exec(contentType);
   const marker = boundary?.[1] ?? boundary?.[2];
@@ -71,6 +76,10 @@ export async function* readCameraFrames(response: Response) {
   }
 }
 
-export function sameCameraFrame(previous: Uint8Array | undefined, next: Uint8Array): boolean {
-  return previous?.length === next.length && next.every((byte, index) => previous[index] === byte);
+export function sameCameraFrame(previous: CameraFrame | undefined, next: CameraFrame): boolean {
+  if (!previous) return false;
+  if (previous.capturedAtMs !== undefined || next.capturedAtMs !== undefined) {
+    return previous.capturedAtMs === next.capturedAtMs;
+  }
+  return previous.jpeg.length === next.jpeg.length && next.jpeg.every((byte, index) => previous.jpeg[index] === byte);
 }
