@@ -3,6 +3,7 @@ package gateway
 import (
 	"context"
 	"encoding/json"
+	"github.com/rlinf/rlark/apps/rlark/astribot/stations"
 	"strings"
 	"testing"
 
@@ -66,8 +67,8 @@ func TestMachinesAreListedAndAdmittedEachForItself(t *testing.T) {
 
 	status, body := nodeAdmissionCall(t, g.handleListMachines, "GET", "/api/v1/station/machines?phase=Discovered", "", "")
 	var listed struct {
-		Items   []machine               `json:"items"`
-		Classes map[string]machineClass `json:"classes"`
+		Items   []stations.Machine               `json:"items"`
+		Classes map[string]stations.MachineClass `json:"classes"`
 	}
 	_ = json.Unmarshal(body, &listed)
 	if status != 200 || len(listed.Items) != 3 || listed.Items[0].Name != "lab-05" || listed.Items[0].DiscoveryScanID != scanID || listed.Items[0].Admissible || listed.Items[1].Name != "lab-02" || listed.Items[1].Admissible ||
@@ -75,11 +76,11 @@ func TestMachinesAreListedAndAdmittedEachForItself(t *testing.T) {
 		listed.Classes["s1u"].Labels["rlark.io/robot-body"] != "s1u" {
 		t.Fatalf("list %d: %s", status, body)
 	}
-	// An admitted machine is listed with where its join stands.
+	// An admitted stations.Machine is listed with where its join stands.
 	status, body = nodeAdmissionCall(t, g.handleListMachines, "GET", "/api/v1/station/machines?phase=Admitted", "", "")
 	_ = json.Unmarshal(body, &listed)
 	if status != 200 || len(listed.Items) != 1 || listed.Items[0].AdmitClusterID != "cluster-a" || listed.Items[0].Join == nil ||
-		*listed.Items[0].Join != (machineJoin{Phase: "Blocked", Stage: "Preflight"}) {
+		*listed.Items[0].Join != (stations.MachineJoin{Phase: "Blocked", Stage: "Preflight"}) {
 		t.Fatalf("an admitted machine's join %d: %s", status, body)
 	}
 

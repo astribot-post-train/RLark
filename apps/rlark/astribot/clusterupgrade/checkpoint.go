@@ -58,7 +58,7 @@ func (s ConfigMapCheckpoint) Save(ctx context.Context, state Checkpoint) error {
 		if err := json.Unmarshal([]byte(object.Data["snapshot.json"]), &before); err != nil {
 			return err
 		}
-		if before.Deployment != state.Deployment || before.Target != state.Target || before.NodeAgent != state.NodeAgent ||
+		if before.Deployment != state.Deployment || before.Target != state.Target || before.NodeImage != state.NodeImage || before.NodeAgent != state.NodeAgent ||
 			(before.RollingBack && !state.RollingBack) || (before.Completed && !state.Completed) {
 			return fmt.Errorf("upgrade checkpoint cannot be replaced")
 		}

@@ -22,72 +22,6 @@ var machineGVR = schema.GroupVersionResource{Group: "station.rlark.io", Version:
 // machineNamespace is where the Machines are: with the SiteNetwork.
 const machineNamespace = "station-system"
 
-// machine is a machine RLark knows of as an administrator reads it: what was
-// seen of it and how its join goes. Nothing of any account is in it.
-type machine struct {
-	Name         string `json:"name"`
-	Site         string `json:"site"`
-	NodeClass    string `json:"node_class"`
-	MachineType  string `json:"machine_type"`
-	MachineModel string `json:"machine_model,omitempty"`
-	Source       string `json:"source"`
-	// Phase is Discovered (seen, not a node), Admitted (its join is under
-	// way) or Joined; Problem names what is wrong with it, if anything.
-	Phase   string `json:"phase"`
-	Problem string `json:"problem,omitempty"`
-	Message string `json:"message,omitempty"`
-	Serial  string `json:"serial,omitempty"`
-	// InspectedAt is when RLark last logged in to the machine's entry device
-	// and reached the computer behind it, whose host key is NodeHostKeyFingerprint.
-	InspectedAt            string `json:"inspected_at,omitempty"`
-	NodeHostKeyFingerprint string `json:"node_host_key_fingerprint,omitempty"`
-	HostKeyFingerprint     string `json:"host_key,omitempty"`
-	Port                   int64  `json:"port,omitempty"`
-	HostKeyAlgorithm       string `json:"host_key_algorithm,omitempty"`
-	Banner                 string `json:"banner,omitempty"`
-	Address                string `json:"address,omitempty"`
-	MAC                    string `json:"mac,omitempty"`
-	// LastSeen is when a hub of its site last saw the machine.
-	LastSeen        string `json:"last_seen,omitempty"`
-	DiscoveryScanID string `json:"discovery_scan_id,omitempty"`
-	ClusterID       string `json:"cluster_id,omitempty"`
-	NodeName        string `json:"node_name,omitempty"`
-	// Admissible says whether the machine can be admitted now: one that is
-	// not a node, was read and has no problem, or one whose join stopped.
-	Admissible bool `json:"admissible"`
-	// Joining says that an administrator's request for the machine is being
-	// acted on: it is not admitted again until its join succeeds or stops.
-	Joining     bool   `json:"joining"`
-	RequestedBy string `json:"requested_by,omitempty"`
-	RequestedAt string `json:"requested_at,omitempty"`
-	// AdmitClusterID is the cluster an administrator admitted the machine to.
-	AdmitClusterID string `json:"admit_cluster_id,omitempty"`
-	// Join is where the NodeOperation of the administrator's present request
-	// stands: why it stopped, when it did, is the machine's Message; one that
-	// succeeded while the machine is Discovered again made a node removed since,
-	// and the request is spent.
-	Join             *machineJoin           `json:"join,omitempty"`
-	NodeJoin         *machineNodeJoin       `json:"node_join,omitempty"`
-	ObservedIdentity map[string]interface{} `json:"observed_identity,omitempty"`
-	IdentityVerified string                 `json:"identity_verified,omitempty"`
-	IdentityReason   string                 `json:"identity_reason,omitempty"`
-}
-
-type machineJoin struct {
-	Phase string `json:"phase,omitempty"`
-	// Stage is the last stage it completed.
-	Stage        string `json:"stage,omitempty"`
-	Reason       string `json:"reason,omitempty"`
-	MachineType  string `json:"machine_type,omitempty"`
-	MachineModel string `json:"machine_model,omitempty"`
-}
-
-type machineNodeJoin struct {
-	Phase  string `json:"phase,omitempty"`
-	Stage  string `json:"stage,omitempty"`
-	Reason string `json:"reason,omitempty"`
-}
-
 // machineOperationLabel is on the NodeOperation that joins a Machine and names
 // it, machineRequestAnnotation the Machine's generation it was started for
 // (station-controller, MachineLabel and machineRequestAnnotation).
@@ -95,30 +29,6 @@ const (
 	machineOperationLabel    = "station.rlark.io/machine"
 	machineRequestAnnotation = "station.rlark.io/machine-generation"
 )
-
-// machineClass is what the list shows of a NodeClass: the labels a machine of
-// it gets, whose values an administrator may replace for one machine, and
-// which of its passwords have been entered.
-type machineClass struct {
-	Kind                string                 `json:"kind,omitempty"`
-	Model               string                 `json:"model,omitempty"`
-	Labels              map[string]string      `json:"labels,omitempty"`
-	Taints              []string               `json:"taints,omitempty"`
-	Naming              map[string]interface{} `json:"naming,omitempty"`
-	HasDiscovery        bool                   `json:"hasDiscovery"`
-	HostKeyFingerprints []string               `json:"hostKeyFingerprints,omitempty"`
-	Access              *machineClassAccess    `json:"access,omitempty"`
-}
-
-type machineClassAccess struct {
-	Entry machineCredentialStatus  `json:"entry"`
-	Node  machineCredentialStatus  `json:"node"`
-	Sudo  *machineCredentialStatus `json:"sudo,omitempty"`
-}
-
-type machineCredentialStatus struct {
-	Configured bool `json:"configured"`
-}
 
 type admitMachinesRequest struct {
 	ClusterID    string   `json:"cluster_id"`
@@ -137,118 +47,19 @@ type admittedMachine struct {
 	Error    string `json:"error,omitempty"`
 }
 
-// machineView is a Machine as the list shows it, with the join of its
-// present request among joins (machineJoins).
-func machineView(object *unstructured.Unstructured, joins map[string]*machineJoin, classViews ...map[string]machineClass) machine {
-	classes := map[string]machineClass{}
-	if len(classViews) > 0 && classViews[0] != nil {
-		classes = classViews[0]
-	}
-	text := func(fields ...string) string {
-		value, _, _ := unstructured.NestedString(object.Object, fields...)
-		return value
-	}
-	nodeClass, _, _ := unstructured.NestedString(object.Object, "spec", "nodeClass")
-	classKind, classModel := machineClassIdentity(classes, nodeClass)
-	view := machine{
-		Name: object.GetName(), Site: text("spec", "site"), NodeClass: nodeClass, Source: text("spec", "source"),
-		Phase: text("status", "phase"), Problem: text("status", "problem"), Message: text("status", "message"), Serial: text("status", "serial"),
-		InspectedAt: text("status", "inspectedAt"), NodeHostKeyFingerprint: text("status", "nodeHostKeyFingerprint"), HostKeyFingerprint: text("status", "entry", "hostKeyFingerprint"),
-		Address: text("status", "entry", "address"), MAC: text("status", "entry", "mac"), LastSeen: text("status", "entry", "lastSeen"),
-		DiscoveryScanID: text("status", "entry", "discoveryScanID"),
-		Port:            nestedInt64(object.Object, "status", "entry", "port"), HostKeyAlgorithm: text("status", "entry", "hostKeyAlgorithm"), Banner: text("status", "entry", "banner"),
-		ClusterID: text("status", "clusterID"), NodeName: text("status", "nodeName"),
-		RequestedBy: text("spec", "admit", "requestedBy"), RequestedAt: text("spec", "admit", "requestedAt"), AdmitClusterID: text("spec", "admit", "clusterID"),
-		Join: joins[object.GetName()],
-	}
-	view.MachineModel = text("spec", "admit", "model")
-	if view.MachineModel == "" {
-		view.MachineModel, _, _ = unstructured.NestedString(object.Object, "status", "observedIdentity", "model")
-	}
-	view.ObservedIdentity, _, _ = unstructured.NestedMap(object.Object, "status", "observedIdentity")
-	view.IdentityVerified = text("status", "identityVerified")
-	view.IdentityReason = text("status", "identityReason")
-	if nodeJoin, found, _ := unstructured.NestedMap(object.Object, "status", "nodeJoin"); found {
-		view.NodeJoin = &machineNodeJoin{Phase: stringValue(nodeJoin["phase"]), Stage: stringValue(nodeJoin["stage"]), Reason: stringValue(nodeJoin["reason"])}
-	}
-	if view.NodeJoin == nil {
-		if join := joins[object.GetName()]; join != nil {
-			view.NodeJoin = &machineNodeJoin{Phase: join.Phase, Stage: join.Stage, Reason: join.Reason}
-		}
-	}
-	if view.MachineModel == "" {
-		view.MachineModel = classModel
-	}
-	view.MachineType = text("spec", "admit", "type")
-	if machine, found, _ := unstructured.NestedMap(object.Object, "spec", "admit", "machine"); found && view.MachineType == "" {
-		view.MachineType = stringValue(machine["category"])
-	}
-	if view.MachineType == "" {
-		view.MachineType = text("status", "observedIdentity", "category")
-	}
-	if view.NodeJoin != nil && view.MachineType == "" {
-		if join := joins[object.GetName()]; join != nil {
-			view.MachineType, view.MachineModel = join.MachineType, join.MachineModel
-		}
-	}
-	if view.MachineType == "" {
-		view.MachineType = classKind
-	}
-	if view.MachineType == "" {
-		if view.NodeClass != "" {
-			view.MachineType = "Robot"
-		} else {
-			view.MachineType = "Unknown"
-		}
-	}
-	// A request is acted on from when it is written until the join it starts succeeds or stops; station-controller
-	// may first read the machine, and retries a fault that is not the machine's.
-	view.Joining = view.Phase != "Joined" && view.AdmitClusterID != "" && (view.Join == nil || view.Join.Phase != "Succeeded" && view.Join.Phase != "Blocked" && view.Join.Phase != "Failed")
-	// Read means its entry device let RLark in and the computer behind it answered.
-	entryCandidate := view.Phase == "Discovered" && view.Problem == "" && view.NodeClass == "" && view.Source == "Discovery" && view.Address != "" && text("status", "entry", "hostKeyFingerprint") != "" && view.HostKeyAlgorithm != ""
-	view.Admissible = !view.Joining && (view.Serial != "" && (view.Phase == "Discovered" && view.Problem == "" && view.InspectedAt != "" && view.NodeHostKeyFingerprint != "" ||
-		view.Phase == "Admitted" && view.Problem != "") || entryCandidate)
-	return view
-}
-
-func stringValue(value interface{}) string { text, _ := value.(string); return text }
-
-func nestedInt64(object map[string]interface{}, fields ...string) int64 {
-	value, _, _ := unstructured.NestedInt64(object, fields...)
-	return value
-}
-
-func machineClassIdentity(classes map[string]machineClass, name string) (string, string) {
-	class, ok := classes[name]
-	if !ok {
-		return "", ""
-	}
-	kind, model := class.Kind, class.Model
-	if model == "" {
-		model = class.Labels["rlark.io/robot-model"]
-	}
-	if kind == "" && (model != "" || class.Labels["rlark.io/node-category"] == "robot") {
-		kind = "Robot"
-	}
-	if kind == "" && name != "" {
-		kind = "Robot"
-	}
-	return kind, model
-}
-
 // machineJoins are the NodeOperations that join Machines, by the Machine and
 // the generation of the request each was started for.
-func (g *Gateway) machineJoins(ctx context.Context) (map[string]*machineJoin, error) {
+func (g *Gateway) machineJoins(ctx context.Context) (map[string]*stations.MachineJoin, error) {
 	joins, err := g.stationClient.Resource(nodeOperationGVR).Namespace("").List(ctx, metav1.ListOptions{LabelSelector: machineOperationLabel})
 	if err != nil {
 		return nil, err
 	}
-	joinOf := map[string]*machineJoin{}
+	joinOf := map[string]*stations.MachineJoin{}
 	for i := range joins.Items {
 		phase, _, _ := unstructured.NestedString(joins.Items[i].Object, "status", "phase")
 		stage, _, _ := unstructured.NestedString(joins.Items[i].Object, "status", "stage")
 		machineName := joins.Items[i].GetLabels()[machineOperationLabel]
-		joinOf[machineName] = &machineJoin{Phase: phase, Stage: stage}
+		joinOf[machineName] = &stations.MachineJoin{Phase: phase, Stage: stage}
 	}
 	if g.kubeClient == nil {
 		return joinOf, nil
@@ -266,7 +77,7 @@ func (g *Gateway) machineJoins(ctx context.Context) (map[string]*machineJoin, er
 		phase, stage := string(join.Status.Phase), join.Status.Stage
 		annotations := join.Annotations
 		if machineName != "" {
-			joinOf[machineName] = &machineJoin{Phase: phase, Stage: stage, Reason: annotations["station.rlark.io/join-reason"], MachineType: annotations["station.rlark.io/machine-type"], MachineModel: annotations["station.rlark.io/machine-model"]}
+			joinOf[machineName] = &stations.MachineJoin{Phase: phase, Stage: stage, Reason: annotations["station.rlark.io/join-reason"], MachineType: annotations["station.rlark.io/machine-type"], MachineModel: annotations["station.rlark.io/machine-model"]}
 		}
 	}
 	return joinOf, nil
@@ -286,7 +97,7 @@ func (g *Gateway) handleListMachines(c *gin.Context) {
 		c.JSON(http.StatusBadGateway, gin.H{"error": "NodeClass request failed"})
 		return
 	}
-	classes := map[string]machineClass{}
+	classes := map[string]stations.MachineClass{}
 	for i := range classList.Items {
 		classObject := &classList.Items[i]
 		labels, _, _ := unstructured.NestedStringMap(classObject.Object, "spec", "labels")
@@ -299,14 +110,14 @@ func (g *Gateway) handleListMachines(c *gin.Context) {
 		discovery, hasDiscovery, _ := unstructured.NestedMap(classObject.Object, "spec", "discovery")
 		fingerprints, _, _ := unstructured.NestedStringSlice(discovery, "hostKeyFingerprints")
 		naming, _, _ := unstructured.NestedMap(classObject.Object, "spec", "naming")
-		class := machineClass{Kind: kind, Model: model, Labels: labels, Taints: taints, Naming: naming, HasDiscovery: hasDiscovery, HostKeyFingerprints: fingerprints}
+		class := stations.MachineClass{Kind: kind, Model: model, Labels: labels, Taints: taints, Naming: naming, HasDiscovery: hasDiscovery, HostKeyFingerprints: fingerprints}
 		if access, hasAccess, accessErr := g.nodeClassAccessOf(ctx, classObject); accessErr != nil {
 			c.JSON(http.StatusBadGateway, gin.H{"error": "NodeClass access status request failed"})
 			return
 		} else if hasAccess {
-			class.Access = &machineClassAccess{Entry: machineCredentialStatus{Configured: access.Entry.Configured}, Node: machineCredentialStatus{Configured: access.Node.Configured}}
+			class.Access = &stations.MachineClassAccess{Entry: stations.MachineCredentialStatus{Configured: access.Entry.Configured}, Node: stations.MachineCredentialStatus{Configured: access.Node.Configured}}
 			if access.Sudo != nil {
-				class.Access.Sudo = &machineCredentialStatus{Configured: access.Sudo.Configured}
+				class.Access.Sudo = &stations.MachineCredentialStatus{Configured: access.Sudo.Configured}
 			}
 		}
 		classes[classObject.GetName()] = class
@@ -317,9 +128,9 @@ func (g *Gateway) handleListMachines(c *gin.Context) {
 		return
 	}
 	site, phase := c.Query("site"), c.Query("phase")
-	items := make([]machine, 0, len(list.Items))
+	items := make([]stations.Machine, 0, len(list.Items))
 	for i := range list.Items {
-		if view := machineView(&list.Items[i], joins, classes); (site == "" || view.Site == site) && (phase == "" || view.Phase == phase) {
+		if view := stations.MachineView(&list.Items[i], joins, classes); (site == "" || view.Site == site) && (phase == "" || view.Phase == phase) {
 			items = append(items, view)
 		}
 	}
@@ -375,9 +186,9 @@ func (g *Gateway) handleAdmitMachines(c *gin.Context) {
 	for _, name := range request.Machines {
 		answer := admittedMachine{Name: name}
 		object, err := resource.Get(ctx, name, metav1.GetOptions{})
-		var view machine
+		var view stations.Machine
 		if err == nil {
-			view = machineView(object, joins)
+			view = stations.MachineView(object, joins, nil)
 		}
 		switch {
 		case apierrors.IsNotFound(err):

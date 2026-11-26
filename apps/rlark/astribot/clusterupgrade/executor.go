@@ -17,6 +17,7 @@ import (
 type Checkpoint struct {
 	Deployment  DeploymentTarget
 	Target      Images
+	NodeImage   string
 	NodeAgent   NodeAgentTarget
 	RollingBack bool
 	Completed   bool
@@ -54,7 +55,7 @@ type Executor struct {
 var ErrRolledBack = errors.New("upgrade failed and the previous images were restored")
 var ErrRollbackFailed = errors.New("upgrade failed and rollback did not complete")
 
-func (e Executor) Run(ctx context.Context, target Images, autoRollback bool) error {
+func (e Executor) Run(ctx context.Context, target Images, nodeImage string, autoRollback bool) error {
 	checkpoint, exists, err := e.Checkpoints.Load(ctx)
 	if err != nil {
 		return fmt.Errorf("load upgrade checkpoint: %w", err)
@@ -74,11 +75,14 @@ func (e Executor) Run(ctx context.Context, target Images, autoRollback bool) err
 		if err != nil {
 			return err
 		}
-		checkpoint = Checkpoint{Deployment: deployment, Target: target, NodeAgent: nodes}
+		if (nodes.ClusterUID == "") != (nodeImage == "") {
+			return errors.New("an explicit node Agent target is required exactly when managed node Agents are present")
+		}
+		checkpoint = Checkpoint{Deployment: deployment, Target: target, NodeImage: nodeImage, NodeAgent: nodes}
 		if err := e.Checkpoints.Save(ctx, checkpoint); err != nil {
 			return fmt.Errorf("persist upgrade checkpoint: %w", err)
 		}
-	} else if checkpoint.Target != target || (e.ExpectedDeployment != "" && checkpoint.Deployment.Name != e.ExpectedDeployment) {
+	} else if checkpoint.Target != target || checkpoint.NodeImage != nodeImage || (e.ExpectedDeployment != "" && checkpoint.Deployment.Name != e.ExpectedDeployment) {
 		return errors.New("upgrade request differs from the persisted checkpoint")
 	}
 	if checkpoint.RollingBack {
@@ -100,11 +104,11 @@ func (e Executor) Run(ctx context.Context, target Images, autoRollback bool) err
 		if checkpoint.NodeAgent.ClusterUID != "" {
 			health, cancel := context.WithTimeout(ctx, e.HealthTimeout)
 			defer cancel()
-			return e.NodeAgents.WaitReady(health, checkpoint.NodeAgent, target.Agent)
+			return e.NodeAgents.WaitReady(health, checkpoint.NodeAgent, checkpoint.NodeImage)
 		}
 		return nil
 	}
-	err = e.apply(ctx, checkpoint, checkpoint.Deployment.Before, target, checkpoint.NodeAgent.Before, target.Agent)
+	err = e.apply(ctx, checkpoint, checkpoint.Deployment.Before, target, checkpoint.NodeAgent.Before, checkpoint.NodeImage)
 	if err == nil {
 		checkpoint.Completed = true
 		if err := e.Checkpoints.Save(ctx, checkpoint); err != nil {
@@ -126,7 +130,7 @@ func (e Executor) Run(ctx context.Context, target Images, autoRollback bool) err
 }
 
 func (e Executor) rollback(ctx context.Context, checkpoint Checkpoint, upgradeErr error) error {
-	if err := e.apply(ctx, checkpoint, checkpoint.Target, checkpoint.Deployment.Before, checkpoint.Target.Agent, checkpoint.NodeAgent.Before); err != nil {
+	if err := e.apply(ctx, checkpoint, checkpoint.Target, checkpoint.Deployment.Before, checkpoint.NodeImage, checkpoint.NodeAgent.Before); err != nil {
 		return errors.Join(ErrRollbackFailed, upgradeErr, err)
 	}
 	return errors.Join(ErrRolledBack, upgradeErr)

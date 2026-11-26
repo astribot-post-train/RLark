@@ -311,9 +311,9 @@ func (r *nodeJoinRun) precheck(ctx context.Context, j *rlarkv1alpha1.NodeJoin) (
 	bundle := "机器上没有安装包"
 	switch {
 	case facts.BundleSHA256 == want:
-		bundle = "安装包 sha " + short(want) + "…（与 Station API 相同）"
+		bundle = "安装包 sha " + provisioning.ShortDigest(want) + "…（与 Station API 相同）"
 	case facts.BundleSHA256 != "":
-		bundle = "安装包 sha " + short(facts.BundleSHA256) + "…（Station API 的是 " + short(want) + "…）"
+		bundle = "安装包 sha " + provisioning.ShortDigest(facts.BundleSHA256) + "…（Station API 的是 " + provisioning.ShortDigest(want) + "…）"
 	}
 	route := "Station API " + address
 	switch {
@@ -357,8 +357,8 @@ func (r *nodeJoinRun) bundle(ctx context.Context, j *rlarkv1alpha1.NodeJoin) (st
 		return "", err
 	}
 	facts := &j.Status.Facts
-	installed, readback, err := r.g.sendInstaller(ctx, machine, release.Registry, facts.BundleSHA256, func(line string) { r.line(ctx, stageBundle, line) })
-	facts.BundleSHA256, facts.PublicKey = installed.sha256, installed.publicKey
+	installed, readback, err := provisioning.SendInstaller(ctx, r.g.stationBootstrap, machine, release.Registry, facts.BundleSHA256, func(line string) { r.line(ctx, stageBundle, line) })
+	facts.BundleSHA256, facts.PublicKey = installed.SHA256, installed.PublicKey
 	return readback, err
 }
 

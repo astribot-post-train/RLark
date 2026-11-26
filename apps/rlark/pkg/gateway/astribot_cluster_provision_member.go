@@ -10,6 +10,7 @@ import (
 	"time"
 
 	rlarkv1alpha1 "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
+	"github.com/rlinf/rlark/apps/rlark/astribot/provisioning"
 	"github.com/rlinf/rlark/apps/rlark/astribot/release"
 	"github.com/rlinf/rlark/apps/rlark/astribot/stationmember"
 	"github.com/rlinf/rlark/apps/rlark/pkg/rlarkadm"
@@ -166,7 +167,7 @@ func (r *provisionRun) agent(ctx context.Context, p *rlarkv1alpha1.ClusterProvis
 	if err := r.g.waitCluster(ctx, p.Name, 5*time.Minute, rlarkv1alpha1.ClusterOnline); err != nil {
 		return "the agent reports in; node agents " + nodeAgents, err
 	}
-	readback := fmt.Sprintf("Cluster %s Online (agent %s…); node agents %s", p.Name, short(strings.TrimPrefix(rel.Images["cluster-agent"][strings.LastIndex(rel.Images["cluster-agent"], "@")+1:], "sha256:")), nodeAgents)
+	readback := fmt.Sprintf("Cluster %s Online (agent %s…); node agents %s", p.Name, provisioning.ShortDigest(strings.TrimPrefix(rel.Images["cluster-agent"][strings.LastIndex(rel.Images["cluster-agent"], "@")+1:], "sha256:")), nodeAgents)
 
 	// The release reaches the cluster with an account of its own, which the release's tree states, at the address
 	// the site's names give the control plane's name (release.ReachedAs).

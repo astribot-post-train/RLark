@@ -9,9 +9,7 @@ import (
 	"github.com/rlinf/rlark/apps/rlark/astribot/storageconfig"
 	"maps"
 	"net/http"
-	"slices"
 	"strings"
-	"unicode"
 
 	"github.com/gin-gonic/gin"
 	v1 "k8s.io/api/core/v1"
@@ -346,63 +344,10 @@ func normalizeAstribotStorage(req CreateStorageClassRequest, name string, cluste
 	return storedStorageClass{}, false, nil
 }
 
-// normalizeS3StorageMount adds to an S3 storage the official flow normalized
-// how it is mounted: endpoints, prefix, profile and mount options.
 func normalizeS3StorageMount(req CreateStorageClassRequest, stored storedStorageClass) (storedStorageClass, error) {
-	mountEndpoint := strings.TrimSpace(req.MountEndpoint)
-	if mountEndpoint != "" {
-		var err error
-		mountEndpoint, err = storage.NormalizeEndpoint(stored.Provider, mountEndpoint, req.Region)
-		if err != nil {
-			return storedStorageClass{}, fmt.Errorf("mount_endpoint: %w", err)
-		}
-	}
-	prefix := strings.Trim(strings.TrimSpace(req.Prefix), "/")
-	if strings.Contains(prefix, "\\") || strings.Contains(prefix, "//") || strings.IndexFunc(prefix, unicode.IsControl) >= 0 {
-		return storedStorageClass{}, fmt.Errorf("prefix must be a slash-separated object path")
-	}
-	for _, segment := range strings.Split(prefix, "/") {
-		if segment == "." || segment == ".." {
-			return storedStorageClass{}, fmt.Errorf("prefix must not contain dot segments")
-		}
-	}
-	profile := strings.TrimSpace(req.MountProfile)
-	if profile == "" {
-		profile = "default"
-	}
-	var overrides []string
-	if req.MountOptions != nil {
-		overrides = append([]string{}, (*req.MountOptions)...)
-	}
-	_, _, cacheMode, err := storageconfig.ResolveS3MountOptions(profile, strings.TrimSpace(req.VFSCacheMode), overrides)
-	if err != nil {
-		return storedStorageClass{}, err
-	}
-	// A volume may choose any profile, so the storage's mount options must
-	// combine with each of them.
-	for _, other := range storageref.Profiles(storageTypeS3) {
-		if other == profile {
-			continue
-		}
-		if _, _, _, err := storageconfig.ResolveS3MountOptions(other, "", overrides); err != nil {
-			return storedStorageClass{}, fmt.Errorf("mount_options with profile %s: %w", other, err)
-		}
-	}
-	var clusterEndpoints map[string]string
-	if req.ClusterMountEndpoints != nil && len(*req.ClusterMountEndpoints) != 0 {
-		clusterEndpoints = make(map[string]string, len(*req.ClusterMountEndpoints))
-		for cluster, endpoint := range *req.ClusterMountEndpoints {
-			if !slices.Contains(stored.Clusters, cluster) {
-				return storedStorageClass{}, fmt.Errorf("cluster_mount_endpoints names cluster %q, which is not one of the storage's clusters", cluster)
-			}
-			normalized, err := storage.NormalizeEndpoint(stored.Provider, strings.TrimSpace(endpoint), req.Region)
-			if err != nil || strings.TrimSpace(endpoint) == "" {
-				return storedStorageClass{}, fmt.Errorf("cluster_mount_endpoints[%s]: endpoint must be an http or https URL", cluster)
-			}
-			clusterEndpoints[cluster] = normalized
-		}
-	}
-	stored.Type, stored.MountEndpoint, stored.ClusterMountEndpoints = storageTypeS3, mountEndpoint, clusterEndpoints
-	stored.Prefix, stored.VFSCacheMode, stored.MountProfile, stored.MountOptions = prefix, cacheMode, profile, overrides
-	return stored, nil
+	return storageconfig.NormalizeS3Mount(storageconfig.S3MountRequest{
+		Region: req.Region, MountEndpoint: req.MountEndpoint, Prefix: req.Prefix,
+		MountProfile: req.MountProfile, VFSCacheMode: req.VFSCacheMode, MountOptions: req.MountOptions,
+		ClusterMountEndpoints: req.ClusterMountEndpoints,
+	}, stored, storage.NormalizeEndpoint)
 }

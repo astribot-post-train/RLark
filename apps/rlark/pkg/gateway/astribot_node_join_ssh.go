@@ -160,3 +160,5 @@ func nodeJoinAnnotations(request createNodeJoinRequest, hostKey string) (map[str
 		nodeJoinReasonAnnotation:           "SSH",
 	}, nil
 }
+
+func stringValue(value interface{}) string { text, _ := value.(string); return text }

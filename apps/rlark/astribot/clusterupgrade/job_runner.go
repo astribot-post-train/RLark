@@ -113,7 +113,7 @@ func runClusterOnly(ctx context.Context, member kubernetes.Interface, reader cli
 	if err := ValidateClusterOnly(work, reader); err != nil {
 		return err
 	}
-	return executor.Run(work, target, request.AutoRollback)
+	return executor.Run(work, target, "", request.AutoRollback)
 }
 
 type clusterOnlyNodeImages struct{ reader client.Reader }

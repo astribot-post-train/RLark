@@ -2,10 +2,8 @@ package gateway
 
 import (
 	"context"
-	"encoding/base64"
 	"fmt"
 	"github.com/rlinf/rlark/apps/rlark/astribot/provisioning"
-	"io"
 	"net"
 	"strings"
 	"time"
@@ -74,94 +72,10 @@ func (r *provisionRun) bundle(ctx context.Context, p *rlarkv1alpha1.ClusterProvi
 	if err != nil {
 		return "", err
 	}
-	installed, readback, err := r.g.sendInstaller(ctx, machine, release.Registry, p.Status.Facts.BundleSHA256, func(line string) { r.line(ctx, stageBundle, line) })
+	installed, readback, err := provisioning.SendInstaller(ctx, r.g.stationBootstrap, machine, release.Registry, p.Status.Facts.BundleSHA256, func(line string) { r.line(ctx, stageBundle, line) })
 	facts := &p.Status.Facts
-	facts.BundleSHA256, facts.PublicKey, facts.RegistryCA = installed.sha256, installed.publicKey, installed.registryCA
+	facts.BundleSHA256, facts.PublicKey, facts.RegistryCA = installed.SHA256, installed.PublicKey, installed.RegistryCA
 	return readback, err
-}
-
-// installedMachine is what sendInstaller leaves on a machine: Station API's installer, of sha256, and the machine's
-// tunnel key, made there; registryCA is the CA of the site registry the installer trusts.
-type installedMachine struct {
-	sha256, publicKey, registryCA string
-}
-
-// sendInstaller gives the machine Station API's installer, unless the one it holds (of sha256 have) is that one
-// already, and has the machine make its tunnel key, which never leaves it. While it streams, progress is told how
-// much has gone every 5 s.
-func (g *Gateway) sendInstaller(ctx context.Context, machine provisioning.Machine, registry, have string, progress func(string)) (installedMachine, string, error) {
-	var installed installedMachine
-	want, err := g.stationBootstrap.BundleDigest(ctx)
-	if err != nil {
-		return installed, "", fmt.Errorf("read the installer's sha256 from Station API: %w", err)
-	}
-	var out, readback string
-	if have == want {
-		if out, err = machine.Run(ctx, provisioning.TunnelKeyScript(registry), nil, nil); err != nil {
-			return installed, "", err
-		}
-		readback = fmt.Sprintf("the installer of sha256 %s… is on the machine already, not sent again", short(want))
-	} else {
-		installer, size, err := g.stationBootstrap.Open(ctx, "/v1/bootstrap/bundle")
-		if err != nil {
-			return installed, "", fmt.Errorf("take the installer from Station API: %w", err)
-		}
-		defer installer.Close()
-		sent := &sentCounter{reader: installer, size: size, progress: progress, started: time.Now()}
-		if out, err = machine.Run(ctx, provisioning.BundleScript(registry, want), sent, nil); err != nil {
-			return installed, "", err
-		}
-		readback = fmt.Sprintf("installer sha256 %s… sent (%s in %s)", short(provisioning.OutputValues(out)["sha256"]), megabytes(sent.count), time.Since(sent.started).Round(time.Second))
-	}
-	values := provisioning.OutputValues(out)
-	ca, _ := base64.StdEncoding.DecodeString(values["ca"])
-	installed = installedMachine{sha256: want, publicKey: values["publickey"], registryCA: string(ca)}
-	readback += "; tunnel public key " + installed.publicKey
-	if values["sha256"] != "" && values["sha256"] != want {
-		return installed, readback, fmt.Errorf("the machine holds an installer of sha256 %s, Station API's is %s", values["sha256"], want)
-	}
-	if !strings.Contains(installed.registryCA, "BEGIN CERTIFICATE") {
-		return installed, readback, fmt.Errorf("the installer holds no CA of %s (certs.d/%s/ca.crt)", registry, registry)
-	}
-	if len(installed.publicKey) != 44 {
-		return installed, readback, fmt.Errorf("station-gateway answered no WireGuard public key (%q)", installed.publicKey)
-	}
-	return installed, readback, nil
-}
-
-// sentCounter counts what the installer's stream has given, and tells progress every 5 s.
-type sentCounter struct {
-	reader   io.Reader
-	size     int64
-	count    int64
-	progress func(string)
-	started  time.Time
-	told     time.Time
-}
-
-func (s *sentCounter) Read(p []byte) (int, error) {
-	n, err := s.reader.Read(p)
-	s.count += int64(n)
-	if now := time.Now(); now.Sub(s.told) >= 5*time.Second {
-		s.told = now
-		rate := float64(s.count) / max(now.Sub(s.started).Seconds(), 1) / (1 << 20)
-		s.progress(fmt.Sprintf("sent %s of %s, %.1f MB/s", megabytes(s.count), megabytes(s.size), rate))
-	}
-	return n, err
-}
-
-func megabytes(n int64) string {
-	if n >= 1<<30 {
-		return fmt.Sprintf("%.2f GB", float64(n)/(1<<30))
-	}
-	return fmt.Sprintf("%d MB", n>>20)
-}
-
-func short(digest string) string {
-	if len(digest) > 12 {
-		return digest[:12]
-	}
-	return digest
 }
 
 func (r *provisionRun) controlPlane(ctx context.Context, p *rlarkv1alpha1.ClusterProvision) (string, error) {
