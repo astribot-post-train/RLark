@@ -153,6 +153,7 @@ export interface Machine {
   // same network.
   mac?: string;
   last_seen?: string;
+  discovery_scan_id?: string;
   cluster_id?: string;
   node_name?: string;
   // It can be ticked: it was read and has no problem, or its join stopped.
@@ -230,6 +231,13 @@ export function machineStateLabel(machine: Pick<Machine, "phase" | "problem">, z
 export function unjoinedMachines(machines: Machine[], clusterID: string): Machine[] {
   return machines.filter((machine) => machine.phase !== "Joined" && !(machine.joining && machine.admit_cluster_id === clusterID)).sort((a, b) =>
     Number(b.admissible) - Number(a.admissible) || (b.last_seen ?? "").localeCompare(a.last_seen ?? ""));
+}
+
+export function scanJoinMachines(machines: Machine[], clusterID: string, now: number, scanID?: string): Machine[] {
+  return [
+    ...unjoinedMachines(machines, clusterID).filter((machine) => scanID && machine.discovery_scan_id === scanID && !machineUnseen(machine, now)),
+    ...machines.filter((machine) => machine.joining && machine.admit_cluster_id === clusterID),
+  ];
 }
 
 export type ReachState = "ok" | "fail" | "checking" | "unknown";
@@ -409,9 +417,10 @@ export function unseenMachineOf(machines: Machine[], clusterID: string, nodeName
   return machine && !machineUnseen(machine, now) ? undefined : machine;
 }
 
-// No hub has seen the machine's entry device for ten minutes (a hub looks at its site's network every 30 s).
-export function machineUnseen(machine: Pick<Machine, "last_seen">, now: number): boolean {
-  return !(now - Date.parse(machine.last_seen ?? "") < 10 * 60 * 1000);
+// Allow three configured scan intervals, with a minimum window of ten minutes.
+export function machineUnseen(machine: Pick<Machine, "last_seen">, now: number, intervalSeconds = 30): boolean {
+  const windowMs = Math.max(10 * 60 * 1000, 3 * intervalSeconds * 1000);
+  return !(now - Date.parse(machine.last_seen ?? "") < windowMs);
 }
 
 const two = (value: number) => String(value).padStart(2, "0");

@@ -24,6 +24,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	rlarkv1alpha1 "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
+	"github.com/rlinf/rlark/apps/rlark/astribot/taskprovider"
 	kubernetesobjects "github.com/rlinf/rlark/apps/rlark/pkg/agent/controllers/task/compatibility/kubernetes/kubernetesobjects"
 	"github.com/rlinf/rlark/apps/rlark/pkg/agent/execution/fault"
 	"github.com/rlinf/rlark/apps/rlark/pkg/agent/execution/observability"
@@ -345,10 +346,11 @@ func (p *Provider) ListInstances(ctx context.Context, query agentruntime.Instanc
 		if err != nil {
 			return agentruntime.InstanceSnapshot{}, err
 		}
-		nodes, err := p.instanceNodes(ctx, object, pods, &objectsForRevision)
+		nodes, relatedNodes, err := taskprovider.ReadInstanceNodes(ctx, p.client, object, pods)
 		if err != nil {
 			return agentruntime.InstanceSnapshot{}, err
 		}
+		objectsForRevision = append(objectsForRevision, relatedNodes...)
 		for i := range pods {
 			pod := &pods[i]
 			objectsForRevision = append(objectsForRevision, pod)
@@ -771,7 +773,7 @@ func applyWorkload(current, desired client.Object, task agentruntime.TaskIdentit
 	// the API server when the declarative manifest leaves them unspecified. This
 	// avoids the common permanent update loop without pretending to reproduce the
 	// complete, version-dependent Kubernetes defaulting implementation.
-	keepPlatformAdditions(current, desired, canonicalGeneration)
+	taskprovider.KeepPlatformAdditions(current, workloadTemplatePointer(current), workloadTemplatePointer(desired), canonicalGeneration, preserveObservedPodDefaults)
 	annotationsBeforeMerge := maps.Clone(current.GetAnnotations())
 	specChanged := false
 	// TODO(execution): Replace the conservative common-default normalization and
@@ -790,7 +792,7 @@ func applyWorkload(current, desired client.Object, task agentruntime.TaskIdentit
 	case *appsv1.DaemonSet:
 		want := desired.(*appsv1.DaemonSet)
 		kubernetesobjects.MergeWorkloadAnnotations(existing, compatTask)
-		specChanged = takeRollout(existing, want) || !reflect.DeepEqual(existing.Spec.Template, want.Spec.Template)
+		specChanged = taskprovider.TakeRollout(existing, want) || !reflect.DeepEqual(existing.Spec.Template, want.Spec.Template)
 		existing.Spec.Template = want.Spec.Template
 	case *appsv1.StatefulSet:
 		want := desired.(*appsv1.StatefulSet)
@@ -1395,7 +1397,7 @@ func (p *Provider) podEvents(ctx context.Context, namespace string, pods []corev
 	return result, nil
 }
 
-func podInstance(runtimeID agentruntime.ID, task agentruntime.TaskIdentity, parent agentruntime.ObjectRef, pod *corev1.Pod, events []corev1.Event, node instanceNode) agentruntime.Instance {
+func podInstance(runtimeID agentruntime.ID, task agentruntime.TaskIdentity, parent agentruntime.ObjectRef, pod *corev1.Pod, events []corev1.Event, node taskprovider.InstanceNode) agentruntime.Instance {
 	conditions := make([]agentruntime.InstanceCondition, 0)
 	if pod.Spec.NodeName != "" {
 		conditions = append(conditions, agentruntime.InstanceCondition{Source: "kubernetes", Scope: "node", Subject: pod.Spec.NodeName})
@@ -1411,7 +1413,7 @@ func podInstance(runtimeID agentruntime.ID, task agentruntime.TaskIdentity, pare
 	for _, event := range events {
 		conditions = append(conditions, agentruntime.InstanceCondition{Source: "kubernetes", Scope: "instance", Subject: pod.Name, Reason: event.Reason, Message: event.Message})
 	}
-	conditions = append(conditions, perNodeConditions(pod, node)...)
+	conditions = append(conditions, taskprovider.PerNodeConditions(pod, node)...)
 	sort.SliceStable(conditions, func(i, j int) bool {
 		left, right := conditions[i], conditions[j]
 		return left.Scope+"/"+left.Subject+"/"+left.Reason+"/"+left.Message < right.Scope+"/"+right.Subject+"/"+right.Reason+"/"+right.Message

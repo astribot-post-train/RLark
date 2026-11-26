@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"github.com/rlinf/rlark/apps/rlark/astribot/agentconfig"
 	"math/rand"
 	"net"
 	"net/http"
@@ -34,7 +35,7 @@ func (a *Agent) runRegistrationTunnel(ctx context.Context, role string, register
 	}
 	connect := func() error {
 		startedAt := time.Now()
-		ready, changed := a.ready.announce(header)
+		ready, changed := a.ready.Announce(header)
 		ws, _, err := a.serverClient.DialWebsocket(ctx, header)
 		if err != nil {
 			return err
@@ -61,15 +62,15 @@ func (a *Agent) runRegistrationTunnel(ctx context.Context, role string, register
 
 		session := remotedialer.NewClientSessionWithDialer(auth, ws, netDialer)
 		defer session.Close()
-		go closeWhenChanged(session, changed, sessCtx)
+		go agentconfig.CloseWhenChanged(session, changed, sessCtx)
 
 		_, err = session.Serve(sessCtx)
 		stage, duration := session.Diagnostics()
 		logger.Info("tunnel session ended", "role", role, "ready", ready, "duration", duration, "stage", stage)
 		_ = startedAt
-		return changedOr(changed, err)
+		return agentconfig.ChangedOr(changed, err)
 	}
-	connect = reconnectOnChange(ctx, connect)
+	connect = agentconfig.ReconnectOnChange(ctx, connect)
 
 	for {
 		if err := connect(); err != nil {

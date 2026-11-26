@@ -55,3 +55,37 @@
   border-radius: 0;
   background: none;
 }
+
+.create-cluster-page .new-cluster-form {
+  align-items: flex-end;
+  flex-direction: column;
+}
+
+.create-cluster-page .new-cluster-field > input,
+.create-cluster-page .new-cluster-password input {
+  height: 44px;
+  background: var(--canvas);
+}
+
+.create-cluster-page .new-cluster-form-actions button {
+  height: 42px;
+  min-width: 150px;
+  justify-content: center;
+}
+
+@media (max-width: 620px) {
+  .create-cluster-page .new-cluster-form {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .create-cluster-page .new-cluster-form-actions button {
+    width: 100%;
+  }
+}
+
+.jobs-table-panel .job-table-submitter {
+  min-width: 84px;
+  max-width: 164px;
+  overflow-wrap: anywhere;
+}

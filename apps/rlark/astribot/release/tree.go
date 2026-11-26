@@ -103,10 +103,11 @@ type Pinned struct {
 }
 
 const (
-	catalogFiles     = "apps/rlark/pkg/addons/catalog/*/addon.yaml"
-	pinnedFile       = "astribot/release/pinned.yaml"
-	composeFile      = "astribot/release/control-plane/rlark.compose.yaml"
-	environmentFiles = "astribot/release/environments/*.yaml"
+	catalogFiles          = "apps/rlark/pkg/addons/catalog/*/addon.yaml"
+	extensionCatalogFiles = "apps/rlark/astribot/addoncatalog/catalog/*/addon.yaml"
+	pinnedFile            = "astribot/release/pinned.yaml"
+	composeFile           = "astribot/release/control-plane/rlark.compose.yaml"
+	environmentFiles      = "astribot/release/environments/*.yaml"
 )
 
 // ReadTree reads what a release takes of its tree out of an archive of it.
@@ -136,7 +137,7 @@ func ReadTree(file string) (Tree, error) {
 			tree.Environments = append(tree.Environments, strings.TrimSuffix(path.Base(name), ".yaml"))
 			continue
 		}
-		catalog := matches(catalogFiles)
+		catalog := matches(catalogFiles) || matches(extensionCatalogFiles)
 		definitions, memberDefinitions := slices.ContainsFunc(definitionFiles, matches), slices.ContainsFunc(memberDefinitionFiles, matches)
 		recorded, isRecorded := recordedFiles[name]
 		if !catalog && !definitions && !memberDefinitions && !isRecorded && name != pinnedFile && name != composeFile {
@@ -159,6 +160,9 @@ func ReadTree(file string) (Tree, error) {
 			}
 			if err := yaml.Unmarshal(data, &item); err != nil {
 				return Tree{}, fmt.Errorf("%s: %w", name, err)
+			}
+			if _, exists := tree.AddonVersions[item.Name]; exists {
+				return Tree{}, fmt.Errorf("%s: duplicate addon %q", name, item.Name)
 			}
 			tree.AddonVersions[item.Name] = item.Version
 		case name == pinnedFile:

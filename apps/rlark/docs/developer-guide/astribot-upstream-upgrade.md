@@ -13,7 +13,11 @@ The standard Astribot release applies CRDs and the generated management roles in
 
 ## Implementation in the compatibility branch
 
-The station running-images implementation, robot model catalog and console brand assets/configuration now live in the per-project Astribot directories. Gateway route registration, error translation and its integration test stay beside the shared route code. The remaining station Gateway groups, task adapters and UI overrides still need migration.
+Astribot-specific implementations are under `apps/rlark/astribot/`, `apps/rlark-ui/src/astribot/`, and `astribot/`. The Addon definitions, Station API clients, model catalog, running images, body state, camera and log proxy, discovery scan, Agent readiness and node-service proxy, per-node task status projection, and storage mount and encoding rules live there. The default UI test runner also includes `apps/rlark-ui/tests/astribot/`.
+
+Shared exceptions have two categories. Keep canonical CRD fields and generated artifacts, shared roles, HTTP authorization and error conversion, component wiring, and tests that exercise those shared entry points next to their upstream contracts. The stock `csi-driver-rclone` entry also carries Astribot parameters used by existing installations of the same Addon name and version. Migration remains open for Gateway admission, cluster provisioning, robot operations, registry and storage orchestration, Agent and provider adapters that use private controller state, and the remaining UI page hooks. Keep those exceptions visible during review.
+
+The reconciliation branch includes the v1.7.3 S1U telemetry source from the release build. The same hardware capability profile is embedded by Gateway and copied into the S1U image. Validate body state, both camera streams, the camera timing metrics, and site discovery in a test environment before using this branch for a release.
 
 The release tool acquires member Kubernetes Leases in sorted order before release writes, while retaining the management-plane site Lease. On a conflict it reports the holder and releases any member Leases already acquired. Before using this release tool, an administrator must apply the member release RBAC and provision `astribot/release/member-upgrade-lease.yaml` in each target cluster. Expiry alone does not clear a member holder. A takeover requires independent evidence that the old writer exited. Do not use an older release tool concurrently because it only knows the site Lease.
 

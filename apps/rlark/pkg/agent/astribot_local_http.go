@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"github.com/rlinf/rlark/apps/rlark/astribot/agentconfig"
 	"net/http"
 	"net/http/pprof"
 	"time"
@@ -74,11 +75,11 @@ func (a *Agent) handleReady(w http.ResponseWriter, _ *http.Request) {
 // supplies the probe and metrics listeners to the startup supervisor.
 func (a *Agent) astribotServices() []func(context.Context) error {
 	if a.config.Mode == "cluster" {
-		a.ready.set(partClusterWatches, false)
+		a.ready.Set(agentconfig.PartClusterWatches, false)
 	}
 	if a.config.HasNode() {
-		a.ready.set(partNodeWatches, false)
-		a.ready.set(partNodeServer, false)
+		a.ready.Set(agentconfig.PartNodeWatches, false)
+		a.ready.Set(agentconfig.PartNodeServer, false)
 	}
 	return []func(context.Context) error{
 		func(ctx context.Context) error { return serve(ctx, a.config.HealthProbeBindAddress, a.probeRouter()) },

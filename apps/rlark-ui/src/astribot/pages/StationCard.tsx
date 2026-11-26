@@ -5,7 +5,7 @@ import type { StationItem } from "../api";
 import type { ClusterSummary } from "../../types";
 import { NodeName, type NodeRef } from "../components/NodeName";
 import { RobotPoseButton } from "../components/RobotControls";
-import { cameraCells, cameraFramePath, publishedCameras, type CameraCell, type CameraView } from "../lib/cameras";
+import { cameraCells, cameraFramePath, formatCameraMilliseconds, publishedCameras, readCameraAge, type CameraCell, type CameraView } from "../lib/cameras";
 import { stationFacts } from "../lib/stationDrawer";
 import { shortUID, stationNetworkState, stationPhase, stationPhaseLabel, stationStatusClass } from "../lib/stationDisplay";
 import {
@@ -19,6 +19,8 @@ import { NetworkBadge } from "./StationFields";
 // strip of the smaller views. Frames are slow previews (one frame per view, five seconds); a frame click enlarges
 // that camera and never expands the card. Requests stop while the tile is off screen, the tab is hidden or the
 // detail below is open, which owns the live frames.
+type Snapshot = { url: string; age?: number; fetchMs: number; receivedAt: number };
+
 function CameraWall({ cells, node, namespace, zh, expanded, onZoom, overlayTop, overlayBottom }: {
   cells: CameraCell[];
   node: string;
@@ -26,12 +28,13 @@ function CameraWall({ cells, node, namespace, zh, expanded, onZoom, overlayTop, 
   zh: boolean;
   expanded: boolean;
   onZoom: (view: CameraView, trigger: HTMLElement) => void;
-  overlayTop?: ReactNode;
+  overlayTop: (metrics: string) => ReactNode;
   overlayBottom?: ReactNode;
 }) {
   const wall = useRef<HTMLDivElement>(null);
   const [visible, setVisible] = useState(false);
-  const [frames, setFrames] = useState<Partial<Record<CameraView, string>>>({});
+  const [frames, setFrames] = useState<Partial<Record<CameraView, Snapshot>>>({});
+  const [now, setNow] = useState(0);
   const views = cells.filter((cell) => cell.frames).map((cell) => cell.view);
   const viewsKey = views.join(",");
 
@@ -49,31 +52,55 @@ function CameraWall({ cells, node, namespace, zh, expanded, onZoom, overlayTop, 
 
   useEffect(() => {
     if (!visible || expanded || !viewsKey) return;
-    let stopped = false;
-    let timer = 0;
-    const shots: Partial<Record<CameraView, string>> = {};
+    const lifecycle = new AbortController();
+    let inFlight: AbortController | undefined;
+    const shots: Partial<Record<CameraView, Snapshot>> = {};
     setFrames({});
     const ask = async () => {
-      for (const view of views) {
-        if (stopped) return;
-        try {
-          const response = await request(cameraFramePath(node, namespace, view), { signal: AbortSignal.timeout(4000) });
-          const blob = await response.blob();
-          if (stopped) return;
-          if (shots[view]) URL.revokeObjectURL(shots[view]!);
-          shots[view] = URL.createObjectURL(blob);
-          setFrames({ ...shots });
-        } catch {
-          // A view without a frame keeps its state badge and the placeholder.
+      if (inFlight || document.hidden) return;
+      const batch = new AbortController();
+      inFlight = batch;
+      try {
+        for (const view of views) {
+          if (batch.signal.aborted || document.hidden) return;
+          const started = performance.now();
+          try {
+            const signal = AbortSignal.any([batch.signal, AbortSignal.timeout(4000)]);
+            const response = await request(cameraFramePath(node, namespace, view), { signal });
+            const blob = await response.blob();
+            if (batch.signal.aborted) return;
+            const receivedAt = performance.now();
+            const previous = shots[view];
+            if (previous) URL.revokeObjectURL(previous.url);
+            shots[view] = {
+              url: URL.createObjectURL(blob),
+              age: readCameraAge(response.headers.get("X-Age-Seconds")),
+              fetchMs: receivedAt - started,
+              receivedAt,
+            };
+            setNow(receivedAt);
+            setFrames({ ...shots });
+          } catch {
+            // Keep the last picture until the next successful fetch.
+          }
         }
+      } finally {
+        inFlight = undefined;
       }
     };
     void ask();
-    timer = window.setInterval(() => { if (!document.hidden) void ask(); }, 5000);
+    const timer = window.setInterval(() => void ask(), 5000);
+    const clock = window.setInterval(() => { if (!document.hidden) setNow(performance.now()); }, 1000);
+    document.addEventListener("visibilitychange", () => {
+      if (document.hidden) inFlight?.abort();
+      else void ask();
+    }, { signal: lifecycle.signal });
     return () => {
-      stopped = true;
+      lifecycle.abort();
+      inFlight?.abort();
       window.clearInterval(timer);
-      Object.values(shots).forEach((url) => { if (url) URL.revokeObjectURL(url); });
+      window.clearInterval(clock);
+      Object.values(shots).forEach((shot) => { if (shot) URL.revokeObjectURL(shot.url); });
     };
     // The frame set follows the published report; node and namespace identify the machine.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -81,23 +108,34 @@ function CameraWall({ cells, node, namespace, zh, expanded, onZoom, overlayTop, 
 
   const [big, ...small] = cells;
   const bigTitle = big ? [big.badge, big.note, big.advice].filter(Boolean).join(" · ") : undefined;
+  const metrics = (cell: CameraCell) => {
+    if (cell.present === false) return "";
+    const shot = frames[cell.view];
+    const stale = shot && ((shot.age ?? 0) >= 5 || now - shot.receivedAt >= 10000);
+    const age = formatCameraMilliseconds(shot?.age === undefined ? undefined : shot.age * 1000);
+    return [
+      `${zh ? "帧龄" : "Frame age"} ${age}`,
+      `${zh ? "取图" : "Fetch"} ${formatCameraMilliseconds(shot?.fetchMs)}`,
+      stale && (zh ? "画面已过期" : "Stale frame"),
+    ].filter(Boolean).join(" · ");
+  };
   return <div ref={wall} className="station-tile-media" role="group" aria-label={zh ? "相机" : "Cameras"}>
     <div className="station-tile-main">
       {big ? <button type="button" className={`station-camera is-big${big.present === false ? " is-missing" : ""}`}
         onClick={(event) => onZoom(big.view, event.currentTarget)} aria-haspopup="dialog"
         aria-label={`${big.name} · ${big.badge}`} title={bigTitle}>
-        <span className={`station-camera-frame is-${big.tone}`}>{frames[big.view] ? <img src={frames[big.view]} alt="" loading="lazy" /> : big.present === false ? <span aria-hidden="true">—</span> : <Camera size={22} aria-hidden="true" />}</span>
+        <span className={`station-camera-frame is-${big.tone}`}>{frames[big.view] ? <img src={frames[big.view]?.url} alt="" loading="lazy" /> : big.present === false ? <span aria-hidden="true">—</span> : <Camera size={22} aria-hidden="true" />}</span>
       </button> : <div className="station-camera is-big is-empty" aria-hidden="true">
         <span className="station-camera-frame"><Camera size={22} aria-hidden="true" /></span>
       </div>}
-      {overlayTop}
+      {overlayTop(big && big.present !== false ? `${big.name} · ${metrics(big)}` : "")}
       {overlayBottom}
     </div>
     {small.length > 0 && <div className="station-tile-strip" role="group" aria-label={zh ? "其余相机" : "Other cameras"}>
       {small.map((cell) => <button key={cell.view} type="button" className={`station-camera${cell.present === false ? " is-missing" : ""}`}
         onClick={(event) => onZoom(cell.view, event.currentTarget)} aria-haspopup="dialog"
-        aria-label={`${cell.name} · ${cell.badge}`} title={[cell.badge, cell.note, cell.advice].filter(Boolean).join(" · ")}>
-        <span className={`station-camera-frame is-${cell.tone}`}>{frames[cell.view] ? <img src={frames[cell.view]} alt="" loading="lazy" /> : cell.present === false ? <span aria-hidden="true">—</span> : <Camera size={16} aria-hidden="true" />}</span>
+        aria-label={`${cell.name} · ${cell.badge}`} title={[cell.badge, metrics(cell), cell.note, cell.advice].filter(Boolean).join(" · ")}>
+        <span className={`station-camera-frame is-${cell.tone}`}>{frames[cell.view] ? <img src={frames[cell.view]?.url} alt="" loading="lazy" /> : cell.present === false ? <span aria-hidden="true">—</span> : <Camera size={16} aria-hidden="true" />}</span>
         <span className="station-camera-caption"><strong>{cell.name}</strong><span className={`station-camera-state is-${cell.tone}`}><i />{cell.badge}</span></span>
       </button>)}
     </div>}
@@ -122,7 +160,7 @@ const cardPowerActual = (state: string | null, zh: boolean) =>
 export type StationCardVariant = "robot" | "node" | "control";
 
 export function StationCard({
-  station, cluster, node, siteNode, admission, labels, siteDataState, now, zh, expanded, chosen, power, variant,
+  station, cluster, node, siteNode, admission, labels, siteDataState, now, zh, expanded, previewing, chosen, power, variant,
   onToggle, onChoose, onZoom,
 }: {
   station: StationItem;
@@ -135,6 +173,7 @@ export function StationCard({
   now: number;
   zh: boolean;
   expanded: boolean;
+  previewing: boolean;
   chosen: boolean;
   power: { pending: boolean; press: (action: RobotPowerAction, label: string) => void };
   variant: StationCardVariant;
@@ -188,13 +227,14 @@ export function StationCard({
     // The camera-wall tile: identity and controls live on the picture itself. An alert state (a power fault or
     // e-stop, a failed self-check, or maintenance) rings the tile so a problem reads from across the room.
     const tileAlert = powerNow === "fault" || powerNow === "estop" || selfCheck === "failed" || Boolean(maintenance);
-    const overlayTop = <>
+    const overlayTop = (metrics: string) => <>
       <div className="station-tile-overlay is-top">
         <div className="station-tile-top">
           <input type="checkbox" className="station-card-check" aria-label={zh ? `选中 ${station.metadata.name}` : `Select ${station.metadata.name}`} checked={chosen} onChange={(event) => onChoose(event.target.checked)} />
           <div className="station-tile-name">
             <h3 id={nameID}><NodeName node={node} /></h3>
             <small>{machineModel(labels) || siteNode?.declared_type || siteNode?.observed_type || "—"} · <code className="inline-code">UID {shortUID(station.spec.nodeUID)}</code></small>
+            {metrics && <small className="station-tile-camera-metrics" title={zh ? "帧龄由相机服务上报，取图耗时由浏览器测量" : "Frame age is reported by the camera service. Fetch time is measured in the browser."}>{metrics}</small>}
           </div>
           <span className={`station-tile-phase status ${stationStatusClass(phase)}`}><i />{stationPhaseLabel(phase, zh)}</span>
           <button id={expanderID} type="button" className="station-tile-expand" aria-expanded={expanded} aria-haspopup="dialog" aria-controls={detailsID} aria-label={expanded ? (zh ? "收起详情" : "Collapse details") : (zh ? "展开详情" : "Expand details")} title={expanded ? (zh ? "收起详情" : "Collapse details") : (zh ? "展开详情" : "Expand details")} onClick={onToggle}>
@@ -224,7 +264,7 @@ export function StationCard({
       </div>
     </>;
     return <article className={`station-tile${expanded ? " is-expanded" : ""}${chosen ? " is-selected" : ""}${retired ? " is-retired" : ""}${tileAlert ? " is-alert" : ""}`} aria-labelledby={nameID} onKeyDown={onKeyDown}>
-      <CameraWall cells={cameraList} node={station.metadata.name} namespace={station.metadata.namespace} zh={zh} expanded={expanded} onZoom={onZoom} overlayTop={overlayTop} overlayBottom={overlayBottom} />
+      <CameraWall cells={cameraList} node={station.metadata.name} namespace={station.metadata.namespace} zh={zh} expanded={expanded || previewing} onZoom={onZoom} overlayTop={overlayTop} overlayBottom={overlayBottom} />
       <dl className="station-tile-facts">{facts.slice(0, 3).map((fact) => <div key={fact.key}><dt>{fact.label}</dt><dd>{fact.value}</dd></div>)}</dl>
     </article>;
   }

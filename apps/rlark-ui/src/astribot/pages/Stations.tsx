@@ -13,7 +13,7 @@ import { NodeName } from "../components/NodeName";
 import { useRobotPower } from "../components/useRobotPower";
 import { nodeLabel } from "../lib/displayName";
 import { clusterForStation, stationPhase } from "../lib/stationDisplay";
-import { isControlPlaneLabels } from "../../utils/nodeVisibility";
+import { isControlPlaneLabels } from "../lib/legacyWorkerVisibility";
 import { admissionStateLabel, isRobotNode, robotPowerAfter, robotPowerDesired, robotPowerState, type IssuedNodeAdmission, type NodeAdmission, type RobotPowerAction, type SiteNode } from "../lib/siteNodeDisplay";
 import { cameraCells, publishedCameras, type CameraCell, type CameraView } from "../lib/cameras";
 import { CameraPreviewDialog } from "./CameraPreviewDialog";
@@ -329,6 +329,7 @@ export function StationsPage({ copy: c, onJoin, onModels }: { copy: Copy; onJoin
       now={now}
       zh={zh}
       expanded={openKey === key}
+      previewing={Boolean(zoom)}
       chosen={chosen.has(key)}
       power={{ pending: power.pending, press: (action, label) => powerPress(item, action, label) }}
       variant={variant}

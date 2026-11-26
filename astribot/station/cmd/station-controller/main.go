@@ -21,7 +21,7 @@ import (
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 )
 
-// builtInAddonsDirectory is where this program's image holds the built-in addons (apps/rlark/pkg/addons/catalog).
+// builtInAddonsDirectory is where this program's image holds the built-in Addons from the upstream and Astribot catalogs.
 const builtInAddonsDirectory = "/usr/share/rlark/addons"
 
 func main() {

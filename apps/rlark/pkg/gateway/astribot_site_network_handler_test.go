@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/rlinf/rlark/apps/rlark/astribot/stationidentity"
 	"net/http/httptest"
 	"reflect"
 	"strings"
@@ -48,7 +49,8 @@ func siteNetworkGateway() (*Gateway, *unstructured.Unstructured) {
 	clusterA := &unstructured.Unstructured{Object: map[string]any{"apiVersion": "rlinf.io/v1alpha1", "kind": "Cluster", "metadata": map[string]any{"name": "cluster-a"}}}
 	clusterB := &unstructured.Unstructured{Object: map[string]any{"apiVersion": "rlinf.io/v1alpha1", "kind": "Cluster", "metadata": map[string]any{"name": "cluster-b"}}}
 	client := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), map[schema.GroupVersionResource]string{
-		siteNetworkGVR: "SiteNetworkList", nodeClassGVR: "NodeClassList", stationClusterGVR: "ClusterList",
+		networkEnrollmentGVR: "NetworkEnrollmentList",
+		siteNetworkGVR:       "SiteNetworkList", nodeClassGVR: "NodeClassList", stationClusterGVR: "ClusterList",
 	}, network, class, withoutDiscovery, clusterA, clusterB)
 	return &Gateway{astribotState: astribotState{stationClient: client}}, network
 }
@@ -81,7 +83,7 @@ func TestGetSiteNetworkReturnsSafeView(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	g, _ := siteNetworkGateway()
 	status, body := siteNetworkCall(t, g, g.handleGetSiteNetwork, "GET", "/api/v1/station/site-network", "", "admin")
-	var view siteNetworkView
+	var view stationidentity.SiteNetworkView
 	if err := json.Unmarshal(body, &view); err != nil || status != 200 {
 		t.Fatalf("GET status=%d err=%v body=%s", status, err, body)
 	}
@@ -122,7 +124,7 @@ func TestUpdateSiteDiscoveryPreservesOtherNetworkFields(t *testing.T) {
 	if status != 200 {
 		t.Fatalf("PUT status=%d body=%s", status, body)
 	}
-	var view siteNetworkView
+	var view stationidentity.SiteNetworkView
 	if err := json.Unmarshal(body, &view); err != nil || view.ResourceVersion != "8" {
 		t.Fatalf("updated view rv=%q err=%v body=%s", view.ResourceVersion, err, body)
 	}

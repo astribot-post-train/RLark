@@ -2,6 +2,7 @@ package agent
 
 import (
 	"fmt"
+	"github.com/rlinf/rlark/apps/rlark/astribot/agentconfig"
 	"math"
 	"net"
 	"net/url"
@@ -103,7 +104,7 @@ type Config struct {
 	ContainerdNamespace string
 	NodeName            string
 
-	AstribotConfig
+	agentconfig.AstribotConfig
 }
 
 // DefaultConfig returns the default config.
@@ -122,7 +123,7 @@ func DefaultConfig() Config {
 			config.Identity = common.Hostname("node")
 			return config
 		}(),
-		MetricsBindAddress:      astribotMetricsBindAddress,
+		MetricsBindAddress:      agentconfig.MetricsBindAddress,
 		ControllerConcurrency:   defaultControllerConcurrencyConfig(),
 		PodOrphanSweepInterval:  5 * time.Minute,
 		PodOrphanSweepPageSize:  200,
@@ -140,7 +141,7 @@ func DefaultConfig() Config {
 		ContainerdNamespace: "k8s.io",
 		NodeName:            os.Getenv("NODE_NAME"),
 
-		AstribotConfig: defaultAstribotConfig(),
+		AstribotConfig: agentconfig.DefaultConfig(),
 	}
 }
 
@@ -178,7 +179,7 @@ func (c *Config) SetupFlags(fs *pflag.FlagSet) {
 	fs.StringVar(&c.ContainerdSocket, "containerd-socket", c.ContainerdSocket, "containerd socket address used by ctr for image pulling (Kubernetes agent type)")
 	fs.StringVar(&c.ContainerdNamespace, "containerd-namespace", c.ContainerdNamespace, "containerd namespace used by ctr for image pulling (Kubernetes agent type, default k8s.io)")
 	fs.StringVar(&c.NodeName, "node-name", c.NodeName, "Name of the local node, used for Kubernetes node-selector matching (defaults to $NODE_NAME)")
-	c.AstribotConfig.setupFlags(fs)
+	c.AstribotConfig.SetupFlags(fs)
 }
 
 // RuntimeKind preserves the existing API/Provider/claimant identity independently

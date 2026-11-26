@@ -1,5 +1,5 @@
 import type { CRDNode } from "../../types.js";
-import { isControlPlaneLabels } from "../../utils/nodeVisibility.js";
+import { isControlPlaneLabels } from "./legacyWorkerVisibility.js";
 
 export interface ControlPlaneNode {
   name: string;

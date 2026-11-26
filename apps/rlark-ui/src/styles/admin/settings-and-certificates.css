@@ -154,18 +154,17 @@
   line-height: 1.55;
 }
 
-.create-cluster-page .new-cluster-form {
+.cluster-enrollment-card .cert-form {
   align-items: flex-end;
-  flex-direction: column;
+  flex-direction: row;
 }
 
-.create-cluster-page .new-cluster-field > input,
-.create-cluster-page .new-cluster-password input {
+.cluster-enrollment-card .cert-form input {
   height: 44px;
   background: var(--canvas);
 }
 
-.create-cluster-page .new-cluster-form-actions button {
+.cluster-enrollment-card .cert-form button {
   height: 42px;
   min-width: 150px;
   justify-content: center;
@@ -379,12 +378,12 @@
     flex-direction: column;
   }
 
-  .create-cluster-page .new-cluster-form {
+  .cluster-enrollment-card .cert-form {
     align-items: stretch;
     flex-direction: column;
   }
 
-  .create-cluster-page .new-cluster-form-actions button {
+  .cluster-enrollment-card .cert-form button {
     width: 100%;
   }
 }

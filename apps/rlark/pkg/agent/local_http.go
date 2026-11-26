@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"github.com/rlinf/rlark/apps/rlark/astribot/nodeagent"
 	"net/http"
 	"net/http/httputil"
 	"net/http/pprof"
@@ -58,7 +59,7 @@ func (a *Agent) localHTTPRouter() http.Handler {
 	r.Any("/api/kubernetes/*path", a.handleKubernetesProxy)
 	r.GET("/api/terminal/:namespace/:pod", a.handleTerminal)
 	r.Any("/api/proxy/*path", a.handleProxy)
-	a.astribotLocalRoutes(r)
+	nodeagent.RegisterServiceRoutes(r)
 	return r
 }
 

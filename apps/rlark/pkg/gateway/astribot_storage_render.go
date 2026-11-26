@@ -32,9 +32,9 @@ import (
 	"sigs.k8s.io/yaml"
 
 	"github.com/rlinf/rlark/apps/rlark/astribot/nodepath"
+	"github.com/rlinf/rlark/apps/rlark/astribot/storageconfig"
 	"github.com/rlinf/rlark/apps/rlark/astribot/storageref"
 	"github.com/rlinf/rlark/apps/rlark/pkg/distribution"
-	"github.com/rlinf/rlark/apps/rlark/pkg/gateway/storage"
 	"github.com/rlinf/rlark/apps/rlark/pkg/tenant"
 )
 
@@ -93,7 +93,7 @@ func storageProfileClasses(id string, stored storedStorageClass) ([]storageProfi
 			if profile == own {
 				cacheMode = stored.VFSCacheMode
 			}
-			options, backend, _, err := resolveS3MountOptions(profile, cacheMode, stored.MountOptions)
+			options, backend, _, err := storageconfig.ResolveS3MountOptions(profile, cacheMode, stored.MountOptions)
 			if err != nil {
 				if profile == own {
 					return nil, err
@@ -153,7 +153,7 @@ func storageDelivery(id string, stored storedStorageClass, mountEndpoint string)
 		return storageHostPathDelivery(id, stored, classes)
 	case storageTypeSMB:
 		// rclone's smb backend only accepts an obscured password.
-		pass, err := storage.RcloneObscure(stored.Password)
+		pass, err := storageconfig.RcloneObscure(stored.Password)
 		if err != nil {
 			return v1.Secret{}, fmt.Errorf("obscure smb password: %w", err)
 		}

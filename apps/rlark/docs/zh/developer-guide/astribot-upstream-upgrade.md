@@ -13,7 +13,11 @@ Astribot 标准发布在 `crds-rbac` 阶段应用 CRD 和生成的管理面角�
 
 ## 兼容分支实现进度
 
-场站运行镜像实现、机器人型号目录和控制台品牌资源及配置已迁入各工程的 Astribot 目录。Gateway 的路由注册、错误转换和集成测试保留在共享路由旁，其余场站 Gateway 路由组、任务适配器和 UI 覆盖仍待迁移。
+Astribot 专用实现放在 `apps/rlark/astribot/`、`apps/rlark-ui/src/astribot/` 和 `astribot/`。已归拢 Addon 定义、Station API 客户端、型号目录、运行镜像、本体状态、相机和日志代理、手动扫描、Agent 就绪判定、节点服务代理、逐节点任务状态转换，以及存储挂载和编码规则。前端默认测试命令也会运行 `apps/rlark-ui/tests/astribot/` 下的测试。
+
+CRD 字段与生成产物、共享角色、HTTP 鉴权和错误转换、组件接线及其集成测试随共享契约维护。已有安装通过同名同版本的 `csi-driver-rclone` 使用 Astribot 参数，因此该扩展仍在原 Addon 定义内。Gateway 的入网、集群配置、机器人操作、仓库与存储编排，依赖控制器内部状态的 Agent 和 provider 适配，以及剩余页面接入仍待迁移。审查时逐项核对这些例外。
+
+兼容分支已纳入 v1.7.3 发布构建使用的 S1U 遥测源码。Gateway 内嵌的硬件能力定义与 S1U 镜像复制的文件相同。使用该分支发布前，在测试环境验收本体状态、两路相机及其延迟指标和手动扫描。
 
 发布工具保留管理面的全站 Lease，同时在写入前按集群顺序获取成员 Kubernetes Lease。遇到冲突会报告持有者并释放本次已经获取的成员锁。使用新版发布工具前，管理员需给每个目标集群应用成员发布 RBAC 并预建 `astribot/release/member-upgrade-lease.yaml`。成员锁到期后仍须确认旧执行者已退出才能接管。旧发布工具只识别全站锁，应避免和新流程同时使用。
 

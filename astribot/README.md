@@ -13,15 +13,15 @@
 | `astribot/release/` | 构建（`build.sh`、`run.sh`）、发布文件（`releases/`）、环境（`environments/live.yaml`）、控制面 compose、镜像清单 |
 | `astribot/docs/` | 本目录的文档；`swagger.yaml` 是我们加的接口（叠在官方 `apps/rlark/docs/api/swagger.yaml` 上，`apps/rlark/pkg/gateway/astribot_swagger_test.go` 检查） |
 | `apps/rlark/astribot/` | 要和官方程序链接在一起的 Go 包：`release`、`rlarkctl`（release、station 命令）、`identity`、`idlerelay`、`inuse`、`nodeagent`、`nodepath`、`nodessh`、`resident`、`rollout`、`stationidentity`、`stationmember`、`storageref`；程序 `cmd/station-api`、`cmd/station-agent`、`cmd/csi-nodepath` |
-| `apps/rlark-ui/src/astribot/` | 控制台我们的页面；测试 `apps/rlark-ui/tests/astribot-*.test.mjs` |
-| `apps/rlark/pkg/addons/catalog/` | 我们加的 Addon：`csi-driver-nodepath`、`nvidia-gpu`、`package-proxy`、`registry-trust`、`s1u-robot`、`site-registry` |
+| `apps/rlark-ui/src/astribot/` | 控制台我们的页面；测试 `apps/rlark-ui/tests/astribot/*.test.mjs` |
+| `apps/rlark/astribot/addoncatalog/catalog/` | 我们加的 Addon：`csi-driver-nodepath`、`nvidia-gpu`、`package-proxy`、`registry-trust`、`s1u-robot`、`site-registry` |
 
 官方 Go 包里我们加的文件都叫 `astribot_<名字>.go`，所以 `git ls-files '*astribot*'` 列出我们的代码。例外只有生成的代码和上面的 Addon 目录。改了哪些官方文件、为什么，见 [upstream.md](docs/upstream.md)。
 
 ## 不能随手改的字节
 
-- **已发布的 Addon 版本不可变**。同一个“名字@版本”内容一变，Gateway 就回 409。改 `apps/rlark/pkg/addons/catalog/<名字>/` 下任何文件，同时升它 `addon.yaml` 的 `version`。
-- **Orin 上联脚本**。`astribot/s1u/orin/orin.py --uplink-setup` 的输出必须逐字节等于 `apps/rlark/pkg/addons/catalog/s1u-robot/bootstrap/orin-uplink.sh`（`astribot/s1u/tests/test_s1u.py` 检查），所以那里的注释还写着旧路径 `extensions/s1u`。改 `orin.py` 的这段输出或 `s1u-orin-uplink.service`，就重新生成这个文件（`python3 astribot/s1u/orin/orin.py --uplink-setup > apps/rlark/pkg/addons/catalog/s1u-robot/bootstrap/orin-uplink.sh`）并升 `s1u-robot` 的版本。
+- **已发布的 Addon 版本不可变**。同一个“名字@版本”内容一变，Gateway 就回 409。改 `apps/rlark/astribot/addoncatalog/catalog/<名字>/` 下任何文件，同时升它 `addon.yaml` 的 `version`。
+- **Orin 上联脚本**。`astribot/s1u/orin/orin.py --uplink-setup` 的输出必须逐字节等于 `apps/rlark/astribot/addoncatalog/catalog/s1u-robot/bootstrap/orin-uplink.sh`（`astribot/s1u/tests/test_s1u.py` 检查），所以那里的注释还写着旧路径 `extensions/s1u`。改 `orin.py` 的这段输出或 `s1u-orin-uplink.service`，就重新生成这个文件（`python3 astribot/s1u/orin/orin.py --uplink-setup > apps/rlark/astribot/addoncatalog/catalog/s1u-robot/bootstrap/orin-uplink.sh`）并升 `s1u-robot` 的版本。
 - **生成物**（CRD、clientset、deepcopy、控制台的 `src/generated`、`reference/crd.md`）不手改：`make generate`，`make verify-generated` 检查。
 
 ## 构建和测试

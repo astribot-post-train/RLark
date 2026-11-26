@@ -26,7 +26,7 @@ import {
 import { ColumnFilterPopover } from "../../components/ColumnFilterPopover";
 import { NodeNetworkAddresses } from "../components/NodeNetworkAddresses";
 import { useNodeNetworks } from "../components/useNodeNetworks";
-import { isControlPlaneLabels } from "../../utils/nodeVisibility";
+import { isControlPlaneLabels } from "../lib/legacyWorkerVisibility";
 import { RemoveNodeDialog } from "../pages/RemoveNodeDialog";
 import { useRemovalProgress } from "./removalProgressContext";
 import { removalOutcome, removalStageLabel, removalStageProgress } from "../lib/nodeRemoval";

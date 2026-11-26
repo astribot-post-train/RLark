@@ -3,6 +3,7 @@ package task
 import (
 	"context"
 	"fmt"
+	"github.com/rlinf/rlark/apps/rlark/astribot/taskstatus"
 	"os"
 	"strings"
 
@@ -158,7 +159,7 @@ func NewKubernetesHost(controller *Controller, execution *coordinator.Coordinato
 				ObjectUID: snapshot.Identity.ObjectUID, Generation: snapshot.Identity.Generation,
 				Phase: string(observed.Observation.Phase), MessageSet: true, Message: observed.Observation.Message,
 				ObservedSet: true, Observed: host.TaskObservation{
-					Nodes: instanceNodes(observed.Instances), Instances: perNodeInstances(observed.Instances),
+					Nodes: instanceNodes(observed.Instances), Instances: taskstatus.PerNodeInstances(observed.Instances),
 				},
 				Priority: host.StatusPriorityWorkload,
 			}

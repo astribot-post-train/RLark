@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/rlinf/rlark/apps/rlark/astribot/agentconfig"
 	"net"
 	"net/http"
 	"strings"
@@ -34,7 +35,7 @@ type Agent struct {
 
 	localListener net.Listener
 	localDialer   utils.Dial
-	ready         readiness
+	ready         agentconfig.Readiness
 	drainMu       sync.Mutex
 	drain         context.CancelFunc
 }
@@ -65,7 +66,7 @@ func (a *Agent) init(ctx context.Context) error {
 	var err error
 	a.config.AgentType = strings.ToLower(a.config.AgentType)
 	a.config.Execution.Image = a.config.Image
-	if err := a.config.AstribotConfig.apply(); err != nil {
+	if err := a.config.AstribotConfig.Apply(); err != nil {
 		return err
 	}
 	if err := a.config.Validate(); err != nil {

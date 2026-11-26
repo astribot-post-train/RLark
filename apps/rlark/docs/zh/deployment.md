@@ -434,6 +434,8 @@ Agent 通过 `--mode` 支持两种角色，语义独立于部署方式：
 
 rlark 支持跨数据面集群的声明式 Addon 管理。Addon 定义在 addon 目录（`../pkg/addons/catalog/`）中，通过 Addon API 安装。
 
+Astribot 的专用 Addon 定义放在 `apps/rlark/astribot/addoncatalog/catalog/`。Gateway 内嵌两个目录，Station Controller 打包及发布归档同样读取两处。源文件迁移保留已发布 Addon 的名称和版本标识。
+
 ### 6.1 Addon 目录结构
 
 ```

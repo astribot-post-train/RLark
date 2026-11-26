@@ -15,7 +15,7 @@ import pytest
 
 HERE = Path(__file__).resolve().parents[1]
 TUNER, ORIN, CLOCK = HERE / "tuner", HERE / "orin", HERE / "clock"
-CATALOG = HERE.parents[1] / "apps/rlark/pkg/addons/catalog/s1u-robot"
+CATALOG = HERE.parents[1] / "apps/rlark/astribot/addoncatalog/catalog/s1u-robot"
 for directory in (TUNER, ORIN, CLOCK):
     sys.path.insert(0, str(directory))  # node_tuner.py imports node_spec.py from beside itself
 specification = importlib.util.spec_from_file_location("node_tuner", TUNER / "node_tuner.py")

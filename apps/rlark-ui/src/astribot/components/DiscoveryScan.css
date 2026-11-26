@@ -1,0 +1,14 @@
+.station-discovery-control {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+}
+
+.station-discovery-control > small {
+  color: var(--muted);
+}
+
+.station-discovery-control > .station-discovery-error {
+  color: var(--red);
+}

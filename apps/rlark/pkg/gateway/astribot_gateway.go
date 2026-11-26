@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/rlinf/rlark/apps/rlark/astribot/stationidentity"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -71,11 +72,11 @@ func (g *Gateway) initAstribot(restConfig *rest.Config) error {
 	if len(g.config.RegistryBrowseAllowedHosts) == 0 {
 		return errors.New("--registry-browse-allowed-hosts is required")
 	}
-	g.networkSummary, err = newStationNetworkClient(g.config.StationAPIAddress, g.config.StationAPICAFile, g.config.StationGatewayCredentialFile)
+	g.networkSummary, err = stationidentity.NewNetworkClient(g.config.StationAPIAddress, g.config.StationAPICAFile, g.config.StationGatewayCredentialFile)
 	if err != nil {
 		return fmt.Errorf("configure Station network summaries: %w", err)
 	}
-	g.stationBootstrap, err = newStationBootstrapClient(g.config.StationAPIBootstrapURL, g.config.StationAPIAddress, g.config.StationAPICAFile)
+	g.stationBootstrap, err = stationidentity.NewBootstrapClient(g.config.StationAPIBootstrapURL, g.config.StationAPIAddress, g.config.StationAPICAFile)
 	if err != nil {
 		return fmt.Errorf("configure join codes: %w", err)
 	}
@@ -119,7 +120,7 @@ func (g *Gateway) registerAstribotRoutes(api *gin.RouterGroup) {
 	{
 		station.GET("", g.handleListStations)
 		station.GET("/:name", g.handleGetStation)
-		g.registerStationRunningImages(station)
+		g.registerStationObservation(station)
 		station.DELETE("/:name", g.handleDeleteStation)
 	}
 	stationNodeOperations := adminAPI.Group("/station/node-operations")
@@ -130,6 +131,9 @@ func (g *Gateway) registerAstribotRoutes(api *gin.RouterGroup) {
 	}
 	adminAPI.GET("/station/site-network", g.handleGetSiteNetwork)
 	adminAPI.PUT("/station/site-network/sites/:site/discovery", g.handleUpdateSiteDiscovery)
+	scanHandler := g.discoveryScanHandler()
+	adminAPI.GET("/station/site-network/sites/:site/scan", scanHandler)
+	adminAPI.POST("/station/site-network/sites/:site/scan", scanHandler)
 	g.registerRobotModelRoutes(adminAPI)
 	nodeAdmissions := adminAPI.Group("/station/node-admissions")
 	{

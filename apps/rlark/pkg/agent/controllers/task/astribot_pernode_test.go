@@ -20,7 +20,6 @@ import (
 	taskapi "github.com/rlinf/rlark/apps/rlark/pkg/agent/controllers/task/api"
 	kubernetesruntime "github.com/rlinf/rlark/apps/rlark/pkg/agent/controllers/task/runtime/kubernetes"
 	"github.com/rlinf/rlark/apps/rlark/pkg/agent/execution/host"
-	agentruntime "github.com/rlinf/rlark/apps/rlark/pkg/agent/execution/runtime"
 	"github.com/rlinf/rlark/apps/rlark/pkg/tenant"
 )
 
@@ -230,20 +229,5 @@ func TestPerNodeTaskFollowsItsNodes(t *testing.T) {
 	status = observe(map[string]bool{"robot-a": true, "robot-b": true}, pod("robot-a"), pod("robot-b"))
 	if status.Phase != rlarkv1alpha1.TaskPhaseRunning || status.Message != "" || !reflect.DeepEqual(status.Instances, []rlarkv1alpha1.TaskInstanceStatus{running("robot-a"), running("robot-b")}) {
 		t.Fatalf("node left: status=%#v", status)
-	}
-}
-
-func TestPerNodeInstancesAreSortedByNodeAndKeepTheMainImage(t *testing.T) {
-	instances := agentruntime.InstanceSnapshot{Instances: []agentruntime.Instance{
-		{Name: "task-z", Phase: "Pending", Conditions: []agentruntime.InstanceCondition{{Scope: "instance", Subject: "task-z", Reason: "FailedScheduling"}, {Scope: "image", Subject: "main", Message: "station:v2"}}},
-		{Name: "task-y", Phase: "Running", Conditions: []agentruntime.InstanceCondition{{Scope: "node", Subject: "a"}, {Scope: "image", Subject: "sidecar", Message: "tools:v1"}, {Scope: "image", Subject: "main", Message: "station:v1"}, {Scope: "instance", Subject: "task-y", Reason: "Ready"}}},
-	}}
-	got := perNodeInstances(instances)
-	want := []rlarkv1alpha1.TaskInstanceStatus{
-		{Name: "task-z", Phase: rlarkv1alpha1.TaskInstancePending, Image: "station:v2", Message: "FailedScheduling"},
-		{Node: "a", Name: "task-y", Phase: rlarkv1alpha1.TaskInstanceRunning, Image: "station:v1"},
-	}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("instances=%#v, want %#v", got, want)
 	}
 }

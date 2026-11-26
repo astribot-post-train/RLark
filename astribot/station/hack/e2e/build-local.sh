@@ -17,6 +17,7 @@ image() { # name entrypoint user directory package
 }
 image station-services /usr/local/bin/station-api 65532 apps/rlark ./astribot/cmd/station-api
 mkdir -p "$W/station-controller/usr/share/rlark" && cp -r "$REPO/apps/rlark/pkg/addons/catalog" "$W/station-controller/usr/share/rlark/addons"
+cp -r "$REPO/apps/rlark/astribot/addoncatalog/catalog/." "$W/station-controller/usr/share/rlark/addons/"
 image station-controller /station-controller 65532 astribot/station ./cmd/station-controller
 image station-agent /usr/local/bin/station-agent 65532 apps/rlark ./astribot/cmd/station-agent
 image station-wireguard /station-gateway 0 astribot/station-gateway .

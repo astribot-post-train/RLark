@@ -16,5 +16,6 @@ FROM ${RUNTIME_IMAGE}
 COPY --from=build /station-controller /station-controller
 # What the built-in addons publish for machines that are not nodes yet (a NodeClass's uplink.setup).
 COPY apps/rlark/pkg/addons/catalog /usr/share/rlark/addons
+COPY apps/rlark/astribot/addoncatalog/catalog /usr/share/rlark/addons
 USER 65532:65532
 ENTRYPOINT ["/station-controller"]

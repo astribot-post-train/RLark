@@ -3,6 +3,7 @@ import { ApiError, request, requestJson, withQuery } from "../api.js";
 import type { AdmittedMachine, IssuedNodeAdmission, MachineList, NodeAdmission, NodeClassAccess, RobotPowerDesired, SiteNode } from "./lib/siteNodeDisplay.js";
 import type { NodeJoin } from "./lib/nodeJoin.js";
 import type { ClusterProvision, NewClusterForm } from "./lib/clusterProvision.js";
+import type { BodyCapabilities, StationBodyState } from "./lib/bodyCapabilities.js";
 import type { CRDNode } from "../types.js";
 
 interface Condition {
@@ -112,6 +113,10 @@ export const stationsApi = {
   list(query: Record<string, string | undefined> = {}, signal?: AbortSignal) {
     return requestJson<Page<StationItem>>(withQuery("/api/v1/station/stations", query), { signal });
   },
+  bodyState(name: string, clusterID: string, nodeUID: string, signal: AbortSignal) {
+    const path = `/api/v1/station/stations/${encodeURIComponent(name)}/body-state`;
+    return requestJson<StationBodyState>(withQuery(path, { cluster_id: clusterID, node_uid: nodeUID }), { signal });
+  },
   runningImages(name: string, clusterID: string, nodeUID: string, signal?: AbortSignal) {
     const path = `/api/v1/station/stations/${encodeURIComponent(name)}/running-images`;
     return requestJson<{ items: StationRunningImage[] }>(withQuery(path, { cluster_id: clusterID, node_uid: nodeUID }), { signal });
@@ -132,8 +137,8 @@ export const stationsApi = {
   robotPose(node: string, namespace: string, action: "hold" | "stop", pose: RobotPose = "home", signal?: AbortSignal) {
     return requestJson<RobotPoseAnswer>(withQuery(`/api/v1/rlinf.io/v1alpha1/nodes/${encodeURIComponent(node)}/robot-pose`, { namespace }), {
       method: "POST",
-      signal,
       body: { pose, action },
+      signal,
     });
   },
 };
@@ -198,7 +203,24 @@ export interface SiteNetworkDiscoveryInput {
   discovery: SiteNetworkDiscovery | null;
 }
 
+export interface SiteDiscoveryScan {
+  id: string;
+  startedAt: string;
+  phase: "Running" | "Succeeded" | "Failed" | "TimedOut";
+  total: number;
+  completed: number;
+  failed: number;
+}
+
+const discoveryScanPath = (site: string) => `/api/v1/station/site-network/sites/${encodeURIComponent(site)}/scan`;
+
 export const siteNetworkApi = {
+  getScan(site: string, signal?: AbortSignal) {
+    return requestJson<SiteDiscoveryScan | null>(discoveryScanPath(site), { signal });
+  },
+  startScan(site: string, id: string) {
+    return requestJson<SiteDiscoveryScan>(discoveryScanPath(site), { method: "POST", body: { id } });
+  },
   get(signal?: AbortSignal) {
     return requestJson<SiteNetworkView>("/api/v1/station/site-network", { signal });
   },
@@ -215,6 +237,7 @@ export interface RobotModelItem {
   displayName?: string;
   vendor?: string;
   description?: string;
+  capabilities?: BodyCapabilities;
   references: { nodeClasses: number; nodes: number; machines: number; nodeAdmissions: number; nodeJoins: number };
 }
 

@@ -3,6 +3,7 @@ package gateway
 import (
 	"context"
 	"encoding/base64"
+	"github.com/rlinf/rlark/apps/rlark/astribot/storageconfig"
 	"net/http"
 	"testing"
 
@@ -16,39 +17,6 @@ import (
 	"github.com/rlinf/rlark/apps/rlark/pkg/distribution"
 )
 
-func TestStorageMountProfiles(t *testing.T) {
-	options, backend, cache, err := resolveS3MountOptions("archive", "", nil)
-	require.NoError(t, err)
-	require.Equal(t, "off", cache)
-	require.Contains(t, options, "dir-cache-time=5s")
-	require.Equal(t, map[string]string{"chunk_size": "32Mi", "upload_concurrency": "4"}, backend)
-	require.Contains(t, options, "attr-timeout=1s")
-	read, _, _, err := resolveS3MountOptions("read", "", []string{"low-level-retries=30"})
-	require.NoError(t, err)
-	require.Contains(t, read, "read-only=true")
-	require.Contains(t, read, "low-level-retries=30")
-	require.NotContains(t, read, "ignore-checksum=true")
-	// Resolving one mount must not change another mount's defaults.
-	defaults, _, _, err := resolveS3MountOptions("default", "", nil)
-	require.NoError(t, err)
-	require.NotContains(t, defaults, "read-only=true")
-	require.Contains(t, defaults, "vfs-cache-mode=writes")
-	for _, tc := range []struct {
-		profile, cache string
-		options        []string
-	}{
-		{"invalid", "", nil}, {"archive", "writes", nil}, {"read", "", []string{"read-only=false"}},
-		{"default", "", []string{"ignore-checksum"}}, {"default", "", []string{"tpslimit=2"}},
-		{"default", "", []string{"low-level-retries=0"}}, {"default", "", []string{"s3-chunk-size=4Mi"}},
-		{"default", "", []string{"s3-chunk-size=6Gi"}}, {"default", "", []string{"dir-cache-time=-1s"}},
-		{"default", "", []string{"transfers=0"}}, {"default", "", []string{"checkers=1", "checkers=2"}},
-		{"default", "", []string{"config=/tmp/credentials"}}, {"default", "", []string{"read-only=true\nfoo=bar"}},
-	} {
-		_, _, _, err := resolveS3MountOptions(tc.profile, tc.cache, tc.options)
-		require.Error(t, err, "%+v", tc)
-	}
-}
-
 func TestStorageMountPolicyRenderBackendAndRoundTrip(t *testing.T) {
 	options := []string{"s3-chunk-size=64Mi", "s3-upload-concurrency=2", "low-level-retries=30"}
 	s, err := normalizeStorageClass(CreateStorageClassRequest{Name: "archive", Clusters: []string{"cloud"}, Provider: "Other", Endpoint: "https://s3.example.com", Bucket: "bucket", AccessKeySecret: "secret", astribotStorageClassRequest: astribotStorageClassRequest{MountProfile: "archive", MountOptions: &options}})
@@ -59,7 +27,7 @@ func TestStorageMountPolicyRenderBackendAndRoundTrip(t *testing.T) {
 	_, decoded, err := storageClassFromSecret(declaration)
 	require.NoError(t, err)
 	require.Equal(t, s, decoded)
-	_, backend, _, err := resolveS3MountOptions(s.MountProfile, s.VFSCacheMode, s.MountOptions)
+	_, backend, _, err := storageconfig.ResolveS3MountOptions(s.MountProfile, s.VFSCacheMode, s.MountOptions)
 	require.NoError(t, err)
 	require.Equal(t, "64Mi", backend["chunk_size"])
 	require.Equal(t, "2", backend["upload_concurrency"])

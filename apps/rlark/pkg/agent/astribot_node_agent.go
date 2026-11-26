@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"fmt"
+	"github.com/rlinf/rlark/apps/rlark/astribot/agentconfig"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -64,7 +65,7 @@ func (n *nodeAgent) waitForFirstSync(ctx context.Context, informers []cache.Shar
 		}
 		return fmt.Errorf("the first watches of the management plane did not sync in %s", firstSyncTimeout)
 	}
-	n.a.ready.set(partNodeWatches, true)
+	n.a.ready.Set(agentconfig.PartNodeWatches, true)
 	return nil
 }
 

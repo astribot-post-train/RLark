@@ -675,8 +675,6 @@
 .stations-page .station-detail-robot {
   display: grid;
   gap: 10px;
-  padding-top: 12px;
-  border-top: 1px solid var(--line);
 }
 
 .stations-page .station-detail-robot-head {
@@ -968,6 +966,7 @@
 }
 
 .stations-page .station-tile-name small { display: flex; flex-wrap: wrap; gap: 2px 6px; color: rgb(255 255 255 / .72); font-size: 11px; }
+.stations-page .station-tile-name .station-tile-camera-metrics { color: rgb(255 255 255 / .9); font-variant-numeric: tabular-nums; }
 .stations-page .station-tile-name small .inline-code {
   padding: 0;
   border: 0;
@@ -1488,3 +1487,26 @@
   color: color-mix(in srgb, var(--red) 78%, var(--ink));
   font-weight: 650;
 }
+
+.stations-page .station-detail-metadata {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+.stations-page .station-detail-metadata > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 11px 13px;
+  list-style: none;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+}
+.stations-page .station-detail-metadata > summary::-webkit-details-marker { display: none; }
+.stations-page .station-detail-metadata > summary span { display: inline-flex; align-items: center; gap: 7px; }
+.stations-page .station-detail-metadata > summary svg { color: var(--muted); flex: none; }
+.stations-page .station-detail-metadata[open] > summary { border-bottom: 1px solid var(--line); }
+.stations-page .station-detail-metadata[open] > summary > svg { transform: rotate(180deg); }
+.stations-page .station-detail-metadata > :not(summary) { margin: 13px; }

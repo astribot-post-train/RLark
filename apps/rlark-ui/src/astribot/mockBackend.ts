@@ -1,3 +1,4 @@
+import type { SiteDiscoveryScan } from "./api";
 // The mock console's answers to the Gateway routes this fork adds or changes. mockBackend.ts asks
 // astribotMockRoute first and adds the fields of our storages to the ones it saves.
 import type { CRDNode } from "../types.js";
@@ -129,12 +130,13 @@ const mockSiteNetwork = {
     { clusterID: "rlark-ksyun-gpu", nodeName: "10-0-2-57", role: "Hub", site: "ksyun", address: "10.254.240.2" },
   ],
   nodeClasses: [{ name: "s1u", hasAccess: true, hasDiscovery: true, entryPort: 22, hostKeyFingerprints: ["SHA256:mock-factory-key"] }],
-  status: { observedGeneration: 11, members: 4, unreachable: [], conditions: [
+  status: { observedGeneration: 12, members: 4, unreachable: [], conditions: [
     { type: "Ready", status: "True", reason: "Computed", message: "" },
     { type: "FullyConnected", status: "True", reason: "AllPairsReachable", message: "" },
-    { type: "DiscoveryStale", status: "False", reason: "HubsReport", message: "" },
   ] },
 };
+
+const mockDiscoveryScans = new Map<string, SiteDiscoveryScan>();
 
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), {
@@ -155,6 +157,25 @@ export interface MockState {
 // The answer to a request on one of our routes; undefined for RLark's own.
 export async function astribotMockRoute(method: string, path: string, request: Request, state: MockState) {
   if (method === "GET" && path === "/api/v1/station/site-network") return json(mockSiteNetwork);
+  const scanRoute = path.match(/^\/api\/v1\/station\/site-network\/sites\/([^/]+)\/scan$/);
+  if (scanRoute && (method === "GET" || method === "POST")) {
+    const siteName = decodeURIComponent(scanRoute[1]);
+    const site = mockSiteNetwork.sites.find((item) => item.name === siteName);
+    if (!site) return json({ code: "RESOURCE_NOT_FOUND", message: "site not found" }, 404);
+    const current = mockDiscoveryScans.get(siteName);
+    if (current?.phase === "Running" && Date.now() - Date.parse(current.startedAt) > 2500) {
+      current.phase = "Succeeded";
+      current.completed = current.total;
+    }
+    if (method === "GET") return json(current ?? null);
+    const { id } = await request.json();
+    if (current && (current.id === id || current.phase === "Running")) return json(current, current.phase === "Running" ? 202 : 200);
+    if (!site.discovery?.enabled) return json({ code: "RESOURCE_CONFLICT", message: "Save scan settings first." }, 409);
+    const total = mockSiteNetwork.members.filter((member) => member.site === siteName && member.role === "Hub").length;
+    const scan: SiteDiscoveryScan = { id, startedAt: new Date().toISOString(), phase: "Running", total, completed: 0, failed: 0 };
+    mockDiscoveryScans.set(siteName, scan);
+    return json(scan, 202);
+  }
   const discoveryRoute = path.match(/^\/api\/v1\/station\/site-network\/sites\/([^/]+)\/discovery$/);
   if (method === "PUT" && discoveryRoute) {
     const body = await request.json();
@@ -165,7 +186,8 @@ export async function astribotMockRoute(method: string, path: string, request: R
     site.discovery = body.discovery;
     mockSiteNetwork.resourceVersion = `mock-rv-${Number(mockSiteNetwork.resourceVersion.split("-").at(-1)) + 1}`;
     mockSiteNetwork.generation += 1;
-    return json({ resourceVersion: mockSiteNetwork.resourceVersion, site });
+    mockSiteNetwork.status.observedGeneration = mockSiteNetwork.generation;
+    return json(mockSiteNetwork);
   }
   // The site-node page's fixtures: the same shapes the Gateway serves, so the real cards and detail render.
   const query = new URL(request.url).searchParams;

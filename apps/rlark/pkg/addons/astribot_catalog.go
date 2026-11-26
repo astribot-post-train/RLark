@@ -2,7 +2,6 @@ package addons
 
 import (
 	"bytes"
-	"embed"
 	"fmt"
 	"io/fs"
 	"log"
@@ -14,13 +13,12 @@ import (
 	"text/template"
 	"time"
 
+	"github.com/rlinf/rlark/apps/rlark/astribot/addoncatalog"
+
 	"go.yaml.in/yaml/v3"
 	"k8s.io/apimachinery/pkg/util/validation"
 	utilversion "k8s.io/apimachinery/pkg/util/version"
 )
-
-//go:embed catalog/*/bootstrap
-var publishedFS embed.FS
 
 // Published returns a file a built-in item publishes for machines that are
 // not nodes yet (its bootstrap directory; a NodeClass's uplink.setup names
@@ -33,7 +31,7 @@ func Published(item, name string) (data []byte, builtIn bool, err error) {
 	if !fs.ValidPath(name) || !strings.HasPrefix(name, "bootstrap/") {
 		return nil, true, fmt.Errorf("%s of %s is not a file the item publishes", name, item)
 	}
-	data, err = publishedFS.ReadFile(path.Join("catalog", item, name))
+	data, err = fs.ReadFile(addoncatalog.Files(), path.Join("catalog", item, name))
 	return data, true, err
 }
 
@@ -217,30 +215,46 @@ var Catalog = newCatalog(os.Getenv(CatalogDirEnv))
 
 func newCatalog(dir string) *catalog {
 	c := &catalog{builtIn: map[string]*Item{}, dir: dir}
-	entries, err := addonYAMLs.ReadDir("catalog")
+	extension := addoncatalog.Files()
+	for _, sources := range []struct{ metadata, manifests fs.FS }{
+		{addonYAMLs, manifestsFS},
+		{extension, extension},
+	} {
+		if err := c.loadBuiltIn(sources.metadata, sources.manifests); err != nil {
+			panic(fmt.Sprintf("failed to load addon catalog: %v", err))
+		}
+	}
+	return c
+}
+
+func (c *catalog) loadBuiltIn(metadata, manifests fs.FS) error {
+	entries, err := fs.ReadDir(metadata, "catalog")
 	if err != nil {
-		panic(fmt.Sprintf("failed to load addon catalog: %v", err))
+		return err
 	}
 	for _, entry := range entries {
 		if !entry.IsDir() {
 			continue
 		}
 		yamlPath := path.Join("catalog", entry.Name(), packageMetaFile)
-		data, err := addonYAMLs.ReadFile(yamlPath)
+		data, err := fs.ReadFile(metadata, yamlPath)
 		if err != nil {
-			panic(fmt.Sprintf("failed to load addon catalog: read %s: %v", yamlPath, err))
+			return fmt.Errorf("read %s: %w", yamlPath, err)
 		}
 		meta, err := parseMeta(data)
 		if err != nil {
-			panic(fmt.Sprintf("failed to load addon catalog: unmarshal %s: %v", yamlPath, err))
+			return fmt.Errorf("unmarshal %s: %w", yamlPath, err)
 		}
-		templates, err := readTemplates(manifestsFS, path.Join("catalog", entry.Name(), "manifests"))
+		templates, err := readTemplates(manifests, path.Join("catalog", entry.Name(), "manifests"))
 		if err != nil {
-			panic(fmt.Sprintf("failed to load addon catalog: %v", err))
+			return err
+		}
+		if _, exists := c.builtIn[meta.Name]; exists {
+			return fmt.Errorf("duplicate built-in addon %q", meta.Name)
 		}
 		c.builtIn[meta.Name] = &Item{meta: meta, metaRaw: data, templates: templates}
 	}
-	return c
+	return nil
 }
 
 // List returns every item of the catalog, each version of a name on its own.

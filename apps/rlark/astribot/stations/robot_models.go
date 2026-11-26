@@ -2,6 +2,7 @@ package stations
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -36,11 +37,12 @@ type robotModelReferenceCounts struct {
 }
 
 type robotModelView struct {
-	Name        string                    `json:"name"`
-	DisplayName string                    `json:"displayName,omitempty"`
-	Vendor      string                    `json:"vendor,omitempty"`
-	Description string                    `json:"description,omitempty"`
-	References  robotModelReferenceCounts `json:"references"`
+	Name         string                    `json:"name"`
+	DisplayName  string                    `json:"displayName,omitempty"`
+	Vendor       string                    `json:"vendor,omitempty"`
+	Description  string                    `json:"description,omitempty"`
+	Capabilities json.RawMessage           `json:"capabilities,omitempty"`
+	References   robotModelReferenceCounts `json:"references"`
 }
 
 func (r RobotModelRoutes) references(c *gin.Context, name string) (robotModelReferenceCounts, error) {
@@ -137,7 +139,7 @@ func (r RobotModelRoutes) list(c *gin.Context) {
 		displayName, _, _ := unstructured.NestedString(object.Object, "spec", "displayName")
 		vendor, _, _ := unstructured.NestedString(object.Object, "spec", "vendor")
 		description, _, _ := unstructured.NestedString(object.Object, "spec", "description")
-		items = append(items, robotModelView{Name: object.GetName(), DisplayName: displayName, Vendor: vendor, Description: description, References: counts})
+		items = append(items, robotModelView{Name: object.GetName(), DisplayName: displayName, Vendor: vendor, Description: description, Capabilities: modelCapabilities(object.GetName()), References: counts})
 	}
 	c.JSON(http.StatusOK, gin.H{"items": items})
 }

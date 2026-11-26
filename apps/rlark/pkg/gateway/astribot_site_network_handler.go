@@ -2,9 +2,8 @@ package gateway
 
 import (
 	"encoding/json"
-	"fmt"
+	"github.com/rlinf/rlark/apps/rlark/astribot/stationidentity"
 	"net/http"
-	"net/netip"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -15,145 +14,6 @@ import (
 
 	"github.com/rlinf/rlark/apps/rlark/pkg/log"
 )
-
-type siteDiscoveryFrom struct {
-	ClusterID string `json:"clusterID"`
-	NodeName  string `json:"nodeName"`
-}
-
-type siteDiscovery struct {
-	Enabled             bool              `json:"enabled"`
-	Ranges              []string          `json:"ranges"`
-	IntervalSeconds     int64             `json:"intervalSeconds"`
-	From                siteDiscoveryFrom `json:"from"`
-	IncludeUnclassified bool              `json:"includeUnclassified,omitempty"`
-	SSHPorts            []int64           `json:"sshPorts,omitempty"`
-}
-
-type siteNetworkSite struct {
-	Name      string         `json:"name"`
-	Clusters  []string       `json:"clusters"`
-	Discovery *siteDiscovery `json:"discovery"`
-}
-
-type siteNetworkView struct {
-	ResourceVersion string            `json:"resourceVersion"`
-	Generation      int64             `json:"generation"`
-	Sites           []siteNetworkSite `json:"sites"`
-	Members         []map[string]any  `json:"members"`
-	NodeClasses     []map[string]any  `json:"nodeClasses"`
-	Status          map[string]any    `json:"status"`
-}
-
-func siteNetworkDiscovery(network *unstructured.Unstructured, site string) *siteDiscovery {
-	sites, _, _ := unstructured.NestedSlice(network.Object, "spec", "sites")
-	for _, raw := range sites {
-		entry, _ := raw.(map[string]any)
-		if entry["name"] != site {
-			continue
-		}
-		discovery, ok := entry["discovery"].(map[string]any)
-		if !ok || discovery == nil {
-			return nil
-		}
-		view := &siteDiscovery{}
-		view.Enabled, _, _ = unstructured.NestedBool(discovery, "enabled")
-		view.Ranges, _, _ = unstructured.NestedStringSlice(discovery, "ranges")
-		view.IntervalSeconds, _, _ = unstructured.NestedInt64(discovery, "intervalSeconds")
-		view.IncludeUnclassified, _, _ = unstructured.NestedBool(discovery, "includeUnclassified")
-		ports, _, _ := unstructured.NestedSlice(discovery, "sshPorts")
-		for _, rawPort := range ports {
-			if port, ok := rawPort.(int64); ok {
-				view.SSHPorts = append(view.SSHPorts, port)
-			}
-			if port, ok := rawPort.(int); ok {
-				view.SSHPorts = append(view.SSHPorts, int64(port))
-			}
-		}
-		view.From.ClusterID, _, _ = unstructured.NestedString(discovery, "from", "clusterID")
-		view.From.NodeName, _, _ = unstructured.NestedString(discovery, "from", "nodeName")
-		return view
-	}
-	return nil
-}
-
-func siteNetworkViewOf(network *unstructured.Unstructured, classes *unstructured.UnstructuredList) siteNetworkView {
-	view := siteNetworkView{
-		ResourceVersion: network.GetResourceVersion(),
-		Generation:      network.GetGeneration(),
-		Sites:           []siteNetworkSite{},
-		Members:         []map[string]any{},
-		NodeClasses:     []map[string]any{},
-		Status:          map[string]any{},
-	}
-	sites, _, _ := unstructured.NestedSlice(network.Object, "spec", "sites")
-	for _, raw := range sites {
-		entry, _ := raw.(map[string]any)
-		name, _ := entry["name"].(string)
-		clusters, _, _ := unstructured.NestedStringSlice(entry, "clusters")
-		view.Sites = append(view.Sites, siteNetworkSite{Name: name, Clusters: clusters, Discovery: siteNetworkDiscovery(network, name)})
-	}
-	clusterSites := map[string]string{}
-	for _, site := range view.Sites {
-		for _, cluster := range site.Clusters {
-			clusterSites[cluster] = site.Name
-		}
-	}
-	nodes, _, _ := unstructured.NestedSlice(network.Object, "spec", "nodes")
-	for _, raw := range nodes {
-		entry, _ := raw.(map[string]any)
-		member := map[string]any{}
-		for _, field := range []string{"clusterID", "nodeName", "role", "address", "site"} {
-			if value, ok := entry[field]; ok {
-				member[field] = value
-			}
-		}
-		if member["site"] == nil {
-			member["site"] = clusterSites[fmt.Sprint(entry["clusterID"])]
-		}
-		view.Members = append(view.Members, member)
-	}
-	for i := range classes.Items {
-		class := &classes.Items[i]
-		access, hasAccess, _ := unstructured.NestedMap(class.Object, "spec", "access")
-		discovery, hasDiscovery, _ := unstructured.NestedMap(class.Object, "spec", "discovery")
-		if !hasAccess || !hasDiscovery {
-			continue
-		}
-		item := map[string]any{"name": class.GetName(), "hasAccess": true, "hasDiscovery": true}
-		if port, found, _ := unstructured.NestedInt64(access, "entry", "port"); found {
-			item["entryPort"] = port
-		}
-		fingerprints, _, _ := unstructured.NestedStringSlice(discovery, "hostKeyFingerprints")
-		if fingerprints == nil {
-			fingerprints = []string{}
-		}
-		item["hostKeyFingerprints"] = fingerprints
-		view.NodeClasses = append(view.NodeClasses, item)
-	}
-	if status, found, _ := unstructured.NestedMap(network.Object, "status"); found {
-		encoded, _ := json.Marshal(status)
-		_ = json.Unmarshal(encoded, &view.Status)
-		if view.Status == nil {
-			view.Status = map[string]any{}
-		}
-		if declared, ok := view.Status["declared"].([]any); ok {
-			for _, raw := range declared {
-				entry, _ := raw.(map[string]any)
-				delete(entry, "config")
-			}
-		}
-	}
-	// A SiteNetwork without status still answers with the arrays the console
-	// expects, so a fresh site network does not read as a broken response.
-	if _, ok := view.Status["conditions"]; !ok {
-		view.Status["conditions"] = []any{}
-	}
-	if _, ok := view.Status["unreachable"]; !ok {
-		view.Status["unreachable"] = []any{}
-	}
-	return view
-}
 
 func (g *Gateway) handleGetSiteNetwork(c *gin.Context) {
 	network, err := g.siteNetwork(c.Request.Context())
@@ -170,52 +30,12 @@ func (g *Gateway) handleGetSiteNetwork(c *gin.Context) {
 		respondKubeError(c, "NodeClass request failed", err)
 		return
 	}
-	c.JSON(http.StatusOK, siteNetworkViewOf(network, classes))
+	c.JSON(http.StatusOK, stationidentity.SiteNetworkViewOf(network, classes))
 }
 
 type updateSiteDiscoveryRequest struct {
 	ResourceVersion string          `json:"resourceVersion"`
 	Discovery       json.RawMessage `json:"discovery"`
-}
-
-func validateSiteDiscovery(discovery *siteDiscovery) error {
-	if discovery == nil {
-		return nil
-	}
-	if discovery.Ranges == nil || len(discovery.Ranges) < 1 || len(discovery.Ranges) > 8 {
-		return fmt.Errorf("ranges must be 1 to 8 IPv4 prefixes of /22 or shorter")
-	}
-	seen := make(map[string]struct{}, len(discovery.Ranges))
-	for i, raw := range discovery.Ranges {
-		prefix, err := netip.ParsePrefix(raw)
-		if err != nil || !prefix.Addr().Is4() || prefix.Bits() < 22 {
-			return fmt.Errorf("ranges must be 1 to 8 IPv4 prefixes of /22 or shorter")
-		}
-		canonical := prefix.Masked().String()
-		if _, exists := seen[canonical]; exists {
-			return fmt.Errorf("ranges must be 1 to 8 IPv4 prefixes of /22 or shorter")
-		}
-		seen[canonical] = struct{}{}
-		discovery.Ranges[i] = canonical
-	}
-	if discovery.IntervalSeconds < 10 || discovery.IntervalSeconds > 3600 {
-		return fmt.Errorf("intervalSeconds must be between 10 and 3600")
-	}
-	if len(discovery.From.ClusterID) == 0 || len(discovery.From.ClusterID) > 128 ||
-		len(discovery.From.NodeName) == 0 || len(discovery.From.NodeName) > 253 {
-		return fmt.Errorf("from must name a Hub of the network")
-	}
-	if len(discovery.SSHPorts) > 4 {
-		return fmt.Errorf("sshPorts must have at most 4 ports")
-	}
-	seenPorts := map[int64]bool{}
-	for _, port := range discovery.SSHPorts {
-		if port < 1 || port > 65535 || seenPorts[port] {
-			return fmt.Errorf("sshPorts must contain unique ports between 1 and 65535")
-		}
-		seenPorts[port] = true
-	}
-	return nil
 }
 
 func (g *Gateway) handleUpdateSiteDiscovery(c *gin.Context) {
@@ -236,15 +56,15 @@ func (g *Gateway) handleUpdateSiteDiscovery(c *gin.Context) {
 		respondError(c, http.StatusBadRequest, CodeInvalidRequest, "site must be a DNS label of at most 63 characters")
 		return
 	}
-	var discovery *siteDiscovery
+	var discovery *stationidentity.DiscoverySettings
 	if len(request.Discovery) != 0 && strings.TrimSpace(string(request.Discovery)) != "null" {
 		var value struct {
-			Enabled             *bool              `json:"enabled"`
-			Ranges              []string           `json:"ranges"`
-			IntervalSeconds     *int64             `json:"intervalSeconds"`
-			From                *siteDiscoveryFrom `json:"from"`
-			IncludeUnclassified bool               `json:"includeUnclassified,omitempty"`
-			SSHPorts            []int64            `json:"sshPorts,omitempty"`
+			Enabled             *bool                            `json:"enabled"`
+			Ranges              []string                         `json:"ranges"`
+			IntervalSeconds     *int64                           `json:"intervalSeconds"`
+			From                *stationidentity.DiscoverySource `json:"from"`
+			IncludeUnclassified bool                             `json:"includeUnclassified,omitempty"`
+			SSHPorts            []int64                          `json:"sshPorts,omitempty"`
 		}
 		decoder := json.NewDecoder(strings.NewReader(string(request.Discovery)))
 		decoder.DisallowUnknownFields()
@@ -260,7 +80,7 @@ func (g *Gateway) handleUpdateSiteDiscovery(c *gin.Context) {
 		if value.IntervalSeconds != nil {
 			interval = *value.IntervalSeconds
 		}
-		from := siteDiscoveryFrom{}
+		from := stationidentity.DiscoverySource{}
 		if value.From != nil {
 			from = *value.From
 		}
@@ -268,8 +88,8 @@ func (g *Gateway) handleUpdateSiteDiscovery(c *gin.Context) {
 			respondError(c, http.StatusBadRequest, CodeInvalidRequest, "from must name a Hub of the network")
 			return
 		}
-		discovery = &siteDiscovery{Enabled: *value.Enabled, Ranges: value.Ranges, IntervalSeconds: interval, From: from, IncludeUnclassified: value.IncludeUnclassified, SSHPorts: value.SSHPorts}
-		if err := validateSiteDiscovery(discovery); err != nil {
+		discovery = &stationidentity.DiscoverySettings{Enabled: *value.Enabled, Ranges: value.Ranges, IntervalSeconds: interval, From: from, IncludeUnclassified: value.IncludeUnclassified, SSHPorts: value.SSHPorts}
+		if err := stationidentity.ValidateSiteDiscovery(discovery); err != nil {
 			respondError(c, http.StatusBadRequest, CodeInvalidRequest, err.Error())
 			return
 		}
@@ -291,14 +111,14 @@ func (g *Gateway) handleUpdateSiteDiscovery(c *gin.Context) {
 	}
 	sites, _, _ := unstructured.NestedSlice(network.Object, "spec", "sites")
 	found := false
-	var previous *siteDiscovery
+	var previous *stationidentity.DiscoverySettings
 	for i, raw := range sites {
 		entry, _ := raw.(map[string]any)
 		if entry["name"] != site {
 			continue
 		}
 		found = true
-		previous = siteNetworkDiscovery(network, site)
+		previous = stationidentity.SiteNetworkDiscovery(network, site)
 		if discovery == nil {
 			delete(entry, "discovery")
 		} else {
@@ -315,7 +135,7 @@ func (g *Gateway) handleUpdateSiteDiscovery(c *gin.Context) {
 				}
 				value["sshPorts"] = ports
 			}
-			if err := validateSiteDiscoveryMember(network, discovery.From); err != nil {
+			if err := stationidentity.ValidateSiteDiscoveryMember(network, discovery.From); err != nil {
 				respondError(c, http.StatusBadRequest, CodeInvalidRequest, err.Error())
 				return
 			}
@@ -360,18 +180,7 @@ func (g *Gateway) handleUpdateSiteDiscovery(c *gin.Context) {
 		"enabled", discovery != nil && discovery.Enabled, "ranges", discoveryRanges(discovery),
 		"intervalSeconds", discoveryInterval(discovery), "from", discoveryFrom(discovery),
 		"resourceVersion", request.ResourceVersion, "newResourceVersion", updated.GetResourceVersion())
-	c.JSON(http.StatusOK, siteNetworkViewOf(updated, classes))
-}
-
-func validateSiteDiscoveryMember(network *unstructured.Unstructured, from siteDiscoveryFrom) error {
-	nodes, _, _ := unstructured.NestedSlice(network.Object, "spec", "nodes")
-	for _, raw := range nodes {
-		entry, _ := raw.(map[string]any)
-		if entry["clusterID"] == from.ClusterID && entry["nodeName"] == from.NodeName && entry["role"] == "Hub" {
-			return nil
-		}
-	}
-	return fmt.Errorf("from must name a Hub of the network")
+	c.JSON(http.StatusOK, stationidentity.SiteNetworkViewOf(updated, classes))
 }
 
 func stringInterfaces(values []string) []any {
@@ -382,25 +191,25 @@ func stringInterfaces(values []string) []any {
 	return result
 }
 
-func discoveryRanges(discovery *siteDiscovery) []string {
+func discoveryRanges(discovery *stationidentity.DiscoverySettings) []string {
 	if discovery == nil {
 		return nil
 	}
 	return discovery.Ranges
 }
 
-func discoveryEnabled(discovery *siteDiscovery) bool {
+func discoveryEnabled(discovery *stationidentity.DiscoverySettings) bool {
 	return discovery != nil && discovery.Enabled
 }
 
-func discoveryInterval(discovery *siteDiscovery) int64 {
+func discoveryInterval(discovery *stationidentity.DiscoverySettings) int64 {
 	if discovery == nil {
 		return 0
 	}
 	return discovery.IntervalSeconds
 }
 
-func discoveryFrom(discovery *siteDiscovery) string {
+func discoveryFrom(discovery *stationidentity.DiscoverySettings) string {
 	if discovery == nil {
 		return ""
 	}

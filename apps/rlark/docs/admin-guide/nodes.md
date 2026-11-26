@@ -187,11 +187,11 @@ In Administrator Console → Site Nodes → Add node, choose a target cluster an
 
 Open **Administrator Console → Site Nodes → Discovery Settings** (`/admin/stations/network`), or select **Discovery Settings** from **Add node**. The page is administrator-only: the Gateway rejects reading and saving with `403`, and the console shows a read-only notice. A `404` means the site network has yet to be initialized.
 
-The site selector sits above the editor. A site linked to one cluster uses the name shown in Cluster Management and keeps its site identifier visible. A site linked to several clusters uses the site identifier as its heading. The single form groups **Scan cadence**, **Scan scope**, and **Management connection** into separate rows. Expand **Unclassified SSH candidates** under Scan scope to configure those options. **Discard changes** and **Save settings** are at the bottom.
+The site selector sits above the editor. A site linked to one cluster uses the name shown in Cluster Management and keeps its site identifier visible. A site linked to several clusters uses the site identifier as its heading. The single form groups **Scan mode**, **Scan scope**, and **Management connection** into separate rows. Expand **Unclassified SSH candidates** under Scan scope to configure those options. **Discard changes** and **Save settings** are at the bottom.
 
-Stale discovery results, unreachable paths, and pending configuration appear above the form when reported. Expand **Network status and diagnostics** for network health, configuration generation, site and model details, scope limits, and recent activity.
+Unreachable paths, and pending configuration appear above the form when reported. Expand **Network status and diagnostics** for network health, configuration generation, site and model details, scope limits, and recent activity.
 
-The scan interval is 10–3600 seconds. Enter 1–8 unique additional IPv4 prefixes from `/22` to `/32`. Hubs also scan directly connected private networks. The management-plane dial-out Hub connects to the relay, while the site’s Hubs run discovery. Settings typically take effect in about 30 seconds, and existing Machine records are retained.
+After saving enabled discovery settings, wait for the status generation to catch up, then choose **Start scan**. The selected site’s enrolled Hubs that have received the settings run once. Concurrent requests share the active run, and the page reports progress and failures or times out after five minutes. Hubs also scan their directly connected private networks and accept 1–8 additional unique IPv4 prefixes from `/22` to `/32`. The management dial-out Hub selection is separate from scan execution. Existing Machine records are retained.
 
 Ordinary x86/GPU servers have no discovery declaration and never appear in the scan list. They join over SSH or with a join code; scanning them directly requires a separate direct/entry-only admission mode.
 

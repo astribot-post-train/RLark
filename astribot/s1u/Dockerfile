@@ -1,4 +1,4 @@
-# The image of the Addon s1u-robot (apps/rlark/pkg/addons/catalog/s1u-robot): the node tuner, the Orin's keeper, the
+# The image of the Addon s1u-robot (apps/rlark/astribot/addoncatalog/catalog/s1u-robot): the node tuner, the Orin's keeper, the
 # robot's power and cameras, and the clock of every S1U robot x86. ROS noetic, as the robot's vendor software runs it,
 # for the power and the cameras; what runs on the host is the host's (node_profile.sh through nsenter).
 # ROS is the office registry's mirror/ by digest (astribot/release/mirror copies it there; elsewhere
@@ -18,6 +18,7 @@ COPY astribot/s1u/tuner /s1u/tuner
 COPY astribot/s1u/orin /s1u/orin
 COPY astribot/s1u/clock /s1u/clock
 COPY astribot/s1u/device /s1u/device
+COPY apps/rlark/astribot/stations/s1u_capabilities.json /s1u/device/capabilities.json
 ENTRYPOINT []
 
 # The Addon's tests, in the image its programs run in (--target test; a release's build runs them first, astribot/release/run.sh).
@@ -25,7 +26,8 @@ FROM image AS test
 RUN apt-get update && apt-get install -y --no-install-recommends python3-pytest && rm -rf /var/lib/apt/lists/*
 COPY astribot/s1u /src/astribot/s1u
 # The Addon's catalog entry, whose Orin uplink script the tests hold orin.py to.
-COPY apps/rlark/pkg/addons/catalog/s1u-robot /src/apps/rlark/pkg/addons/catalog/s1u-robot
+COPY apps/rlark/astribot/addoncatalog/catalog/s1u-robot /src/apps/rlark/astribot/addoncatalog/catalog/s1u-robot
+COPY apps/rlark/astribot/stations/s1u_capabilities.json /src/apps/rlark/astribot/stations/s1u_capabilities.json
 RUN cd /src && python3 -m pytest -q astribot/s1u/tests
 
 FROM image

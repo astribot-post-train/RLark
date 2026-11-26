@@ -6,6 +6,7 @@ package gateway
 import (
 	"context"
 	"fmt"
+	"github.com/rlinf/rlark/apps/rlark/astribot/storageconfig"
 	"maps"
 	"net/http"
 	"slices"
@@ -112,7 +113,6 @@ const (
 // s3MountOptions and smbMountOptions are rclone VFS flags for the CSI mount.
 // fast-list only applies to bucket-based remotes, so SMB omits it.
 var (
-	s3MountOptions  = []string{"vfs-cache-mode=writes", "dir-cache-time=5m", "attr-timeout=1m", "poll-interval=5s", "vfs-write-back=1s", "vfs-cache-max-age=10m", "buffer-size=64M", "transfers=8", "checkers=16", "fast-list"}
 	smbMountOptions = []string{"vfs-cache-mode=writes", "dir-cache-time=5m", "attr-timeout=1m", "poll-interval=5s", "vfs-write-back=1s", "vfs-cache-max-age=10m", "buffer-size=64M", "transfers=8", "checkers=8"}
 )
 
@@ -121,19 +121,6 @@ func effectiveVFSCacheMode(mode string) string {
 		return "writes"
 	}
 	return mode
-}
-
-func s3MountOptionsForCacheMode(mode string) []string {
-	options := slices.Clone(s3MountOptions)
-	if effectiveVFSCacheMode(mode) == "off" {
-		for i, option := range options {
-			if strings.HasPrefix(option, "vfs-cache-mode=") {
-				options[i] = "vfs-cache-mode=off"
-				break
-			}
-		}
-	}
-	return options
 }
 
 // rerenderStorageClasses rewrites every storage declaration whose rendered
@@ -196,7 +183,7 @@ func describeAstribotStorage(c *gin.Context, entry *StorageClassData, id string,
 		entry.MountProfile = "default"
 	}
 	entry.MountOptions = append([]string{}, stored.MountOptions...)
-	entry.EffectiveMountOptions, entry.EffectiveBackendOptions, _, err = resolveS3MountOptions(stored.MountProfile, stored.VFSCacheMode, stored.MountOptions)
+	entry.EffectiveMountOptions, entry.EffectiveBackendOptions, _, err = storageconfig.ResolveS3MountOptions(stored.MountProfile, stored.VFSCacheMode, stored.MountOptions)
 	if err != nil {
 		respondError(c, http.StatusInternalServerError, CodeInternalError, "invalid storage mount policy")
 		return false
@@ -419,7 +406,7 @@ func normalizeS3StorageMount(req CreateStorageClassRequest, stored storedStorage
 	if req.MountOptions != nil {
 		overrides = append([]string{}, (*req.MountOptions)...)
 	}
-	_, _, cacheMode, err := resolveS3MountOptions(profile, strings.TrimSpace(req.VFSCacheMode), overrides)
+	_, _, cacheMode, err := storageconfig.ResolveS3MountOptions(profile, strings.TrimSpace(req.VFSCacheMode), overrides)
 	if err != nil {
 		return storedStorageClass{}, err
 	}
@@ -429,7 +416,7 @@ func normalizeS3StorageMount(req CreateStorageClassRequest, stored storedStorage
 		if other == profile {
 			continue
 		}
-		if _, _, _, err := resolveS3MountOptions(other, "", overrides); err != nil {
+		if _, _, _, err := storageconfig.ResolveS3MountOptions(other, "", overrides); err != nil {
 			return storedStorageClass{}, fmt.Errorf("mount_options with profile %s: %w", other, err)
 		}
 	}

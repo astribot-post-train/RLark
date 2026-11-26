@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"fmt"
+	"github.com/rlinf/rlark/apps/rlark/astribot/agentconfig"
 	"net/url"
 	"os"
 
@@ -105,7 +106,7 @@ func (c *clusterAgent) prepareAstribot(ctx context.Context, mm, localManager ctr
 		return startTogether(ctx, mm.Start, lm.Start, func(ctx context.Context) error {
 			if mm.GetCache().WaitForCacheSync(ctx) && localManager.GetCache().WaitForCacheSync(ctx) {
 				log.FromContext(ctx).WithName("clusterAgent").Info("the first watches of the management plane and of the cluster have synced; the agent is ready")
-				c.a.ready.set(partClusterWatches, true)
+				c.a.ready.Set(agentconfig.PartClusterWatches, true)
 			}
 			<-ctx.Done()
 			return nil

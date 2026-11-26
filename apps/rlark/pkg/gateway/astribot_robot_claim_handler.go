@@ -72,10 +72,7 @@ func (g *Gateway) registerRobotRoutes(nodes gin.IRouter) {
 	nodes.POST("/:name/robot-pose", requireOperator(), g.handleRobotPose)
 	nodes.PUT("/:name/robot-claim", g.handleClaimRobot)
 	nodes.DELETE("/:name/robot-claim", g.handleReleaseRobot)
-	nodes.GET("/:name/station-logs", requireOperator(), g.handleStationLogs)
-	nodes.GET("/:name/cameras", g.handleRobotCameras)
-	nodes.GET("/:name/cameras/:camera", g.handleRobotCameras)
-	nodes.GET("/:name/cameras/:camera/stream", g.handleRobotCameras)
+	g.registerStationCameraRoutes(nodes)
 }
 
 // robotClaimOf reads a Node's claim, and whether it has one (over or not).

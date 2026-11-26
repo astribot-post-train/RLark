@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"github.com/rlinf/rlark/apps/rlark/astribot/agentconfig"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -67,9 +68,9 @@ func TestTaskDaemonSetWorkersFlag(t *testing.T) {
 // An agent is ready when every part it runs has said so, and not before any has.
 func TestReadyWhenEveryPartIs(t *testing.T) {
 	a := NewAgent(DefaultConfig())
-	a.ready.set(partNodeWatches, false)
-	a.ready.set(partNodeServer, false)
-	_, changed := a.ready.state()
+	a.ready.Set(agentconfig.PartNodeWatches, false)
+	a.ready.Set(agentconfig.PartNodeServer, false)
+	_, changed := a.ready.State()
 
 	a.SetReady(true)
 	assertStatus(t, a.probeRouter(), http.MethodGet, "/readyz", http.StatusServiceUnavailable)
@@ -79,7 +80,7 @@ func TestReadyWhenEveryPartIs(t *testing.T) {
 	default:
 	}
 
-	a.ready.set(partNodeWatches, true)
+	a.ready.Set(agentconfig.PartNodeWatches, true)
 	assertStatus(t, a.probeRouter(), http.MethodGet, "/readyz", http.StatusOK)
 	select {
 	case <-changed:
@@ -87,7 +88,7 @@ func TestReadyWhenEveryPartIs(t *testing.T) {
 		t.Fatal("becoming ready was not announced, so the tunnel would go on saying not ready")
 	}
 
-	_, changed = a.ready.state()
+	_, changed = a.ready.State()
 	a.SetReady(false)
 	assertStatus(t, a.probeRouter(), http.MethodGet, "/readyz", http.StatusServiceUnavailable)
 	select {

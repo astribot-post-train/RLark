@@ -4,11 +4,14 @@ import (
 	"bytes"
 	"embed"
 	"fmt"
+	"io/fs"
 	"path"
 	"strings"
 	"text/template"
 
 	"go.yaml.in/yaml/v3"
+
+	"github.com/rlinf/rlark/apps/rlark/astribot/addoncatalog"
 )
 
 //go:embed catalog/*/addon.yaml
@@ -83,7 +86,15 @@ func init() {
 }
 
 func (r *registry) load() error {
-	entries, err := addonYAMLs.ReadDir("catalog")
+	if err := r.loadFrom(addonYAMLs, manifestsFS); err != nil {
+		return err
+	}
+	extension := addoncatalog.Files()
+	return r.loadFrom(extension, extension)
+}
+
+func (r *registry) loadFrom(metadata, manifests fs.FS) error {
+	entries, err := fs.ReadDir(metadata, "catalog")
 	if err != nil {
 		return fmt.Errorf("read catalog dir: %w", err)
 	}
@@ -93,7 +104,7 @@ func (r *registry) load() error {
 			continue
 		}
 		yamlPath := path.Join("catalog", entry.Name(), "addon.yaml")
-		data, err := addonYAMLs.ReadFile(yamlPath)
+		data, err := fs.ReadFile(metadata, yamlPath)
 		if err != nil {
 			return fmt.Errorf("read %s: %w", yamlPath, err)
 		}
@@ -104,7 +115,7 @@ func (r *registry) load() error {
 		}
 
 		manifestsDir := path.Join("catalog", entry.Name(), "manifests")
-		manifestEntries, err := manifestsFS.ReadDir(manifestsDir)
+		manifestEntries, err := fs.ReadDir(manifests, manifestsDir)
 		if err != nil {
 			return fmt.Errorf("read manifests dir %s: %w", manifestsDir, err)
 		}
@@ -121,6 +132,10 @@ func (r *registry) load() error {
 			meta:          meta,
 			dir:           entry.Name(),
 			manifestFiles: manifestFiles,
+			manifests:     manifests,
+		}
+		if _, exists := r.addons[meta.Name]; exists {
+			return fmt.Errorf("duplicate built-in addon %q", meta.Name)
 		}
 		r.addons[meta.Name] = a
 	}
@@ -147,6 +162,7 @@ type embeddedAddon struct {
 	meta          AddonMeta
 	dir           string
 	manifestFiles []string
+	manifests     fs.FS
 }
 
 // Meta is an exported method.
@@ -190,7 +206,7 @@ func (a *embeddedAddon) Render(values map[string]string, namespace string, addon
 	var result []Manifest
 	for _, fname := range a.manifestFiles {
 		manifestPath := path.Join("catalog", a.dir, "manifests", fname)
-		raw, err := manifestsFS.ReadFile(manifestPath)
+		raw, err := fs.ReadFile(a.manifests, manifestPath)
 		if err != nil {
 			return nil, fmt.Errorf("read manifest %s: %w", manifestPath, err)
 		}
