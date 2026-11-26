@@ -17,6 +17,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
+
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -249,9 +251,39 @@ func (r *Run) Apply(ctx context.Context) error {
 	if r.DryRun {
 		return nil
 	}
-	if len(plan) == 0 {
-		r.log.printf("the site runs release %s as stated; nothing to do", r.Name)
-		return r.record(ctx, current)
+	ctx, release, err := r.hold(ctx)
+	if err != nil {
+		return err
+	}
+	defer release()
+	if len(plan) != 0 {
+		ctx, releaseMembers, err := r.holdMembers(ctx)
+		if err != nil {
+			return err
+		}
+		defer releaseMembers()
+		// Use the lease-scoped context for every subsequent read and write.
+		return r.applyLocked(ctx)
+	}
+	current, err = r.Site.Read(ctx)
+	if err != nil {
+		return err
+	}
+	lockedPlan, err := r.Plan(ctx, current)
+	if err != nil {
+		return err
+	}
+	if len(lockedPlan) > 0 {
+		return fmt.Errorf("site changed while acquiring the release lock; rerun to review the new plan")
+	}
+	r.log.printf("the site runs release %s as stated; nothing to do", r.Name)
+	return r.record(ctx, current)
+}
+
+func (r *Run) applyLocked(ctx context.Context) error {
+	current, err := r.Site.Read(ctx)
+	if err != nil {
+		return err
 	}
 
 	stamp := time.Now().UTC().Format("20060102-150405")
@@ -273,12 +305,6 @@ func (r *Run) Apply(ctx context.Context) error {
 	defer record.Close()
 	r.log.record = bufio.NewWriter(record)
 	r.log.printf("the state before is recorded in %s", before)
-
-	release, err := r.hold(ctx)
-	if err != nil {
-		return err
-	}
-	defer release()
 
 	baseline, err := Read(ctx, r.Site.Management, time.Now())
 	if err != nil {
@@ -1010,17 +1036,17 @@ const (
 // hold takes the site's release lease for the run and renews it while the
 // run goes on: two people never change one site at once. A lease nobody
 // renewed for its duration is taken over.
-func (r *Run) hold(ctx context.Context) (func(), error) {
+func (r *Run) hold(ctx context.Context) (context.Context, func(), error) {
 	leases := r.Site.Management.Resource(leaseGVR).Namespace(leaseNamespace)
 	me, _ := os.Hostname()
 	if account, err := user.Current(); err == nil {
 		me = account.Username + "@" + me
 	}
-	holder := fmt.Sprintf("%s %s", me, r.Name)
-	write := func() error {
+	holder := fmt.Sprintf("%s %s %s", me, r.Name, uuid.NewString())
+	write := func(ctx context.Context, renewing bool) error {
 		now := time.Now().UTC().Format("2006-01-02T15:04:05.000000Z07:00")
 		current, err := leases.Get(ctx, leaseName, metav1.GetOptions{})
-		if apierrors.IsNotFound(err) {
+		if apierrors.IsNotFound(err) && !renewing {
 			lease := &unstructured.Unstructured{Object: map[string]any{
 				"apiVersion": "coordination.k8s.io/v1", "kind": "Lease",
 				"metadata": map[string]any{"name": leaseName, "namespace": leaseNamespace},
@@ -1034,6 +1060,9 @@ func (r *Run) hold(ctx context.Context) (func(), error) {
 		}
 		other, _, _ := unstructured.NestedString(current.Object, "spec", "holderIdentity")
 		renewed, _, _ := unstructured.NestedString(current.Object, "spec", "renewTime")
+		if renewing && other != holder {
+			return fmt.Errorf("site release lease was taken by %q", other)
+		}
 		if other != "" && other != holder {
 			at, _ := time.Parse(time.RFC3339Nano, renewed)
 			if time.Now().Sub(at) < leaseSeconds*time.Second {
@@ -1049,10 +1078,10 @@ func (r *Run) hold(ctx context.Context) (func(), error) {
 		_, err = leases.Update(ctx, current, metav1.UpdateOptions{})
 		return err
 	}
-	if err := write(); err != nil {
-		return nil, err
+	if err := write(ctx, false); err != nil {
+		return ctx, nil, err
 	}
-	renewing, stop := context.WithCancel(ctx)
+	renewing, stop := context.WithCancelCause(ctx)
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -1061,21 +1090,29 @@ func (r *Run) hold(ctx context.Context) (func(), error) {
 			case <-renewing.Done():
 				return
 			case <-time.After(leaseSeconds * time.Second / 5):
-				if err := write(); err != nil {
-					r.log.printf("the release lease was not renewed: %v", err)
+				leaseCtx, cancel := context.WithTimeout(renewing, 10*time.Second)
+				err := write(leaseCtx, true)
+				cancel()
+				if err != nil {
+					stop(fmt.Errorf("the site release lease was not renewed: %w", err))
+					return
 				}
 			}
 		}
 	}()
-	return func() {
-		stop()
+	return renewing, func() {
+		stop(context.Canceled)
 		<-done
-		current, err := leases.Get(context.WithoutCancel(ctx), leaseName, metav1.GetOptions{})
+		cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+		defer cancel()
+		current, err := leases.Get(cleanup, leaseName, metav1.GetOptions{})
 		if err != nil {
 			return
 		}
 		if other, _, _ := unstructured.NestedString(current.Object, "spec", "holderIdentity"); other == holder {
-			_ = leases.Delete(context.WithoutCancel(ctx), leaseName, metav1.DeleteOptions{})
+			_ = leases.Delete(cleanup, leaseName, metav1.DeleteOptions{Preconditions: &metav1.Preconditions{
+				UID: ptr.To(current.GetUID()), ResourceVersion: ptr.To(current.GetResourceVersion()),
+			}})
 		}
 	}, nil
 }

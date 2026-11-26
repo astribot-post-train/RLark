@@ -13,7 +13,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	rlarkv1alpha1 "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
-	"github.com/rlinf/rlark/apps/rlark/pkg/log"
+	"github.com/rlinf/rlark/apps/rlark/astribot/clusterupgrade"
 )
 
 // K8sDriver implements UpgradeDriver for a Kubernetes data plane.
@@ -171,15 +171,6 @@ func (d *K8sDriver) StartUpgrade(ctx context.Context, job *rlarkv1alpha1.Cluster
 	return jobName, nil
 }
 
-// CheckStatus reads a batchv1.Job and maps its state to JobStatus.
-func (d *K8sDriver) CheckStatus(ctx context.Context, jobName string) (JobStatus, error) {
-	result, err := d.CheckJobResult(ctx, jobName)
-	if err != nil {
-		return "", err
-	}
-	return result.Status, nil
-}
-
 // CheckJobResult reads a batchv1.Job and returns its status plus the container
 // exit code, so the caller can distinguish "upgrade failed, rollback succeeded"
 // (exit code 2) from "upgrade failed, rollback also failed" (other non-zero).
@@ -203,37 +194,43 @@ func (d *K8sDriver) CheckJobResult(ctx context.Context, jobName string) (*JobRes
 		return &JobResult{Status: JobStatusSucceeded, ExitCode: 0}, nil
 	}
 	if k8sJob.Status.Failed > 0 {
-		// Read the exit code from the failed Pod.
-		exitCode := d.readExitCodeFromPods(ctx, &k8sJob)
-		return &JobResult{Status: JobStatusFailed, ExitCode: exitCode}, nil
+		return d.failedJobResult(ctx, &k8sJob)
 	}
 	return &JobResult{Status: JobStatusRunning}, nil
 }
 
-// readExitCodeFromPods finds a terminated Pod for the Job and returns its exit code.
-func (d *K8sDriver) readExitCodeFromPods(ctx context.Context, k8sJob *batchv1.Job) int32 {
-	logger := log.FromContext(ctx)
-	selector, err := metav1.LabelSelectorAsSelector(k8sJob.Spec.Selector)
+// failedJobResult reads only the upgrade container of a Pod owned by this Job.
+func (d *K8sDriver) failedJobResult(ctx context.Context, job *batchv1.Job) (*JobResult, error) {
+	result := &JobResult{Status: JobStatusFailed, ExitCode: -1}
+	if job.Spec.Selector == nil {
+		return result, nil
+	}
+	selector, err := metav1.LabelSelectorAsSelector(job.Spec.Selector)
 	if err != nil {
-		logger.Info("failed to build selector from job", "job", k8sJob.Name, "error", err)
-		return -1
+		return nil, fmt.Errorf("build upgrade job selector: %w", err)
 	}
 	var pods corev1.PodList
-	if err := d.client.List(ctx, &pods, client.InNamespace(d.namespace), client.MatchingLabelsSelector{Selector: selector}); err != nil {
-		logger.Info("failed to list pods for job", "job", k8sJob.Name, "error", err)
-		return -1
+	if err := d.client.List(ctx, &pods, client.InNamespace(job.Namespace), client.MatchingLabelsSelector{Selector: selector}); err != nil {
+		return nil, fmt.Errorf("list upgrade job pods: %w", err)
 	}
-	logger.Info("found pods for job", "job", k8sJob.Name, "podCount", len(pods.Items))
+	var last *corev1.ContainerStateTerminated
 	for _, pod := range pods.Items {
-		for _, cs := range pod.Status.ContainerStatuses {
-			if cs.State.Terminated != nil {
-				logger.Info("found terminated container", "pod", pod.Name, "container", cs.Name, "exitCode", cs.State.Terminated.ExitCode)
-				return cs.State.Terminated.ExitCode
+		owner := metav1.GetControllerOf(&pod)
+		if owner == nil || owner.UID != job.UID || owner.Kind != "Job" || owner.APIVersion != batchv1.SchemeGroupVersion.String() {
+			continue
+		}
+		for _, status := range pod.Status.ContainerStatuses {
+			terminated := status.State.Terminated
+			if status.Name == "upgrade" && terminated != nil && (last == nil || terminated.FinishedAt.After(last.FinishedAt.Time)) {
+				last = terminated
 			}
 		}
 	}
-	logger.Info("no terminated container found", "job", k8sJob.Name, "podCount", len(pods.Items))
-	return -1
+	if last != nil {
+		result.ExitCode = last.ExitCode
+		result.Message = clusterupgrade.PublicMessage(last.Message)
+	}
+	return result, nil
 }
 
 // ─── ConfigMap-backed StateStore ──────────────────────────────────────────────

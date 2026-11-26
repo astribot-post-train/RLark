@@ -28,14 +28,14 @@ type UpgradeDriver interface {
 	CleanupConfig(ctx context.Context, job *rlarkv1alpha1.ClusterUpgradeJob) error
 
 	// StartUpgrade launches the upgrade workload.
-	// It returns the driver-specific job name used later in CheckStatus.
+	// It returns the driver-specific job name used later in CheckJobResult.
 	// rollbackImage is the image to fall back to (empty = no rollback possible).
 	// configRef is the value returned by PrepareConfig.
 	StartUpgrade(ctx context.Context, job *rlarkv1alpha1.ClusterUpgradeJob, rollbackImage, configRef string) (jobName string, err error)
 
-	// CheckStatus returns the current state of a running or finished job.
-	// It must return JobStatusNotFound when the job no longer exists (e.g. TTL-cleared).
-	CheckStatus(ctx context.Context, jobName string) (JobStatus, error)
+	// CheckJobResult returns the outcome of the upgrade workload. Drivers must
+	// return JobStatusNotFound when the workload no longer exists.
+	CheckJobResult(ctx context.Context, jobName string) (*JobResult, error)
 }
 
 // JobResult extends JobStatus with the container exit code, so the caller
@@ -44,6 +44,7 @@ type UpgradeDriver interface {
 type JobResult struct {
 	Status   JobStatus
 	ExitCode int32
+	Message  string
 }
 
 // JobStatus represents the lifecycle state of a driver-managed upgrade/rollback job.

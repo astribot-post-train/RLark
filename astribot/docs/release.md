@@ -17,6 +17,14 @@
 | `astribot/release/control-plane/rlark.compose.yaml` | 控制面四个服务 |
 | `astribot/release/member-rbac.yaml` | 每个成员集群里发布和只读账号的 RBAC |
 
+## 前端静态文件热更新
+
+依赖安装后，通过 `astribot/release/build-ui-static.sh /absolute/new-output-directory` 生成静态包。此入口与正式 UI 镜像使用同一个构建开关 `VITE_IAM_PORTAL=1`。更新时先备份当前入口，上传带哈希的资源，再原子切换 `index.html`。验证未登录时进入 `/login`、已有会话时进入原目标页，以及控制台加载新资源。静态热更新保存在运行中的容器，替换容器前需将同样的产物纳入镜像。
+
+## 成员集群升级锁
+
+使用启用了成员锁的发布工具前，由每个目标集群的管理员应用成员发布 RBAC，并预建 `astribot/release/member-upgrade-lease.yaml` 中的 Lease。工具先获取全站发布锁，再获取计划涉及的成员锁。发生冲突时，在修改工作负载前退出并显示持有者。旧版工具只识别全站锁，切换工具前应结束旧版发布会话。
+
 ## 整套构建
 
 ```bash

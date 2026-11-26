@@ -139,13 +139,7 @@ func (r *pullReconciler) startUpgrade(ctx context.Context, job *rlarkv1alpha1.Cl
 func (r *pullReconciler) monitorUpgrade(ctx context.Context, job *rlarkv1alpha1.ClusterUpgradeJob) (ctrl.Result, error) {
 	r.log.Info("monitoring upgrade", "name", job.Name, "jobName", job.Status.JobName)
 
-	// Use CheckJobResult to get the exit code, which tells us whether a
-	// failed upgrade was rolled back successfully (exit code 2) or not.
-	k8sDriver, ok := r.driver.(*K8sDriver)
-	if !ok {
-		return ctrl.Result{}, fmt.Errorf("driver does not support CheckJobResult")
-	}
-	result, err := k8sDriver.CheckJobResult(ctx, job.Status.JobName)
+	result, err := r.driver.CheckJobResult(ctx, job.Status.JobName)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -159,7 +153,7 @@ func (r *pullReconciler) monitorUpgrade(ctx context.Context, job *rlarkv1alpha1.
 		return r.handleUpgradeSuccess(ctx, job)
 
 	case JobStatusFailed:
-		return r.handleUpgradeFailure(ctx, job, result.ExitCode)
+		return r.handleUpgradeFailure(ctx, job, *result)
 
 	case JobStatusNotFound:
 		return r.handleJobNotFound(ctx, job)
@@ -192,7 +186,7 @@ func (r *pullReconciler) handleJobNotFound(ctx context.Context, job *rlarkv1alph
 	}
 
 	r.log.Info("state image does not match observed target, upgrade failed", "state", stateImage, "observed", observed)
-	return r.handleUpgradeFailure(ctx, job, -1)
+	return r.handleUpgradeFailure(ctx, job, JobResult{ExitCode: -1})
 }
 
 // handleUpgradeSuccess persists state and marks the job succeeded.
@@ -216,8 +210,8 @@ func (r *pullReconciler) handleUpgradeSuccess(ctx context.Context, job *rlarkv1a
 	return ctrl.Result{}, r.updateStatus(ctx, job, rlarkv1alpha1.ClusterUpgradeJobSucceeded, "", "")
 }
 
-func (r *pullReconciler) handleUpgradeFailure(ctx context.Context, job *rlarkv1alpha1.ClusterUpgradeJob, exitCode int32) (ctrl.Result, error) {
-	r.log.Info("upgrade failed", "name", job.Name, "exitCode", exitCode)
+func (r *pullReconciler) handleUpgradeFailure(ctx context.Context, job *rlarkv1alpha1.ClusterUpgradeJob, result JobResult) (ctrl.Result, error) {
+	r.log.Info("upgrade failed", "name", job.Name, "exitCode", result.ExitCode)
 
 	// Rollback is handled inside the upgrade Pod itself (AUTO_ROLLBACK env).
 	// Exit code 2 means "upgrade failed but rollback succeeded".
@@ -227,10 +221,17 @@ func (r *pullReconciler) handleUpgradeFailure(ctx context.Context, job *rlarkv1a
 		r.log.Error(err, "cleanup config")
 	}
 
-	if exitCode == 2 {
-		return ctrl.Result{}, r.updateStatus(ctx, job, rlarkv1alpha1.ClusterUpgradeJobRolledBack, "", "upgrade failed, rolled back successfully")
+	if result.ExitCode == 2 {
+		return ctrl.Result{}, r.updateStatus(ctx, job, rlarkv1alpha1.ClusterUpgradeJobRolledBack, "", upgradeFailureMessage("upgrade failed, rolled back successfully", result.Message))
 	}
-	return ctrl.Result{}, r.updateStatus(ctx, job, rlarkv1alpha1.ClusterUpgradeJobFailed, "", "upgrade job failed")
+	return ctrl.Result{}, r.updateStatus(ctx, job, rlarkv1alpha1.ClusterUpgradeJobFailed, "", upgradeFailureMessage("upgrade job failed", result.Message))
+}
+
+func upgradeFailureMessage(summary, detail string) string {
+	if detail == "" {
+		return summary
+	}
+	return summary + ": " + detail
 }
 
 // updateStatus updates the ClusterUpgradeJob status.

@@ -19,6 +19,7 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 
 	appsv1 "k8s.io/api/apps/v1"
+	coordinationv1 "k8s.io/api/coordination/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -34,6 +35,7 @@ import (
 	k8stesting "k8s.io/client-go/testing"
 
 	"github.com/rlinf/rlark/apps/rlark/pkg/addons"
+	"k8s.io/utils/ptr"
 )
 
 const (
@@ -116,7 +118,9 @@ func newFakeSite(t *testing.T) *fakeSite {
 	s.reactors()
 
 	for _, cluster := range []string{"lab", "office"} {
-		member := fake.NewClientset()
+		member := fake.NewClientset(&coordinationv1.Lease{
+			ObjectMeta: metav1.ObjectMeta{Namespace: "rlark-system", Name: "rlark-agent-upgrade"},
+		})
 		s.members[cluster] = member
 		definitions := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
 		// A server-side apply makes the object, or makes it what it states.
@@ -781,6 +785,35 @@ func TestOneRunAtATime(t *testing.T) {
 	}
 	if len(s.writes) != 0 {
 		t.Errorf("wrote while another held the site: %v", s.writes)
+	}
+}
+
+func TestMemberLeaseConflictStopsBeforeReleaseWrites(t *testing.T) {
+	s := newFakeSite(t)
+	_, environment, release := writeFiles(t)
+	desired := environment.Desired(release, testClusters)
+	ctx := t.Context()
+	office := s.members["office"].CoordinationV1().Leases("rlark-system")
+	lease, err := office.Get(ctx, "rlark-agent-upgrade", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	lease.Spec.HolderIdentity = ptr.To("upgrade-job/office")
+	lease.Spec.RenewTime = ptr.To(metav1.NowMicro())
+	lease.Spec.LeaseDurationSeconds = ptr.To(int32(300))
+	if _, err := office.Update(ctx, lease, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	if err := newRun(t, s, environment, desired, &out).Apply(ctx); err == nil || !strings.Contains(err.Error(), "upgrade-job/office") {
+		t.Fatalf("did not refuse the conflicting release: %v", err)
+	}
+	if len(s.writes) != 0 {
+		t.Fatalf("wrote before holding all targets: %v", s.writes)
+	}
+	lab, err := s.members["lab"].CoordinationV1().Leases("rlark-system").Get(ctx, "rlark-agent-upgrade", metav1.GetOptions{})
+	if err != nil || lab.Spec.HolderIdentity != nil {
+		t.Fatalf("partial acquisition was not cleared: %v, %v", lab, err)
 	}
 }
 
