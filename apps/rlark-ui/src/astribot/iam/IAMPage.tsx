@@ -326,7 +326,7 @@ export function IAMPage({ zh }: { zh: boolean }) {
 
   const signOut = async () => {
     if (iamPortalEnabled()) {
-      await signOutOfConsole(window.location.pathname);
+      await signOutOfConsole();
       return;
     }
     if (!isMockMode) {
@@ -546,7 +546,7 @@ export function IAMPage({ zh }: { zh: boolean }) {
         await iamApi.changePassword({ currentPassword: profileCurrent, newPassword: profileNew });
         setProfileCurrent(""); setProfileNew(""); setProfileConfirm("");
         if (iamPortalEnabled()) {
-          void signOutOfConsole("/admin/iam");
+          void signOutOfConsole();
           return;
         }
         notify(text(zh, "passwordUpdated"));

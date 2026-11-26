@@ -379,6 +379,7 @@ export function AdminApp() {
           onThemeChange={setTheme}
           showMockEnvironment={isMockMode}
           userName={userName}
+          accountRole="admin"
           onCreate={() => navigate("create-cluster")}
           onLogout={() => {
             clearAuthSession();

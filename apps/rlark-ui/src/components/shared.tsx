@@ -234,6 +234,7 @@ export function Header({
   showMockEnvironment = false,
   notificationSummary,
   userName,
+  accountRole = "user",
 }: {
   title: string;
   lang: Lang;
@@ -247,8 +248,12 @@ export function Header({
   showMockEnvironment?: boolean;
   notificationSummary?: { runningJobs: number; attentionNodes: number };
   userName?: string;
+  accountRole?: "admin" | "user";
 }) {
   const zh = lang === "zh";
+  const accountRoleLabel = accountRole === "admin"
+    ? zh ? "管理员" : "Administrator"
+    : zh ? "平台用户" : "Platform user";
   const displayUserName = userName?.trim() || (zh ? "用户" : "User");
   const avatarText = Array.from(displayUserName.replace(/\s+/g, ""))
     .slice(0, 2)
@@ -397,7 +402,7 @@ export function Header({
           {accountOpen && (
             <div className="topbar-popover account-popover">
               <strong>{displayUserName}</strong>
-              <span>{zh ? "平台用户" : "Platform user"}</span>
+              <span>{accountRoleLabel}</span>
               {onLogout && (
                 <button
                   type="button"

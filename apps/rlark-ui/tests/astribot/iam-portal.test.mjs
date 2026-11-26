@@ -186,9 +186,9 @@ for (const [name, logoutResult] of [
       fetchOverride: (url, init) => url === "/api/iam/logout" ? logoutResult(url, init) : Promise.resolve(new Response(JSON.stringify(adminSession("admin", "session-token")), { status: 200 })),
     });
     await tab.portal.enter();
-    await tab.portal.signOut("/admin/iam");
+    await tab.portal.signOut();
     assert.equal(tab.calls.find((call) => call.url === "/api/iam/logout").headers.Authorization, "Bearer session-token");
-    assert.deepEqual(tab.navigations, ["/login?next=%2Fadmin%2Fiam"]);
+    assert.deepEqual(tab.navigations, ["/login"]);
     assert.equal(tab.store.getItem("rlark-auth-token"), null);
     assert.equal(tab.counters.covers.length, 1);
     assert.equal(tab.counters.broadcasts, 1);
@@ -216,9 +216,9 @@ test("without AbortSignal.timeout the AbortController fallback times out and cle
       },
     });
     await tab.portal.enter();
-    await tab.portal.signOut("/");
+    await tab.portal.signOut();
     assert.equal(cleared, true);
-    assert.deepEqual(tab.navigations, ["/login?next=%2F"]);
+    assert.deepEqual(tab.navigations, ["/login"]);
   } finally {
     AbortSignal.timeout = originalTimeout;
     globalThis.setTimeout = originalSetTimeout;
@@ -228,6 +228,7 @@ test("without AbortSignal.timeout the AbortController fallback times out and cle
 
 test("native sign-out is intercepted before the native click listener", async () => {
   const tab = consoleTab({
+    path: "/jobs/example?tab=logs",
     stored: { "rlark-auth-token": "session-token" },
     session: adminSession(),
   });
@@ -238,6 +239,7 @@ test("native sign-out is intercepted before the native click listener", async ()
   assert.equal(event.immediateStopped, true);
   assert.equal(tab.native.click, 0);
   await settle();
+  assert.deepEqual(tab.navigations, ["/login"]);
   assert.equal(tab.calls.filter((call) => call.url === "/api/iam/logout").length, 1);
 });
 
@@ -264,7 +266,7 @@ test("unauthorized dispatch is stopped before the native handler and leaves only
   assert.equal(tab.counters.covers.length, 1);
 });
 
-test("a native sign-in leaves for the portal once, and a role mismatch returns home", async () => {
+test("a native sign-in leaves once and valid sessions return to their role landing page", async () => {
   const signedOut = consoleTab({ sessionStatus: 401 });
   void signedOut.portal.enter();
   await settle();
@@ -277,6 +279,11 @@ test("a native sign-in leaves for the portal once, and a role mismatch returns h
   otherRole.bringUpNativeSignIn();
   assert.deepEqual(otherRole.navigations, ["/"]);
   assert.equal(otherRole.counters.covers.length, 1);
+
+  const admin = consoleTab({ session: adminSession() });
+  await admin.portal.enter();
+  admin.bringUpNativeSignIn();
+  assert.deepEqual(admin.navigations, ["/admin"]);
 });
 
 test("bfcache restoration synchronizes the session and leaves on 401", async () => {
@@ -304,7 +311,7 @@ test("a logout broadcast leaves this tab without another logout or broadcast", a
   tab.receiveLogoutBroadcast();
   tab.receiveLogoutBroadcast();
   await settle();
-  assert.deepEqual(tab.navigations, ["/login?next=%2Fadmin%2Fiam"]);
+  assert.deepEqual(tab.navigations, ["/login"]);
   assert.equal(tab.calls.filter((call) => call.url === "/api/iam/logout").length, 0);
   assert.equal(tab.counters.broadcasts, 0);
 });
@@ -329,7 +336,15 @@ test("the console renders only after the portal lets it", async () => {
   assert.match(dockerfile, /^ENV VITE_IAM_PORTAL=1$/m);
 
   const page = await readFile(new URL("../../src/astribot/iam/IAMPage.tsx", import.meta.url), "utf8");
-  assert.match(page, /if \(iamPortalEnabled\(\)\) \{\s+await signOutOfConsole\(window\.location\.pathname\);/);
+  assert.match(page, /if \(iamPortalEnabled\(\)\) \{\s+await signOutOfConsole\(\);/);
   assert.match(page, /void returnToPortal\(window\.location\.pathname \+ window\.location\.search\)/);
   assert.match(page, /!isMockMode && !sessionChecked \? <div className="iam-state" role="status"/);
+});
+
+test("the admin console identifies its role in the shared account menu", async () => {
+  const adminApp = await readFile(new URL("../../src/admin/AdminApp.tsx", import.meta.url), "utf8");
+  const header = await readFile(new URL("../../src/components/shared.tsx", import.meta.url), "utf8");
+  assert.match(adminApp, /<Header[\s\S]*?accountRole="admin"/);
+  assert.match(header, /accountRole === "admin"[\s\S]*?"管理员" : "Administrator"/);
+  assert.match(header, /<span>\{accountRoleLabel\}<\/span>/);
 });

@@ -1,4 +1,4 @@
-import { clearAuthSession, storeAuthSession, UNAUTHORIZED_EVENT } from "../../api.js";
+import { clearAuthSession, hasAuthSession, storeAuthSession, UNAUTHORIZED_EVENT } from "../../api.js";
 
 const tokenKey = "rlark-auth-token";
 const sessionPath = "/api/iam/session";
@@ -86,11 +86,10 @@ export function createIamPortal(host: PortalHost) {
     return true;
   }
 
-  function leave(path: string, broadcast = false): Promise<void> {
+  function leave(path?: string): Promise<void> {
     if (!beginDeparture(leaveMessage("portal"))) return parked;
     clearAuthSession();
-    if (broadcast) host.broadcastLogout();
-    host.location.replace(portalPath(path));
+    host.location.replace(path ? portalPath(path) : "/login");
     return parked;
   }
 
@@ -137,7 +136,7 @@ export function createIamPortal(host: PortalHost) {
     if (!existingToken) await leave(consolePath(host));
   }
 
-  async function signOut(path: string): Promise<void> {
+  async function signOut(): Promise<void> {
     if (!beginDeparture(leaveMessage("sign-out"))) return;
     const token = sessionStorage.getItem(tokenKey);
     const timeout = requestSignal();
@@ -155,7 +154,7 @@ export function createIamPortal(host: PortalHost) {
       timeout.dispose();
       clearAuthSession();
       host.broadcastLogout();
-      host.location.replace(portalPath(path));
+      host.location.replace("/login");
     }
   }
 
@@ -165,7 +164,7 @@ export function createIamPortal(host: PortalHost) {
       event.preventDefault();
       event.stopPropagation();
       event.stopImmediatePropagation();
-      void signOut(consolePath(host));
+      void signOut();
     });
     host.intercept(UNAUTHORIZED_EVENT, (event) => {
       event.stopImmediatePropagation();
@@ -174,7 +173,7 @@ export function createIamPortal(host: PortalHost) {
     host.onNativeSignIn(() => {
       if (sessionStorage.getItem(tokenKey)) {
         if (!beginDeparture(leaveMessage("console"))) return;
-        host.location.replace("/");
+        host.location.replace(hasAuthSession("admin") ? "/admin" : "/");
         return;
       }
       void leave(consolePath(host));
@@ -182,7 +181,7 @@ export function createIamPortal(host: PortalHost) {
     host.onPageShow((persisted) => {
       if (persisted && !leaving) void syncSession();
     });
-    host.onLogoutBroadcast(() => void leave(consolePath(host)));
+    host.onLogoutBroadcast(() => void leave());
   }
 
   return {
@@ -269,8 +268,8 @@ export function enterIamPortal(): Promise<void> {
   return iamPortalEnabled() ? iamPortal().enter() : Promise.resolve();
 }
 
-export function signOutOfConsole(path: string): Promise<void> {
-  return iamPortalEnabled() ? iamPortal().signOut(path) : Promise.resolve();
+export function signOutOfConsole(): Promise<void> {
+  return iamPortalEnabled() ? iamPortal().signOut() : Promise.resolve();
 }
 
 export function returnToPortal(path: string): Promise<void> {
