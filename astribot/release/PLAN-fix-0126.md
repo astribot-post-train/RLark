@@ -148,3 +148,10 @@ curl -X PUT "$GATEWAY/api/v1/rlinf.io/v1alpha1/nodes/s1u-01-x86/station?namespac
 - 第二次换了 `station-controller` 后，新控制器按第 4 级重写 cailiang、wendychen、alexfu 的文档，同一次运行里 `station-agents` 的 `documents-unchanged` 对基线必然不成立，只能等 30 分钟超时。停掉该次（只在等，0 处改动），同一命令再跑：0 changes，写记录。给 RLark 的要求：`controller` 阶段换了控制器时，后面阶段的 `documents-unchanged` 用 `controller` 之后的读数做基线。
 - 管理机 cailiang 盘余量在 kubelet 的 imagefs 15% 门槛上下（liangcai 同时在机器上构建 e2e 镜像），DiskPressure 反复：驱逐了 Dashboard（jo-f706800a9a904c84）、它的数据库和 package-proxy；`station-agent-network` 在 cailiang 的拉取 Pod 被拒（`Evicted`），而 rollout 对一个 Failed 的拉取 Pod 永远等它（`apps/rlark/astribot/rollout/update.go` `pulled`），整个办公室集群的网关滚动卡住。处理：压力解除后删掉那个 Evicted 的拉取 Pod，agent 重建后拉取成功；`docker image prune --filter until=168h`（只删超过 7 天、无标签、无容器引用的镜像）腾出约 90 GB。给 RLark 的要求：拉取 Pod 失败（Evicted/Failed）时重建，并带 DaemonSet 的 priorityClass；管理机要有盘的清理/告警。
 - 运行中 liangcai 把 Addon `s1u-robot` 用 `kubectl replace` 改成 `v1.7.1-timing-8b84e07a8b72`（相机时序预览，ConfigMap `s1u-camera-timing-addon-8b84e07a8b72`），被这次 `addons` 阶段按用户“直接覆盖发布”换成 v1.7.2。原对象备份在管理机 `/var/lib/rlark/backup/liangcai-override-20261126/`。
+
+## 9. 合并 liangcai/dev 后的发布（2026-11-26 下午）
+
+- `astribot/main` 快进到 `2469c70`（liangcai/dev 的 4 个提交，叠在 `60c7a2a` 官方 v0.1.0 合并上），没有冲突；全量测试通过。
+- liangcai 12:55 之后的现网热改（gateway `manual-scan-98rtpm`、rlark-ui `join-code-advanced-xh19s3`、station-api `1f3a6c58`、station-controller `8a988d42`、station-wireguard `682eaf02`）是从他工作区**未提交**的改动构建的（手动扫描、机体状态、相机时序等），不在任何提交里。
+- `ci-49580ee-636354f`（14:18 上线，树仍 `49580ee`）：只换 Fleet 的 fleet-robot `c69238d8`、lamp-bridge `d85fbbf2`，并把上面五个热改镜像按摘要钉进发布文件（不后退）；gateway、rlark-ui 两个容器因由标签改成摘要被重建，内容相同。`s1u-robot` 的 rollout 是 `whenIdle`，三台在用（`fleet-station,s1u-device`），设备 Pod 要等机器人空闲才换。
+- `ci-2469c70-636354f`（未上线，构建目录 `/var/lib/rlark/release/builds/ci-2469c70-636354f`）：rlark/agent `437d0191`（`2469c70` 构建）换 server、controller-manager、astribot-iam、cluster-agent、node-agent；gateway/console/station-* 仍钉 liangcai 的热改镜像。dry-run 19 项：官方 CRD、compose（提交者签名）、三个集群的 agent。没 apply：新 agent 的 Ray 适配改了，可能重建在跑 Run 的 Ray 头。
