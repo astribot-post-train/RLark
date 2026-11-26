@@ -90,7 +90,7 @@ func TestStationRunningImages(t *testing.T) {
 			}
 			router := gin.New()
 			router.Use(func(c *gin.Context) { c.Set(authRoleKey, tc.role) })
-			router.GET("/api/v1/station/stations/:name/running-images", requireAdmin(), g.handleStationRunningImages)
+			g.registerStationRunningImages(router.Group("/api/v1/station/stations", requireAdmin()))
 			response := httptest.NewRecorder()
 			router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, path+tc.uid, nil))
 			require.Equal(t, tc.wantStatus, response.Code, response.Body.String())

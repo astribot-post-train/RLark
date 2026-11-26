@@ -21,18 +21,16 @@ import {
 import type { Copy, Lang, Theme } from "../i18n";
 import type { JobDisplayPhase } from "../utils/jobPhase";
 import type { ResourceRow } from "../types";
-import { iamPortalEnabled } from "../astribot/iam/portal";
-import astribotDark from "../astribot/iam/assets/astribot-logo-dark.png";
-import astribotLight from "../astribot/iam/assets/astribot-logo-light.png";
+import { consoleBrand } from "../astribot/consoleBrand";
 
 export function PlatformFooter({ lang }: { lang: Lang }) {
   const locale = lang === "zh" ? "zh" : "en";
-  const astribot = iamPortalEnabled();
+  const edition = consoleBrand();
   return (
-    <footer className={astribot ? "platform-footer platform-footer-astribot" : "platform-footer"}>
+    <footer className={edition ? `platform-footer ${edition.footerClass}` : "platform-footer"}>
       <div className="platform-footer-links">
-        <strong className={astribot ? "platform-footer-brand" : undefined}>
-          {astribot && (
+        <strong className={edition ? "platform-footer-brand" : undefined}>
+          {edition && (
             <>
               <img src={`/rlark-logo-${locale}-light.png`} alt="" className="platform-footer-logo brand-logo-light" />
               <img src={`/rlark-logo-${locale}-dark.svg`} alt="" className="platform-footer-logo brand-logo-dark" />
@@ -177,17 +175,17 @@ export function useColumnFilter() {
 
 export function Logo({ lang }: { lang: Lang }) {
   const locale = lang === "zh" ? "zh" : "en";
-  const astribot = iamPortalEnabled();
-  const brand = astribot ? "Astribot" : "RLark";
+  const edition = consoleBrand();
+  const brand = edition?.name ?? "RLark";
   return (
-    <div className={astribot ? "brand brand-astribot" : "brand"}>
+    <div className={edition ? `brand ${edition.sidebarClass}` : "brand"}>
       <img
-        src={astribot ? astribotLight : `/rlark-logo-${locale}-light.png`}
+        src={edition?.lightLogo ?? `/rlark-logo-${locale}-light.png`}
         alt={brand}
         className="brand-logo brand-logo-light"
       />
       <img
-        src={astribot ? astribotDark : `/rlark-logo-${locale}-dark.svg`}
+        src={edition?.darkLogo ?? `/rlark-logo-${locale}-dark.svg`}
         alt={brand}
         className="brand-logo brand-logo-dark"
       />
