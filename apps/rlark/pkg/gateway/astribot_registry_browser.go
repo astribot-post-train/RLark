@@ -16,12 +16,12 @@ import (
 	"github.com/gin-gonic/gin"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 
+	"github.com/rlinf/rlark/apps/rlark/astribot/registry"
 	"github.com/rlinf/rlark/apps/rlark/pkg/common"
 )
 
 var registryRepositoryPattern = regexp.MustCompile(`^[a-z0-9]+(?:(?:[._]|__|[-]+)[a-z0-9]+)*(?:/[a-z0-9]+(?:(?:[._]|__|[-]+)[a-z0-9]+)*)*$`)
 var registryTagPattern = regexp.MustCompile(`^[a-zA-Z0-9_][a-zA-Z0-9_.-]{0,127}$`)
-var registryDigestPattern = regexp.MustCompile(`^sha256:[a-f0-9]{64}$`)
 
 const registryBrowsePageSize = "50"
 
@@ -243,7 +243,7 @@ func (g *Gateway) handleRegistryManifest(c *gin.Context) {
 	}
 	defer response.Body.Close()
 	digest := response.Header.Get("Docker-Content-Digest")
-	if !registryDigestPattern.MatchString(digest) {
+	if !registry.ValidDigest(digest) {
 		respondError(c, http.StatusBadGateway, CodeUpstreamUnavailable, "registry did not return a supported manifest digest")
 		return
 	}

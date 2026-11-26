@@ -13,7 +13,7 @@ The standard Astribot release applies CRDs and the generated management roles in
 
 ## Implementation in the compatibility branch
 
-Astribot-specific implementations are under `apps/rlark/astribot/`, `apps/rlark-ui/src/astribot/`, and `astribot/`. The Addon definitions, Station API clients, model catalog, running images, body state, camera and log proxy, discovery scan, Agent readiness and node-service proxy, per-node task status projection, and storage mount and encoding rules live there. The default UI test runner also includes `apps/rlark-ui/tests/astribot/`.
+Astribot-specific implementations are under `apps/rlark/astribot/`, `apps/rlark-ui/src/astribot/`, and `astribot/`. The Addon definitions, Station API clients, model catalog, running images, body state, camera and log proxy, discovery scan, Agent readiness and node-service proxy, per-node task status projection, and storage mount and encoding rules, and OCI registry manifest verification live there. The default UI test runner also includes `apps/rlark-ui/tests/astribot/`.
 
 Keep canonical CRD fields and generated artifacts, shared roles, HTTP authorization and error conversion, component wiring, and tests that exercise those shared entry points next to their upstream contracts. The stock `csi-driver-rclone` entry also carries Astribot parameters used by existing installations of the same Addon name and version. Migration remains open for Gateway admission, cluster provisioning, robot operations, registry and storage orchestration, Agent and provider adapters that use private controller state, and the remaining UI page hooks. Keep those exceptions visible during review.
 

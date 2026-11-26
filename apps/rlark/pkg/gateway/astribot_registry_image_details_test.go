@@ -2,6 +2,8 @@ package gateway
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -15,6 +17,7 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 	"k8s.io/utils/lru"
 
+	"github.com/rlinf/rlark/apps/rlark/astribot/registry"
 	"github.com/rlinf/rlark/apps/rlark/pkg/configs"
 )
 
@@ -31,7 +34,7 @@ func newFakeRegistryImage(t *testing.T, created, arch string, layers ...int64) f
 		layerList = append(layerList, map[string]any{"mediaType": "application/vnd.oci.image.layer.v1.tar+gzip", "digest": "sha256:" + strings.Repeat(fmt.Sprint(i), 64), "size": size})
 	}
 	manifest, err := json.Marshal(map[string]any{
-		"schemaVersion": 2, "mediaType": mediaTypeOCIManifest,
+		"schemaVersion": 2, "mediaType": "application/vnd.oci.image.manifest.v1+json",
 		"config": map[string]any{"mediaType": "application/vnd.oci.image.config.v1+json", "digest": contentDigest(config), "size": len(config)},
 		"layers": layerList,
 	})
@@ -55,11 +58,11 @@ func newRegistryDetailsFixture(t *testing.T, tags string) *registryDetailsFixtur
 	}
 	single := newFakeRegistryImage(t, "2026-11-11T07:12:00Z", "amd64", 1000)
 	index, err := json.Marshal(map[string]any{
-		"schemaVersion": 2, "mediaType": mediaTypeOCIIndex,
+		"schemaVersion": 2, "mediaType": "application/vnd.oci.image.index.v1+json",
 		"manifests": []map[string]any{
-			{"mediaType": mediaTypeOCIManifest, "digest": contentDigest(f.arm64.manifest), "size": len(f.arm64.manifest), "platform": map[string]string{"os": "linux", "architecture": "arm64"}},
-			{"mediaType": mediaTypeOCIManifest, "digest": contentDigest(f.amd64.manifest), "size": len(f.amd64.manifest), "platform": map[string]string{"os": "linux", "architecture": "amd64"}},
-			{"mediaType": mediaTypeOCIManifest, "digest": "sha256:" + strings.Repeat("e", 64), "size": 10, "platform": map[string]string{"os": "unknown", "architecture": "unknown"}, "annotations": map[string]string{attestationReferenceType: attestationManifestType}},
+			{"mediaType": "application/vnd.oci.image.manifest.v1+json", "digest": contentDigest(f.arm64.manifest), "size": len(f.arm64.manifest), "platform": map[string]string{"os": "linux", "architecture": "arm64"}},
+			{"mediaType": "application/vnd.oci.image.manifest.v1+json", "digest": contentDigest(f.amd64.manifest), "size": len(f.amd64.manifest), "platform": map[string]string{"os": "linux", "architecture": "amd64"}},
+			{"mediaType": "application/vnd.oci.image.manifest.v1+json", "digest": "sha256:" + strings.Repeat("e", 64), "size": 10, "platform": map[string]string{"os": "unknown", "architecture": "unknown"}, "annotations": map[string]string{"vnd.docker.reference.type": "attestation-manifest"}},
 		},
 	})
 	require.NoError(t, err)
@@ -85,7 +88,7 @@ func newRegistryDetailsFixture(t *testing.T, tags string) *registryDetailsFixtur
 			reference := strings.TrimPrefix(r.URL.Path, "/v2/rlark/agent/manifests/")
 			switch reference {
 			case "big":
-				_, _ = w.Write([]byte(strings.Repeat(" ", registryManifestLimit+1)))
+				_, _ = w.Write([]byte(strings.Repeat(" ", (4<<20)+1)))
 				return
 			case "moved":
 				http.Redirect(w, r, "/v2/rlark/agent/manifests/v1", http.StatusFound)
@@ -150,11 +153,11 @@ func TestRegistryTagDetails(t *testing.T) {
 	recorder := f.call(t, context.Background(), "repository=rlark%2Fagent")
 	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
 	var response struct {
-		Items []registryTagDetail `json:"items"`
-		Next  string              `json:"next"`
+		Items []registry.TagDetail `json:"items"`
+		Next  string               `json:"next"`
 	}
 	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &response))
-	byTag := map[string]registryTagDetail{}
+	byTag := map[string]registry.TagDetail{}
 	for _, item := range response.Items {
 		byTag[item.Tag] = item
 	}
@@ -165,7 +168,7 @@ func TestRegistryTagDetails(t *testing.T) {
 	require.Empty(t, single.Error)
 	require.Equal(t, "2026-11-11T07:12:00Z", single.Created)
 	require.Equal(t, []string{"linux/amd64"}, single.Platforms)
-	require.Regexp(t, registryDigestPattern, single.Digest)
+	require.True(t, registry.ValidDigest(single.Digest))
 
 	multi := byTag["multi"]
 	require.Empty(t, multi.Error)
@@ -195,19 +198,7 @@ func TestRegistryTagDetailsRejectsInvalidInputAndCancellation(t *testing.T) {
 	require.Equal(t, http.StatusBadGateway, invalid.call(t, context.Background(), "repository=rlark%2Fagent").Code)
 }
 
-func TestIndexPlatformsPrefersLinuxAMD64(t *testing.T) {
-	entry := func(os, arch, digit string) registryDescriptor {
-		d := registryDescriptor{Digest: "sha256:" + strings.Repeat(digit, 64)}
-		d.Platform = &struct {
-			OS           string `json:"os"`
-			Architecture string `json:"architecture"`
-			Variant      string `json:"variant"`
-		}{OS: os, Architecture: arch}
-		return d
-	}
-	platforms, chosen := indexPlatforms([]registryDescriptor{entry("linux", "arm64", "1"), entry("linux", "amd64", "2"), entry("windows", "amd64", "3")})
-	require.Equal(t, []string{"linux/arm64", "linux/amd64", "windows/amd64"}, platforms)
-	require.Equal(t, "sha256:"+strings.Repeat("2", 64), chosen.Digest)
-	_, none := indexPlatforms([]registryDescriptor{entry("unknown", "unknown", "4")})
-	require.Nil(t, none)
+func contentDigest(body []byte) string {
+	sum := sha256.Sum256(body)
+	return "sha256:" + hex.EncodeToString(sum[:])
 }
