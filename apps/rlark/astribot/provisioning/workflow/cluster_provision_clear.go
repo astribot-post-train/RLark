@@ -1,15 +1,15 @@
-package gateway
+package workflow
 
 import (
 	"context"
 	"fmt"
-	"github.com/rlinf/rlark/apps/rlark/astribot/provisioning"
 	"net/http"
 	"slices"
 	"strings"
 
 	"github.com/gin-gonic/gin"
 	rlarkv1alpha1 "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
+	"github.com/rlinf/rlark/apps/rlark/astribot/provisioning"
 	"github.com/rlinf/rlark/apps/rlark/astribot/release"
 	"github.com/rlinf/rlark/apps/rlark/astribot/stationmember"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -48,26 +48,26 @@ systemctl daemon-reload
 echo cleared=yes
 `
 
-// handleClearClusterProvision answers POST /api/v1/cluster-provisions/:name/clear: a making that stopped half way,
+// HandleClearClusterProvision answers POST /api/v1/cluster-provisions/:name/clear: a making that stopped half way,
 // or the record of one whose cluster was deleted, is taken away so that the site, the cluster's name and the machine
 // can be used again. Until then they are held: the SiteNetwork has the site, the control plane's name and the hub by
 // its key, and a new cluster of the name is refused. It answers what it did, a line a step.
-func (g *Gateway) handleClearClusterProvision(c *gin.Context) {
+func (g *Service) HandleClearClusterProvision(c *gin.Context) {
 	var req clearClusterProvisionRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		respondError(c, http.StatusBadRequest, CodeInvalidRequestBody, err.Error())
+		g.http.RespondError(c, http.StatusBadRequest, g.http.CodeInvalidRequestBody, err.Error())
 		return
 	}
 	ctx := c.Request.Context()
 	provisions := g.kubeClient.RlinfV1alpha1().ClusterProvisions()
 	p, err := provisions.Get(ctx, c.Param("name"), metav1.GetOptions{})
 	if err != nil {
-		respondKubeError(c, "get cluster provision: "+err.Error(), err)
+		g.http.RespondKubeError(c, "get cluster provision: "+err.Error(), err)
 		return
 	}
 	_, err = g.kubeClient.RlinfV1alpha1().Clusters().Get(ctx, p.Name, metav1.GetOptions{})
 	if err != nil && !apierrors.IsNotFound(err) {
-		respondKubeError(c, err.Error(), err)
+		g.http.RespondKubeError(c, err.Error(), err)
 		return
 	}
 	listed := err == nil
@@ -76,13 +76,13 @@ func (g *Gateway) handleClearClusterProvision(c *gin.Context) {
 	})
 	switch {
 	case p.Status.Phase == rlarkv1alpha1.ClusterProvisionSucceeded && listed:
-		respondError(c, http.StatusConflict, CodeResourceConflict, "cluster "+p.Name+" is made and listed: delete the cluster first; clearing then takes away what its making declared")
+		g.http.RespondError(c, http.StatusConflict, g.http.CodeResourceConflict, "cluster "+p.Name+" is made and listed: delete the cluster first; clearing then takes away what its making declared")
 		return
 	case reached && req.Password == "" && !req.MachineGone:
-		respondError(c, http.StatusBadRequest, CodeInvalidRequest, "the making reached the machine: give its SSH password so that the machine is put back too, or machine_gone when it is not there any more")
+		g.http.RespondError(c, http.StatusBadRequest, g.http.CodeInvalidRequest, "the making reached the machine: give its SSH password so that the machine is put back too, or machine_gone when it is not there any more")
 		return
 	case !g.provisions.start(p.Name):
-		respondError(c, http.StatusConflict, CodeResourceConflict, "the making of "+p.Name+" is running")
+		g.http.RespondError(c, http.StatusConflict, g.http.CodeResourceConflict, "the making of "+p.Name+" is running")
 		return
 	}
 	defer g.provisions.end(p.Name)
@@ -102,7 +102,7 @@ func (g *Gateway) handleClearClusterProvision(c *gin.Context) {
 // clearProvision takes away, in the order that leaves nothing pointing at what is gone: the machine's control plane
 // and tunnel, the Cluster a making that did not finish listed, the credentials the management plane reaches the
 // cluster with, the SiteNetwork's declarations of the making, and the record itself.
-func (g *Gateway) clearProvision(ctx context.Context, p *rlarkv1alpha1.ClusterProvision, password []byte, listed bool) ([]string, error) {
+func (g *Service) clearProvision(ctx context.Context, p *rlarkv1alpha1.ClusterProvision, password []byte, listed bool) ([]string, error) {
 	var steps []string
 	facts := p.Status.Facts
 	if len(password) > 0 {
@@ -129,7 +129,7 @@ func (g *Gateway) clearProvision(ctx context.Context, p *rlarkv1alpha1.ClusterPr
 		stationMemberCredentialNamespace:    stationmember.SecretName(p.Name),
 		stationOperationCredentialNamespace: stationmember.SecretName(p.Name),
 		release.CredentialNamespace:         release.CredentialName(p.Name),
-		g.managementNamespace():             "rlark-agent-cert-" + provisionAgentID(p.Name),
+		g.namespace:                         "rlark-agent-cert-" + provisionAgentID(p.Name),
 	}
 	for namespace, name := range secrets {
 		if err := g.rawClient.CoreV1().Secrets(namespace).Delete(ctx, name, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {

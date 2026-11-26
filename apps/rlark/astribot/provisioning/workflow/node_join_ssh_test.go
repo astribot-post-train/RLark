@@ -1,4 +1,4 @@
-package gateway
+package workflow
 
 import (
 	"bufio"
@@ -6,7 +6,6 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"errors"
-	"github.com/rlinf/rlark/apps/rlark/astribot/provisioning"
 	"io"
 	"net"
 	"strconv"
@@ -17,6 +16,7 @@ import (
 	clientset "github.com/rlinf/rlark/api/kubeclients/clientset/versioned/fake"
 	rlarkv1alpha1 "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
 	"github.com/rlinf/rlark/apps/rlark/astribot/nodessh"
+	"github.com/rlinf/rlark/apps/rlark/astribot/provisioning"
 	"golang.org/x/crypto/ssh"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -53,7 +53,7 @@ func serveSSHForJoin(listener net.Listener, signer ssh.Signer) {
 			_ = conn.Close()
 			return
 		}
-		defer server.Close()
+		defer func() { _ = server.Close() }()
 		go ssh.DiscardRequests(requests)
 		for incoming := range channels {
 			channel, channelRequests, err := incoming.Accept()
@@ -61,7 +61,7 @@ func serveSSHForJoin(listener net.Listener, signer ssh.Signer) {
 				continue
 			}
 			go func() {
-				defer channel.Close()
+				defer func() { _ = channel.Close() }()
 				for request := range channelRequests {
 					if request.Type == "exec" {
 						_ = request.Reply(true, nil)
@@ -90,7 +90,7 @@ func TestNodeJoinDialUsesDirectBeforeRelayAndFallsBackOnlyWhenUnreachable(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer relay.Close()
+	defer func() { _ = relay.Close() }()
 	called := make(chan struct{}, 1)
 	go func() {
 		conn, err := relay.Accept()
@@ -117,14 +117,14 @@ func TestNodeJoinDialUsesDirectBeforeRelayAndFallsBackOnlyWhenUnreachable(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer server.Close()
+	defer func() { _ = server.Close() }()
 	request := make(chan string, 1)
 	go func() {
 		conn, err := server.Accept()
 		if err != nil {
 			return
 		}
-		defer conn.Close()
+		defer func() { _ = conn.Close() }()
 		reader := bufio.NewReaderSize(conn, 1)
 		line, _ := reader.ReadString('\n')
 		request <- line
@@ -156,7 +156,7 @@ func serveSSHOnConn(conn net.Conn, signer ssh.Signer) {
 	if err != nil {
 		return
 	}
-	defer server.Close()
+	defer func() { _ = server.Close() }()
 	go ssh.DiscardRequests(requests)
 	for incoming := range channels {
 		channel, channelRequests, err := incoming.Accept()
@@ -164,7 +164,7 @@ func serveSSHOnConn(conn net.Conn, signer ssh.Signer) {
 			continue
 		}
 		go func() {
-			defer channel.Close()
+			defer func() { _ = channel.Close() }()
 			for request := range channelRequests {
 				if request.Type == "exec" {
 					_ = request.Reply(true, nil)
@@ -187,13 +187,13 @@ func TestNodeJoinHostKeyMismatchDoesNotFallBack(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer target.Close()
+	defer func() { _ = target.Close() }()
 	serveSSHForJoin(target, signer)
 	relay, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer relay.Close()
+	defer func() { _ = relay.Close() }()
 	called := make(chan struct{}, 1)
 	go func() {
 		conn, err := relay.Accept()
@@ -221,7 +221,7 @@ func TestScannedNodeJoinReadsItsSiteRelayAndRunsCommandsOverIt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer listener.Close()
+	defer func() { _ = listener.Close() }()
 	const relayToken = "site-secret-token"
 	requestLine := make(chan string, 1)
 	go func() {
@@ -229,7 +229,7 @@ func TestScannedNodeJoinReadsItsSiteRelayAndRunsCommandsOverIt(t *testing.T) {
 		if err != nil {
 			return
 		}
-		defer conn.Close()
+		defer func() { _ = conn.Close() }()
 		reader := bufio.NewReaderSize(conn, 1)
 		line, _ := reader.ReadString('\n')
 		requestLine <- line
@@ -253,13 +253,13 @@ func TestScannedNodeJoinReadsItsSiteRelayAndRunsCommandsOverIt(t *testing.T) {
 	station := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), map[schema.GroupVersionResource]string{machineGVR: "MachineList"}, machineObject)
 	raw := kubefake.NewSimpleClientset(&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "station-relay-token-office", Namespace: "default"}, Data: map[string][]byte{"token": []byte(relayToken)}})
 	annotations := map[string]string{nodeJoinMachineAnnotation: "candidate-1", nodeJoinHostKeyAnnotation: entryKey, nodeJoinHostKeyAlgorithmAnnotation: signer.PublicKey().Type(), nodeJoinTypeAnnotation: "Server"}
-	gateway := &Gateway{kubeClient: clientset.NewSimpleClientset(), rawClient: raw, astribotState: astribotState{stationClient: station}}
+	gateway := &Service{kubeClient: clientset.NewSimpleClientset(), rawClient: raw, stationClient: station}
 	join := &rlarkv1alpha1.NodeJoin{ObjectMeta: metav1.ObjectMeta{Annotations: annotations}, Spec: rlarkv1alpha1.NodeJoinSpec{Machine: rlarkv1alpha1.NodeJoinMachine{Address: address, Port: port, User: "root"}}}
 	connected, _, err := gateway.dialNodeJoinMachine(context.Background(), join, []byte("login-password"), []byte("sudo-password"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer connected.Close()
+	defer func() { _ = connected.Close() }()
 	out, err := connected.Run(context.Background(), "echo test", nil, nil)
 	if err != nil || !strings.Contains(out, "joined over relay") {
 		t.Fatalf("relay command output %q, err %v", out, err)
@@ -284,7 +284,7 @@ func TestDirectAuthenticationAndSudoFailuresDoNotFallBack(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer listener.Close()
+			defer func() { _ = listener.Close() }()
 			go func() {
 				conn, err := listener.Accept()
 				if err != nil {
@@ -302,7 +302,7 @@ func TestDirectAuthenticationAndSudoFailuresDoNotFallBack(t *testing.T) {
 					_ = conn.Close()
 					return
 				}
-				defer server.Close()
+				defer func() { _ = server.Close() }()
 				go ssh.DiscardRequests(requests)
 				for incoming := range channels {
 					channel, channelRequests, err := incoming.Accept()
@@ -310,7 +310,7 @@ func TestDirectAuthenticationAndSudoFailuresDoNotFallBack(t *testing.T) {
 						continue
 					}
 					go func() {
-						defer channel.Close()
+						defer func() { _ = channel.Close() }()
 						for request := range channelRequests {
 							if request.Type == "exec" {
 								_ = request.Reply(true, nil)
@@ -328,7 +328,7 @@ func TestDirectAuthenticationAndSudoFailuresDoNotFallBack(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer relay.Close()
+			defer func() { _ = relay.Close() }()
 			called := make(chan struct{}, 1)
 			go func() {
 				conn, err := relay.Accept()
@@ -361,7 +361,7 @@ func TestNodeJoinAnnotationsPersistIntentButNeverCredentials(t *testing.T) {
 		t.Fatal(err)
 	}
 	for key, value := range map[string]string{
-		nodeJoinMachineAnnotation: "candidate-1", nodeJoinTypeAnnotation: "Server", nodeJoinModelAnnotation: "x86-v2",
+		nodeJoinMachineAnnotation: "candidate-1", nodeJoinTypeAnnotation: "Server", NodeJoinModelAnnotation: "x86-v2",
 		nodeJoinHostKeyAnnotation: "SHA256:pinned", nodeJoinHostKeyAlgorithmAnnotation: "ssh-ed25519",
 		nodeJoinInstallLabelsAnnotation: `{"rlark.io/node-category":"server"}`, nodeJoinNetworkRoleAnnotation: "Hub", nodeJoinReasonAnnotation: "SSH",
 	} {

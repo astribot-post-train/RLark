@@ -9,6 +9,7 @@ import (
 	"github.com/gin-gonic/gin"
 	clientset "github.com/rlinf/rlark/api/kubeclients/clientset/versioned/fake"
 	rlarkv1alpha1 "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
+	"github.com/rlinf/rlark/apps/rlark/astribot/provisioning/workflow"
 	"github.com/rlinf/rlark/apps/rlark/astribot/stations"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -25,7 +26,7 @@ func TestRobotModelListCountsReferencesAndDeleteBlocksThenAllows(t *testing.T) {
 	admission := &unstructured.Unstructured{Object: map[string]interface{}{"apiVersion": "station.rlark.io/v1alpha1", "kind": "NodeAdmission", "metadata": map[string]interface{}{"name": "robot-01", "namespace": "agent-a"}, "spec": map[string]interface{}{"machine": map[string]interface{}{"category": "Robot", "model": "s1u"}}}}
 	listKinds := map[schema.GroupVersionResource]string{stations.RobotModelsResource: "RobotModelList", nodeClassGVR: "NodeClassList", siteNodeGVR: "NodeList", networkEnrollmentGVR: "NetworkEnrollmentList", machineGVR: "MachineList", nodeAdmissionGVR: "NodeAdmissionList"}
 	station := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), listKinds, model, class, node, admission)
-	joins := clientset.NewSimpleClientset(&rlarkv1alpha1.NodeJoin{ObjectMeta: metav1.ObjectMeta{Name: "cluster-a.robot-01", Annotations: map[string]string{nodeJoinModelAnnotation: "s1u"}}})
+	joins := clientset.NewSimpleClientset(&rlarkv1alpha1.NodeJoin{ObjectMeta: metav1.ObjectMeta{Name: "cluster-a.robot-01", Annotations: map[string]string{workflow.NodeJoinModelAnnotation: "s1u"}}})
 	gateway := &Gateway{kubeClient: joins, astribotState: astribotState{stationClient: station}}
 
 	router := gin.New()

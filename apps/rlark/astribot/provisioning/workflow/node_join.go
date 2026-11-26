@@ -1,4 +1,4 @@
-package gateway
+package workflow
 
 import (
 	"context"
@@ -7,8 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/rlinf/rlark/apps/rlark/astribot/provisioning"
-	"github.com/rlinf/rlark/apps/rlark/astribot/stationidentity"
 	"net"
 	"regexp"
 	"slices"
@@ -18,6 +16,8 @@ import (
 
 	rlarkv1alpha1 "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
 	"github.com/rlinf/rlark/apps/rlark/astribot/nodessh"
+	"github.com/rlinf/rlark/apps/rlark/astribot/provisioning"
+	"github.com/rlinf/rlark/apps/rlark/astribot/stationidentity"
 	"github.com/rlinf/rlark/apps/rlark/pkg/log"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -26,7 +26,7 @@ import (
 	"k8s.io/client-go/util/retry"
 )
 
-// A machine is joined to a cluster over SSH in stages, as a cluster is made (astribot_cluster_provision.go): each stage does
+// A machine is joined to a cluster over SSH in stages, as a cluster is made (cluster_provision.go): each stage does
 // its work, reads back what it did and writes both into the NodeJoin's status before the next starts; a stage that
 // fails stops the join there, and a retry goes on from it. The stages that a machine which reaches Station API does
 // not need (the installer sent ahead, its declaration as a hub, its own tunnel) are Skipped, with the reason.
@@ -88,7 +88,7 @@ func (s skipped) Error() string { return string(s) }
 // nodeJoinRun is one join of a machine, from the stage it starts at to the last or to the one that fails. The
 // password is held here only, and cleared when the run ends.
 type nodeJoinRun struct {
-	g            *Gateway
+	g            *Service
 	name         string
 	namespace    string
 	password     []byte
@@ -98,7 +98,7 @@ type nodeJoinRun struct {
 	progressSent time.Time
 }
 
-func nodeJoinName(cluster, node string) string { return cluster + "." + node }
+func NodeJoinName(cluster, node string) string { return cluster + "." + node }
 
 // newJoinStatus is the status of a join that has not started: every stage pending.
 func newJoinStatus(hostKey string) rlarkv1alpha1.NodeJoinStatus {
@@ -110,7 +110,7 @@ func newJoinStatus(hostKey string) rlarkv1alpha1.NodeJoinStatus {
 }
 
 // writeJoinStatus changes the status of a NodeJoin as it is now.
-func (g *Gateway) writeJoinStatus(ctx context.Context, name string, change func(*rlarkv1alpha1.NodeJoinStatus)) error {
+func (g *Service) writeJoinStatus(ctx context.Context, name string, change func(*rlarkv1alpha1.NodeJoinStatus)) error {
 	client := g.kubeClient.RlinfV1alpha1().NodeJoins()
 	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		j, err := client.Get(ctx, name, metav1.GetOptions{})
@@ -123,9 +123,9 @@ func (g *Gateway) writeJoinStatus(ctx context.Context, name string, change func(
 	})
 }
 
-// interruptNodeJoins marks every join that was running when the Gateway stopped: it stopped where it was, and is
+// InterruptNodeJoins marks every join that was running when the Gateway stopped: it stopped where it was, and is
 // retried from there. A unit rlark-join still running on the machine is followed again by the retry.
-func (g *Gateway) interruptNodeJoins(ctx context.Context) error {
+func (g *Service) InterruptNodeJoins(ctx context.Context) error {
 	joins, err := g.kubeClient.RlinfV1alpha1().NodeJoins().List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return fmt.Errorf("list node joins: %w", err)
@@ -286,13 +286,13 @@ func (r *nodeJoinRun) precheck(ctx context.Context, j *rlarkv1alpha1.NodeJoin) (
 	} else if taken != "" && taken != "a node of "+cluster && taken != "declared in the SiteNetwork for "+cluster {
 		return login, fmt.Errorf("名为 %s 的节点已经是 %s：换个节点名", node, taken)
 	}
-	network, err := r.g.siteNetwork(ctx)
+	network, err := stationidentity.ReadSiteNetwork(ctx, r.g.stationClient)
 	if err != nil {
 		return login, fmt.Errorf("read the SiteNetwork: %w", err)
 	}
 	// The address the code's line will redeem through (joinCommand): the tunnel's, for a machine declared with its
 	// key; else the bootstrap address.
-	address := r.g.stationAPIFor(network, cluster, node)
+	address := stationidentity.APIForAdmission(network, cluster, node, r.g.stationBootstrap)
 	declared := address == r.g.stationBootstrap.TunnelAddress()
 	declaredKey := ""
 	if declared {
@@ -422,7 +422,7 @@ func (r *nodeJoinRun) install(ctx context.Context, j *rlarkv1alpha1.NodeJoin) (s
 		joinLabels := map[string]string{}
 		_ = json.Unmarshal([]byte(j.Annotations[nodeJoinInstallLabelsAnnotation]), &joinLabels)
 		machineIntent := map[string]interface{}{"category": "Server"}
-		if model := j.Annotations[nodeJoinModelAnnotation]; model != "" {
+		if model := j.Annotations[NodeJoinModelAnnotation]; model != "" {
 			machineIntent["model"] = model
 		}
 		issued, _, refused := r.g.admissionService().Issue(ctx, j.Spec.RequestedBy, r.namespace, &stationidentity.IssueAdmissionRequest{ClusterID: cluster, NodeName: node, Labels: joinLabels, Machine: machineIntent},
@@ -485,7 +485,7 @@ func (r *nodeJoinRun) installReadback(ctx context.Context, admission types.Names
 	return readback + "；" + ended
 }
 
-func (g *Gateway) markInstallFailure(admission types.NamespacedName, failure string) {
+func (g *Service) markInstallFailure(admission types.NamespacedName, failure string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	if len(failure) > 1000 {

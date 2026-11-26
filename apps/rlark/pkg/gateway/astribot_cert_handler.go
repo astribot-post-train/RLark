@@ -9,19 +9,19 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/rlinf/rlark/apps/rlark/astribot/registry"
 	"io"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/rlinf/rlark/apps/rlark/pkg/common"
+	"github.com/rlinf/rlark/apps/rlark/pkg/log"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/util/retry"
-
-	"github.com/rlinf/rlark/apps/rlark/pkg/common"
-	"github.com/rlinf/rlark/apps/rlark/pkg/log"
 )
 
 type agentCertWithPullSecretsResponse struct {
@@ -29,7 +29,7 @@ type agentCertWithPullSecretsResponse struct {
 	// ImagePullSecrets are the image registry credentials the cluster is given (their cluster selection takes it in):
 	// whoever installs the agent puts them in before it starts, as its own image is pulled with them; the agent then
 	// delivers each under its own name.
-	ImagePullSecrets []agentImagePullSecret `json:"image_pull_secrets"`
+	ImagePullSecrets []registry.ImagePullSecret `json:"image_pull_secrets"`
 }
 
 // respondAgentCertStored ends the official handleSignAgentCert: it answers only once the signed certificate's Secret

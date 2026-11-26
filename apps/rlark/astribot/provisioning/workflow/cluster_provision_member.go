@@ -1,4 +1,4 @@
-package gateway
+package workflow
 
 import (
 	"context"
@@ -11,6 +11,7 @@ import (
 
 	rlarkv1alpha1 "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
 	"github.com/rlinf/rlark/apps/rlark/astribot/provisioning"
+	"github.com/rlinf/rlark/apps/rlark/astribot/registry"
 	"github.com/rlinf/rlark/apps/rlark/astribot/release"
 	"github.com/rlinf/rlark/apps/rlark/astribot/stationmember"
 	"github.com/rlinf/rlark/apps/rlark/pkg/rlarkadm"
@@ -48,7 +49,7 @@ type provisionRelease struct {
 	Files    map[string]string
 }
 
-func (g *Gateway) currentRelease(ctx context.Context) (provisionRelease, error) {
+func (g *Service) currentRelease(ctx context.Context) (provisionRelease, error) {
 	record, err := g.rawClient.CoreV1().ConfigMaps(release.RecordNamespace).Get(ctx, release.RecordName, metav1.GetOptions{})
 	if apierrors.IsNotFound(err) {
 		return provisionRelease{}, fmt.Errorf("there is no release record (%s/%s): a cluster is made at the release the site is at, which the release command records", release.RecordNamespace, release.RecordName)
@@ -105,22 +106,22 @@ func (r *provisionRun) agent(ctx context.Context, p *rlarkv1alpha1.ClusterProvis
 		return "", err
 	}
 	agentID := provisionAgentID(p.Name)
-	_, _, caPEM, err := r.g.getKCPAdminCerts()
+	_, _, caPEM, err := r.g.hooks.GetKCPAdminCerts()
 	if err != nil {
 		return "", fmt.Errorf("read the management plane's CA: %w", err)
 	}
-	certPEM, keyPEM, err := r.g.signCertViaServer(agentID)
+	certPEM, keyPEM, err := r.g.hooks.SignCertViaServer(agentID)
 	if err != nil {
 		return "", fmt.Errorf("sign the agent's certificate: %w", err)
 	}
-	if err := r.g.storeOwnedAgentCertSecret(ctx, agentID, caPEM, []byte(certPEM), []byte(keyPEM)); err != nil {
+	if err := r.g.hooks.StoreOwnedAgentCertSecret(ctx, agentID, caPEM, []byte(certPEM), []byte(keyPEM)); err != nil {
 		return "", err
 	}
-	pulls, err := r.g.imagePullSecretsOf(ctx, agentID)
+	pulls, err := r.g.hooks.ImagePullSecretsOf(ctx, agentID)
 	if err != nil {
 		return "", fmt.Errorf("read the cluster's image registry credentials: %w", err)
 	}
-	if !slices.ContainsFunc(pulls, func(s agentImagePullSecret) bool { return registryOf(s.DockerConfigJSON) == rel.Registry }) {
+	if !slices.ContainsFunc(pulls, func(s registry.ImagePullSecret) bool { return registryOf(s.DockerConfigJSON) == rel.Registry }) {
 		return "", fmt.Errorf("no image registry credential for %s is given to %s: include it in the credential's cluster selection", rel.Registry, agentID)
 	}
 	credentials := make([]rlarkadmtypes.ImagePullCredential, 0, len(pulls))
@@ -129,7 +130,7 @@ func (r *provisionRun) agent(ctx context.Context, p *rlarkv1alpha1.ClusterProvis
 	}
 	err = rlarkadm.InstallTo(ctx, admin, &rlarkadmtypes.DeployConfig{
 		Plane:               rlarkadmtypes.PlaneData,
-		ControlPlaneAddress: r.g.config.ServerAddress,
+		ControlPlaneAddress: r.g.serverAddress,
 		Cert:                &rlarkadmtypes.CertConfig{CACert: string(caPEM), AgentCert: certPEM, AgentKey: keyPEM},
 		Kubernetes: &rlarkadmtypes.KubernetesEnv{
 			AgentImage: rel.Images["cluster-agent"], Image: rel.Images["tools"],
@@ -150,7 +151,7 @@ func (r *provisionRun) agent(ctx context.Context, p *rlarkv1alpha1.ClusterProvis
 			return err
 		}
 		cluster.Spec.NodeAgents = &rlarkv1alpha1.ClusterNodeAgents{Enabled: true, Image: rel.Images["node-agent"]}
-		metav1.SetMetaDataLabel(&cluster.ObjectMeta, clusterTypeLabel, p.Labels[clusterTypeLabel])
+		metav1.SetMetaDataLabel(&cluster.ObjectMeta, provisioning.ClusterTypeLabel, p.Labels[provisioning.ClusterTypeLabel])
 		_, err = r.g.kubeClient.RlinfV1alpha1().Clusters().Update(ctx, cluster, metav1.UpdateOptions{})
 		return err
 	}); err != nil {
@@ -178,7 +179,7 @@ func (r *provisionRun) agent(ctx context.Context, p *rlarkv1alpha1.ClusterProvis
 }
 
 // waitCluster waits until the Cluster is in one of phases.
-func (g *Gateway) waitCluster(ctx context.Context, name string, within time.Duration, phases ...rlarkv1alpha1.ClusterPhase) error {
+func (g *Service) waitCluster(ctx context.Context, name string, within time.Duration, phases ...rlarkv1alpha1.ClusterPhase) error {
 	phase := "absent"
 	for deadline := time.Now().Add(within); time.Now().Before(deadline); time.Sleep(5 * time.Second) {
 		cluster, err := g.kubeClient.RlinfV1alpha1().Clusters().Get(ctx, name, metav1.GetOptions{})
@@ -207,12 +208,12 @@ func (r *provisionRun) station(ctx context.Context, p *rlarkv1alpha1.ClusterProv
 	if err != nil {
 		return "", err
 	}
-	ca, err := os.ReadFile(r.g.config.StationAPICAFile)
+	ca, err := os.ReadFile(r.g.stationCAFile)
 	if err != nil {
 		return "", fmt.Errorf("read Station API's CA: %w", err)
 	}
 	// The image registry credential RLark delivers into station-system, for the release's registry.
-	pulls, err := r.g.imagePullSecretsOf(ctx, provisionAgentID(p.Name))
+	pulls, err := r.g.hooks.ImagePullSecretsOf(ctx, provisionAgentID(p.Name))
 	if err != nil {
 		return "", err
 	}

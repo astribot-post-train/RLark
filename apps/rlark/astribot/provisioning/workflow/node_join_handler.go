@@ -1,11 +1,10 @@
-package gateway
+package workflow
 
 import (
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/rlinf/rlark/apps/rlark/astribot/provisioning"
 	"net"
 	"net/http"
 	"slices"
@@ -14,8 +13,11 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/rlinf/rlark/api/kubeclients/clientset/versioned"
 	rlarkv1alpha1 "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
 	"github.com/rlinf/rlark/apps/rlark/astribot/nodessh"
+	"github.com/rlinf/rlark/apps/rlark/astribot/provisioning"
+	"github.com/rlinf/rlark/apps/rlark/astribot/stationidentity"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -79,12 +81,12 @@ type nodeJoinRequest struct {
 	MachineGone  bool   `json:"machine_gone"`
 }
 
-// handleCreateNodeJoin answers POST /api/v1/station/node-joins: it logs in to the machine once, at once, so that a
+// HandleCreateNodeJoin answers POST /api/v1/station/node-joins: it logs in to the machine once, at once, so that a
 // password the machine refuses is said on the form and the node's name is known; then it records the join and runs
 // its stages in the background, from the login it made.
-func (g *Gateway) handleCreateNodeJoin(c *gin.Context) {
+func (g *Service) HandleCreateNodeJoin(c *gin.Context) {
 	var request createNodeJoinRequest
-	if !decodeOneJSON(c, maxNodeAdmissionRequestBytes, &request, false) {
+	if !g.http.DecodeOneJSON(c, maxNodeAdmissionRequestBytes, &request, false) {
 		return
 	}
 	portProvided := request.Port != 0
@@ -104,7 +106,7 @@ func (g *Gateway) handleCreateNodeJoin(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "cluster_id, address (an IP address or host name), port, user and password are required; tunnel_endpoint is an IPv4 ip:port"})
 		return
 	}
-	namespace, err := g.stationNamespace(c, request.ClusterID)
+	namespace, err := g.http.StationNamespace(c, request.ClusterID)
 	if err != nil {
 		clear(password)
 		clear(sudoPassword)
@@ -211,7 +213,7 @@ func (g *Gateway) handleCreateNodeJoin(c *gin.Context) {
 			return
 		}
 	}
-	name := nodeJoinName(request.ClusterID, request.NodeName)
+	name := NodeJoinName(request.ClusterID, request.NodeName)
 	if len(validation.IsDNS1123Subdomain(request.NodeName)) > 0 || len(validation.IsDNS1123Subdomain(name)) > 0 {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "node_name must be a DNS subdomain", "reason": "NodeName"})
 		return
@@ -219,14 +221,14 @@ func (g *Gateway) handleCreateNodeJoin(c *gin.Context) {
 	client := g.kubeClient.RlinfV1alpha1().NodeJoins()
 	joins, err := client.List(ctx, metav1.ListOptions{})
 	if err != nil {
-		respondKubeError(c, "list node joins: "+err.Error(), err)
+		g.http.RespondKubeError(c, "list node joins: "+err.Error(), err)
 		return
 	}
 	for _, other := range joins.Items {
 		switch {
 		case other.Name == name && other.Status.Phase == rlarkv1alpha1.ClusterProvisionSucceeded:
 			if err := client.Delete(ctx, name, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
-				respondKubeError(c, "delete the earlier join: "+err.Error(), err)
+				g.http.RespondKubeError(c, "delete the earlier join: "+err.Error(), err)
 				return
 			}
 		case other.Name == name:
@@ -260,7 +262,7 @@ func (g *Gateway) handleCreateNodeJoin(c *gin.Context) {
 		}
 		patch, _ := json.Marshal(map[string]interface{}{
 			"metadata": map[string]string{"resourceVersion": latest.GetResourceVersion()},
-			"spec":     map[string]interface{}{"admit": machineAdmissionForServer(request, c.GetString(authSubjectKey), time.Now().UTC().Format(time.RFC3339))},
+			"spec":     map[string]interface{}{"admit": machineAdmissionForServer(request, g.http.Actor(c), time.Now().UTC().Format(time.RFC3339))},
 		})
 		if _, err := resource.Patch(ctx, latest.GetName(), types.MergePatchType, patch, metav1.PatchOptions{}); err != nil {
 			c.JSON(http.StatusConflict, gin.H{"error": "scanned Machine changed before its admission was recorded; refresh and retry"})
@@ -279,24 +281,24 @@ func (g *Gateway) handleCreateNodeJoin(c *gin.Context) {
 	j, err := client.Create(ctx, &rlarkv1alpha1.NodeJoin{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Labels: labels, Annotations: annotations},
 		Spec: rlarkv1alpha1.NodeJoinSpec{
-			ClusterID: request.ClusterID, NodeName: request.NodeName, RequestedBy: c.GetString(authSubjectKey),
+			ClusterID: request.ClusterID, NodeName: request.NodeName, RequestedBy: g.http.Actor(c),
 			Machine: rlarkv1alpha1.NodeJoinMachine{Address: request.Address, Port: request.Port, User: request.User, TunnelEndpoint: request.TunnelEndpoint},
 		},
 	}, metav1.CreateOptions{})
 	if err != nil {
 		if candidate != nil {
-			_ = g.clearMachineAdmission(ctx, candidate.GetName(), request.ClusterID, c.GetString(authSubjectKey))
+			_ = g.clearMachineAdmission(ctx, candidate.GetName(), request.ClusterID, g.http.Actor(c))
 		}
-		respondKubeError(c, "create node join: "+err.Error(), err)
+		g.http.RespondKubeError(c, "create node join: "+err.Error(), err)
 		return
 	}
 	j.Status = newJoinStatus(hostKey)
 	if j, err = client.UpdateStatus(ctx, j, metav1.UpdateOptions{}); err != nil {
 		if candidate != nil {
-			_ = g.clearMachineAdmission(ctx, candidate.GetName(), request.ClusterID, c.GetString(authSubjectKey))
+			_ = g.clearMachineAdmission(ctx, candidate.GetName(), request.ClusterID, g.http.Actor(c))
 		}
 		_ = client.Delete(ctx, name, metav1.DeleteOptions{})
-		respondKubeError(c, "write the node join's status: "+err.Error(), err)
+		g.http.RespondKubeError(c, "write the node join's status: "+err.Error(), err)
 		return
 	}
 	started = g.startNodeJoin(ctx, &nodeJoinRun{g: g, name: name, namespace: namespace, password: password, sudoPassword: sudoPassword, machine: machine}, joinStages[0])
@@ -305,7 +307,7 @@ func (g *Gateway) handleCreateNodeJoin(c *gin.Context) {
 }
 
 // startNodeJoin runs the join in the background, from stage on; false when it already runs.
-func (g *Gateway) startNodeJoin(ctx context.Context, run *nodeJoinRun, stage string) bool {
+func (g *Service) startNodeJoin(ctx context.Context, run *nodeJoinRun, stage string) bool {
 	if !g.nodeJoins.start(run.name) {
 		return false
 	}
@@ -313,27 +315,27 @@ func (g *Gateway) startNodeJoin(ctx context.Context, run *nodeJoinRun, stage str
 	return true
 }
 
-// handleListNodeJoins answers GET /api/v1/station/node-joins?cluster_id=: the cluster's joins, running ones first,
+// HandleListNodeJoins answers GET /api/v1/station/node-joins?cluster_id=: the cluster's joins, running ones first,
 // then the newest.
-func (g *Gateway) handleListNodeJoins(c *gin.Context) {
+func (g *Service) HandleListNodeJoins(c *gin.Context) {
 	clusterID := c.Query("cluster_id")
 	if clusterID == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "cluster_id is required"})
 		return
 	}
-	items, err := g.nodeJoinsOf(c.Request.Context(), clusterID)
+	items, err := NodeJoinsOf(c.Request.Context(), g.kubeClient, clusterID)
 	if err != nil {
-		respondKubeError(c, "list node joins: "+err.Error(), err)
+		g.http.RespondKubeError(c, "list node joins: "+err.Error(), err)
 		return
 	}
 	c.Header("Cache-Control", "no-store")
 	c.JSON(http.StatusOK, gin.H{"items": items})
 }
 
-// nodeJoinsOf lists a cluster's joins, running ones first and then the newest, and deletes those that succeeded more
+// NodeJoinsOf lists a cluster's joins, running ones first and then the newest, and deletes those that succeeded more
 // than joinKeptFor ago.
-func (g *Gateway) nodeJoinsOf(ctx context.Context, clusterID string) ([]rlarkv1alpha1.NodeJoin, error) {
-	client := g.kubeClient.RlinfV1alpha1().NodeJoins()
+func NodeJoinsOf(ctx context.Context, kubeClient versioned.Interface, clusterID string) ([]rlarkv1alpha1.NodeJoin, error) {
+	client := kubeClient.RlinfV1alpha1().NodeJoins()
 	list, err := client.List(ctx, metav1.ListOptions{LabelSelector: nodeJoinClusterLabel + "=" + clusterID})
 	if err != nil {
 		return nil, err
@@ -341,8 +343,12 @@ func (g *Gateway) nodeJoinsOf(ctx context.Context, clusterID string) ([]rlarkv1a
 	items := make([]rlarkv1alpha1.NodeJoin, 0, len(list.Items))
 	for _, j := range list.Items {
 		// A join that succeeded is listed for joinKeptFor after its last stage.
-		if j.Status.Phase == rlarkv1alpha1.ClusterProvisionSucceeded && time.Since(j.Status.Stages[len(j.Status.Stages)-1].FinishedAt.Time) > joinKeptFor {
-			if err := client.Delete(ctx, j.Name, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
+		if j.Status.Phase == rlarkv1alpha1.ClusterProvisionSucceeded && joinExpired(j.Status.Stages) {
+			options := metav1.DeleteOptions{}
+			if j.UID != "" && j.ResourceVersion != "" {
+				options.Preconditions = &metav1.Preconditions{UID: &j.UID, ResourceVersion: &j.ResourceVersion}
+			}
+			if err := client.Delete(ctx, j.Name, options); err != nil && !apierrors.IsNotFound(err) {
 				return nil, err
 			}
 			continue
@@ -361,20 +367,28 @@ func (g *Gateway) nodeJoinsOf(ctx context.Context, clusterID string) ([]rlarkv1a
 	return items, nil
 }
 
-func (g *Gateway) handleGetNodeJoin(c *gin.Context) {
+func joinExpired(stages []rlarkv1alpha1.ClusterProvisionStage) bool {
+	if len(stages) == 0 {
+		return false
+	}
+	finished := stages[len(stages)-1].FinishedAt
+	return finished != nil && !finished.IsZero() && time.Since(finished.Time) > joinKeptFor
+}
+
+func (g *Service) HandleGetNodeJoin(c *gin.Context) {
 	j, err := g.kubeClient.RlinfV1alpha1().NodeJoins().Get(c.Request.Context(), c.Param("name"), metav1.GetOptions{})
 	if err != nil {
-		respondKubeError(c, "get node join: "+err.Error(), err)
+		g.http.RespondKubeError(c, "get node join: "+err.Error(), err)
 		return
 	}
 	c.Header("Cache-Control", "no-store")
 	c.JSON(http.StatusOK, gin.H{"data": j})
 }
 
-// handleRetryNodeJoin answers POST /api/v1/station/node-joins/:name/retry: a join that stopped goes on from its stage.
-func (g *Gateway) handleRetryNodeJoin(c *gin.Context) {
+// HandleRetryNodeJoin answers POST /api/v1/station/node-joins/:name/retry: a join that stopped goes on from its stage.
+func (g *Service) HandleRetryNodeJoin(c *gin.Context) {
 	var request nodeJoinRequest
-	if !decodeOneJSON(c, maxNodeAdmissionRequestBytes, &request, false) {
+	if !g.http.DecodeOneJSON(c, maxNodeAdmissionRequestBytes, &request, false) {
 		return
 	}
 	password := []byte(request.Password)
@@ -392,11 +406,15 @@ func (g *Gateway) handleRetryNodeJoin(c *gin.Context) {
 	client := g.kubeClient.RlinfV1alpha1().NodeJoins()
 	j, err := client.Get(ctx, c.Param("name"), metav1.GetOptions{})
 	if err != nil {
-		respondKubeError(c, "get node join: "+err.Error(), err)
+		g.http.RespondKubeError(c, "get node join: "+err.Error(), err)
 		return
 	}
 	if j.Status.Phase != rlarkv1alpha1.ClusterProvisionFailed {
 		c.JSON(http.StatusConflict, gin.H{"error": "the join of " + j.Spec.NodeName + " is " + string(j.Status.Phase) + ": only a stopped one is retried"})
+		return
+	}
+	if !slices.Contains(joinStages, j.Status.Stage) {
+		c.JSON(http.StatusConflict, gin.H{"error": "the recorded node join stage is invalid"})
 		return
 	}
 	if joinNeedsMachine(j.Status.Stage) && len(password) == 0 {
@@ -405,7 +423,7 @@ func (g *Gateway) handleRetryNodeJoin(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "stage " + j.Status.Stage + " logs in to the machine: its SSH password is required"})
 		return
 	}
-	namespace, err := g.stationNamespace(c, j.Spec.ClusterID)
+	namespace, err := g.http.StationNamespace(c, j.Spec.ClusterID)
 	if err != nil {
 		clear(password)
 		clear(sudoPassword)
@@ -416,7 +434,7 @@ func (g *Gateway) handleRetryNodeJoin(c *gin.Context) {
 		if j, err = client.Update(ctx, j, metav1.UpdateOptions{}); err != nil {
 			clear(password)
 			clear(sudoPassword)
-			respondKubeError(c, "change the machine's account: "+err.Error(), err)
+			g.http.RespondKubeError(c, "change the machine's account: "+err.Error(), err)
 			return
 		}
 	}
@@ -440,13 +458,13 @@ systemctl daemon-reload
 echo cleared=yes
 `
 
-// handleClearNodeJoin answers POST /api/v1/station/node-joins/:name/clear: a join that is not running is taken away,
+// HandleClearNodeJoin answers POST /api/v1/station/node-joins/:name/clear: a join that is not running is taken away,
 // with what it left. Before its code's line ran: its declaration as a hub, and with the password the tunnel it
 // started on the machine. After: the node's name is removed as a removal by name does (a NodeOperation Remove), which
 // retires its site node record and deletes its admission or its Node. It answers what it did, a line a step.
-func (g *Gateway) handleClearNodeJoin(c *gin.Context) {
+func (g *Service) HandleClearNodeJoin(c *gin.Context) {
 	var request nodeJoinRequest
-	if !decodeOneJSON(c, maxNodeAdmissionRequestBytes, &request, true) {
+	if !g.http.DecodeOneJSON(c, maxNodeAdmissionRequestBytes, &request, true) {
 		return
 	}
 	password := []byte(request.Password)
@@ -459,10 +477,10 @@ func (g *Gateway) handleClearNodeJoin(c *gin.Context) {
 	client := g.kubeClient.RlinfV1alpha1().NodeJoins()
 	j, err := client.Get(ctx, c.Param("name"), metav1.GetOptions{})
 	if err != nil {
-		respondKubeError(c, "get node join: "+err.Error(), err)
+		g.http.RespondKubeError(c, "get node join: "+err.Error(), err)
 		return
 	}
-	namespace, err := g.stationNamespace(c, j.Spec.ClusterID)
+	namespace, err := g.http.StationNamespace(c, j.Spec.ClusterID)
 	if err != nil {
 		return
 	}
@@ -484,7 +502,7 @@ func (g *Gateway) handleClearNodeJoin(c *gin.Context) {
 	switch {
 	case j.Status.Phase == rlarkv1alpha1.ClusterProvisionSucceeded:
 	case reached(stageInstall):
-		steps, err = g.removeJoinedName(ctx, namespace, j, c.GetString(authSubjectKey))
+		steps, err = g.removeJoinedName(ctx, namespace, j, g.http.Actor(c))
 	default:
 		steps, err = g.clearUnredeemedJoin(ctx, j, password, sudoPassword)
 	}
@@ -508,7 +526,7 @@ func (g *Gateway) handleClearNodeJoin(c *gin.Context) {
 
 // clearUnredeemedJoin takes away what a join left before its code's line ran: the tunnel on the machine, when the
 // password is given, and its declaration of the machine as a hub.
-func (g *Gateway) clearUnredeemedJoin(ctx context.Context, j *rlarkv1alpha1.NodeJoin, password, sudoPassword []byte) ([]string, error) {
+func (g *Service) clearUnredeemedJoin(ctx context.Context, j *rlarkv1alpha1.NodeJoin, password, sudoPassword []byte) ([]string, error) {
 	var steps []string
 	machineTouched := slices.ContainsFunc(j.Status.Stages, func(s rlarkv1alpha1.ClusterProvisionStage) bool {
 		return s.Name == stageTunnel && (s.State == rlarkv1alpha1.ClusterProvisionStageDone || s.State == rlarkv1alpha1.ClusterProvisionStageFailed || s.State == rlarkv1alpha1.ClusterProvisionStageRunning)
@@ -556,9 +574,9 @@ func (g *Gateway) clearUnredeemedJoin(ctx context.Context, j *rlarkv1alpha1.Node
 // removeJoinedName removes the node's name as the console's "start over" of an admission does: a NodeOperation
 // Remove without a UID, which station-controller carries out (the Node its cluster has, or what RLark keeps of the
 // name: the site node record, the admission).
-func (g *Gateway) removeJoinedName(ctx context.Context, namespace string, j *rlarkv1alpha1.NodeJoin, actor string) ([]string, error) {
+func (g *Service) removeJoinedName(ctx context.Context, namespace string, j *rlarkv1alpha1.NodeJoin, actor string) ([]string, error) {
 	requestID := "clear-" + j.Spec.NodeName + "-" + strconv.FormatInt(time.Now().Unix(), 36)
-	name := nodeOperationName(j.Spec.ClusterID, requestID)
+	name := stationidentity.NodeOperationName(j.Spec.ClusterID, requestID)
 	spec := map[string]any{"requestID": requestID, "action": "Remove", "clusterID": j.Spec.ClusterID, "nodeName": j.Spec.NodeName, "requestedBy": actor}
 	operation := &unstructured.Unstructured{Object: map[string]any{"apiVersion": "station.rlark.io/v1alpha1", "kind": "NodeOperation",
 		"metadata": map[string]any{"name": name, "namespace": namespace}, "spec": spec}}

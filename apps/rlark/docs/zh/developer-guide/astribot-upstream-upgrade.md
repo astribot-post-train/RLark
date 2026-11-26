@@ -15,7 +15,7 @@ Astribot 标准发布在 `crds-rbac` 阶段应用 CRD 和生成的管理面角�
 
 机器人操作、场站观测、相机和日志代理、手动扫描及型号目录在 `apps/rlark/astribot/stations/`。入网码签发和撤销、有效期校验、安装命令和记录转换在 `stationidentity/`。成员集群网络规划和机器安装脚本在 `provisioning/`。专用 Addon 目录、Agent 就绪判定、节点服务代理、任务适配器、存储声明渲染和 OCI 清单校验已归入相应的 Astribot 包。控制台扩展和测试分别位于 `apps/rlark-ui/src/astribot/` 和 `apps/rlark-ui/tests/astribot/`。
 
-CRD 字段与生成产物、共享角色、鉴权和错误转换、组件接线及其集成测试随共享契约维护。已有安装通过同名同版本的 `csi-driver-rclone` 使用 Astribot 参数，因此该扩展仍在原 Addon 定义内。共享包中还包含SSH 加入流程、建站编排、仓库访问与存储持久化和同步，以及依赖控制器内部状态的 Agent 和 provider 实现。
+CRD 字段与生成产物、共享角色、鉴权和错误转换、组件接线及其集成测试随共享契约维护。已有安装通过同名同版本的 `csi-driver-rclone` 使用 Astribot 参数，因此该扩展仍在原 Addon 定义内。依赖共享组件状态的镜像仓库和 Agent／提供商代码保留各自的接入点。
 
 兼容分支已纳入 v1.7.3 发布构建使用的 S1U 遥测源码。Gateway 内嵌的硬件能力定义与 S1U 镜像复制的文件相同。使用该分支发布前，在测试环境验收本体状态、两路相机及其延迟指标和手动扫描。
 
@@ -38,7 +38,7 @@ CRD 字段与生成产物、共享角色、鉴权和错误转换、组件接线�
 
 Gateway、管理面控制器和升级后的成员 Agent 都要求集群明确设置 `rlark.io/upgrade-driver: stock` 后才允许使用上游安装器。声明了托管节点 Agent 的集群无法使用该安装器。若成员已有 Astribot 发布租约但未配置执行策略，Agent 同样拒绝启动。隔离测试的仅镜像模式在目标就绪后由 Job 持成员租约写入完成检查点。若本地 Job 消失，Agent 会确认检查点属于本轮子任务 UID，并核验相同 Deployment 的两个目标镜像摘要及实际就绪状态。找不到匹配的检查点时会报告结果无法确认。
 
-机器列表和入网资格共用 `stations/machine_view.go` 中的转换逻辑。集群创建和 SSH 节点入网共用 `provisioning/bundle.go` 中的安装包传输、摘要验证和进度上报。Astribot 的 S3 挂载选项和端点校验归入 `storageconfig/mount_request.go`，复用上游端点标准化逻辑。Gateway 仍负责 HTTP 授权、响应处理、资源持久化以及创建和入网阶段编排。 升级目标被拒绝时的诊断信息，以及节点加入状态的注解转换，也由 Astribot 扩展负责，沿用现有 API 字段。
+机器列表和入网资格共用 `stations/machine_view.go` 中的转换逻辑。集群创建和 SSH 节点入网共用 `provisioning/bundle.go` 中的安装包传输、摘要验证和进度上报。Astribot 的 S3 挂载选项和端点校验归入 `storageconfig/mount_request.go`，复用上游端点标准化逻辑。Gateway 沿用现有授权和响应契约，再调用 Astribot 工作流。 升级目标被拒绝时的诊断信息，以及节点加入状态的注解转换，也由 Astribot 扩展负责，沿用现有 API 字段。
 
 执行器将托管节点 Agent 镜像作为第三个独立目标写入本轮检查点。开放托管升级前，仍需接通管理面通道，仅允许对已核验的集群和任务比较并变更 `Cluster.spec.nodeAgents.image`，并核验成员集群的实际滚动结果。通过混合双集群验收后再开放 Astribot 批量入口。
 
@@ -74,4 +74,14 @@ Kind 混合批次用例对标准和托管 Cluster 记录运行了真实控制面
 
 标准 Job 显式选择上游组件清单，预检、升级及回滚都覆盖两个标准数据面工作负载。常规 Astribot 安装仍走托管声明。标准批次校验和安装器共用严格 DeployConfig 解析器，接受文档规定的连字符 YAML 字段。
 
-首台机器创建与节点加入共用的 SSH 传输已归入 `astribot/provisioning/ssh.go`。Gateway 保留创建和加入阶段编排，以及 HTTP 和授权接入。
+### Gateway 业务归属和共享接入点
+
+- `astribot/provisioning/workflow/` 负责 SSH 节点入网与集群创建，包括请求校验、阶段状态和恢复、机器安装、隧道建立及清理。它使用经校验的 Station 引导客户端和类型化管理面客户端。保存的阶段无法识别时，重试返回 HTTP 409。入网记录缺少完成时间时，列表会保留该记录。
+- `astribot/storageconfig/` 负责存储声明校验、渲染、Secret 持久化、端点协调，以及为新集群接入共享 S3 存储。Gateway 保留现有路由、HTTP 错误映射和对象浏览客户端缓存。集群创建因部分写入而重试时会补齐缺失的端点声明。Astribot 复用上游 `pkg/gateway/storage` 的提供商目录和 S3 客户端。
+- Gateway 接入共用的 JWT 和管理员鉴权，提供操作人身份和 Station 命名空间解析，并注入现有证书服务、Kubernetes 代理、镜像仓库凭据、Addon 发布、任务密钥分发及日志访问。这些接入点复用 Gateway 的已认证客户端。CRD 和生成客户端仍归 API 层维护。
+
+旧版清理流程仍以名称定位部分集群资源，并以节点名为中断的 SSH 入网提交移除操作。存在同名重建时，执行清理前须核对目标归属原操作。为这些资源记录可持久化的归属凭据需要单独处理兼容性。
+
+### Server 隧道验收
+
+独立验收使用 kcp v0.30.0 root workspace、一个 Kind 成员和本地构建的真实 Server、Cluster Agent、Node Agent。两个 Agent 使用 Server 签发的客户端证书连接，并续约各自的管理面心跳 Lease。通过 `/api/proxy/:agent/api/kubernetes/api/v1/nodes` 和 `/api/nodeproxy/:agent/:node/api/kubernetes/api/v1/nodes/:node` 发起认证请求，均读到了实际成员 API。请求未连接的节点返回 HTTP 502，节点专用路由未降级到集群隧道。Server 拒绝了无客户端证书的请求。重启测试 Server 后，两个 Agent 均自动重连，原请求再次成功。本次覆盖 Agent 反向隧道。机器 SSH 入网、Station WireGuard 链路和生产发布有各自的验收流程。

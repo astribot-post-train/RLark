@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/gin-gonic/gin"
+	"github.com/rlinf/rlark/apps/rlark/astribot/provisioning/workflow"
 	"github.com/rlinf/rlark/apps/rlark/astribot/stations"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -22,7 +23,7 @@ func (g *Gateway) registerRobotModelRoutes(admin *gin.RouterGroup) {
 			}
 			models := make([]string, 0, len(joins.Items))
 			for _, join := range joins.Items {
-				models = append(models, join.Annotations[nodeJoinModelAnnotation])
+				models = append(models, join.Annotations[workflow.NodeJoinModelAnnotation])
 			}
 			return models, nil
 		}

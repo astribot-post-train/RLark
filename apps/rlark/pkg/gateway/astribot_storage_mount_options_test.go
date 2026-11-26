@@ -3,28 +3,27 @@ package gateway
 import (
 	"context"
 	"encoding/base64"
-	"github.com/rlinf/rlark/apps/rlark/astribot/storageconfig"
 	"net/http"
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"github.com/rlinf/rlark/apps/rlark/astribot/storageconfig"
+	"github.com/rlinf/rlark/apps/rlark/pkg/configs"
+	"github.com/rlinf/rlark/apps/rlark/pkg/distribution"
 	"github.com/stretchr/testify/require"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/client-go/kubernetes/fake"
-
-	"github.com/rlinf/rlark/apps/rlark/pkg/configs"
-	"github.com/rlinf/rlark/apps/rlark/pkg/distribution"
 )
 
 func TestStorageMountPolicyRenderBackendAndRoundTrip(t *testing.T) {
 	options := []string{"s3-chunk-size=64Mi", "s3-upload-concurrency=2", "low-level-retries=30"}
-	s, err := normalizeStorageClass(CreateStorageClassRequest{Name: "archive", Clusters: []string{"cloud"}, Provider: "Other", Endpoint: "https://s3.example.com", Bucket: "bucket", AccessKeySecret: "secret", astribotStorageClassRequest: astribotStorageClassRequest{MountProfile: "archive", MountOptions: &options}})
+	s, err := storageconfig.NormalizeClass(CreateStorageClassRequest{Name: "archive", Clusters: []string{"cloud"}, Provider: "Other", Endpoint: "https://s3.example.com", Bucket: "bucket", AccessKeySecret: "secret", SpecialClassRequest: storageconfig.SpecialClassRequest{MountProfile: "archive", MountOptions: &options}})
 	require.NoError(t, err)
 	require.Equal(t, "off", s.VFSCacheMode)
 	declaration, err := storageconfig.RenderReplication("default", "sc-0123456789abcdef", s)
 	require.NoError(t, err)
-	_, decoded, err := storageClassFromSecret(declaration)
+	_, decoded, err := storageconfig.ClassFromSecret(declaration)
 	require.NoError(t, err)
 	require.Equal(t, s, decoded)
 	_, backend, _, err := storageconfig.ResolveS3MountOptions(s.MountProfile, s.VFSCacheMode, s.MountOptions)
@@ -34,9 +33,9 @@ func TestStorageMountPolicyRenderBackendAndRoundTrip(t *testing.T) {
 }
 
 func TestStorageClassRemoteNameIsStable(t *testing.T) {
-	archive, err := normalizeStorageClass(CreateStorageClassRequest{
+	archive, err := storageconfig.NormalizeClass(CreateStorageClassRequest{
 		Name: "archive", Clusters: []string{"cloud"}, Provider: "Other", Endpoint: "https://s3.example.com",
-		Bucket: "bucket", AccessKeySecret: "archive-secret", astribotStorageClassRequest: astribotStorageClassRequest{MountProfile: "archive"},
+		Bucket: "bucket", AccessKeySecret: "archive-secret", SpecialClassRequest: storageconfig.SpecialClassRequest{MountProfile: "archive"},
 	})
 	require.NoError(t, err)
 	secret, err := storageconfig.RenderReplication("default", "sc-archive", archive)
@@ -77,9 +76,9 @@ func TestStorageClassCredentialsFromExistingStorage(t *testing.T) {
 	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
 	response = performJSONRequest(t, router, http.MethodPost, "/storage", map[string]any{"name": "read", "clusters": []string{"cloud"}, "credentials_from": "archive", "bucket": "bucket", "prefix": "data", "mount_profile": "read"})
 	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
-	secret, err := getStorageClassSecretByName(context.Background(), g.rawClient, "management", "read")
+	secret, err := storageconfig.ClassSecretByName(context.Background(), g.rawClient, "management", "read")
 	require.NoError(t, err)
-	_, read, err := storageClassFromSecret(secret)
+	_, read, err := storageconfig.ClassFromSecret(secret)
 	require.NoError(t, err)
 	require.Equal(t, []string{"https://public.example.com", "cn", "access", "secret", "data", "read"}, []string{read.Endpoint, read.Region, read.AccessKeyID, read.AccessKey, read.Prefix, read.MountProfile})
 	response = performJSONRequest(t, router, http.MethodPost, "/storage", map[string]any{"name": "other", "clusters": []string{"cloud"}, "credentials_from": "missing", "bucket": "bucket"})

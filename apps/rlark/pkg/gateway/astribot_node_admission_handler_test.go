@@ -6,15 +6,17 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	clientset "github.com/rlinf/rlark/api/kubeclients/clientset/versioned/fake"
-	"github.com/rlinf/rlark/apps/rlark/astribot/stationidentity"
 	"io"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	clientset "github.com/rlinf/rlark/api/kubeclients/clientset/versioned/fake"
+	rlarkv1alpha1 "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
+	"github.com/rlinf/rlark/apps/rlark/astribot/stationidentity"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -42,7 +44,8 @@ func (f *fakeStationBootstrap) Open(_ context.Context, path string) (io.ReadClos
 }
 
 func (f *fakeStationBootstrap) BundleDigest(context.Context) (string, error) {
-	return sha256Hex(fakeInstaller), nil
+	digest := sha256.Sum256([]byte(fakeInstaller))
+	return hex.EncodeToString(digest[:]), nil
 }
 
 // fakeInstaller is what the fake Station API serves as the installer.
@@ -259,5 +262,52 @@ func TestIssueNodeAdmissionForADeclaredKeyRedeemsThroughTheTunnel(t *testing.T) 
 		if strings.Count(issued.Command, "https://"+address+"/") != 2 {
 			t.Fatalf("%s: command %s, want Station API at %s", node, issued.Command, address)
 		}
+	}
+}
+
+func TestWorkflowRoutesAndAdmissionProjectionUseGatewayAuthorization(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	g, _ := nodeAdmissionGateway()
+	g.jwtSigningKey = []byte(strings.Repeat("k", 32))
+	g.setupProvisioningWorkflow()
+	router := gin.New()
+	g.RegisterRoutes(router)
+
+	code, body := nodeAdmissionCall(t, g.handleIssueNodeAdmission, "POST", "/station/node-admissions", "", `{"cluster_id":"cluster-a","node_name":"arm-1","ttl_seconds":600}`)
+	if code != http.StatusCreated {
+		t.Fatalf("issue admission: %d %s", code, body)
+	}
+	_, err := g.kubeClient.RlinfV1alpha1().NodeJoins().Create(context.Background(), &rlarkv1alpha1.NodeJoin{
+		ObjectMeta: metav1.ObjectMeta{Name: "cluster-a.arm-1", Labels: map[string]string{"rlark.io/cluster": "cluster-a"}},
+		Spec:       rlarkv1alpha1.NodeJoinSpec{ClusterID: "cluster-a", NodeName: "arm-1"},
+		Status:     rlarkv1alpha1.NodeJoinStatus{Phase: rlarkv1alpha1.ClusterProvisionSucceeded, Stage: "gpu"},
+	}, metav1.CreateOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, test := range []struct {
+		path, body string
+	}{
+		{"/api/v1/cluster-provisions", `"success":true`},
+		{"/api/v1/station/node-joins?cluster_id=cluster-a", `"nodeName":"arm-1"`},
+		{"/api/v1/station/node-admissions?cluster_id=cluster-a", `"join_phase":"Succeeded"`},
+	} {
+		t.Run(test.path, func(t *testing.T) {
+			for _, role := range []string{"user", "admin"} {
+				token, _, err := g.issueJWT(role, role)
+				if err != nil {
+					t.Fatal(err)
+				}
+				request := httptest.NewRequest(http.MethodGet, test.path, nil)
+				request.Header.Set("Authorization", "Bearer "+token)
+				response := httptest.NewRecorder()
+				router.ServeHTTP(response, request)
+				if role == "user" && response.Code != http.StatusForbidden ||
+					role == "admin" && (response.Code != http.StatusOK || !strings.Contains(response.Body.String(), test.body)) {
+					t.Fatalf("%s response: %d %s", role, response.Code, response.Body.String())
+				}
+			}
+		})
 	}
 }

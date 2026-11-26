@@ -1,9 +1,9 @@
 package gateway
 
 import (
-	"github.com/rlinf/rlark/apps/rlark/astribot/storageconfig"
 	"testing"
 
+	"github.com/rlinf/rlark/apps/rlark/astribot/storageconfig"
 	"github.com/rlinf/rlark/apps/rlark/pkg/distribution"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -17,14 +17,14 @@ func TestStorageClassPrefixAndVFSCacheMode(t *testing.T) {
 		AccessKeyId: "access", AccessKeySecret: "secret",
 	}
 
-	legacy, err := normalizeStorageClass(base)
+	legacy, err := storageconfig.NormalizeClass(base)
 	require.NoError(t, err)
 	assert.Empty(t, legacy.Prefix)
-	assert.Equal(t, "writes", effectiveVFSCacheMode(legacy.VFSCacheMode))
+	assert.Equal(t, "writes", storageconfig.EffectiveVFSCacheMode(legacy.VFSCacheMode))
 
 	base.Prefix = "ks3-regular"
 	base.VFSCacheMode = "off"
-	stored, err := normalizeStorageClass(base)
+	stored, err := storageconfig.NormalizeClass(base)
 	require.NoError(t, err)
 	decl, err := storageconfig.RenderReplication("management", "sc-0123456789abcdef", stored)
 	require.NoError(t, err)
@@ -58,11 +58,11 @@ func TestNormalizeStorageClassRejectsInvalidPrefixAndCacheMode(t *testing.T) {
 	}
 	for _, prefix := range []string{"a//b", "../private", "a/../b", `a\\b`} {
 		base.Prefix = prefix
-		_, err := normalizeStorageClass(base)
+		_, err := storageconfig.NormalizeClass(base)
 		require.Error(t, err, "prefix %q", prefix)
 	}
 	base.Prefix = ""
 	base.VFSCacheMode = "full"
-	_, err := normalizeStorageClass(base)
+	_, err := storageconfig.NormalizeClass(base)
 	require.ErrorContains(t, err, "vfs_cache_mode")
 }

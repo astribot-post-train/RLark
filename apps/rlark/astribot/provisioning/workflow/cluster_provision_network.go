@@ -1,11 +1,11 @@
-package gateway
+package workflow
 
 import (
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/rlinf/rlark/apps/rlark/astribot/provisioning"
+	"github.com/rlinf/rlark/apps/rlark/astribot/stationidentity"
 	"net"
 	"net/http"
 	"net/netip"
@@ -15,14 +15,15 @@ import (
 	"time"
 
 	rlarkv1alpha1 "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
+	"github.com/rlinf/rlark/apps/rlark/astribot/provisioning"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/client-go/util/retry"
 	"sigs.k8s.io/yaml"
 )
 
-func (g *Gateway) provisionNetwork(ctx context.Context) (provisioning.Network, error) {
-	object, err := g.siteNetwork(ctx)
+func (g *Service) provisionNetwork(ctx context.Context) (provisioning.Network, error) {
+	object, err := stationidentity.ReadSiteNetwork(ctx, g.stationClient)
 	if err != nil {
 		return provisioning.Network{}, fmt.Errorf("read the SiteNetwork: %w", err)
 	}
@@ -34,7 +35,7 @@ func (g *Gateway) provisionNetwork(ctx context.Context) (provisioning.Network, e
 
 // admissionAddresses are the tunnel addresses the node admissions hold (pinned, or allocated by station-controller):
 // a machine that joined by a code has its address there, not in the SiteNetwork.
-func (g *Gateway) admissionAddresses(ctx context.Context) ([]string, error) {
+func (g *Service) admissionAddresses(ctx context.Context) ([]string, error) {
 	admissions, err := g.stationClient.Resource(nodeAdmissionGVR).Namespace("").List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("list node admissions: %w", err)
@@ -52,14 +53,14 @@ func (g *Gateway) admissionAddresses(ctx context.Context) ([]string, error) {
 
 // clusterNetworks are the Pod and Service networks of a cluster, as its API shows them: kubeadm's configuration
 // where there is one, each node's Pod CIDR, and the /16 around the API's own Service address.
-func (g *Gateway) clusterNetworks(ctx context.Context, cluster string) ([]netip.Prefix, error) {
+func (g *Service) clusterNetworks(ctx context.Context, cluster string) ([]netip.Prefix, error) {
 	agent := provisionAgentID(cluster)
 	get := func(path string, into any) (bool, error) {
-		resp, err := g.proxyKubeRequest(ctx, http.MethodGet, agent, path, nil)
+		resp, err := g.hooks.ProxyKubeRequest(ctx, http.MethodGet, agent, path, nil)
 		if err != nil {
 			return false, err
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 		if resp.StatusCode == http.StatusNotFound {
 			return false, nil
 		}
@@ -132,9 +133,9 @@ func (r *provisionRun) declare(ctx context.Context, p *rlarkv1alpha1.ClusterProv
 	if err != nil {
 		return "", fmt.Errorf("the release's registry %q is not host:port", release.Registry)
 	}
-	server, err := url.Parse(r.g.config.ServerAddress)
+	server, err := url.Parse(r.g.serverAddress)
 	if err != nil || server.Hostname() == "" {
-		return "", fmt.Errorf("the Gateway's --server-address %q names no host", r.g.config.ServerAddress)
+		return "", fmt.Errorf("the Gateway's --server-address %q names no host", r.g.serverAddress)
 	}
 	others, err := r.g.kubeClient.RlinfV1alpha1().ClusterProvisions().List(ctx, metav1.ListOptions{})
 	if err != nil {
@@ -277,7 +278,7 @@ func (r *provisionRun) declare(ctx context.Context, p *rlarkv1alpha1.ClusterProv
 
 // declareHub declares a machine of a cluster's site as a hub by its key, at a tunnel address of its own (the one it
 // has, or the lowest free), and answers that address and the SiteNetwork's generation that holds the declaration.
-func (g *Gateway) declareHub(ctx context.Context, cluster, node, privateAddress, publicKey, endpoint string) (string, int64, error) {
+func (g *Service) declareHub(ctx context.Context, cluster, node, privateAddress, publicKey, endpoint string) (string, int64, error) {
 	admitted, err := g.admissionAddresses(ctx)
 	if err != nil {
 		return "", 0, err
@@ -317,7 +318,7 @@ func (g *Gateway) declareHub(ctx context.Context, cluster, node, privateAddress,
 }
 
 // declaredDocument waits for the first tunnel document station-controller publishes for a node declared by its key.
-func (g *Gateway) declaredDocument(ctx context.Context, cluster, node string) (string, error) {
+func (g *Service) declaredDocument(ctx context.Context, cluster, node string) (string, error) {
 	for deadline := time.Now().Add(2 * time.Minute); time.Now().Before(deadline); time.Sleep(3 * time.Second) {
 		network, err := g.provisionNetwork(ctx)
 		if err != nil {

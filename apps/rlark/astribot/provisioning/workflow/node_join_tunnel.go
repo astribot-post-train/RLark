@@ -1,14 +1,14 @@
-package gateway
+package workflow
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/rlinf/rlark/apps/rlark/astribot/provisioning"
 	"strings"
 	"time"
 
 	rlarkv1alpha1 "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
+	"github.com/rlinf/rlark/apps/rlark/astribot/provisioning"
 	"github.com/rlinf/rlark/apps/rlark/astribot/stationidentity"
 )
 
@@ -60,7 +60,7 @@ func (r *nodeJoinRun) tunnel(ctx context.Context, j *rlarkv1alpha1.NodeJoin) (st
 // again, which it stops doing 90 s after an unanswered try. It fails on what stationidentity.JudgePropagation reads
 // from that evidence, and after PropagationLongest and tunnelAnswerWithin from since whatever it reads; it records
 // when each step was seen in facts.Timings and says where the wait stands.
-func (g *Gateway) awaitTunnel(ctx context.Context, machine provisioning.Machine, self, document, endpoint string, since time.Time,
+func (g *Service) awaitTunnel(ctx context.Context, machine provisioning.Machine, self, document, endpoint string, since time.Time,
 	facts *rlarkv1alpha1.NodeJoinFacts, say func(string)) (string, error) {
 	address := g.stationBootstrap.TunnelAddress()
 	state := stationidentity.PropagationState{Since: since}

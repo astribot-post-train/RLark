@@ -1,22 +1,22 @@
-package gateway
+package workflow
 
 import (
 	"context"
 	"fmt"
-	"github.com/rlinf/rlark/apps/rlark/astribot/provisioning"
 	"net"
 	"strings"
 	"time"
 
 	rlarkv1alpha1 "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
+	"github.com/rlinf/rlark/apps/rlark/astribot/provisioning"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 )
 
-// provisionDialFunc logs in to the machine with its password. A hostKey (SHA256 fingerprint) that is not empty is
+// DialFunc logs in to the machine with its password. A hostKey (SHA256 fingerprint) that is not empty is
 // the key the machine must show; an empty one takes the key it shows, which is answered.
-type provisionDialFunc func(ctx context.Context, machine rlarkv1alpha1.ClusterProvisionMachine, password []byte, hostKey string) (provisioning.Machine, string, error)
+type DialFunc func(ctx context.Context, machine rlarkv1alpha1.ClusterProvisionMachine, password []byte, hostKey string) (provisioning.Machine, string, error)
 
 func (r *provisionRun) precheck(ctx context.Context, p *rlarkv1alpha1.ClusterProvision) (string, error) {
 	machine, err := r.needMachine(ctx, p)
@@ -41,7 +41,7 @@ func (r *provisionRun) precheck(ctx context.Context, p *rlarkv1alpha1.ClusterPro
 
 // nodeNameTaken says where a node of that name already is, if anywhere: a node of a cluster, or one the
 // SiteNetwork declares.
-func (g *Gateway) nodeNameTaken(ctx context.Context, name string) (string, error) {
+func (g *Service) nodeNameTaken(ctx context.Context, name string) (string, error) {
 	nodes, err := g.kubeClient.RlinfV1alpha1().Nodes("").List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return "", fmt.Errorf("list nodes: %w", err)

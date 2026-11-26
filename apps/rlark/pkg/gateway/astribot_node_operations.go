@@ -1,13 +1,13 @@
 package gateway
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"net/http"
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/rlinf/rlark/apps/rlark/astribot/provisioning/workflow"
+	"github.com/rlinf/rlark/apps/rlark/astribot/stationidentity"
 	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -34,11 +34,6 @@ type nodeOperationCreateRequest struct {
 	NodeUID string `json:"node_uid,omitempty"`
 }
 
-func nodeOperationName(clusterID, requestID string) string {
-	digest := sha256.Sum256([]byte(clusterID + "\x00" + requestID))
-	return "node-op-" + hex.EncodeToString(digest[:16])
-}
-
 func (g *Gateway) handleCreateNodeOperation(c *gin.Context) {
 	var request nodeOperationCreateRequest
 	if !decodeOneJSON(c, maxNodeOperationRequestBytes, &request, false) {
@@ -53,7 +48,7 @@ func (g *Gateway) handleCreateNodeOperation(c *gin.Context) {
 	if err != nil {
 		return
 	}
-	name := nodeOperationName(request.ClusterID, request.RequestID)
+	name := stationidentity.NodeOperationName(request.ClusterID, request.RequestID)
 	resource := g.stationClient.Resource(nodeOperationGVR).Namespace(namespace)
 	// One removal at a time per node: a second operation while one is still
 	// pending or running would power, drain, reset, and delete concurrently.
@@ -110,7 +105,7 @@ func (g *Gateway) handleCreateNodeOperation(c *gin.Context) {
 		return
 	}
 	// The record of the node's SSH join goes with the node.
-	if err := g.kubeClient.RlinfV1alpha1().NodeJoins().Delete(c.Request.Context(), nodeJoinName(request.ClusterID, request.NodeName), metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
+	if err := g.kubeClient.RlinfV1alpha1().NodeJoins().Delete(c.Request.Context(), workflow.NodeJoinName(request.ClusterID, request.NodeName), metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
 		log.FromContext(c.Request.Context()).Error(err, "delete the node's join record", "cluster", request.ClusterID, "node", request.NodeName)
 	}
 	c.Header("Location", "/api/v1/station/node-operations/"+name+"?cluster_id="+request.ClusterID)

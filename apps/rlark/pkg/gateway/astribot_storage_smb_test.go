@@ -3,29 +3,27 @@ package gateway
 import (
 	"context"
 	"encoding/json"
-	"github.com/rlinf/rlark/apps/rlark/astribot/storageconfig"
-	"net"
 	"net/http"
 	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"github.com/rlinf/rlark/apps/rlark/astribot/storageconfig"
+	"github.com/rlinf/rlark/apps/rlark/pkg/configs"
+	"github.com/rlinf/rlark/apps/rlark/pkg/distribution"
+	"github.com/rlinf/rlark/apps/rlark/pkg/gateway/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/client-go/kubernetes/fake"
-
-	"github.com/rlinf/rlark/apps/rlark/pkg/configs"
-	"github.com/rlinf/rlark/apps/rlark/pkg/distribution"
-	"github.com/rlinf/rlark/apps/rlark/pkg/gateway/storage"
 )
 
 func smbTestRequest() CreateStorageClassRequest {
 	return CreateStorageClassRequest{
 		Name: "nas-post-train", Description: "local nas", Clusters: []string{"rlark-cluster-a"},
-		astribotStorageClassRequest: astribotStorageClassRequest{
+		SpecialClassRequest: storageconfig.SpecialClassRequest{
 			Type: "smb", Host: "10.11.5.12", Share: "post-train_group", SubPath: "/RL/", Username: "user", Password: "p@ss=word", Domain: "ad.example.com",
 		},
 	}
@@ -81,9 +79,9 @@ func stubStorageValidation(t *testing.T) *storedStorageClass {
 }
 
 func TestBuildSMBStorageClassRendersRcloneSMBRemote(t *testing.T) {
-	stored, err := normalizeStorageClass(smbTestRequest())
+	stored, err := storageconfig.NormalizeClass(smbTestRequest())
 	require.NoError(t, err)
-	assert.Equal(t, storageTypeSMB, stored.Type)
+	assert.Equal(t, storageconfig.TypeSMB, stored.Type)
 	assert.Equal(t, "RL", stored.SubPath)
 	assert.Empty(t, stored.Provider)
 	assert.Empty(t, stored.Bucket)
@@ -125,7 +123,7 @@ func TestBuildSMBStorageClassRendersRcloneSMBRemote(t *testing.T) {
 func TestBuildSMBStorageClassWithoutSubPathOrDomain(t *testing.T) {
 	req := smbTestRequest()
 	req.SubPath, req.Domain = "", ""
-	stored, err := normalizeStorageClass(req)
+	stored, err := storageconfig.NormalizeClass(req)
 	require.NoError(t, err)
 	secret, err := storageconfig.RenderReplication("management", "sc-0123456789abcdef", stored)
 	require.NoError(t, err)
@@ -156,12 +154,12 @@ func TestNormalizeSMBStorageClassValidation(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			req := smbTestRequest()
 			test.mutate(&req)
-			_, err := normalizeStorageClass(req)
+			_, err := storageconfig.NormalizeClass(req)
 			switch {
 			case test.fields != nil:
-				var validationErr *storageClassValidationError
+				var validationErr *storageconfig.RequiredFieldsError
 				require.ErrorAs(t, err, &validationErr)
-				assert.Equal(t, test.fields, validationErr.fields)
+				assert.Equal(t, test.fields, validationErr.Fields)
 			case test.err != "":
 				require.Error(t, err)
 				assert.Contains(t, err.Error(), test.err)
@@ -173,7 +171,7 @@ func TestNormalizeSMBStorageClassValidation(t *testing.T) {
 }
 
 func TestListSMBStorageClassOmitsPassword(t *testing.T) {
-	stored, err := normalizeStorageClass(smbTestRequest())
+	stored, err := storageconfig.NormalizeClass(smbTestRequest())
 	require.NoError(t, err)
 	secret, err := storageconfig.RenderReplication("management", "sc-0123456789abcdef", stored)
 	require.NoError(t, err)
@@ -210,19 +208,19 @@ func TestCreateSMBStorageClass(t *testing.T) {
 		"host": "10.11.5.12", "share": "post-train_group", "sub_path": "RL", "username": "user", "password": "secret",
 	})
 	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
-	assert.Equal(t, storageTypeSMB, validated.Type)
+	assert.Equal(t, storageconfig.TypeSMB, validated.Type)
 	assert.Equal(t, "10.11.5.12", validated.Host)
 
-	secret, err := getStorageClassSecretByName(context.Background(), gateway.rawClient, "management", "nas-post-train")
+	secret, err := storageconfig.ClassSecretByName(context.Background(), gateway.rawClient, "management", "nas-post-train")
 	require.NoError(t, err)
-	_, stored, err := storageClassFromSecret(secret)
+	_, stored, err := storageconfig.ClassFromSecret(secret)
 	require.NoError(t, err)
 	assert.Equal(t, "secret", stored.Password)
 }
 
 func TestUpdateSMBStorageClassRetainsStoredPassword(t *testing.T) {
 	validated := stubStorageValidation(t)
-	initial, err := normalizeStorageClass(smbTestRequest())
+	initial, err := storageconfig.NormalizeClass(smbTestRequest())
 	require.NoError(t, err)
 	secret, err := storageconfig.RenderReplication("management", "sc-0123456789abcdef", initial)
 	require.NoError(t, err)
@@ -239,7 +237,7 @@ func TestUpdateSMBStorageClassRetainsStoredPassword(t *testing.T) {
 
 	updated, err := gateway.rawClient.CoreV1().Secrets("management").Get(context.Background(), secret.Name, metav1.GetOptions{})
 	require.NoError(t, err)
-	_, stored, err := storageClassFromSecret(updated)
+	_, stored, err := storageconfig.ClassFromSecret(updated)
 	require.NoError(t, err)
 	assert.Equal(t, "updated", stored.Description)
 	assert.Equal(t, "RL/user", stored.SubPath)
@@ -248,7 +246,7 @@ func TestUpdateSMBStorageClassRetainsStoredPassword(t *testing.T) {
 
 func TestUpdateStorageClassRejectsTypeChange(t *testing.T) {
 	stubStorageValidation(t)
-	initial, err := normalizeStorageClass(smbTestRequest())
+	initial, err := storageconfig.NormalizeClass(smbTestRequest())
 	require.NoError(t, err)
 	secret, err := storageconfig.RenderReplication("management", "sc-0123456789abcdef", initial)
 	require.NoError(t, err)
@@ -265,7 +263,7 @@ func TestUpdateStorageClassRejectsTypeChange(t *testing.T) {
 }
 
 func TestSMBStorageClassFileBrowsingIsUnsupported(t *testing.T) {
-	stored, err := normalizeStorageClass(smbTestRequest())
+	stored, err := storageconfig.NormalizeClass(smbTestRequest())
 	require.NoError(t, err)
 	secret, err := storageconfig.RenderReplication("management", "sc-0123456789abcdef", stored)
 	require.NoError(t, err)
@@ -280,7 +278,7 @@ func TestSMBStorageClassFileBrowsingIsUnsupported(t *testing.T) {
 
 func TestStorageClassFromSecretDefaultsLegacyRecordsToS3(t *testing.T) {
 	legacy := storedStorageClass{
-		Version: storageClassVersion, Name: "object-storage", Clusters: []string{"rlark-cluster-a"},
+		Version: storageconfig.DeclarationVersion, Name: "object-storage", Clusters: []string{"rlark-cluster-a"},
 		Provider: "Minio", Endpoint: "https://minio.example.com", Bucket: "bucket",
 	}
 	storedJSON, err := json.Marshal(legacy)
@@ -288,38 +286,13 @@ func TestStorageClassFromSecretDefaultsLegacyRecordsToS3(t *testing.T) {
 	assert.NotContains(t, string(storedJSON), `"type"`)
 	secret := &v1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: storageClassReplicationName("sc-0123456789abcdef"), Namespace: "management",
-			Labels: map[string]string{storageClassReplicationLabel: "true"},
+			Name: storageconfig.ReplicationName("sc-0123456789abcdef"), Namespace: "management",
+			Labels: map[string]string{storageconfig.ReplicationLabel: "true"},
 		},
 		Type: distribution.ReplicationSecretType,
 		Data: map[string][]byte{"storageclass": storedJSON},
 	}
-	_, decoded, err := storageClassFromSecret(secret)
+	_, decoded, err := storageconfig.ClassFromSecret(secret)
 	require.NoError(t, err)
-	assert.Equal(t, storageTypeS3, decoded.Type)
-}
-
-func TestValidateSMBReachable(t *testing.T) {
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = listener.Close() })
-	go func() {
-		for {
-			conn, err := listener.Accept()
-			if err != nil {
-				return
-			}
-			_ = conn.Close()
-		}
-	}()
-	host, port, err := net.SplitHostPort(listener.Addr().String())
-	require.NoError(t, err)
-
-	original := smbDialPort
-	smbDialPort = port
-	t.Cleanup(func() { smbDialPort = original })
-	assert.NoError(t, validateSMBReachable(context.Background(), host))
-
-	require.NoError(t, listener.Close())
-	assert.Error(t, validateSMBReachable(context.Background(), host))
+	assert.Equal(t, storageconfig.TypeS3, decoded.Type)
 }

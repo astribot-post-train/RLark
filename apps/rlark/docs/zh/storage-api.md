@@ -97,6 +97,8 @@ Gateway 在存储前会对 S3 配置做规范化和校验：
 
 更新指定 StorageClass 声明的对象存储配置和目标集群。请求中的 `clusters` 是期望的最终目标集群集合；分发流程会从未包含的集群清理资源。更新时 `access_key_id` 和 `access_key_secret` 均可留空；Gateway 会读取并复用相应的已存储值，不会将凭据替换为空值。列表返回的 `accessKeyId` 使用五个星号掩码；客户端提交的 `access_key_id` 只要包含 `*****`，Gateway 就会将其视为未变更，而不是替换值。保留凭据时，Gateway 会使用之前存储的 Access Key ID 和 Secret 校验更新后的连接。
 
+如果读取后、写入前有其他请求修改了存储声明，更新和删除会返回 `409 RESOURCE_CONFLICT`。重试前请重新读取当前声明。
+
 ### 5. 删除 StorageClass
 **DELETE** `/api/v1/storage/storageclass/{name}`
 

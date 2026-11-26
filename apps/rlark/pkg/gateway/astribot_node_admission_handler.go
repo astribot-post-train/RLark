@@ -3,13 +3,14 @@ package gateway
 import (
 	"context"
 	"encoding/json"
-	"github.com/rlinf/rlark/apps/rlark/astribot/stationidentity"
 	"io"
 	"net/http"
 	"sort"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/rlinf/rlark/apps/rlark/astribot/provisioning/workflow"
+	"github.com/rlinf/rlark/apps/rlark/astribot/stationidentity"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -26,18 +27,6 @@ var (
 const (
 	maxNodeAdmissionRequestBytes = 16 * 1024
 )
-
-// stationBootstrap is Station API as the Gateway sees it when it gives out a
-// join code: where a new machine reaches it, and the digests of what it
-// serves, read over the Gateway's own verified connection. The machine's
-// command pins those digests before it trusts anything it fetches.
-type stationBootstrap interface {
-	stationidentity.AdmissionBootstrap
-	// Open streams what Station API serves at path (the installer, which takes minutes to send), and its length.
-	Open(ctx context.Context, path string) (io.ReadCloser, int64, error)
-	// BundleDigest is the SHA-256, in hex, of the installer, as Station API says it (/v1/bootstrap/bundle.sha256).
-	BundleDigest(ctx context.Context) (string, error)
-}
 
 // decodeOneJSON reads a request body that is one JSON object of into's fields, at most limit bytes (or nothing,
 // when emptyAllowed). On failure it has answered.
@@ -56,17 +45,8 @@ func decodeOneJSON(c *gin.Context, limit int64, into any, emptyAllowed bool) boo
 	return true
 }
 
-// siteNetwork reads the one SiteNetwork; a management plane without one has no sites.
 func (g *Gateway) siteNetwork(ctx context.Context) (*unstructured.Unstructured, error) {
-	network, err := g.stationClient.Resource(siteNetworkGVR).Namespace("station-system").Get(ctx, "default", metav1.GetOptions{})
-	if apierrors.IsNotFound(err) {
-		return &unstructured.Unstructured{Object: map[string]interface{}{}}, nil
-	}
-	return network, err
-}
-
-func (g *Gateway) stationAPIFor(network *unstructured.Unstructured, clusterID, nodeName string) string {
-	return stationidentity.APIForAdmission(network, clusterID, nodeName, g.stationBootstrap)
+	return stationidentity.ReadSiteNetwork(ctx, g.stationClient)
 }
 
 // handleListNodeAdmissions answers GET /api/v1/station/node-admissions?cluster_id=:
@@ -81,7 +61,7 @@ func (g *Gateway) handleListNodeAdmissions(c *gin.Context) {
 		c.JSON(http.StatusBadGateway, gin.H{"error": "NodeAdmission request failed"})
 		return
 	}
-	joins, err := g.nodeJoinsOf(c.Request.Context(), clusterID)
+	joins, err := workflow.NodeJoinsOf(c.Request.Context(), g.kubeClient, clusterID)
 	if err != nil {
 		respondKubeError(c, "list node joins: "+err.Error(), err)
 		return

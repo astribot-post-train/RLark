@@ -1,16 +1,16 @@
-package gateway
+package workflow
 
 import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/rlinf/rlark/apps/rlark/astribot/provisioning"
 	"slices"
 	"strings"
 	"sync"
 	"time"
 
 	rlarkv1alpha1 "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
+	"github.com/rlinf/rlark/apps/rlark/astribot/provisioning"
 	"github.com/rlinf/rlark/apps/rlark/pkg/apis"
 	"github.com/rlinf/rlark/apps/rlark/pkg/log"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -44,7 +44,7 @@ func provisionNeedsMachine(stage string) bool {
 // provisionRun is one making of a cluster, from the stage it starts at to the last or to the one that fails. The
 // password is held here only, and cleared when the run ends.
 type provisionRun struct {
-	g        *Gateway
+	g        *Service
 	name     string
 	password []byte
 
@@ -86,9 +86,9 @@ func provisionAgentID(cluster string) string {
 	return strings.TrimPrefix(cluster, apis.RLarkAgentNamespacePrefix)
 }
 
-// interruptProvisions marks every making that was running when the Gateway stopped: it stopped where it was, and
+// InterruptProvisions marks every making that was running when the Gateway stopped: it stopped where it was, and
 // is retried from there.
-func (g *Gateway) interruptProvisions(ctx context.Context) error {
+func (g *Service) InterruptProvisions(ctx context.Context) error {
 	provisions, err := g.kubeClient.RlinfV1alpha1().ClusterProvisions().List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return fmt.Errorf("list cluster provisions: %w", err)
@@ -110,7 +110,7 @@ func (g *Gateway) interruptProvisions(ctx context.Context) error {
 }
 
 // writeProvisionStatus changes the status of a ClusterProvision as it is now.
-func (g *Gateway) writeProvisionStatus(ctx context.Context, name string, change func(*rlarkv1alpha1.ClusterProvisionStatus)) error {
+func (g *Service) writeProvisionStatus(ctx context.Context, name string, change func(*rlarkv1alpha1.ClusterProvisionStatus)) error {
 	client := g.kubeClient.RlinfV1alpha1().ClusterProvisions()
 	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		p, err := client.Get(ctx, name, metav1.GetOptions{})

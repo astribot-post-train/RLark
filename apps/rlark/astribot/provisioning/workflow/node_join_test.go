@@ -1,4 +1,4 @@
-package gateway
+package workflow
 
 import (
 	"bytes"
@@ -6,8 +6,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"github.com/rlinf/rlark/apps/rlark/astribot/provisioning"
-	"github.com/rlinf/rlark/apps/rlark/astribot/stationidentity"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -20,6 +18,8 @@ import (
 	clientset "github.com/rlinf/rlark/api/kubeclients/clientset/versioned/fake"
 	rlarkv1alpha1 "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
 	"github.com/rlinf/rlark/apps/rlark/astribot/nodessh"
+	"github.com/rlinf/rlark/apps/rlark/astribot/provisioning"
+	"github.com/rlinf/rlark/apps/rlark/astribot/stationidentity"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -80,7 +80,7 @@ func (m *joinBox) scripts(marker string) []string {
 // joinScene is the management plane and the machine of a join test.
 type joinScene struct {
 	t         *testing.T
-	g         *Gateway
+	g         *Service
 	bootstrap *fakeStationBootstrap
 	box       *joinBox
 	// reach is what the machine reaches Station API at; precheck the extra lines of its precheck.
@@ -120,11 +120,11 @@ func newJoinScene(t *testing.T, network *unstructured.Unstructured, rlark ...run
 	s := &joinScene{t: t, reach: map[string]bool{}, follow: "10:00:00 loading the installer\n10:00:02 admitted as box in cluster-a\n10:01:00 joined\n" + sshJoinExit + "0"}
 	s.bootstrap = &fakeStationBootstrap{}
 	station := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), map[schema.GroupVersionResource]string{
-		siteNetworkGVR: "SiteNetworkList", nodeAdmissionGVR: "NodeAdmissionList", stationClusterGVR: "ClusterList",
+		siteNetworkGVR: "SiteNetworkList", nodeAdmissionGVR: "NodeAdmissionList",
 		networkEnrollmentGVR: "NetworkEnrollmentList", nodeOperationGVR: "NodeOperationList", nodeClassGVR: "NodeClassList",
-	}, network, stationHandlerCluster("cluster-a", "agent-a"))
-	s.g = &Gateway{kubeClient: clientset.NewSimpleClientset(rlark...), rawClient: kubefake.NewSimpleClientset(provisionTestRecord()), astribotState: astribotState{stationClient: station, stationBootstrap: s.bootstrap}}
-	s.g.config.KubeClientConfig.Namespace = "default"
+	}, network)
+	s.g = &Service{kubeClient: clientset.NewSimpleClientset(rlark...), rawClient: kubefake.NewSimpleClientset(provisionTestRecord()), stationClient: station, stationBootstrap: s.bootstrap, http: testHTTP()}
+	s.g.namespace = "default"
 	s.box = &joinBox{answer: s.answer}
 	s.g.provisionDial = func(_ context.Context, _ rlarkv1alpha1.ClusterProvisionMachine, password []byte, _ string) (provisioning.Machine, string, error) {
 		if string(password) != joinPassword {
@@ -191,12 +191,11 @@ func (s *joinScene) call(method, path, body string) (int, map[string]any) {
 	s.t.Helper()
 	router := gin.New()
 	router.Use(func(c *gin.Context) { c.Set(authSubjectKey, "alice"); c.Next() })
-	router.GET("/station/node-joins", s.g.handleListNodeJoins)
-	router.POST("/station/node-joins", s.g.handleCreateNodeJoin)
-	router.GET("/station/node-joins/:name", s.g.handleGetNodeJoin)
-	router.POST("/station/node-joins/:name/retry", s.g.handleRetryNodeJoin)
-	router.POST("/station/node-joins/:name/clear", s.g.handleClearNodeJoin)
-	router.GET("/station/node-admissions", s.g.handleListNodeAdmissions)
+	router.GET("/station/node-joins", s.g.HandleListNodeJoins)
+	router.POST("/station/node-joins", s.g.HandleCreateNodeJoin)
+	router.GET("/station/node-joins/:name", s.g.HandleGetNodeJoin)
+	router.POST("/station/node-joins/:name/retry", s.g.HandleRetryNodeJoin)
+	router.POST("/station/node-joins/:name/clear", s.g.HandleClearNodeJoin)
 	recorder := httptest.NewRecorder()
 	router.ServeHTTP(recorder, httptest.NewRequest(method, path, bytes.NewBufferString(body)))
 	var out map[string]any
@@ -312,10 +311,9 @@ func TestAMachineThatReachesStationAPIJoinsInStages(t *testing.T) {
 			t.Fatalf("the password is on a command line: %q", script)
 		}
 	}
-	// The admission records show where the node's SSH join stands.
-	if code, out := s.call(http.MethodGet, "/station/node-admissions?cluster_id=cluster-a", ""); code != http.StatusOK ||
-		out["items"].([]any)[0].(map[string]any)["join_phase"] != "Succeeded" || out["items"].([]any)[0].(map[string]any)["join_stage"] != stageGPU {
-		t.Fatalf("admissions %d %v", code, out)
+	joins, err := NodeJoinsOf(context.Background(), s.g.kubeClient, "cluster-a")
+	if err != nil || len(joins) != 1 || joins[0].Status.Phase != rlarkv1alpha1.ClusterProvisionSucceeded || joins[0].Status.Stage != stageGPU {
+		t.Fatalf("joins: %v, err: %v", joins, err)
 	}
 }
 
@@ -327,7 +325,7 @@ func TestAMachineWhoseTunnelAnswersIsNotGivenItAgain(t *testing.T) {
 	s.reach["10.254.240.1:18443"] = true
 	s.precheck = "bundle=" + sha256Hex(fakeInstaller) + "\npublickey=" + joinKey + "\n"
 	s.enrolled()
-	before, _ := s.g.siteNetwork(context.Background())
+	before, _ := stationidentity.ReadSiteNetwork(context.Background(), s.g.stationClient)
 	s.create()
 	j := s.wait()
 	if j.Status.Phase != rlarkv1alpha1.ClusterProvisionSucceeded || j.Status.Facts.Route != rlarkv1alpha1.NodeJoinRouteTunnelUp {
@@ -346,7 +344,7 @@ func TestAMachineWhoseTunnelAnswersIsNotGivenItAgain(t *testing.T) {
 			t.Fatal("the installer was taken from Station API")
 		}
 	}
-	after, _ := s.g.siteNetwork(context.Background())
+	after, _ := stationidentity.ReadSiteNetwork(context.Background(), s.g.stationClient)
 	if after.GetResourceVersion() != before.GetResourceVersion() {
 		t.Fatal("the SiteNetwork was written")
 	}
@@ -519,7 +517,7 @@ func TestAnInterruptedJoinIsRetriedFromItsStageAndHoldsItsName(t *testing.T) {
 	}}, metav1.CreateOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.g.interruptNodeJoins(context.Background()); err != nil {
+	if err := s.g.InterruptNodeJoins(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	stopped, _ := s.g.kubeClient.RlinfV1alpha1().NodeJoins().Get(context.Background(), "cluster-a.box", metav1.GetOptions{})
@@ -610,5 +608,15 @@ func TestNodeNameOfHost(t *testing.T) {
 		if got := nodeNameOfHost(host); got != name {
 			t.Fatalf("%q: %q", host, got)
 		}
+	}
+}
+
+func TestRetryRejectsUnknownJoinStage(t *testing.T) {
+	s := newJoinScene(t, joinNetwork(nil, nil), &rlarkv1alpha1.NodeJoin{
+		ObjectMeta: metav1.ObjectMeta{Name: "cluster-a.box"},
+		Status:     rlarkv1alpha1.NodeJoinStatus{Phase: rlarkv1alpha1.ClusterProvisionFailed, Stage: "unknown"},
+	})
+	if code, out := s.call(http.MethodPost, "/station/node-joins/cluster-a.box/retry", `{"password":"fixture"}`); code != http.StatusConflict {
+		t.Fatalf("retry = %d %v", code, out)
 	}
 }

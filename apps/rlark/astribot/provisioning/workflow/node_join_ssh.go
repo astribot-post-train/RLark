@@ -1,16 +1,16 @@
-package gateway
+package workflow
 
 import (
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/rlinf/rlark/apps/rlark/astribot/provisioning"
 	"net"
 	"strconv"
 
 	rlarkv1alpha1 "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
 	"github.com/rlinf/rlark/apps/rlark/astribot/nodessh"
+	"github.com/rlinf/rlark/apps/rlark/astribot/provisioning"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -20,7 +20,7 @@ import (
 const (
 	nodeJoinMachineAnnotation          = "station.rlark.io/machine"
 	nodeJoinTypeAnnotation             = "station.rlark.io/machine-type"
-	nodeJoinModelAnnotation            = "station.rlark.io/machine-model"
+	NodeJoinModelAnnotation            = "station.rlark.io/machine-model"
 	nodeJoinHostKeyAnnotation          = "station.rlark.io/host-key"
 	nodeJoinHostKeyAlgorithmAnnotation = "station.rlark.io/host-key-algorithm"
 	nodeJoinInstallLabelsAnnotation    = "station.rlark.io/install-labels"
@@ -29,7 +29,7 @@ const (
 	nodeJoinRelayUnavailable           = "RelayUnavailable"
 )
 
-func (g *Gateway) machineRelay(ctx context.Context, name string) (string, string, error) {
+func (g *Service) machineRelay(ctx context.Context, name string) (string, string, error) {
 	machine, err := g.stationClient.Resource(machineGVR).Namespace(machineNamespace).Get(ctx, name, metav1.GetOptions{})
 	if err != nil {
 		return "", "", fmt.Errorf("read scanned Machine %s: %w", name, err)
@@ -57,7 +57,7 @@ func (g *Gateway) machineRelay(ctx context.Context, name string) (string, string
 	return endpoint, token, nil
 }
 
-func (g *Gateway) clearNodeJoinMachineAdmission(ctx context.Context, j *rlarkv1alpha1.NodeJoin) error {
+func (g *Service) clearNodeJoinMachineAdmission(ctx context.Context, j *rlarkv1alpha1.NodeJoin) error {
 	name := j.Annotations[nodeJoinMachineAnnotation]
 	if name == "" {
 		return nil
@@ -65,7 +65,7 @@ func (g *Gateway) clearNodeJoinMachineAdmission(ctx context.Context, j *rlarkv1a
 	return g.clearMachineAdmission(ctx, name, j.Spec.ClusterID, j.Spec.RequestedBy)
 }
 
-func (g *Gateway) clearMachineAdmission(ctx context.Context, name, clusterID, actor string) error {
+func (g *Service) clearMachineAdmission(ctx context.Context, name, clusterID, actor string) error {
 	resource := g.stationClient.Resource(machineGVR).Namespace(machineNamespace)
 	object, err := resource.Get(ctx, name, metav1.GetOptions{})
 	if apierrors.IsNotFound(err) {
@@ -92,7 +92,7 @@ func (g *Gateway) clearMachineAdmission(ctx context.Context, name, clusterID, ac
 	return err
 }
 
-func (g *Gateway) dialNodeJoinMachine(ctx context.Context, j *rlarkv1alpha1.NodeJoin, password, sudoPassword []byte) (provisioning.Machine, string, error) {
+func (g *Service) dialNodeJoinMachine(ctx context.Context, j *rlarkv1alpha1.NodeJoin, password, sudoPassword []byte) (provisioning.Machine, string, error) {
 	annotations := j.GetAnnotations()
 	hostKey := annotations[nodeJoinHostKeyAnnotation]
 	if hostKey == "" || annotations[nodeJoinMachineAnnotation] == "" {
@@ -152,7 +152,7 @@ func nodeJoinAnnotations(request createNodeJoinRequest, hostKey string) (map[str
 	return map[string]string{
 		nodeJoinMachineAnnotation:          request.MachineName,
 		nodeJoinTypeAnnotation:             "Server",
-		nodeJoinModelAnnotation:            request.MachineModel,
+		NodeJoinModelAnnotation:            request.MachineModel,
 		nodeJoinHostKeyAnnotation:          hostKey,
 		nodeJoinHostKeyAlgorithmAnnotation: request.HostKeyAlgorithm,
 		nodeJoinInstallLabelsAnnotation:    string(labels),

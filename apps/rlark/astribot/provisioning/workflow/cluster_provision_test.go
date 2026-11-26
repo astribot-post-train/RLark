@@ -1,4 +1,4 @@
-package gateway
+package workflow
 
 import (
 	"bytes"
@@ -8,7 +8,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"github.com/rlinf/rlark/apps/rlark/astribot/provisioning"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -20,6 +19,7 @@ import (
 	"github.com/gin-gonic/gin"
 	clientset "github.com/rlinf/rlark/api/kubeclients/clientset/versioned/fake"
 	rlarkv1alpha1 "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
+	"github.com/rlinf/rlark/apps/rlark/astribot/provisioning"
 	"github.com/rlinf/rlark/apps/rlark/astribot/release"
 	"github.com/rlinf/rlark/apps/rlark/astribot/stationmember"
 	corev1 "k8s.io/api/core/v1"
@@ -102,19 +102,20 @@ func provisionTestRecord() *corev1.ConfigMap {
 	}
 }
 
-func provisionGateway(t *testing.T, network *unstructured.Unstructured, objects ...runtime.Object) *Gateway {
+func provisionGateway(t *testing.T, network *unstructured.Unstructured, objects ...runtime.Object) *Service {
 	t.Helper()
-	g := &Gateway{
+	g := &Service{
 		kubeClient: clientset.NewSimpleClientset(objects...),
 		rawClient:  kubefake.NewSimpleClientset(provisionTestRecord()),
-		astribotState: astribotState{stationClient: dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), map[schema.GroupVersionResource]string{siteNetworkGVR: "SiteNetworkList", nodeAdmissionGVR: "NodeAdmissionList", networkEnrollmentGVR: "NetworkEnrollmentList"}, network,
+		stationClient: dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), map[schema.GroupVersionResource]string{siteNetworkGVR: "SiteNetworkList", nodeAdmissionGVR: "NodeAdmissionList", networkEnrollmentGVR: "NetworkEnrollmentList"}, network,
 			// A robot that joined by a code holds its tunnel address on its admission, not in the SiteNetwork.
 			&unstructured.Unstructured{Object: map[string]interface{}{"apiVersion": "station.rlark.io/v1alpha1", "kind": "NodeAdmission",
-				"metadata": map[string]interface{}{"name": "s1u-01-x86", "namespace": "rlark-local-dev-gpu"}, "status": map[string]interface{}{"address": "10.254.240.4"}}})},
+				"metadata": map[string]interface{}{"name": "s1u-01-x86", "namespace": "rlark-local-dev-gpu"}, "status": map[string]interface{}{"address": "10.254.240.4"}}}),
 	}
 	// The Gateway's own namespace is not the record's (live runs it in default).
-	g.config.KubeClientConfig.Namespace = "default"
-	g.config.ServerAddress = "https://rlark-server:8443"
+	g.namespace = "default"
+	g.serverAddress = "https://rlark-server:8443"
+	g.http = testHTTP()
 	return g
 }
 
@@ -266,15 +267,15 @@ func withProvisionStages(t *testing.T, stages map[string]func(*provisionRun, con
 	t.Cleanup(func() { provisionStageFuncs = saved })
 }
 
-func provisionCall(t *testing.T, g *Gateway, method, path, name, body string) (int, map[string]any) {
+func provisionCall(t *testing.T, g *Service, method, path, name, body string) (int, map[string]any) {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 	router.Use(func(c *gin.Context) { c.Set(authSubjectKey, "alice"); c.Next() })
-	router.GET("/cluster-provisions/:name", g.handleGetClusterProvision)
-	router.POST("/cluster-provisions", g.handleCreateClusterProvision)
-	router.POST("/cluster-provisions/:name/retry", g.handleRetryClusterProvision)
-	router.POST("/cluster-provisions/:name/clear", g.handleClearClusterProvision)
+	router.GET("/cluster-provisions/:name", g.HandleGetClusterProvision)
+	router.POST("/cluster-provisions", g.HandleCreateClusterProvision)
+	router.POST("/cluster-provisions/:name/retry", g.HandleRetryClusterProvision)
+	router.POST("/cluster-provisions/:name/clear", g.HandleClearClusterProvision)
 	recorder := httptest.NewRecorder()
 	router.ServeHTTP(recorder, httptest.NewRequest(method, path, bytes.NewBufferString(body)))
 	var out map[string]any
@@ -282,7 +283,7 @@ func provisionCall(t *testing.T, g *Gateway, method, path, name, body string) (i
 	return recorder.Code, out
 }
 
-func waitProvision(t *testing.T, g *Gateway, name string) *rlarkv1alpha1.ClusterProvision {
+func waitProvision(t *testing.T, g *Service, name string) *rlarkv1alpha1.ClusterProvision {
 	t.Helper()
 	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
 		g.provisions.mu.Lock()
@@ -397,7 +398,7 @@ func TestAMakingRunningWhenTheGatewayStartsIsMarkedStopped(t *testing.T) {
 	status := newProvisionStatus()
 	setStage(&status.Stages, &status.Stage, stageAgent, rlarkv1alpha1.ClusterProvisionStageRunning, "", "")
 	g := provisionGateway(t, provisionTestNetwork(), &rlarkv1alpha1.ClusterProvision{ObjectMeta: metav1.ObjectMeta{Name: "rlark-baidu-gpu"}, Status: status})
-	if err := g.interruptProvisions(context.Background()); err != nil {
+	if err := g.InterruptProvisions(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	p, _ := g.kubeClient.RlinfV1alpha1().ClusterProvisions().Get(context.Background(), "rlark-baidu-gpu", metav1.GetOptions{})
@@ -529,5 +530,16 @@ func TestClearingLeavesAListedClusterAndAMachineThatIsGone(t *testing.T) {
 	_ = g.kubeClient.RlinfV1alpha1().Clusters().Delete(context.Background(), "rlark-baidu-gpu", metav1.DeleteOptions{})
 	if code, out := provisionCall(t, g, http.MethodPost, "/cluster-provisions/rlark-baidu-gpu/clear", "", `{"machine_gone":true}`); code != http.StatusOK {
 		t.Fatalf("clearing what a deleted cluster's making left = %d %v", code, out)
+	}
+}
+
+func TestRetryRejectsUnknownProvisioningStage(t *testing.T) {
+	const name = "rlark-test-gpu"
+	g := provisionGateway(t, provisionTestNetwork(), &rlarkv1alpha1.ClusterProvision{
+		ObjectMeta: metav1.ObjectMeta{Name: name},
+		Status:     rlarkv1alpha1.ClusterProvisionStatus{Phase: rlarkv1alpha1.ClusterProvisionFailed, Stage: "unknown"},
+	})
+	if code, out := provisionCall(t, g, http.MethodPost, "/cluster-provisions/"+name+"/retry", name, `{"password":"fixture"}`); code != http.StatusConflict {
+		t.Fatalf("retry = %d %v", code, out)
 	}
 }

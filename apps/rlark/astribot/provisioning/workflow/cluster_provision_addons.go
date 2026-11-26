@@ -1,17 +1,17 @@
-package gateway
+package workflow
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/rlinf/rlark/apps/rlark/astribot/provisioning"
 	"maps"
 	"net"
-	"slices"
 	"strings"
 	"time"
 
 	rlarkv1alpha1 "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
+	"github.com/rlinf/rlark/apps/rlark/astribot/provisioning"
+	"github.com/rlinf/rlark/apps/rlark/astribot/storageconfig"
 	"github.com/rlinf/rlark/apps/rlark/pkg/addons"
 	"github.com/rlinf/rlark/apps/rlark/pkg/tenant"
 	corev1 "k8s.io/api/core/v1"
@@ -40,7 +40,7 @@ type provisionAddon struct {
 
 // installProvisionAddon installs an Addon at the release's version, or brings an installed one to it, and waits
 // until it is Ready.
-func (g *Gateway) installProvisionAddon(ctx context.Context, cluster string, release provisionRelease, addon provisionAddon) (string, error) {
+func (g *Service) installProvisionAddon(ctx context.Context, cluster string, release provisionRelease, addon provisionAddon) (string, error) {
 	brought, found := release.Addons[addon.name]
 	if !found {
 		return "", fmt.Errorf("the release %s has no Addon %s", release.Name, addon.name)
@@ -50,7 +50,7 @@ func (g *Gateway) installProvisionAddon(ctx context.Context, cluster string, rel
 		values = map[string]string{}
 	}
 	maps.Copy(values, addon.sited)
-	meta, _, err := g.publishAddonPackage(ctx, cluster, addon.name, brought.Version)
+	meta, _, err := g.hooks.PublishAddonPackage(ctx, cluster, addon.name, brought.Version)
 	if err != nil {
 		return "", fmt.Errorf("publish %s %s: %w", addon.name, brought.Version, err)
 	}
@@ -148,7 +148,7 @@ func (r *provisionRun) addons(ctx context.Context, p *rlarkv1alpha1.ClusterProvi
 }
 
 // nodeGPUs waits until the node offers the GPUs the machine has.
-func (g *Gateway) nodeGPUs(ctx context.Context, cluster, name string, want int64) (int64, error) {
+func (g *Service) nodeGPUs(ctx context.Context, cluster, name string, want int64) (int64, error) {
 	var got int64
 	for deadline := time.Now().Add(5 * time.Minute); time.Now().Before(deadline); time.Sleep(5 * time.Second) {
 		node, err := g.kubeClient.RlinfV1alpha1().Nodes(cluster).Get(ctx, name, metav1.GetOptions{})
@@ -169,7 +169,7 @@ func (g *Gateway) nodeGPUs(ctx context.Context, cluster, name string, want int64
 // origin registry through the tunnel once, and the site's registry name points to it once it is Ready.
 func (r *provisionRun) siteCache(ctx context.Context, p *rlarkv1alpha1.ClusterProvision, release provisionRelease) (string, error) {
 	facts := p.Status.Facts
-	if err := r.g.distributeJobSecret(ctx, siteRegistrySecret, p.Name); err != nil {
+	if err := r.g.hooks.DistributeJobSecret(ctx, siteRegistrySecret, p.Name); err != nil {
 		return "", err
 	}
 	_, port, err := net.SplitHostPort(release.Registry)
@@ -219,27 +219,10 @@ func (r *provisionRun) siteCache(ctx context.Context, p *rlarkv1alpha1.ClusterPr
 	return fmt.Sprintf("%s; %s of site %s → %s", done, host, p.Spec.Site, facts.PrivateAddress), nil
 }
 
-// distributeJobSecret delivers one of RLark's secret objects to one more cluster, its values as they are.
-func (g *Gateway) distributeJobSecret(ctx context.Context, name, cluster string) error {
-	current, err := g.rawClient.CoreV1().Secrets(g.managementNamespace()).Get(ctx, jobSecretReplicationName(name), metav1.GetOptions{})
-	if err != nil {
-		return fmt.Errorf("RLark's secret object %s: %w", name, err)
-	}
-	stored, err := readJobSecret(current)
-	if err != nil {
-		return fmt.Errorf("RLark's secret object %s: %w", name, err)
-	}
-	if slices.Contains(stored.Clusters, cluster) {
-		return nil
-	}
-	stored.Clusters = append(stored.Clusters, cluster)
-	return putJobSecret(ctx, g.rawClient, g.managementNamespace(), current.Annotations[tenant.CreatedByAnnotation], stored, true)
-}
-
 // addClusterToSiteStorage gives the new cluster every S3 storage every other cluster has. A storage a cloud's
 // clusters mount at an endpoint of their own network is mounted at the Gateway's own endpoint, which is reachable
 // from anywhere.
-func (g *Gateway) addClusterToSiteStorage(ctx context.Context, cluster string) (string, error) {
+func (g *Service) addClusterToSiteStorage(ctx context.Context, cluster string) (string, error) {
 	clusters, err := g.kubeClient.RlinfV1alpha1().Clusters().List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return "", err
@@ -250,33 +233,9 @@ func (g *Gateway) addClusterToSiteStorage(ctx context.Context, cluster string) (
 			others = append(others, c.Name)
 		}
 	}
-	secrets, err := listStorageClassSecrets(ctx, g.rawClient, g.managementNamespace())
+	added, err := storageconfig.AddClusterToSiteClasses(ctx, g.rawClient, g.namespace, cluster, others)
 	if err != nil {
-		return "", fmt.Errorf("list storages: %w", err)
-	}
-	var added []string
-	for i := range secrets {
-		_, stored, err := storageClassFromSecret(&secrets[i])
-		if err != nil || stored.Type != "" && stored.Type != storageTypeS3 {
-			continue
-		}
-		if slices.Contains(stored.Clusters, cluster) {
-			added = append(added, stored.Name)
-			continue
-		}
-		if !slices.ContainsFunc(others, func(other string) bool { return !slices.Contains(stored.Clusters, other) }) {
-			stored.Clusters = append(stored.Clusters, cluster)
-			if stored.MountEndpoint != "" && stored.MountEndpoint != stored.Endpoint {
-				if stored.ClusterMountEndpoints == nil {
-					stored.ClusterMountEndpoints = map[string]string{}
-				}
-				stored.ClusterMountEndpoints[cluster] = stored.Endpoint
-			}
-			if err := g.updateStorageClassByName(ctx, stored.Name, stored); err != nil {
-				return "", fmt.Errorf("give storage %s to %s: %w", stored.Name, cluster, err)
-			}
-			added = append(added, stored.Name)
-		}
+		return "", err
 	}
 	if len(added) == 0 {
 		return "no storage every cluster has", nil
@@ -350,7 +309,7 @@ func (r *provisionRun) accept(ctx context.Context, p *rlarkv1alpha1.ClusterProvi
 }
 
 // jobOutput is what the Pods of a Job have printed so far.
-func (g *Gateway) jobOutput(ctx context.Context, job string) string {
+func (g *Service) jobOutput(ctx context.Context, job string) string {
 	tasks, err := g.kubeClient.RlinfV1alpha1().Tasks(metav1.NamespaceAll).List(ctx, metav1.ListOptions{LabelSelector: "rlinf.io/job=" + job})
 	if err != nil {
 		return ""
@@ -362,7 +321,7 @@ func (g *Gateway) jobOutput(ctx context.Context, job string) string {
 			continue
 		}
 		for _, pod := range pods.Items {
-			logs, err := g.fetchPodLogs(ctx, provisionAgentID(task.Namespace), pod.Spec.PodNamespace, pod.Spec.PodName)
+			logs, err := g.hooks.FetchPodLogs(ctx, provisionAgentID(task.Namespace), pod.Spec.PodNamespace, pod.Spec.PodName)
 			if err == nil {
 				out.WriteString(logs)
 			}
