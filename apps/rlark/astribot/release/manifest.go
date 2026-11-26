@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 
 	"sigs.k8s.io/yaml"
@@ -87,6 +88,11 @@ type Environment struct {
 		RegistryCA string `json:"registryCA"`
 	} `json:"installer"`
 	Registry Registry `json:"registry"`
+	// Addons are the Addons of a release this site runs in a cluster with values of its own (cluster -> Addon -> the
+	// site's values: the node it is on, the size of its volume, the site's Secrets): a run installs one the cluster
+	// does not have yet, at the release's version, and keeps these values as the file states them. An Addon the
+	// site installed otherwise (the console) needs no entry here.
+	Addons map[string]map[string]map[string]string `json:"addons,omitempty"`
 	// State is the directory the records of runs go to.
 	State string `json:"state"`
 }
@@ -190,7 +196,7 @@ func (e Environment) Compose(tree Tree) *ComposeFile {
 
 // Desired is the state the environment is to run with the release, in its clusters (cluster -> the Addons installed
 // there, Site.Installed): every one of them runs the release's agents and Station, and the release's Addons where they
-// are installed.
+// are installed or the environment states them for the cluster (Addons), those with the site's values.
 func (e Environment) Desired(r Release, clusters map[string][]string) State {
 	images := r.Images
 	state := State{
@@ -221,9 +227,15 @@ func (e Environment) Desired(r Release, clusters map[string][]string) State {
 			StationAgent: images["station-agent"], StationWireguard: images["station-wireguard"], StationPullSecret: e.Station.PullSecret,
 			Addons: map[string]AddonState{},
 		}
-		for _, addon := range installed {
+		for _, addon := range append(slices.Collect(maps.Keys(e.Addons[name])), installed...) {
 			if brought, inRelease := r.Addons[addon]; inRelease {
-				values, _ := r.render(brought.Values)
+				values := maps.Clone(e.Addons[name][addon])
+				rendered, _ := r.render(brought.Values)
+				if values == nil {
+					values = rendered
+				} else {
+					maps.Copy(values, rendered)
+				}
 				desired.Addons[addon] = AddonState{Version: brought.Version, Values: values}
 			}
 		}

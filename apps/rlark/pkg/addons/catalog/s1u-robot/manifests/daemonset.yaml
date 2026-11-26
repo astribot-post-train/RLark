@@ -1,5 +1,5 @@
 # The S1U robot x86's model configuration (extensions/s1u): the node tuner, the Orin, the power, the cameras, the clock,
-# the robot's device layer and its Station, one Pod on every S1U robot. Privileged in the host's PID namespace (tuner,
+# the robot's device layer, its Station and its episode outbox, one Pod on every S1U robot. Privileged in the host's PID namespace (tuner,
 # clock): it writes the host's /etc, /boot/grub and sysfs.
 apiVersion: apps/v1
 kind: DaemonSet
@@ -299,6 +299,28 @@ spec:
             - {name: profile, mountPath: /etc/rlark/s1u, readOnly: true}
             - {name: host, mountPath: /run/rlark/s1u, readOnly: true}
             - {name: in-use, mountPath: /run/rlark/in-use}
+        # The robot's standing episode outbox (/device/start --episodes, the device layer's image): it encodes every
+        # episode a session sealed in the data directory, sends it to its Run's first data hop with the site token and
+        # removes it once that hop holds it, whether a Station or a Run is there or not, so it is a container of its
+        # own beside the Station. It keeps itself to the profile's CPUs for Pods at idle priority (lowering its own
+        # priority takes no capability) and encodes one camera at a time (0.55 GiB at its peak, 11-26); its memory
+        # limit is what the Pod's others leave of the node profile's memory for Pods less the cluster's own 256 MiB.
+        - name: episodes
+          image: {{ .Values.deviceImage }}
+          imagePullPolicy: IfNotPresent
+          command: [/device/start, --episodes]
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests: {memory: 768Mi}
+            limits: {memory: 832Mi}
+          volumeMounts:
+            - {name: device-data, mountPath: /var/lib/fleet}
+            - {name: device-token, mountPath: /site-token, readOnly: true}
+            - {name: profile, mountPath: /etc/rlark/s1u, readOnly: true}
+            - {name: host, mountPath: /run/rlark/s1u, readOnly: true}
         {{- end }}
       volumes:
         - name: orin-access

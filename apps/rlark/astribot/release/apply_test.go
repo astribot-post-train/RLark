@@ -500,6 +500,19 @@ func TestDesired(t *testing.T) {
 	if got := made.Clusters["robots-2"]; got.Agent != newRLark || len(got.Addons) != 1 || got.Addons["s1u-robot"].Version != "v1.3.9" || got.Addons["s1u-robot"].Values["image"] != newRobot {
 		t.Errorf("a cluster the environment does not state: %+v", got)
 	}
+	// An Addon the environment states for a cluster is installed there with the site's values and the release's,
+	// and keeps the site's once it is installed.
+	environment.Addons = map[string]map[string]map[string]string{"office": {"site-registry": {"nodeSelector": "kubernetes.io/hostname=cache", "prewarm": "stale"}}}
+	for _, installed := range [][]string{nil, {"site-registry"}} {
+		stated := environment.Desired(release, map[string][]string{"office": installed}).Clusters["office"].Addons
+		if got := stated["site-registry"]; len(stated) != 1 || got.Version != "v0.2.9" || got.Values["nodeSelector"] != "kubernetes.io/hostname=cache" || got.Values["prewarm"] != newRobot+","+device {
+			t.Errorf("an Addon the environment states (installed %v): %+v", installed, stated)
+		}
+	}
+	changes := Changes("addons", State{Clusters: map[string]ClusterState{"office": {}}}, environment.Desired(release, map[string][]string{"office": nil}))
+	if len(changes) != 1 || changes[0].What != "office/site-registry" || changes[0].To != "install v0.2.9" {
+		t.Errorf("the plan of an Addon to install: %+v", changes)
+	}
 }
 
 func TestLoadReleaseRefusesAnImageWithoutItsDigest(t *testing.T) {

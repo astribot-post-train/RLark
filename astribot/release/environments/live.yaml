@@ -49,6 +49,16 @@ registry:
   name: registry.rlark.internal:5443
   source: {address: "https://10.0.2.57:5443", ca: live.registry-ca.crt, credential: ir-667c8af90d294c2b}
   site: {address: "http://127.0.0.1:5443"}
+# The Addons the site itself has a release install and keep, with the site's values (cluster -> Addon -> values).
+addons:
+  rlark-local-dev-gpu:
+    # The robots' episode relay, on the management machine until the site's cache workstation has joined: the robots
+    # reach it at the hub's tunnel address (10.254.240.1:8030, the first data hop of Fleet's Runs). Its volume is 60 GB
+    # of the machine's disk, of which the relay keeps 20 GB free (Fleet's configs/workers/site_relay.yaml).
+    fleet-episode-relay:
+      nodeSelector: kubernetes.io/hostname=cailiang
+      volumeSize: 60G
+      imagePullSecret: ir-8be41d25ef634987
 # The records of runs. The release's Addons follow it in every cluster that has them installed; the robots' values
 # other than the release's (powerOff, reboot, ...) stay as the site set them.
 state: /var/lib/rlark/release/runs
