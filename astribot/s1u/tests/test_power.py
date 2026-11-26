@@ -530,6 +530,13 @@ def test_a_restart_the_holder_asked_for_lowers_and_raises_the_robot_once_with_it
     assert restart(dict(run, id="21", holder="run_b")) and "held by run_a" in service.restart["error"] and not sent
     # The holder's own session still attached: its policy may be running, so nothing is cut under it.
     assert restart(dict(run, id="21")) and "s1u-device" in service.restart["error"] and not sent
+    # Another Run's observation is not the holder's.
+    (tmp_path / "in-use" / "s1u-device").write_text("an observation of Run run_b is attached to the device layer\n")
+    assert restart(dict(run, id="21b")) and "s1u-device" in service.restart["error"] and not sent
+    # The holder's own observation moves nothing: the restart lowers the arms under it.
+    (tmp_path / "in-use" / "s1u-device").write_text("an observation of Run run_a is attached to the device layer\n")
+    assert restart(dict(run, id="21c")) and service.restart["phase"] == "done", service.restart
+    sent.clear()
     (tmp_path / "in-use" / "s1u-device").unlink()
     # The holder's power restart: driver off, 5 s for the arms, motors off, 10 s, then up to ready.
     assert restart(dict(run, id="22"))
