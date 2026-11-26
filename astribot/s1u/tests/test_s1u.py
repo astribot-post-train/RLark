@@ -647,7 +647,7 @@ def test_a_payload_has_one_version_of_its_files_and_a_changed_host_key_stops_eve
     monkeypatch.setattr(robot, "root", lambda key, result: [])
     # Waiting for a person is no failure: the next look is a minute later, not backed off.
     robot.state["failures"] = 0
-    monkeypatch.setattr(robot, "place", lambda key, steps, result: "")
+    monkeypatch.setattr(robot, "place", lambda key, steps, result: result.update(payloads={}) or "")
     assert robot.reconcile()["label"] == "ok" and trusted == [("ssh-ed25519 NEW", "SHA256:new", "confirmed")]
     # The key RLark gave the Orin at the robot's join is on the Node before the Orin shows it: no person is asked.
     robot.confirm, robot.rotated = None, "SHA256:new"
@@ -693,7 +693,56 @@ def test_payloads_are_placed_switched_when_the_host_is_free_and_removed_when_no_
     assert robot.place("KEY", [], result).endswith("it starts with the robot's maintenance")
     on["quest-bridge"] = version
     sent.clear()
-    assert robot.place("KEY", [], result) == "" and not [line for line in sent if line.startswith("sudo")]
+    assert robot.place("KEY", [], result) == "" and [line for line in sent if line.startswith("sudo")] == [
+        "sudo sh -c 'for name in quest-bridge; do echo payload=$name; ~astribot/rl/$name/install status; done'"]
+
+
+def test_a_payloads_service_that_is_down_or_restarts_itself_makes_the_orin_not_ok_and_says_which(tmp_path, monkeypatch):
+    # lamp-bridge 11-26: a day of crash loop on an Orin whose Node said ok.
+    robot = make_orin(tmp_path, monkeypatch, {"quest-bridge": {"install": "#!/bin/sh\n"}, "lamp-bridge": {"install": "#!/bin/sh\n"}})
+    versions = {name: version for name, (version, _) in robot.payloads.items()}
+    monkeypatch.setenv("S1U_NODE_WANTED", "installed")
+    (tmp_path / "password").write_text("p\n")
+    (tmp_path / "rollout").write_text("allowed\n")
+    monkeypatch.setattr(robot, "scan", lambda: ("ssh-ed25519 K", "SHA256:k"))
+    monkeypatch.setattr(robot, "known", lambda: ("ssh-ed25519 K", {}))
+    monkeypatch.setattr(robot, "root", lambda key, result: [])
+    on = dict(declared="lamp-bridge quest-bridge", **versions)
+    status = {"lamp-bridge": "active=active\nsub=running\nrestarts=0\nsince=Thu 2026-11-26 09:00:00 CST\nage=30000\n",
+              "quest-bridge": "active=active\nsub=running\nrestarts=0\nsince=Thu 2026-11-26 17:15:02 CST\nage=600\n"
+                              "log=2026-11-26T17:15:02+0800 orin bridge[1]: " + "x" * 300 + "\nlog=no headset on adb\n"}
+
+    def ssh(key, remote, data=b"", password=False):
+        if remote.startswith("echo declared="):
+            return done("".join("%s=%s\n" % item for item in on.items()).encode())
+        return done(b"SERIAL" if "serial-number" in remote else b"")
+
+    sudo = []
+    monkeypatch.setattr(robot, "ssh", ssh)
+    monkeypatch.setattr(robot, "sudo", lambda key, remote: sudo.append(remote) or done(
+        "".join("payload=%s\n%s" % (name, status[name]) for names in re.findall("for name in ([^;]*);", remote) for name in names.split()).encode()))
+    monkeypatch.setattr(robot, "api", lambda *arguments: None)
+    result = robot.reconcile()
+    assert result["label"] == "ok" and result["error"] is None
+    assert sudo == ["sh -c 'for name in lamp-bridge quest-bridge; do echo payload=$name; ~astribot/rl/$name/install status; done'"]
+    quest = result["payloads"]["quest-bridge"]
+    assert (quest["wanted"], quest["running"]) == (versions["quest-bridge"],) * 2
+    assert quest["health"] == dict(active="active", sub="running", restarts=0, since="Thu 2026-11-26 17:15:02 CST", age=600,
+                                   log=[("2026-11-26T17:15:02+0800 orin bridge[1]: " + "x" * 300)[:200], "no headset on adb"])
+    # Restarted by systemd two minutes ago: down, though active now; a restart of long ago is not.
+    status["lamp-bridge"] = status["lamp-bridge"].replace("restarts=0", "restarts=14").replace("age=30000", "age=120")
+    status["quest-bridge"] = status["quest-bridge"].replace("restarts=0", "restarts=2")
+    result = robot.reconcile()
+    assert (result["label"], result["error"]) == ("payload_down", "lamp-bridge: active (running), 14 automatic restarts, 120 s in this state")
+    # Not active: down whatever its restarts; both named.
+    status["quest-bridge"] = status["quest-bridge"].replace("active=active\nsub=running", "active=failed\nsub=failed")
+    assert robot.reconcile()["error"] == ("lamp-bridge: active (running), 14 automatic restarts, 120 s in this state; "
+                                          "quest-bridge: failed (failed), 2 automatic restarts, 600 s in this state")
+    # A payload still waiting to be switched to says nothing yet: its running version is not the declared one.
+    on["quest-bridge"] = "0123456789abcdef"
+    (tmp_path / "rollout").write_text("waiting: wave 0\n")
+    result = robot.reconcile()
+    assert "health" not in result["payloads"]["quest-bridge"] and sudo[-1].startswith("sh -c 'for name in lamp-bridge; do")
 
 
 def test_the_uplink_is_one_file_its_setup_script_is_the_addons_and_a_retired_unit_restarts_it(tmp_path, monkeypatch):

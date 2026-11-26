@@ -26,8 +26,11 @@ declares:
   this Pod by an init container, as ~/rl/NAME.<hash of its files> on the Orin with ~/rl/NAME a link to it (the hash
   is the version). A payload's own script ``install`` places what only root can (its units, its USB rules) and
   starts it: run through sudo as ``install`` after a new version is unpacked, ``install restart`` when the link is
-  switched to it, ``install remove`` when the payload is no longer declared. It finds the robot's addresses and the
-  account in rlark.env beside it. A new version is switched to only when the node tuner says so
+  switched to it, ``install remove`` when the payload is no longer declared, and ``install status`` every pass once
+  it runs the declared version: its service's health as key=value lines (active and sub, the unit's states; restarts,
+  its automatic restarts; since and age, when it entered that state and the seconds since; one log= line for each of
+  its last journal lines), on the Node with the payload's versions (lamp-bridge 11-26: a day of crash loop that the
+  Node, saying ok, did not show). It finds the robot's addresses and the account in rlark.env beside it. A new version is switched to only when the node tuner says so
   (/run/rlark/s1u/rollout): a restart of a payload may end what it serves, so the tuner holds the robot's maintenance
   lease for it, taken while nobody uses the robot, in its wave and its place among the site's robots (node_tuner.py).
 RLark depends on a payload's image reference only, never on what it is made of.
@@ -48,7 +51,8 @@ it is trusted as "rotated by RLark". Every trust is recorded: the annotation s1u
 Event.
 
 The state is on the Node: label s1u.rlark.io/orin-state, one word: ok | updating | no_access (the secret is not in the
-cluster yet) | unreachable | login_failed | identity_changed | failed; with the Addon's profile=removed, removing (the
+cluster yet) | unreachable | login_failed | identity_changed | payload_down (a payload's service is not active, or
+restarted itself within the last RESTARTED_SECONDS: the error names it) | failed; with the Addon's profile=removed, removing (the
 host is marked in use) | removed (remove: nothing of the Addon's is left there); annotation s1u.rlark.io/orin, the
 whole state as JSON (reachable, identity, trust, fingerprints, serial, payloads, the last camera reset and diagnosis,
 failures). The camera service tells the Node of each reset and diagnosis (Events CameraUsbReset, CameraStuck).
@@ -138,6 +142,8 @@ HOST_KEY, TRUST, CONFIRM = ("s1u.rlark.io/orin-host-key", "s1u.rlark.io/orin-hos
 ROTATED = "rlark.io/entry-host-key"
 STATE, STATE_ALL, SERIAL = "s1u.rlark.io/orin-state", "s1u.rlark.io/orin", "s1u.rlark.io/orin-serial"
 PERIOD_SECONDS, LONGEST_SECONDS = 60, 900
+# A payload's service that restarted itself this recently is down; of its journal, this many characters a line.
+RESTARTED_SECONDS, LOG_CHARACTERS = 300, 200
 UPLINK = "s1u-orin-uplink.service"
 
 
@@ -393,6 +399,12 @@ class Orin:
         failed = next((step for step in steps if step.returncode), None)
         if failed:
             return dict(result, label="failed", error=failed.stderr.decode(errors="replace")[-300:])
+        down = ["%s: %s (%s), %d automatic restarts, %d s in this state" % (
+                    name, health["active"], health["sub"], health["restarts"], health["age"])
+                for name, health in ((name, versions.get("health")) for name, versions in result["payloads"].items())
+                if health and (health["active"] != "active" or health["restarts"] and health["age"] < RESTARTED_SECONDS)]
+        if down:
+            return dict(result, label="payload_down", error="; ".join(down), waiting=waiting or None)
         return dict(result, label="updating" if waiting else "ok", error=None, waiting=waiting or None)
 
     def root(self, key, result):
@@ -467,6 +479,19 @@ class Orin:
             steps += self.drop(key, name)
             print("Payload %s removed from the Orin: no longer declared" % name, flush=True)
         steps.append(self.ssh(key, "mkdir -p ~/rl && echo %s > ~/rl/.rlark-payloads" % " ".join(sorted(self.payloads))))
+        # Each payload on its declared version says how its service is, all in one login.
+        current = sorted(name for name, versions in states.items() if versions["running"] == versions["wanted"])
+        if current:
+            steps.append(self.sudo(key, "sh -c 'for name in %s; do echo payload=$name; ~%s/rl/$name/install status; done'"
+                                   % (" ".join(current), self.user)))
+            for line in steps[-1].stdout.decode(errors="replace").splitlines():
+                field, _, value = line.partition("=")
+                if field == "payload":
+                    states[value]["health"] = health = dict(log=[])
+                elif field == "log":
+                    health["log"].append(value[:LOG_CHARACTERS])
+                else:
+                    health[field] = int(value) if field in ("restarts", "age") else value
         result["payloads"] = states
         return "; ".join(waiting)
 
@@ -505,8 +530,9 @@ class Orin:
             except Exception as error:  # the API server or ssh itself: reported like any other failure
                 result = dict(label="failed", error="%s: %s" % (type(error).__name__, error))
             before = self.state.get("label")
-            # A host key that changed waits for a person, not for a retry: its confirmation is read every minute.
-            good = result["label"] in ("ok", "updating", "removing", "removed", "identity_changed")
+            # A host key that changed waits for a person, not for a retry: its confirmation is read every minute; a
+            # payload's service that is down is read again every minute too.
+            good = result["label"] in ("ok", "updating", "payload_down", "removing", "removed", "identity_changed")
             self.state = dict(self.state, **result, failures=0 if good else self.state["failures"] + 1, since=(
                 self.state.get("since") if before == result["label"] else time.time()), checked_at=time.time(),
                 **{"camera_" + action: done for action, done in self.camera.items()})
