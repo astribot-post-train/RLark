@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"github.com/rlinf/rlark/apps/rlark/astribot/stations"
 	"net/http"
 	"slices"
 	"sort"
@@ -451,7 +452,7 @@ func (g *Gateway) handleAdmitMachines(c *gin.Context) {
 				answer.Error = "machine_model is required for a Robot admission"
 			}
 			if answer.Error == "" && classModel == "" {
-				if _, modelErr := g.stationClient.Resource(robotModelGVR).Get(ctx, model, metav1.GetOptions{}); modelErr != nil {
+				if _, modelErr := g.stationClient.Resource(stations.RobotModelsResource).Get(ctx, model, metav1.GetOptions{}); modelErr != nil {
 					if apierrors.IsNotFound(modelErr) {
 						answer.Error = "unknown RobotModel " + model
 					} else {

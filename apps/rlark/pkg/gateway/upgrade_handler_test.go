@@ -31,7 +31,10 @@ func setupTestGateway(objs ...runtime.Object) *Gateway {
 }
 
 func TestCreateUpgradeJob(t *testing.T) {
-	g := setupTestGateway()
+	g := setupTestGateway(
+		&rlarkv1alpha1.Cluster{ObjectMeta: metav1.ObjectMeta{Name: "beijing", Labels: map[string]string{"region": "north"}}},
+		&rlarkv1alpha1.Cluster{ObjectMeta: metav1.ObjectMeta{Name: "shanghai"}},
+	)
 
 	router := gin.Default()
 	router.POST("/api/v1/upgrade-jobs", g.rlinfv1alpha1CreateUpgradeJob)
