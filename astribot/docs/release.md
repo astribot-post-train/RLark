@@ -19,7 +19,7 @@
 
 ## 前端静态文件热更新
 
-依赖安装后，通过 `astribot/release/build-ui-static.sh /absolute/new-output-directory` 生成静态包。此入口与正式 UI 镜像使用同一个构建开关 `VITE_IAM_PORTAL=1`。更新时先备份当前入口，上传带哈希的资源，再原子切换 `index.html`。验证未登录时进入 `/login`、已有会话时进入原目标页，以及控制台加载新资源。静态热更新保存在运行中的容器，替换容器前需将同样的产物纳入镜像。
+依赖安装后，通过 `astribot/release/build-ui-static.sh /absolute/new-output-directory` 生成静态包。此入口与正式 UI 镜像使用同一个构建开关 `VITE_IAM_PORTAL=1`。产物包含独立的 `login.html`、它引用的固定路径图片和 SPA 静态包。更新时先备份并上传所需资源，再分别原子切换 `login.html` 和 `index.html`。验证未登录时进入 `/login`、已有会话时进入原目标页，以及控制台加载新资源。静态热更新保存在运行中的容器，替换容器前需将同样的产物纳入镜像。
 
 ## 成员集群升级锁
 

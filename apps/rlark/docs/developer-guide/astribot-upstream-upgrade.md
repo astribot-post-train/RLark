@@ -19,7 +19,7 @@ The release tool acquires member Kubernetes Leases in sorted order before releas
 
 The upgrade reconciler reads results through the driver interface. It accepts structured failure diagnostics from the owned upgrade container and ignores arbitrary termination text. The image-only executor and ConfigMap checkpoint have local tests for preserving the template, first-upgrade rollback, and resuming rollback. They still require the Agent-to-Job wiring, dedicated Job permissions, and a restricted management endpoint for the declared node Agent image. Gateway target preflight and isolated-cluster validation also remain pending. Keep the Astribot batch action out of operational use until those paths are complete and verified.
 
-For a frontend-only hot build, run `astribot/release/build-ui-static.sh` with a new absolute output directory. It matches the production image’s IAM build setting. Verify both the unauthenticated redirect and the authenticated console before closing a hot deployment.
+For a frontend-only hot build, run `astribot/release/build-ui-static.sh` with a new absolute output directory. It matches the production image’s IAM build setting and includes the standalone `login.html` and its images. Verify both the unauthenticated redirect and the authenticated console before closing a hot deployment.
 
 References
 
