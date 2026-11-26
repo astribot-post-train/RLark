@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"k8s.io/apimachinery/pkg/types"
 	"maps"
 	"reflect"
 	"slices"
@@ -42,7 +43,10 @@ type ComposeFile struct {
 }
 
 type ClusterState struct {
-	Agent string `json:"agent"`
+	// Live snapshot identity and mode, excluded from release records.
+	clusterUID        types.UID
+	nodeAgentsEnabled bool
+	Agent             string `json:"agent"`
 	// AgentDeployment is the name of the cluster agent's Deployment, as the site has it (read, not stated).
 	AgentDeployment  string `json:"agentDeployment,omitempty"`
 	Tools            string `json:"tools"`

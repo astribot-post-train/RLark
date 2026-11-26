@@ -21,7 +21,12 @@ const RequeueInterval = 30 * time.Second
 
 // pullReconciler reconciles ClusterUpgradeJob CRs.
 type pullReconciler struct {
-	c      *Controller
+	c *Controller
+}
+
+// A pass keeps the selected driver and logger local to one upgrade attempt.
+type pullRun struct {
+	*pullReconciler
 	log    logr.Logger
 	driver UpgradeDriver
 }
@@ -61,8 +66,8 @@ func (r *pullReconciler) newDriver(ctx context.Context, job *rlarkv1alpha1.Clust
 
 // Reconcile handles a ClusterUpgradeJob CR.
 func (r *pullReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	r.log = log.FromContext(ctx)
-	r.log.Info("reconciling cluster upgrade job", "name", req.Name)
+	run := &pullRun{pullReconciler: r, log: log.FromContext(ctx)}
+	run.log.Info("reconciling cluster upgrade job", "name", req.Name)
 
 	var clusterUpgradeJob rlarkv1alpha1.ClusterUpgradeJob
 	if err := r.c.ManagementClient.Get(ctx, req.NamespacedName, &clusterUpgradeJob); err != nil {
@@ -73,27 +78,27 @@ func (r *pullReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 	}
 
 	if !r.shouldHandle(&clusterUpgradeJob) {
-		r.log.V(1).Info("cluster upgrade job not for this cluster, skipping", "name", req.Name)
+		run.log.V(1).Info("cluster upgrade job not for this cluster, skipping", "name", req.Name)
 		return ctrl.Result{}, nil
 	}
 
 	if r.isCompleted(&clusterUpgradeJob) {
-		r.log.V(1).Info("cluster upgrade job already completed", "name", req.Name)
+		run.log.V(1).Info("cluster upgrade job already completed", "name", req.Name)
 		return ctrl.Result{}, nil
 	}
 
 	driver, err := r.newDriver(ctx, &clusterUpgradeJob)
 	if err != nil {
-		r.log.Error(err, "failed to create upgrade driver")
-		return ctrl.Result{}, r.updateStatus(ctx, &clusterUpgradeJob, rlarkv1alpha1.ClusterUpgradeJobFailed, "", err.Error())
+		run.log.Error(err, "failed to create upgrade driver")
+		return ctrl.Result{}, run.updateStatus(ctx, &clusterUpgradeJob, rlarkv1alpha1.ClusterUpgradeJobFailed, "", err.Error())
 	}
-	r.driver = driver
+	run.driver = driver
 
 	switch clusterUpgradeJob.Status.Phase {
 	case "", rlarkv1alpha1.ClusterUpgradeJobPending:
-		return r.startUpgrade(ctx, &clusterUpgradeJob)
+		return run.startUpgrade(ctx, &clusterUpgradeJob)
 	case rlarkv1alpha1.ClusterUpgradeJobUpgrading:
-		return r.monitorUpgrade(ctx, &clusterUpgradeJob)
+		return run.monitorUpgrade(ctx, &clusterUpgradeJob)
 	default:
 		// Terminal state, nothing to do
 		return ctrl.Result{}, nil
@@ -110,25 +115,25 @@ func (r *pullReconciler) isCompleted(job *rlarkv1alpha1.ClusterUpgradeJob) bool 
 		job.Status.Phase == rlarkv1alpha1.ClusterUpgradeJobRolledBack
 }
 
-func (r *pullReconciler) startUpgrade(ctx context.Context, job *rlarkv1alpha1.ClusterUpgradeJob) (ctrl.Result, error) {
+func (r *pullRun) startUpgrade(ctx context.Context, job *rlarkv1alpha1.ClusterUpgradeJob) (ctrl.Result, error) {
 	r.log.Info("starting upgrade", "name", job.Name, "image", job.Spec.Image)
 
-	var currentImage, currentConfig string
-	state, err := r.driver.StateStore().Get(ctx)
-	if err != nil {
-		if apierrors.IsNotFound(err) {
-			r.log.Info("previous upgrade record absent")
-		} else {
-			return ctrl.Result{}, r.updateStatus(ctx, job, rlarkv1alpha1.ClusterUpgradeJobFailed, "", fmt.Sprintf("get state: %v", err))
-		}
-	} else {
-		currentImage = state.Image
-		currentConfig = state.DeployConfig
-	}
-
+	var currentImage string
 	newConfig := job.Spec.ConfigPatch
-	if newConfig == "" && !r.driver.SnapshotsLiveState() {
-		newConfig = currentConfig
+	stock := !r.driver.SnapshotsLiveState()
+	if stock {
+		state, err := r.driver.StateStore().Get(ctx)
+		switch {
+		case apierrors.IsNotFound(err):
+			r.log.Info("previous upgrade record absent")
+		case err != nil:
+			return ctrl.Result{}, r.updateStatus(ctx, job, rlarkv1alpha1.ClusterUpgradeJobFailed, "", fmt.Sprintf("get state: %v", err))
+		default:
+			currentImage = state.Image
+			if newConfig == "" {
+				newConfig = state.DeployConfig
+			}
+		}
 	}
 
 	configRef, err := r.driver.PrepareConfig(ctx, job, newConfig)
@@ -137,7 +142,7 @@ func (r *pullReconciler) startUpgrade(ctx context.Context, job *rlarkv1alpha1.Cl
 	}
 
 	effectiveJob := job
-	if currentImage == "" && job.Spec.AutoRollback && !r.driver.SnapshotsLiveState() {
+	if stock && currentImage == "" && job.Spec.AutoRollback {
 		r.log.Info("first upgrade, disabling auto rollback")
 		jobCopy := job.DeepCopy()
 		jobCopy.Spec.AutoRollback = false
@@ -153,10 +158,10 @@ func (r *pullReconciler) startUpgrade(ctx context.Context, job *rlarkv1alpha1.Cl
 	return ctrl.Result{RequeueAfter: RequeueInterval}, r.updateStatus(ctx, job, rlarkv1alpha1.ClusterUpgradeJobUpgrading, jobName, "")
 }
 
-func (r *pullReconciler) monitorUpgrade(ctx context.Context, job *rlarkv1alpha1.ClusterUpgradeJob) (ctrl.Result, error) {
+func (r *pullRun) monitorUpgrade(ctx context.Context, job *rlarkv1alpha1.ClusterUpgradeJob) (ctrl.Result, error) {
 	r.log.Info("monitoring upgrade", "name", job.Name, "jobName", job.Status.JobName)
 
-	result, err := r.driver.CheckJobResult(ctx, job.Status.JobName)
+	result, err := r.driver.CheckJobResult(ctx, job)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -182,7 +187,7 @@ func (r *pullReconciler) monitorUpgrade(ctx context.Context, job *rlarkv1alpha1.
 
 // handleJobNotFound determines the outcome when the upgrade job disappears
 // before we can read its status (e.g. TTL-cleared or manually deleted).
-func (r *pullReconciler) handleJobNotFound(ctx context.Context, job *rlarkv1alpha1.ClusterUpgradeJob) (ctrl.Result, error) {
+func (r *pullRun) handleJobNotFound(ctx context.Context, job *rlarkv1alpha1.ClusterUpgradeJob) (ctrl.Result, error) {
 	if r.driver.SnapshotsLiveState() {
 		verified, err := r.driver.VerifyMissingJobSuccess(ctx, job)
 		if err != nil {
@@ -219,18 +224,19 @@ func (r *pullReconciler) handleJobNotFound(ctx context.Context, job *rlarkv1alph
 	return r.handleUpgradeFailure(ctx, job, JobResult{ExitCode: -1})
 }
 
-// handleUpgradeSuccess persists state and marks the job succeeded.
-// A Save failure is returned as an error so the controller retries before
-// declaring success.
-func (r *pullReconciler) handleUpgradeSuccess(ctx context.Context, job *rlarkv1alpha1.ClusterUpgradeJob) (ctrl.Result, error) {
+// The stock installer consumes rlark-state for its next run. Image-only Jobs
+// write their own completion checkpoint before releasing the member lease.
+func (r *pullRun) handleUpgradeSuccess(ctx context.Context, job *rlarkv1alpha1.ClusterUpgradeJob) (ctrl.Result, error) {
 	r.log.Info("upgrade succeeded", "name", job.Name)
 
-	if err := r.driver.StateStore().Save(ctx, &ClusterState{
-		Image:        job.Spec.Image,
-		DeployConfig: job.Spec.ConfigPatch,
-	}); err != nil {
-		r.log.Error(err, "save state")
-		return ctrl.Result{}, fmt.Errorf("save state after upgrade: %w", err)
+	if !r.driver.SnapshotsLiveState() {
+		if err := r.driver.StateStore().Save(ctx, &ClusterState{
+			Image:        job.Spec.Image,
+			DeployConfig: job.Spec.ConfigPatch,
+		}); err != nil {
+			r.log.Error(err, "save state")
+			return ctrl.Result{}, fmt.Errorf("save state after upgrade: %w", err)
+		}
 	}
 
 	if err := r.driver.CleanupConfig(ctx, job); err != nil {
@@ -240,7 +246,7 @@ func (r *pullReconciler) handleUpgradeSuccess(ctx context.Context, job *rlarkv1a
 	return ctrl.Result{}, r.updateStatus(ctx, job, rlarkv1alpha1.ClusterUpgradeJobSucceeded, "", "")
 }
 
-func (r *pullReconciler) handleUpgradeFailure(ctx context.Context, job *rlarkv1alpha1.ClusterUpgradeJob, result JobResult) (ctrl.Result, error) {
+func (r *pullRun) handleUpgradeFailure(ctx context.Context, job *rlarkv1alpha1.ClusterUpgradeJob, result JobResult) (ctrl.Result, error) {
 	r.log.Info("upgrade failed", "name", job.Name, "exitCode", result.ExitCode)
 
 	// Rollback is handled inside the upgrade Pod itself (AUTO_ROLLBACK env).
@@ -265,12 +271,12 @@ func upgradeFailureMessage(summary, detail string) string {
 }
 
 // updateStatus updates the ClusterUpgradeJob status.
-func (r *pullReconciler) updateStatus(ctx context.Context, job *rlarkv1alpha1.ClusterUpgradeJob, phase rlarkv1alpha1.ClusterUpgradeJobPhase, jobName, message string) error {
+func (r *pullRun) updateStatus(ctx context.Context, job *rlarkv1alpha1.ClusterUpgradeJob, phase rlarkv1alpha1.ClusterUpgradeJobPhase, jobName, message string) error {
 	return r.updateStatusInternal(ctx, job, phase, jobName, "", message)
 }
 
 // updateStatusInternal updates the ClusterUpgradeJob status.
-func (r *pullReconciler) updateStatusInternal(ctx context.Context, job *rlarkv1alpha1.ClusterUpgradeJob, phase rlarkv1alpha1.ClusterUpgradeJobPhase, jobName, rollbackJobName, message string) error {
+func (r *pullRun) updateStatusInternal(ctx context.Context, job *rlarkv1alpha1.ClusterUpgradeJob, phase rlarkv1alpha1.ClusterUpgradeJobPhase, jobName, rollbackJobName, message string) error {
 	job.Status.Phase = phase
 	if jobName != "" {
 		job.Status.JobName = jobName

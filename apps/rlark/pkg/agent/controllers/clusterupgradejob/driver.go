@@ -41,7 +41,7 @@ type UpgradeDriver interface {
 
 	// CheckJobResult returns the outcome of the upgrade workload. Drivers must
 	// return JobStatusNotFound when the workload no longer exists.
-	CheckJobResult(ctx context.Context, jobName string) (*JobResult, error)
+	CheckJobResult(ctx context.Context, child *rlarkv1alpha1.ClusterUpgradeJob) (*JobResult, error)
 }
 
 // JobResult extends JobStatus with the container exit code, so the caller

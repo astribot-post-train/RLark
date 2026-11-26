@@ -26,8 +26,10 @@ func (r *Run) holdMembers(ctx context.Context) (context.Context, func(), error) 
 		}
 	}
 	var guards []*clusterupgrade.Guard
+	r.memberGuards = make(map[string]*clusterupgrade.Guard, len(members))
 	release := func() {
 		stop(context.Canceled)
+		defer clear(r.memberGuards)
 		for _, guard := range slices.Backward(guards) {
 			call, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 			if err := guard.Release(call); err != nil {
@@ -49,6 +51,7 @@ func (r *Run) holdMembers(ctx context.Context) (context.Context, func(), error) 
 			return ctx, nil, fmt.Errorf("cluster %s: %w", name, err)
 		}
 		guards = append(guards, guard)
+		r.memberGuards[name] = guard
 		context.AfterFunc(held, func() { stop(context.Cause(held)) })
 	}
 	return work, release, nil

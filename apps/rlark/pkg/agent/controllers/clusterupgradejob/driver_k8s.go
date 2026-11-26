@@ -79,6 +79,12 @@ func imageOnlyJobName(job *rlarkv1alpha1.ClusterUpgradeJob) string {
 	return "upgrade-attempt-" + string(job.UID)
 }
 
+func ownsImageOnlyJob(child *rlarkv1alpha1.ClusterUpgradeJob, job *batchv1.Job) bool {
+	return child.UID != "" && job.Name == imageOnlyJobName(child) &&
+		job.Labels[childUIDLabel] == string(child.UID) &&
+		job.Spec.Template.Spec.ServiceAccountName == clusterupgrade.JobServiceAccount
+}
+
 func (d *K8sDriver) attemptName(job *rlarkv1alpha1.ClusterUpgradeJob) string {
 	if d.policy != nil {
 		return imageOnlyJobName(job)
@@ -252,7 +258,7 @@ func (d *K8sDriver) StartUpgrade(ctx context.Context, job *rlarkv1alpha1.Cluster
 				if err := d.client.Get(ctx, client.ObjectKeyFromObject(k8sJob), &existing); err != nil {
 					return "", err
 				}
-				if existing.Labels[childUIDLabel] != string(job.UID) || existing.Spec.Template.Spec.ServiceAccountName != clusterupgrade.JobServiceAccount {
+				if !ownsImageOnlyJob(job, &existing) {
 					return "", fmt.Errorf("existing upgrade job does not belong to this attempt")
 				}
 			}
@@ -266,7 +272,8 @@ func (d *K8sDriver) StartUpgrade(ctx context.Context, job *rlarkv1alpha1.Cluster
 // CheckJobResult reads a batchv1.Job and returns its status plus the container
 // exit code, so the caller can distinguish "upgrade failed, rollback succeeded"
 // (exit code 2) from "upgrade failed, rollback also failed" (other non-zero).
-func (d *K8sDriver) CheckJobResult(ctx context.Context, jobName string) (*JobResult, error) {
+func (d *K8sDriver) CheckJobResult(ctx context.Context, child *rlarkv1alpha1.ClusterUpgradeJob) (*JobResult, error) {
+	jobName := child.Status.JobName
 	var k8sJob batchv1.Job
 	err := d.client.Get(ctx, types.NamespacedName{
 		Namespace: d.namespace,
@@ -277,6 +284,10 @@ func (d *K8sDriver) CheckJobResult(ctx context.Context, jobName string) (*JobRes
 			return &JobResult{Status: JobStatusNotFound}, nil
 		}
 		return nil, err
+	}
+
+	if d.policy != nil && !ownsImageOnlyJob(child, &k8sJob) {
+		return &JobResult{Status: JobStatusFailed, ExitCode: -1, Message: "the local upgrade Job does not belong to this attempt"}, nil
 	}
 
 	if k8sJob.Status.Active > 0 {

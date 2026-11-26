@@ -105,10 +105,13 @@ func newFakeSite(t *testing.T) *fakeSite {
 	var objects []runtime.Object
 	objects = append(objects, object("station.rlark.io/v1alpha1", "SiteNetwork", "station-system", "default", map[string]any{"status": map[string]any{"members": int64(2)}}))
 	for _, cluster := range []string{"lab", "office"} {
-		objects = append(objects, object("rlinf.io/v1alpha1", "Cluster", "", cluster, map[string]any{
+		clusterObject := object("rlinf.io/v1alpha1", "Cluster", "", cluster, map[string]any{
 			"spec":   map[string]any{"agentNamespace": cluster, "nodeAgents": map[string]any{"enabled": true, "image": oldRLark, "nodeSelector": map[string]any{"rlark.io/enabled": "true"}}},
 			"status": map[string]any{"phase": "Online"},
-		}))
+		})
+		clusterObject.SetUID(types.UID(cluster + "-uid"))
+		clusterObject.SetResourceVersion("1")
+		objects = append(objects, clusterObject)
 		objects = append(objects, object("rlinf.io/v1alpha1", "Node", cluster, cluster+"-1", map[string]any{"status": map[string]any{"phase": "Online"}}))
 	}
 	objects = append(objects,

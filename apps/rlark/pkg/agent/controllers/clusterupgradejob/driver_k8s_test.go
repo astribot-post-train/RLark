@@ -47,7 +47,7 @@ func TestCheckJobResultReportsOnlyOwnedUpgradeTerminations(t *testing.T) {
 	foreign := pod("earlier-job", "different-job-uid", 9, "secret")
 	owned := pod("owned-job", job.UID, 2, `{"kind":"rollout-failed"}`)
 	kube := fake.NewClientBuilder().WithScheme(scheme).WithObjects(job, foreign, owned).Build()
-	result, err := NewK8sDriver(kube, "example").CheckJobResult(t.Context(), job.Name)
+	result, err := NewK8sDriver(kube, "example").CheckJobResult(t.Context(), &rlarkv1alpha1.ClusterUpgradeJob{Status: rlarkv1alpha1.ClusterUpgradeJobStatus{JobName: job.Name}})
 	if err != nil || result.Status != JobStatusFailed || result.ExitCode != 2 || result.Message != "the updated Agent failed to become ready" {
 		t.Fatalf("unexpected job result %+v, %v", result, err)
 	}

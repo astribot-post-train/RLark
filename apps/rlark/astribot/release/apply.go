@@ -18,6 +18,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/rlinf/rlark/apps/rlark/astribot/clusterupgrade"
+	"github.com/rlinf/rlark/apps/rlark/astribot/nodeagent"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -60,6 +62,7 @@ type Run struct {
 	// checks of every later stage, which compare with the baseline taken before the run, take an Addon at that
 	// version as the run made it (going back, addons is the first stage, and the agents' stages come after it).
 	addonVersions map[string]string
+	memberGuards  map[string]*clusterupgrade.Guard
 }
 
 type installed struct{ file, sum string }
@@ -522,25 +525,7 @@ func (r *Run) act(ctx context.Context, stage string, current State) error {
 		}
 	case "node-agents":
 		for _, name := range slices.Sorted(maps.Keys(desired.Clusters)) {
-			if current.Clusters[name].NodeAgent == desired.Clusters[name].NodeAgent {
-				continue
-			}
-			// The Cluster's declaration of its node agents (spec.nodeAgents, as the Gateway's PUT writes it): what the
-			// release does not change (the selector, the rollout) stays as it is.
-			if err := r.retryWrite(ctx, func() error {
-				clusters := site.Management.Resource(clusterGVR)
-				object, err := clusters.Get(ctx, name, metav1.GetOptions{})
-				if err != nil {
-					return err
-				}
-				declared, _, _ := unstructured.NestedMap(object.Object, "spec", "nodeAgents")
-				declared["enabled"], declared["image"] = true, desired.Clusters[name].NodeAgent
-				if err := unstructured.SetNestedMap(object.Object, declared, "spec", "nodeAgents"); err != nil {
-					return err
-				}
-				_, err = clusters.Update(ctx, object, metav1.UpdateOptions{})
-				return err
-			}); err != nil {
+			if err := r.setNodeAgentImage(ctx, name, current.Clusters[name], desired.Clusters[name].NodeAgent); err != nil {
 				return err
 			}
 		}
@@ -620,6 +605,59 @@ func addonOrder(installed map[string]AddonState, desired State) []string {
 	return ordered
 }
 
+func (r *Run) setNodeAgentImage(ctx context.Context, name string, current ClusterState, target string) error {
+	if current.NodeAgent == target {
+		return nil
+	}
+	guard := r.memberGuards[name]
+	if guard == nil {
+		return fmt.Errorf("missing member release lease for %s", name)
+	}
+	clusters := r.Site.Management.Resource(clusterGVR)
+	if current.nodeAgentsEnabled && current.NodeAgent != "" {
+		change := nodeagent.ImageChange{Cluster: name, UID: current.clusterUID, From: current.NodeAgent, To: target}
+		return r.retryWrite(ctx, func() error {
+			return nodeagent.ChangeDeclaredImage(ctx, clusters, change, guard.Check)
+		})
+	}
+
+	// Preserve release bootstrap for clusters without an enabled declaration.
+	// An image-only upgrade never takes this path.
+	return r.retryWrite(ctx, func() error {
+		object, err := clusters.Get(ctx, name, metav1.GetOptions{})
+		if err != nil {
+			return err
+		}
+		declared, _, err := unstructured.NestedMap(object.Object, "spec", "nodeAgents")
+		if err != nil {
+			return err
+		}
+		image, _ := declared["image"].(string)
+		enabled, _ := declared["enabled"].(bool)
+		if object.GetUID() != current.clusterUID || object.GetDeletionTimestamp() != nil {
+			return fmt.Errorf("cluster %s: %w", name, nodeagent.ErrImageDeclarationChanged)
+		}
+		if enabled && image == target {
+			return guard.Check(ctx)
+		}
+		if image != current.NodeAgent || enabled != current.nodeAgentsEnabled {
+			return fmt.Errorf("cluster %s: %w", name, nodeagent.ErrImageDeclarationChanged)
+		}
+		if declared == nil {
+			declared = map[string]any{}
+		}
+		declared["enabled"], declared["image"] = true, target
+		if err := unstructured.SetNestedMap(object.Object, declared, "spec", "nodeAgents"); err != nil {
+			return err
+		}
+		if err := guard.Check(ctx); err != nil {
+			return err
+		}
+		_, err = clusters.Update(ctx, object, metav1.UpdateOptions{})
+		return err
+	})
+}
+
 // retryWrite writes until the management plane takes it: a write that conflicts with another (the object
 // changed meanwhile) or meets the plane busy or unreachable is asked again until the stage's time is up; one it
 // refuses (ErrRefused, forbidden, invalid, absent) is not.
@@ -629,7 +667,7 @@ func (r *Run) retryWrite(ctx context.Context, write func() error) error {
 		switch {
 		case err == nil:
 			return "", nil
-		case errors.Is(err, ErrRefused), apierrors.IsForbidden(err), apierrors.IsInvalid(err), apierrors.IsNotFound(err),
+		case errors.Is(err, ErrRefused), errors.Is(err, nodeagent.ErrImageDeclarationChanged), apierrors.IsForbidden(err), apierrors.IsInvalid(err), apierrors.IsNotFound(err),
 			apierrors.IsBadRequest(err), apierrors.IsUnauthorized(err), apierrors.IsAlreadyExists(err):
 			return "", err
 		}
