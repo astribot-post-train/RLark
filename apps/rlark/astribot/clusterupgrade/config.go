@@ -29,38 +29,54 @@ func (e *FieldError) Error() string { return "unsupported DeployConfig field " +
 // from the live Kubernetes objects. Require immutable image references to make
 // readiness checks and rollback deterministic.
 func ParseImages(input string) (Images, error) {
+	images, _, err := parseImagePlan(input, false)
+	return images, err
+}
+
+func parseImagePlan(input string, managed bool) (Images, string, error) {
 	var document yaml.Node
 	decoder := yaml.NewDecoder(strings.NewReader(input))
 	if err := decoder.Decode(&document); err != nil {
-		return Images{}, errors.New("invalid upgrade DeployConfig YAML")
+		return Images{}, "", errors.New("invalid upgrade DeployConfig YAML")
 	}
 	var trailing yaml.Node
 	if err := decoder.Decode(&trailing); err != io.EOF {
-		return Images{}, errors.New("upgrade DeployConfig must contain one YAML document")
+		return Images{}, "", errors.New("upgrade DeployConfig must contain one YAML document")
 	}
 	if len(document.Content) != 1 {
-		return Images{}, errors.New("upgrade DeployConfig is required")
+		return Images{}, "", errors.New("upgrade DeployConfig is required")
 	}
 	root, err := fields(document.Content[0], "", "apiVersion", "kind", "plane", "kubernetes")
 	if err != nil {
-		return Images{}, err
+		return Images{}, "", err
 	}
 	if !isString(root["apiVersion"], "rlark.io/v1alpha1") || !isString(root["kind"], "DeployConfig") || !isString(root["plane"], "data") {
-		return Images{}, errors.New("expected a data-plane rlark.io/v1alpha1 DeployConfig")
+		return Images{}, "", errors.New("expected a data-plane rlark.io/v1alpha1 DeployConfig")
 	}
-	images, err := fields(root["kubernetes"], "kubernetes.", "agent-image", "image")
+	allowed := []string{"agent-image", "image"}
+	if managed {
+		allowed = append(allowed, "node-agent-image")
+	}
+	images, err := fields(root["kubernetes"], "kubernetes.", allowed...)
 	if err != nil {
-		return Images{}, err
+		return Images{}, "", err
 	}
 	agent, err := imageReference(images["agent-image"], "agent-image")
 	if err != nil {
-		return Images{}, err
+		return Images{}, "", err
 	}
 	tools, err := imageReference(images["image"], "image")
 	if err != nil {
-		return Images{}, err
+		return Images{}, "", err
 	}
-	return Images{Agent: agent, Tools: tools}, nil
+	var node string
+	if managed {
+		node, err = imageReference(images["node-agent-image"], "node-agent-image")
+		if err != nil {
+			return Images{}, "", err
+		}
+	}
+	return Images{Agent: agent, Tools: tools}, node, nil
 }
 
 func fields(n *yaml.Node, prefix string, allowed ...string) (map[string]*yaml.Node, error) {

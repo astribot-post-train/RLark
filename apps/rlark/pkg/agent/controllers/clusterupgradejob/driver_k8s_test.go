@@ -100,7 +100,7 @@ func TestImageOnlyJobUseIsolatedIdentityAndImmutableConfiguration(t *testing.T) 
 	if err := kube.Get(t.Context(), client.ObjectKey{Namespace: StateStoreNamespace, Name: configRef}, &saved); err != nil {
 		t.Fatal(err)
 	}
-	if saved.Immutable == nil || !*saved.Immutable || saved.Labels[childUIDLabel] != string(child.UID) {
+	if saved.Immutable == nil || !*saved.Immutable || saved.Labels[clusterupgrade.ChildUIDLabel] != string(child.UID) {
 		t.Fatalf("upgrade configuration was not bound to its child UID: %+v", saved)
 	}
 }
@@ -193,5 +193,50 @@ func TestAgentRequiresStockOptInForDirectUpgradeJob(t *testing.T) {
 	driver, err := reconciler.newDriver(t.Context(), job)
 	if err != nil || driver == nil || driver.SnapshotsLiveState() {
 		t.Fatalf("explicit stock opt-in did not select stock driver: %v", err)
+	}
+}
+
+func TestManagedUpgradeJobProjectsOnlyTheBrokerAudience(t *testing.T) {
+	scheme := runtime.NewScheme()
+	for _, register := range []func(*runtime.Scheme) error{batchv1.AddToScheme, corev1.AddToScheme, appsv1.AddToScheme} {
+		if err := register(scheme); err != nil {
+			t.Fatal(err)
+		}
+	}
+	kube := fake.NewClientBuilder().WithScheme(scheme).Build()
+	driver := NewK8sDriver(kube, "lab")
+	image := "registry.example/upgrade@sha256:1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
+	driver.policy = &clusterupgrade.JobPolicy{Mode: clusterupgrade.ManagedNodeMode, ExecutorImage: image, Deployment: "site-agent"}
+	child := &rlarkv1alpha1.ClusterUpgradeJob{ObjectMeta: metav1.ObjectMeta{Name: "managed-upgrade", UID: "managed-attempt"},
+		Spec: rlarkv1alpha1.ClusterUpgradeJobSpec{Image: image}}
+	config := "apiVersion: rlark.io/v1alpha1\nkind: DeployConfig\nplane: data\nkubernetes:\n  agent-image: " + image + "\n  image: " + image + "\n"
+	if _, err := driver.PrepareConfig(t.Context(), child, config); err == nil {
+		t.Fatal("managed upgrade accepted a missing node Agent image")
+	}
+	config += "  node-agent-image: " + image + "\n"
+	configRef, err := driver.PrepareConfig(t.Context(), child, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	name, err := driver.StartUpgrade(t.Context(), child, "", configRef)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var job batchv1.Job
+	if err := kube.Get(t.Context(), client.ObjectKey{Namespace: StateStoreNamespace, Name: name}, &job); err != nil {
+		t.Fatal(err)
+	}
+	pod := job.Spec.Template.Spec
+	if len(pod.Volumes) != 2 || pod.Volumes[0].ConfigMap == nil || pod.Volumes[1].Projected == nil ||
+		pod.ServiceAccountName != clusterupgrade.JobServiceAccount {
+		t.Fatalf("unexpected managed executor volumes or identity: %+v", pod)
+	}
+	sources := pod.Volumes[1].Projected.Sources
+	if len(sources) != 1 || sources[0].ServiceAccountToken == nil || sources[0].ServiceAccountToken.Audience != clusterupgrade.BrokerAudience {
+		t.Fatalf("executor did not receive an audience-bound token: %+v", sources)
+	}
+	mount := pod.Containers[0].VolumeMounts[1]
+	if mount.MountPath != clusterupgrade.BrokerTokenMount || !mount.ReadOnly {
+		t.Fatalf("unexpected broker token mount: %+v", mount)
 	}
 }

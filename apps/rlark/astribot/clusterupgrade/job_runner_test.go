@@ -54,11 +54,11 @@ func TestClusterOnlyRunnerChecksPodIdentityAndKeepsTemplate(t *testing.T) {
 	}
 	reader := runtimefake.NewClientBuilder().WithScheme(scheme).WithObjects(policy).Build()
 	req := JobRequest{JobUID: childUID, PodName: pod.Name, PodUID: "wrong", Deployment: object.Name, DeployConfig: imagesConfig, AutoRollback: true, HealthTimeout: time.Second}
-	if err := runClusterOnly(t.Context(), members, reader, req); err == nil {
+	if err := runImageJob(t.Context(), members, reader, req); err == nil {
 		t.Fatal("Job with wrong Pod UID was accepted")
 	}
 	req.PodUID = string(pod.UID)
-	if err := runClusterOnly(t.Context(), members, reader, req); err != nil {
+	if err := runImageJob(t.Context(), members, reader, req); err != nil {
 		t.Fatal(err)
 	}
 	got, err := members.AppsV1().Deployments(Namespace).Get(t.Context(), object.Name, metav1.GetOptions{})

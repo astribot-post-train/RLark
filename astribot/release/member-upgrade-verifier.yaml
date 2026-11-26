@@ -1,0 +1,64 @@
+# Isolated managed-upgrade verifier. Run the broker with this identity's
+# kubeconfig for the member. Never mount that kubeconfig in the upgrade Job.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: rlark-upgrade-verifier
+  namespace: rlark-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: rlark-upgrade-verifier
+rules:
+  - apiGroups: ["authentication.k8s.io"]
+    resources: ["tokenreviews"]
+    verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: rlark-upgrade-verifier
+subjects:
+  - kind: ServiceAccount
+    name: rlark-upgrade-verifier
+    namespace: rlark-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: rlark-upgrade-verifier
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: rlark-upgrade-verifier
+  namespace: rlark-system
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get"]
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["get"]
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    resourceNames: ["rlark-agent-upgrade"]
+    verbs: ["get"]
+  - apiGroups: ["apps"]
+    resources: ["daemonsets"]
+    resourceNames: ["rlark-agent-node"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: rlark-upgrade-verifier
+  namespace: rlark-system
+subjects:
+  - kind: ServiceAccount
+    name: rlark-upgrade-verifier
+    namespace: rlark-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: rlark-upgrade-verifier

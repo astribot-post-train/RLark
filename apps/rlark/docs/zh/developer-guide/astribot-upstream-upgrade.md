@@ -50,4 +50,10 @@ Gateway、管理面控制器和升级后的成员 Agent 都要求集群明确设
 
 托管模式的管理面授权和成员滚动必须能在集群 Agent 重启或故障时继续。继续用 UpgradeJob 和 ClusterUpgradeJob 作为运维入口。管理面授权绑定 Cluster UID、子任务 UID 和已批准的目标镜像摘要，并在首次写入前由管理面记录回滚基线。成员 Job 使用绑定本轮任务的凭据。管理面独立核验成员 Job 和当前成员租约，仅开放受限的镜像操作，授权和凭据留在成员不可写的位置。成员 Job 不挂载通用 Cluster 写权限或全站发布凭据。节点 Agent DaemonSet 仍由集群 Agent 独占调谐。声明变更后，必须核验同一工作负载实例、目标镜像和本轮滚动，包括替换后的 Pod，才能判定成功。节点 Agent 镜像独立于集群 Agent 和工具镜像。
 
-受限的镜像写入已由发布工具使用。托管模式的授权、认证通道及滚动验证仍需接入独立 Job。Astribot 批量入口保持关闭，在一次性的标准与托管成员集群上验证整条链路后再启用。需要覆盖授权过期、资源 UID 被替换、租约丢失、部分节点滚动及回滚，并验证成员无法变更其他 Cluster 或已批准镜像外的字段。
+独立代理和 Job 适配器已可用于托管模式的隔离验证。在一次性成员集群中安装现有的执行器 ServiceAccount、检查点和租约，并应用 `astribot/release/member-upgrade-verifier.yaml`。验证身份能发起 TokenReview，并读取成员的执行器 Pod、Job、Lease 和节点 Agent DaemonSet。凭据只挂载给代理。运行 `rlark-upgrade` 时，把 `RLARK_NODE_IMAGE_BROKER_CONFIG` 指向一份 JSON 配置，其中包含 `listen`、`tlsCert`、`tlsKey`、`managementKubeconfig` 和 `members`。后者按管理面 Cluster 名称索引，每项填写 `clusterUID` 和该成员验证身份的 `kubeconfig`。代理的管理面身份只授予已批准的 Cluster 名称上的读取和更新权限。代理监听指定的内网地址并要求直连 TLS。
+
+隔离子任务的本地 `rlark-agent-upgrade-policy` ConfigMap 设置 `mode=astribot-managed-node`、`deployment`、摘要固定的 `executorImage`、HTTPS `brokerOrigin` 和可信 PEM `brokerCA`。托管模式的 DeployConfig 要求 `kubernetes.agent-image`、`kubernetes.image` 和 `kubernetes.node-agent-image` 都固定到镜像摘要。可信管理面运维人员在启动该子任务前为 Cluster 写入 `rlark.io/node-image-upgrade-grant`。这份 JSON 授权包含 `ClusterUID`、`DaemonSetUID`、`ChildUID`、`Before`（已观测且固定摘要的节点 Agent 镜像）、`Target`（节点 Agent 目标）、`Deployment`（批准的 `Agent` 和 `Tools` 摘要）、`ExecutorImage`、`Expires`（RFC 3339，晚于 Job 截止时间以覆盖回滚）和初始值为 `Approved` 的 `Phase`。不要替换仍在使用的授权。Job 使用绑定 Pod、可轮换的专用受众令牌；代理通过同一次 Cluster 资源版本检查提交镜像和授权阶段，迟到的正向请求无法撤销回滚。代理核验同一托管 DaemonSet UID、预期模板镜像、已观测代际、已更新节点数和可用节点数。隔离模式要求所有已调度节点收敛。
+
+批量入口仍未开放自动签发授权和混合驱动路由。隔离授权流程不用于生产批量升级。托管 Job 消失后，在能确认本轮任务对应的两个工作负载状态前，仍会报告结果无法核验。开放批量升级前，用标准与托管成员完成混合批次验收，覆盖授权过期、资源替换、成员租约冲突、部分滚动和回滚，并确认成员无法变更其他 Cluster 或已批准镜像以外的字段。
+
+独立 Kind 用例以真实 Kubernetes Job 运行托管执行器，使用投射的 Pod 绑定令牌、独立 HTTPS 代理和受限验证凭据。测试夹具将已授权的声明传给真实 DaemonSet，Job 等待滚动状态。故意停止同步后，滚动超时，执行器恢复原声明、保留节点选择器并释放成员租约。该用例尚未覆盖完整的 Astribot 节点 Agent 调谐器、生产 kcp 接入和混合批次调度。

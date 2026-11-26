@@ -17,6 +17,7 @@ import (
 const (
 	PolicyConfigMap   = "rlark-agent-upgrade-policy"
 	ClusterOnlyMode   = "astribot-cluster-only"
+	ManagedNodeMode   = "astribot-managed-node"
 	JobServiceAccount = "rlark-upgrade"
 )
 
@@ -25,6 +26,9 @@ const (
 type JobPolicy struct {
 	ExecutorImage string
 	Deployment    string
+	Mode          string
+	BrokerOrigin  string
+	BrokerCA      string
 }
 
 // ResolveJobPolicy returns a nil policy when the member has neither the Astribot
@@ -46,22 +50,33 @@ func ResolveJobPolicy(ctx context.Context, kube client.Reader) (*JobPolicy, erro
 	if err != nil {
 		return nil, fmt.Errorf("read member upgrade policy: %w", err)
 	}
-	if config.Data["mode"] != ClusterOnlyMode || len(validation.IsDNS1123Subdomain(config.Data["deployment"])) != 0 {
+	mode := config.Data["mode"]
+	if (mode != ClusterOnlyMode && mode != ManagedNodeMode) || len(validation.IsDNS1123Subdomain(config.Data["deployment"])) != 0 {
 		return nil, errors.New("invalid member upgrade mode or Deployment")
 	}
 	image, err := pinnedImage(config.Data["executorImage"])
 	if err != nil {
 		return nil, errors.New("member upgrade policy requires a digest-pinned executor image")
 	}
-	return &JobPolicy{ExecutorImage: image, Deployment: config.Data["deployment"]}, nil
+	policy := &JobPolicy{ExecutorImage: image, Deployment: config.Data["deployment"], Mode: mode}
+	if mode == ManagedNodeMode {
+		policy.BrokerOrigin, policy.BrokerCA = config.Data["brokerOrigin"], config.Data["brokerCA"]
+		if _, err := brokerTLSClient(policy.BrokerOrigin, policy.BrokerCA); err != nil {
+			return nil, err
+		}
+	}
+	return policy, nil
 }
 
 func (p JobPolicy) Validate(ctx context.Context, kube client.Reader, image, config string) error {
 	if image != p.ExecutorImage {
 		return errors.New("upgrade image does not match the trusted member upgrade executor")
 	}
-	if _, err := ParseImages(config); err != nil {
+	if _, _, err := parseImagePlan(config, p.Mode == ManagedNodeMode); err != nil {
 		return err
+	}
+	if p.Mode == ManagedNodeMode {
+		return nil
 	}
 	return ValidateClusterOnly(ctx, kube)
 }

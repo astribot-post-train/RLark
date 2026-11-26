@@ -38,8 +38,16 @@ func main() {
 
 	logger.Info("starting rlark-upgrade")
 
+	if brokerConfig := os.Getenv("RLARK_NODE_IMAGE_BROKER_CONFIG"); brokerConfig != "" {
+		if err := clusterupgrade.ServeNodeImageBroker(ctx, brokerConfig); err != nil {
+			logger.Error(err, "node image broker stopped")
+			os.Exit(ExitPrecheckFailed)
+		}
+		return
+	}
+
 	if mode := os.Getenv("RLARK_UPGRADE_MODE"); mode != "" {
-		if mode != clusterupgrade.ClusterOnlyMode {
+		if mode != clusterupgrade.ClusterOnlyMode && mode != clusterupgrade.ManagedNodeMode {
 			logger.Error(fmt.Errorf("unrecognized upgrade execution mode"), "invalid configuration")
 			os.Exit(ExitPrecheckFailed)
 		}
@@ -50,6 +58,7 @@ func main() {
 		}
 		err = clusterupgrade.RunInCluster(ctx, clusterupgrade.JobRequest{
 			JobUID: os.Getenv("RLARK_UPGRADE_JOB_UID"), PodName: os.Getenv("POD_NAME"), PodUID: os.Getenv("POD_UID"),
+			Mode: mode, Cluster: os.Getenv("RLARK_UPGRADE_CLUSTER"),
 			Deployment: os.Getenv("RLARK_UPGRADE_DEPLOYMENT"), DeployConfig: string(data),
 			AutoRollback: utils.GetEnvBool("AUTO_ROLLBACK", true), HealthTimeout: utils.GetEnvDuration("HEALTH_CHECK_TIMEOUT", 5*time.Minute),
 		})

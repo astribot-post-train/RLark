@@ -21,7 +21,7 @@ type fakeNodeImages struct {
 func (f *fakeNodeImages) Read(context.Context) (NodeAgentTarget, error) {
 	return NodeAgentTarget{ClusterUID: "cluster-uid", Before: f.image}, nil
 }
-func (f *fakeNodeImages) CompareAndSet(_ context.Context, target NodeAgentTarget, old, next string) error {
+func (f *fakeNodeImages) CompareAndSet(_ context.Context, target NodeAgentTarget, old, next string, _ bool) error {
 	if target.ClusterUID != "cluster-uid" || (f.image != old && f.image != next) {
 		return ErrTargetChanged
 	}

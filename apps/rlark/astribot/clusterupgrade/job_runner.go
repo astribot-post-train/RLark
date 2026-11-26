@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
@@ -19,12 +18,12 @@ import (
 type JobRequest struct {
 	JobUID, PodName, PodUID, Deployment string
 	DeployConfig                        string
+	Mode, Cluster                       string
 	AutoRollback                        bool
 	HealthTimeout                       time.Duration
 }
 
-// RunInCluster executes the explicit cluster-only mode. An installation with
-// managed node Agents needs a separate, authorized management-plane adapter.
+// RunInCluster executes the mode approved by the member policy.
 func RunInCluster(ctx context.Context, request JobRequest) error {
 	config, err := rest.InClusterConfig()
 	if err != nil {
@@ -38,48 +37,36 @@ func RunInCluster(ctx context.Context, request JobRequest) error {
 	if err != nil {
 		return err
 	}
-	return runClusterOnly(ctx, members, reader, request)
+	return runImageJob(ctx, members, reader, request)
 }
 
-func runClusterOnly(ctx context.Context, member kubernetes.Interface, reader client.Reader, request JobRequest) error {
+func runImageJob(ctx context.Context, member kubernetes.Interface, reader client.Reader, request JobRequest) error {
 	if request.JobUID == "" || request.PodName == "" || request.PodUID == "" || request.Deployment == "" || request.HealthTimeout <= 0 {
 		return errors.New("invalid image-only upgrade executor identity or timeout")
-	}
-	target, err := ParseImages(request.DeployConfig)
-	if err != nil {
-		return err
 	}
 	policy, err := ResolveJobPolicy(ctx, reader)
 	if err != nil {
 		return err
 	}
-	if policy == nil || policy.Deployment != request.Deployment {
+	mode := request.Mode
+	if mode == "" {
+		mode = ClusterOnlyMode
+	}
+	if policy == nil || policy.Deployment != request.Deployment || policy.Mode != mode {
 		return errors.New("no matching image-only upgrade executor policy")
 	}
+	managed := mode == ManagedNodeMode
+	target, nodeImage, err := parseImagePlan(request.DeployConfig, managed)
+	if err != nil {
+		return err
+	}
 	pods := member.CoreV1().Pods(Namespace)
-	pod, err := pods.Get(ctx, request.PodName, metav1.GetOptions{})
+	identity := ExecutorIdentity{ChildUID: request.JobUID, PodName: request.PodName, PodUID: request.PodUID}
+	pod, err := readExecutor(ctx, member, identity)
 	if err != nil {
 		return err
 	}
-	owner := metav1.GetControllerOf(pod)
-	if pod.DeletionTimestamp != nil || string(pod.UID) != request.PodUID || pod.Spec.ServiceAccountName != JobServiceAccount ||
-		owner == nil || owner.Kind != "Job" || owner.APIVersion != batchv1.SchemeGroupVersion.String() {
-		return errors.New("invalid image-only upgrade Pod identity")
-	}
-	job, err := member.BatchV1().Jobs(Namespace).Get(ctx, owner.Name, metav1.GetOptions{})
-	if err != nil {
-		return err
-	}
-	if job.DeletionTimestamp != nil || job.UID != owner.UID || job.Name != "upgrade-attempt-"+request.JobUID || job.Labels["rlark.io/cluster-upgrade-job-uid"] != request.JobUID {
-		return errors.New("invalid image-only upgrade Job identity")
-	}
-	image := ""
-	for _, container := range pod.Spec.Containers {
-		if container.Name == "upgrade" {
-			image = container.Image
-		}
-	}
-	if err := policy.Validate(ctx, reader, image, request.DeployConfig); err != nil {
+	if err := policy.Validate(ctx, reader, executorImage(pod), request.DeployConfig); err != nil {
 		return err
 	}
 	confirmExited := func(ctx context.Context, _ string, previous string) (bool, error) {
@@ -104,16 +91,51 @@ func runClusterOnly(ctx context.Context, member kubernetes.Interface, reader cli
 		_ = guard.Release(cleanup)
 	}()
 	checkpoint := ConfigMapCheckpoint{ConfigMaps: member.CoreV1().ConfigMaps(Namespace), JobUID: request.JobUID, CheckLease: guard.Check}
-	executor := Executor{
-		Deployments: member.AppsV1().Deployments(Namespace), ExpectedDeployment: request.Deployment,
-		HealthTimeout: request.HealthTimeout, Checkpoints: checkpoint, CheckLease: guard.Check,
-		NodeAgents: clusterOnlyNodeImages{reader: reader},
-	}
-	// Recheck topology after taking the lease, even on checkpoint recovery.
-	if err := ValidateClusterOnly(work, reader); err != nil {
+	var nodes NodeAgentImages = clusterOnlyNodeImages{reader: reader}
+	if managed {
+		if request.Cluster == "" {
+			return errors.New("managed node upgrade requires the member cluster identity")
+		}
+		httpClient, err := brokerTLSClient(policy.BrokerOrigin, policy.BrokerCA)
+		if err != nil {
+			return err
+		}
+		adapter, err := NewBrokerNodeImages(policy.BrokerOrigin, request.Cluster, nodeImage, target, identity, readBrokerToken, httpClient)
+		if err != nil {
+			return err
+		}
+		saved, exists, err := checkpoint.Load(work)
+		if err != nil {
+			return err
+		}
+		if exists {
+			// A replacement Pod must prove the original grant still exists
+			// before it can perform any further Deployment writes.
+			grant, err := adapter.call(work, ReadNodeImage)
+			if err != nil {
+				return err
+			}
+			if !matchesNodeSnapshot(grant, saved.NodeAgent) || (grant.Phase == NodeImageRolledBack && !saved.RollingBack) {
+				return ErrNodeImageGrant
+			}
+		}
+		nodes = adapter
+	} else if err := ValidateClusterOnly(work, reader); err != nil {
+		// Recheck topology after taking the lease, even on checkpoint recovery.
 		return err
 	}
-	return executor.Run(work, target, "", request.AutoRollback)
+	executor := Executor{
+		Deployments: member.AppsV1().Deployments(Namespace), ExpectedDeployment: request.Deployment,
+		HealthTimeout: request.HealthTimeout, Checkpoints: checkpoint, CheckLease: guard.Check, NodeAgents: nodes,
+	}
+	return executor.Run(work, target, nodeImage, request.AutoRollback)
+}
+
+const BrokerTokenMount = "/var/run/rlark-upgrade/broker"
+
+func readBrokerToken() (string, error) {
+	data, err := os.ReadFile(BrokerTokenMount + "/token")
+	return strings.TrimSpace(string(data)), err
 }
 
 type clusterOnlyNodeImages struct{ reader client.Reader }
@@ -121,7 +143,7 @@ type clusterOnlyNodeImages struct{ reader client.Reader }
 func (n clusterOnlyNodeImages) Read(ctx context.Context) (NodeAgentTarget, error) {
 	return NodeAgentTarget{}, ValidateClusterOnly(ctx, n.reader)
 }
-func (clusterOnlyNodeImages) CompareAndSet(context.Context, NodeAgentTarget, string, string) error {
+func (clusterOnlyNodeImages) CompareAndSet(context.Context, NodeAgentTarget, string, string, bool) error {
 	return errors.New("node Agents are outside cluster-only upgrade mode")
 }
 func (clusterOnlyNodeImages) WaitReady(context.Context, NodeAgentTarget, string) error {

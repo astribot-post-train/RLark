@@ -33,7 +33,7 @@ type NodeAgentTarget struct {
 // managed node Agents. The implementation must also fence writes by Cluster UID.
 type NodeAgentImages interface {
 	Read(context.Context) (NodeAgentTarget, error)
-	CompareAndSet(context.Context, NodeAgentTarget, string, string) error
+	CompareAndSet(ctx context.Context, snapshot NodeAgentTarget, from, to string, rollback bool) error
 	WaitReady(context.Context, NodeAgentTarget, string) error
 }
 
@@ -108,7 +108,7 @@ func (e Executor) Run(ctx context.Context, target Images, nodeImage string, auto
 		}
 		return nil
 	}
-	err = e.apply(ctx, checkpoint, checkpoint.Deployment.Before, target, checkpoint.NodeAgent.Before, checkpoint.NodeImage)
+	err = e.apply(ctx, checkpoint, checkpoint.Deployment.Before, target, checkpoint.NodeAgent.Before, checkpoint.NodeImage, false)
 	if err == nil {
 		checkpoint.Completed = true
 		if err := e.Checkpoints.Save(ctx, checkpoint); err != nil {
@@ -130,13 +130,13 @@ func (e Executor) Run(ctx context.Context, target Images, nodeImage string, auto
 }
 
 func (e Executor) rollback(ctx context.Context, checkpoint Checkpoint, upgradeErr error) error {
-	if err := e.apply(ctx, checkpoint, checkpoint.Target, checkpoint.Deployment.Before, checkpoint.NodeImage, checkpoint.NodeAgent.Before); err != nil {
+	if err := e.apply(ctx, checkpoint, checkpoint.Target, checkpoint.Deployment.Before, checkpoint.NodeImage, checkpoint.NodeAgent.Before, true); err != nil {
 		return errors.Join(ErrRollbackFailed, upgradeErr, err)
 	}
 	return errors.Join(ErrRolledBack, upgradeErr)
 }
 
-func (e Executor) apply(ctx context.Context, checkpoint Checkpoint, from, to Images, oldNodeImage, nodeImage string) error {
+func (e Executor) apply(ctx context.Context, checkpoint Checkpoint, from, to Images, oldNodeImage, nodeImage string, rollback bool) error {
 	if err := WriteDeploymentImages(ctx, e.Deployments, checkpoint.Deployment, from, to, e.CheckLease); err != nil {
 		return err
 	}
@@ -158,10 +158,10 @@ func (e Executor) apply(ctx context.Context, checkpoint Checkpoint, from, to Ima
 	if checkpoint.NodeAgent.ClusterUID == "" {
 		return nil
 	}
-	if err := e.CheckLease(ctx); err != nil {
+	if err := e.CheckLease(health); err != nil {
 		return err
 	}
-	if err := e.NodeAgents.CompareAndSet(ctx, checkpoint.NodeAgent, oldNodeImage, nodeImage); err != nil {
+	if err := e.NodeAgents.CompareAndSet(health, checkpoint.NodeAgent, oldNodeImage, nodeImage, rollback); err != nil {
 		return err
 	}
 	return e.NodeAgents.WaitReady(health, checkpoint.NodeAgent, nodeImage)

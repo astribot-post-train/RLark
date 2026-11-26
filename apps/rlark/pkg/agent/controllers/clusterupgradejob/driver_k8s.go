@@ -73,15 +73,13 @@ func (d *K8sDriver) VerifyMissingJobSuccess(ctx context.Context, job *rlarkv1alp
 	return ready, err
 }
 
-const childUIDLabel = "rlark.io/cluster-upgrade-job-uid"
-
 func imageOnlyJobName(job *rlarkv1alpha1.ClusterUpgradeJob) string {
-	return "upgrade-attempt-" + string(job.UID)
+	return clusterupgrade.JobName(string(job.UID))
 }
 
 func ownsImageOnlyJob(child *rlarkv1alpha1.ClusterUpgradeJob, job *batchv1.Job) bool {
 	return child.UID != "" && job.Name == imageOnlyJobName(child) &&
-		job.Labels[childUIDLabel] == string(child.UID) &&
+		job.Labels[clusterupgrade.ChildUIDLabel] == string(child.UID) &&
 		job.Spec.Template.Spec.ServiceAccountName == clusterupgrade.JobServiceAccount
 }
 
@@ -115,7 +113,7 @@ func (d *K8sDriver) PrepareConfig(ctx context.Context, job *rlarkv1alpha1.Cluste
 	}
 	if d.policy != nil {
 		cm.Immutable = ptr.To(true)
-		cm.Labels = map[string]string{childUIDLabel: string(job.UID)}
+		cm.Labels = map[string]string{clusterupgrade.ChildUIDLabel: string(job.UID)}
 	}
 	if err := d.client.Create(ctx, cm); err != nil {
 		// Tolerate AlreadyExists in case the agent restarted after creating
@@ -128,7 +126,7 @@ func (d *K8sDriver) PrepareConfig(ctx context.Context, job *rlarkv1alpha1.Cluste
 			if err := d.client.Get(ctx, client.ObjectKeyFromObject(cm), &existing); err != nil {
 				return "", err
 			}
-			if existing.Labels[childUIDLabel] != string(job.UID) || existing.Data["deploy-config.yaml"] != config || !ptr.Deref(existing.Immutable, false) {
+			if existing.Labels[clusterupgrade.ChildUIDLabel] != string(job.UID) || existing.Data["deploy-config.yaml"] != config || !ptr.Deref(existing.Immutable, false) {
 				return "", fmt.Errorf("existing upgrade configuration does not belong to this immutable attempt")
 			}
 		}
@@ -234,19 +232,9 @@ func (d *K8sDriver) StartUpgrade(ctx context.Context, job *rlarkv1alpha1.Cluster
 	}
 
 	if d.policy != nil {
-		k8sJob.Labels[childUIDLabel] = string(job.UID)
-		pod := &k8sJob.Spec.Template.Spec
-		pod.ServiceAccountName = clusterupgrade.JobServiceAccount
-		pod.Volumes = volumes[:1]
-		pod.Containers[0].VolumeMounts = volumeMounts[:1]
-		pod.Containers[0].VolumeMounts[0].ReadOnly = true
-		pod.Containers[0].Env = append(pod.Containers[0].Env,
-			corev1.EnvVar{Name: "RLARK_UPGRADE_MODE", Value: clusterupgrade.ClusterOnlyMode},
-			corev1.EnvVar{Name: "RLARK_UPGRADE_JOB_UID", Value: string(job.UID)},
-			corev1.EnvVar{Name: "RLARK_UPGRADE_DEPLOYMENT", Value: d.policy.Deployment},
-			corev1.EnvVar{Name: "POD_NAME", ValueFrom: &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.name"}}},
-			corev1.EnvVar{Name: "POD_UID", ValueFrom: &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.uid"}}},
-		)
+		k8sJob.Spec.Template.Spec.Volumes = volumes[:1]
+		k8sJob.Spec.Template.Spec.Containers[0].VolumeMounts = volumeMounts[:1]
+		clusterupgrade.ConfigureExecutor(k8sJob, *d.policy, string(job.UID), d.managementCluster)
 	}
 
 	if err := d.client.Create(ctx, k8sJob); err != nil {
