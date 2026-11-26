@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from "react";
 import {
   Check,
   ChevronLeft,
@@ -10,12 +10,15 @@ import {
   Search,
   Server,
   ShieldCheck,
+  SlidersHorizontal,
   Terminal,
   TerminalSquare,
 } from "lucide-react";
 import { ApiError } from "../../api";
 import { clustersApi } from "../../backend";
 import { machinesApi, nodeAdmissionsApi, nodeJoinsApi, robotModelsApi, siteNetworkApi, type RobotModelItem, type SiteNetworkView } from "../api";
+import { DiscoveryScanControl } from "../components/DiscoveryScan";
+import { useDiscoveryScan } from "../components/useDiscoveryScan";
 import { RetryClear } from "../components/RetryClear";
 import { StageList } from "../components/StageList";
 import { useAction } from "../components/useAction";
@@ -41,7 +44,7 @@ import {
   robotTaint,
   seenTime,
   sshJoinFailure,
-  unjoinedMachines,
+  scanJoinMachines,
   unseenFor,
   type IssuedNodeAdmission,
   type Machine,
@@ -280,9 +283,12 @@ function ReachCell({ zh, reach, machine, now }: { zh: boolean; reach: Reach; mac
 // entries; they are opened from their record, not batch-admitted.
 type MachineSource = "all" | "scanned" | "manual";
 type MachineKindFilter = "all" | "Robot" | "Server" | "Unknown";
+const machineKindLabel = (kind: Machine["machine_type"], zh: boolean) =>
+  ({ Robot: zh ? "机器人" : "Robot", Server: zh ? "服务器" : "Server", Unknown: zh ? "类型待确认" : "Unclassified" })[kind];
+
 type ManualJoinRow = { join: NodeJoin; record: string; name: string; address: string; user: string; phase: string; stage: string };
 
-function UnjoinedMachines({ zh, clusterID, clusterName, site, ticked, setTicked, onViewProgress, onUseMethod, onOpenSSHJoin }: { zh: boolean; clusterID: string; clusterName: string; site: string; ticked: string[]; setTicked: (update: string[] | ((current: string[]) => string[])) => void; onViewProgress: () => void; onUseMethod: (method: Method) => void; onOpenSSHJoin: (record: string) => void }) {
+function UnjoinedMachines({ zh, clusterID, clusterName, site, scanEnabled, ticked, setTicked, onViewProgress, onUseMethod, onOpenSSHJoin }: { zh: boolean; clusterID: string; clusterName: string; site: string; scanEnabled: boolean; ticked: string[]; setTicked: (update: string[] | ((current: string[]) => string[])) => void; onViewProgress: () => void; onUseMethod: (method: Method) => void; onOpenSSHJoin: (record: string) => void }) {
   const [list, setList] = useState<MachineList>();
   const [joins, setJoins] = useState<NodeJoin[]>([]);
   const [labels, setLabels] = useState<Record<string, string>>({});
@@ -292,27 +298,36 @@ function UnjoinedMachines({ zh, clusterID, clusterName, site, ticked, setTicked,
   const [dialogOpen, setDialogOpen] = useState(false);
   const [dialogMachines, setDialogMachines] = useState<Machine[]>([]);
   const [accessOpen, setAccessOpen] = useState<boolean>();
+  const [now, setNow] = useState(Date.now);
   const { error, setError } = useAction();
+  const listRequest = useRef(0);
 
   const load = useCallback(async () => {
+    const request = ++listRequest.current;
+    setNow(Date.now());
     const [machineResult, joinResult] = await Promise.allSettled([
       machinesApi.list(site),
       nodeJoinsApi.list(clusterID),
     ]);
+    if (request !== listRequest.current) return;
     if (machineResult.status === "fulfilled") { setList(machineResult.value); setError(""); }
     if (joinResult.status === "fulfilled") setJoins(joinResult.value);
     const failed = [machineResult, joinResult].find((result) => result.status === "rejected");
     if (failed?.status === "rejected") setError((failed.reason as Error).message);
   }, [clusterID, setError, site]);
-  const now = Date.now();
+  const discovery = useDiscoveryScan(site, zh);
+  const scanID = discovery.scan?.id;
+  const scanPhase = discovery.scan?.phase;
+  useEffect(() => {
+    if (scanID && scanPhase !== "Running") void load();
+  }, [scanID, scanPhase, load]);
   const progress = machineJoinProgress(list?.items ?? [], clusterID, now, zh);
   const joining = progress.running > 0;
   const joinRunning = joins.some((join) => join.status?.phase === "Running");
-  // A machine that was just plugged in shows up within a minute; a join is
-  // followed step by step. The shared hook pauses while the tab is hidden.
+  // Refresh server-side operations and machine inspection without initiating discovery.
   useAutoRefresh(load, joining || joinRunning ? 3000 : 10000, [joining, joinRunning, site, clusterID]);
 
-  const scanned = [...unjoinedMachines(list?.items ?? [], clusterID), ...(list?.items ?? []).filter((machine) => machine.joining && machine.admit_cluster_id === clusterID)];
+  const scanned = scanJoinMachines(list?.items ?? [], clusterID, now, scanID);
   const lang = zh ? "zh" : "en";
   const manual: ManualJoinRow[] = joins
     .filter((join) => join.status?.phase !== "Succeeded")
@@ -329,6 +344,14 @@ function UnjoinedMachines({ zh, clusterID, clusterName, site, ticked, setTicked,
   // not be selectable again: a second admit would start a duplicate join.
   const selectable = (machine: Machine) => machine.admissible && !(machine.joining && machine.admit_cluster_id === clusterID);
   const chosen = scanned.filter((machine) => selectable(machine) && ticked.includes(machine.name));
+  const canSubmitMachines = () => {
+    const submittedAt = Date.now();
+    return dialogMachines.every((selected) => {
+      const current = list?.items.find((machine) => machine.name === selected.name);
+      return current && selectable(current) && scanID && current.discovery_scan_id === scanID && !machineUnseen(current, submittedAt)
+        && current.address === selected.address && current.port === selected.port && current.host_key === selected.host_key;
+    });
+  };
   const choices = machineLabelChoices(chosen, list?.classes ?? {});
   const search = query.trim().toLocaleLowerCase();
   const matches = (values: Array<string | undefined>) => values.some((value) => value?.toLocaleLowerCase().includes(search));
@@ -356,6 +379,10 @@ function UnjoinedMachines({ zh, clusterID, clusterName, site, ticked, setTicked,
         </div>
       </header>
 
+      <div className="join-discovery-bar">
+        <DiscoveryScanControl {...discovery} zh={zh} disabledReason={!scanEnabled ? (zh ? "请先配置站点扫描" : "Configure site discovery first") : undefined} />
+      </div>
+
       <details className="join-class-access-panel" open={accessOpen ?? (scanClasses.length > 0 && !allClassesConfigured)} onToggle={(event) => setAccessOpen((event.currentTarget).open)}>
         <summary>
           <span className="join-class-access-title"><KeyRound size={14} />{zh ? "机型登录凭据" : "Scanned-machine credentials"}</span>
@@ -375,7 +402,7 @@ function UnjoinedMachines({ zh, clusterID, clusterName, site, ticked, setTicked,
           <button type="button" className={source === "manual" ? "is-active" : ""} onClick={() => setSource("manual")}>{zh ? "手动添加" : "Manual"} <span>{manual.length}</span></button>
         </div>
         <div className="join-machine-filter" role="group" aria-label={zh ? "机器类型" : "Machine type"}>
-          {(["all", "Robot", "Server", "Unknown"] as const).map((kind) => <button key={kind} type="button" className={kindFilter === kind ? "is-active" : ""} onClick={() => setKindFilter(kind)}>{kind === "all" ? (zh ? "全部类型" : "All types") : kind === "Robot" ? "Robot" : kind === "Server" ? "Server" : (zh ? "未知" : "Unknown")}<span>{kind === "all" ? scanned.length : scanned.filter((machine) => machine.machine_type === kind).length}</span></button>)}
+          {(["all", "Robot", "Server", "Unknown"] as const).map((kind) => <button key={kind} type="button" className={kindFilter === kind ? "is-active" : ""} onClick={() => setKindFilter(kind)}>{kind === "all" ? (zh ? "全部类型" : "All types") : machineKindLabel(kind, zh)}<span>{kind === "all" ? scanned.length : scanned.filter((machine) => machine.machine_type === kind).length}</span></button>)}
         </div>
       </div>
 
@@ -387,7 +414,11 @@ function UnjoinedMachines({ zh, clusterID, clusterName, site, ticked, setTicked,
         : visibleCount === 0 ? <div className="join-machines-empty muted">
           {source === "manual"
             ? (zh ? "没有手动添加的机器。用上方“添加普通电脑/GPU”打开 SSH 入网表单。" : "No manually added machines. Use Add computer/GPU above to open the SSH form.")
-            : (zh ? "没有扫到未加入的机器。新机器插上网线后，站点下一次扫描时会出现在这里；普通电脑/GPU 可以用 SSH 手动添加，场地第一台也可以用入网码。" : "No machine that has not joined was found. A new machine shows up after the site's next scan; ordinary computers/GPUs can be added over SSH, and a site's first machine can use a join code.")}
+            : discovery.scan?.phase === "Running"
+              ? (zh ? "正在等待 Hub 返回发现结果。" : "Waiting for Hub scan results.")
+              : !scanID
+                ? (zh ? "点击「开始扫描」查找此站点的机器。" : "Select Start scan to find machines at this site.")
+                : (zh ? "没有符合筛选条件的近期结果。可重新扫描、调整筛选或使用 SSH 入网。" : "No recent scan results match. Scan again, adjust filters, or join over SSH.")}
         </div> : <div className="join-machine-grid">
           {visibleScanned.map((machine) => {
             const hasClassMatch = hasRegisteredRobotClass(machine, list?.classes ?? {});
@@ -400,7 +431,7 @@ function UnjoinedMachines({ zh, clusterID, clusterName, site, ticked, setTicked,
               <div className="join-machine-identity">
                 <strong title={machine.serial || machine.name}>{machine.serial || machine.name}</strong>
                 <small>{machine.node_class || (zh ? "无 NodeClass" : "No NodeClass")} · <span className="mono">{machine.mac || "—"}</span><span className="join-source-tag">{zh ? "扫描" : "scanned"}</span></small>
-                <span className={`join-machine-kind is-${machine.machine_type.toLowerCase()}`} title={machine.identity_reason}>{machine.machine_type === "Unknown" ? (zh ? "类型未知" : "Type unknown") : machine.machine_type}{machine.machine_model ? ` · ${machine.machine_model}` : ""}{machine.identity_verified === "False" ? (zh ? " · 身份不匹配" : " · identity mismatch") : ""}</span>
+                <span className={`join-machine-kind is-${machine.machine_type.toLowerCase()}`} title={machine.identity_reason || (machine.machine_type === "Unknown" ? (zh ? "只发现 SSH 入口，入网时确认设备类型。" : "Only SSH was discovered. Confirm the device type when joining.") : undefined)}>{machineKindLabel(machine.machine_type, zh)}{machine.machine_model ? ` · ${machine.machine_model}` : ""}{machine.identity_verified === "False" ? (zh ? " · 身份不匹配" : " · identity mismatch") : ""}</span>
               </div>
               <div className="join-machine-location">
                 <strong>{machine.site || "—"}</strong>
@@ -462,6 +493,7 @@ function UnjoinedMachines({ zh, clusterID, clusterName, site, ticked, setTicked,
       machines={dialogMachines}
       classes={list?.classes ?? {}}
       labels={labelOverrides}
+      canSubmitMachines={canSubmitMachines}
       onClose={() => { setDialogOpen(false); setDialogMachines([]); setTicked([]); }}
       onJoined={async () => { await load(); }}
       onUseCode={() => { setDialogOpen(false); setDialogMachines([]); onUseMethod("code"); }}
@@ -469,11 +501,23 @@ function UnjoinedMachines({ zh, clusterID, clusterName, site, ticked, setTicked,
   </>;
 }
 
+function JoinAdvancedSummary({ zh, hint }: { zh: boolean; hint: string }) {
+  return <summary>
+    <span className="join-advanced-icon"><SlidersHorizontal size={16} aria-hidden="true" /></span>
+    <span className="join-advanced-heading">
+      <strong>{zh ? "高级设置" : "Advanced settings"}</strong>
+      <small>{hint}</small>
+    </span>
+    <ChevronDown className="join-advanced-chevron" size={16} aria-hidden="true" />
+  </summary>;
+}
+
 // A machine RLark logs in to with the account typed here, and joins in stages: the Gateway records them on the
 // join (NodeJoin), so the list below shows every join of the cluster that runs or has lately run, as it goes, from
 // any browser and after the page is left. The password is sent with the request that starts or retries a join, and
 // forgotten.
 function SSHJoin({ zh, clusterID, initial, selectedOperation }: { zh: boolean; clusterID: string; initial?: string; selectedOperation?: string }) {
+  const advancedID = useId();
   const lang = zh ? "zh" : "en";
   const [form, setForm] = useState({ address: "", user: "", password: "", sudoPassword: "", port: "22", nodeName: "", tunnelEndpoint: "" });
   const { pending, error, run } = useAction();
@@ -559,18 +603,31 @@ function SSHJoin({ zh, clusterID, initial, selectedOperation }: { zh: boolean; c
             <label>{zh ? "密码" : "Password"} *<input type="password" value={form.password} onChange={(event) => update({ password: event.target.value })} maxLength={4096} autoComplete="new-password" disabled={pending} /></label>
             <label>{zh ? "sudo 密码（可选）" : "sudo password (optional)"}<input type="password" value={form.sudoPassword} onChange={(event) => update({ sudoPassword: event.target.value })} maxLength={4096} autoComplete="new-password" disabled={pending} /><small>{zh ? "和 SSH 密码不同才填写。" : "Only enter when it differs from the SSH password."}</small></label>
           </div>
-          <details className="join-node-advanced">
-            <summary>{zh ? "高级：节点名、端口、隧道端点" : "Advanced: node name, port, tunnel"}</summary>
-            <div className="form-grid">
-              <label>{zh ? "节点名" : "Node name"}<input value={form.nodeName} onChange={(event) => update({ nodeName: event.target.value })} maxLength={253} autoComplete="off" placeholder={zh ? "不填取机器的主机名" : "the machine's host name"} disabled={pending} /><small className="muted">{zh ? "Kubernetes 节点名（调度用，加入后不可改，之后只能改显示名）" : "The Kubernetes Node name (used for scheduling; it cannot change after the join, only the display name can)"}</small></label>
-              <label>{zh ? "SSH 端口" : "SSH port"}<input type="number" min={1} max={65535} value={form.port} onChange={(event) => update({ port: event.target.value })} disabled={pending} /></label>
-              <label title={zh ? "机器到不了场地的 Station API、要先建自己的隧道时用：几台机器共用一个公网 IP，填云上转发给这台的 公网IP:UDP端口" : "For a machine that gets a tunnel of its own first: behind one public IP with others, the public IP and the UDP port the cloud forwards to it"}>
-                {zh ? "隧道公网端点（UDP）" : "Tunnel endpoint (UDP)"}
-                <input value={form.tunnelEndpoint} onChange={(event) => update({ tunnelEndpoint: event.target.value })} maxLength={21} autoComplete="off" placeholder={zh ? "不填为 IP:51820" : "IP:51820 when empty"} disabled={pending} />
-              </label>
+          <details className="join-node-advanced join-form-advanced">
+            <JoinAdvancedSummary zh={zh} hint={endpointProblem
+              ? (zh ? "请检查隧道端点" : "Check the tunnel endpoint")
+              : (zh ? "节点名、SSH 端口和隧道端点" : "Node name, SSH port, and tunnel endpoint")} />
+            <div className="join-method-fields join-advanced-body join-ssh-advanced-fields">
+              <div className="join-advanced-field">
+                <label htmlFor={`${advancedID}-name`}>{zh ? "节点名" : "Node name"}</label>
+                <input id={`${advancedID}-name`} aria-describedby={`${advancedID}-name-help`} value={form.nodeName} onChange={(event) => update({ nodeName: event.target.value })} maxLength={253} autoComplete="off" placeholder={zh ? "默认使用机器主机名" : "Defaults to the machine hostname"} disabled={pending} />
+                <small id={`${advancedID}-name-help`}>{zh ? "用于 Kubernetes 调度，入网后只能修改显示名。" : "Used for Kubernetes scheduling. After joining, you can edit the display name."}</small>
+              </div>
+              <div className="join-advanced-field">
+                <label htmlFor={`${advancedID}-port`}>{zh ? "SSH 端口" : "SSH port"}</label>
+                <input id={`${advancedID}-port`} aria-describedby={`${advancedID}-port-help`} type="number" min={1} max={65535} value={form.port} onChange={(event) => update({ port: event.target.value })} disabled={pending} />
+                <small id={`${advancedID}-port-help`}>{zh ? "默认使用 22。" : "Defaults to 22."}</small>
+              </div>
+              <div className="join-advanced-field join-ssh-tunnel-field">
+                <label htmlFor={`${advancedID}-endpoint`}>{zh ? "隧道公网端点（UDP）" : "Public tunnel endpoint (UDP)"}</label>
+                <input id={`${advancedID}-endpoint`} aria-invalid={!!endpointProblem}
+                  aria-describedby={`${advancedID}-endpoint-help${endpointProblem ? ` ${advancedID}-endpoint-error` : ""}`}
+                  value={form.tunnelEndpoint} onChange={(event) => update({ tunnelEndpoint: event.target.value })} maxLength={21} autoComplete="off" placeholder={zh ? "公网 IP:UDP 端口" : "Public IP:UDP port"} disabled={pending} />
+                <small id={`${advancedID}-endpoint-help`}>{zh ? "若机器需要先建隧道，通过公网端口转发接入，请填写分配给它的端点。留空使用机器 IP 和端口 51820。" : "For machines that need a tunnel first through a public port forward, enter the assigned endpoint. Leave blank to use the machine IP and port 51820."}</small>
+                {endpointProblem && <small className="join-advanced-error" id={`${advancedID}-endpoint-error`} role="alert">{endpointProblem}</small>}
+              </div>
             </div>
           </details>
-          {endpointProblem && <small className="cert-error">{endpointProblem}</small>}
           {error && <div className="cert-error" role="alert">{error}</div>}
           {pollError && <div className="cert-error" role="status">{zh ? `读不到入网记录：${pollError}` : `The joins cannot be read: ${pollError}`}</div>}
           {cleared.length > 0 && <ol className="provision-cleared">{cleared.map((step) => <li key={step}>{step}</li>)}</ol>}
@@ -636,6 +693,8 @@ function SSHJoin({ zh, clusterID, initial, selectedOperation }: { zh: boolean; c
 // machine joins it. A robot's labels and taint follow from its node name;
 // they are under Advanced, for the rare machine that differs.
 function JoinCode({ zh, clusterID, reissued }: { zh: boolean; clusterID: string; reissued?: IssuedNodeAdmission }) {
+  const advancedID = useId();
+  const advanced = useRef<HTMLDetailsElement>(null);
   const [form, setForm] = useState({
     nodeName: "", kind: "Robot" as "Robot" | "Server", site: "", ttl: 7200,
     robotID: "", robotModel: "", nodeClass: "", labels: undefined as string | undefined, taints: undefined as string | undefined, address: "", uplink: "",
@@ -670,6 +729,17 @@ function JoinCode({ zh, clusterID, reissued }: { zh: boolean; clusterID: string;
   const taintText = form.taints ?? (robot ? robotTaint : "");
   const labels = parseLabelLines(labelText);
   const taints = parseTaintLines(taintText);
+  const schedulingInvalid = Boolean(labels.error || taints.error);
+  useEffect(() => {
+    if (schedulingInvalid && advanced.current) advanced.current.open = true;
+  }, [schedulingInvalid]);
+  const advancedHint = schedulingInvalid
+    ? (zh ? "请检查节点标签或污点" : "Check node labels or taints")
+    : robot && (!model || !form.nodeClass)
+      ? (zh ? "发码前请选择机器人型号和配置" : "Choose a robot model and profile before issuing a code")
+      : robot
+        ? (zh ? "机器人配置、网络与节点调度" : "Robot configuration, network, and scheduling")
+        : (zh ? "网络与节点调度" : "Network and scheduling");
   const ready = clusterID && form.nodeName.trim() && (!robot || (model && form.nodeClass)) && !labels.error && !taints.error;
 
   const submit = () => !pending && ready && run(async () => {
@@ -717,24 +787,69 @@ function JoinCode({ zh, clusterID, reissued }: { zh: boolean; clusterID: string;
               </select>
             </label>
           </div>
-          <details className="join-node-advanced" open={!!(labels.error || taints.error) || undefined}>
-            <summary>{zh ? "高级：机器人编号、隧道、标签与污点" : "Advanced: robot ID, tunnel, labels and taints"}</summary>
-            <div className="form-grid">
-              {robot && <>
-                <label>{zh ? "机器人型号" : "Robot model"}<select value={model || form.robotModel} onChange={(event) => { const matching = Object.entries(classProfiles).find(([, item]) => (item.model || item.labels?.["rlark.io/robot-model"]) === event.target.value)?.[0] ?? ""; update({ robotModel: event.target.value, nodeClass: matching, labels: undefined }); }}><option value="">{zh ? "选择型号" : "Select model"}</option>{robotModels.map((item) => <option key={item.name} value={item.name}>{item.displayName || item.name}</option>)}</select></label>
-                <label>{zh ? "机器人配置" : "Robot class profile"}<select value={form.nodeClass} onChange={(event) => { const item = classProfiles[event.target.value]; update({ nodeClass: event.target.value, robotModel: item?.model || item?.labels?.["rlark.io/robot-model"] || form.robotModel, labels: undefined }); }}><option value="">{zh ? "选择 NodeClass" : "Select NodeClass"}</option>{Object.entries(classProfiles).filter(([, item]) => (item.kind === "Robot" || Boolean(item.model || item.labels?.["rlark.io/robot-model"])) && (!form.robotModel || (item.model || item.labels?.["rlark.io/robot-model"]) === form.robotModel)).map(([name, item]) => <option key={name} value={name}>{name}{item.model ? ` · ${item.model}` : ""}</option>)}</select></label>
-                <label>{zh ? "机器人编号" : "Robot ID"}<input value={form.robotID} onChange={(event) => update({ robotID: event.target.value, labels: undefined })} maxLength={63} autoComplete="off" placeholder={robotIDOfNode(form.nodeName) || "robot-01"} /></label>
-              </>}
-              <label>{zh ? "固定隧道地址" : "Pinned tunnel address"}<input value={form.address} onChange={(event) => update({ address: event.target.value })} maxLength={15} autoComplete="off" placeholder={zh ? "不填自动分配" : "allocated when empty"} /></label>
-              <label>{zh ? "上联网关" : "Uplink gateway"}<input value={form.uplink} onChange={(event) => update({ uplink: event.target.value })} maxLength={15} autoComplete="off" placeholder={zh ? "默认路由出不去时才填" : "when the default route does not lead out"} /></label>
-              <label className="join-node-wide">{zh ? "节点标签（每行 key=value）" : "Node labels (key=value per line)"}
-                <textarea value={labelText} onChange={(event) => update({ labels: event.target.value })} rows={4} spellCheck={false} />
-                {labels.error && <small className="join-missing">{zh ? `看不懂这一行：${labels.error}` : `Cannot read: ${labels.error}`}</small>}
-              </label>
-              <label className="join-node-wide">{zh ? "污点（每行 key=value:Effect）" : "Taints (key=value:Effect per line)"}
-                <textarea value={taintText} onChange={(event) => update({ taints: event.target.value })} rows={2} spellCheck={false} />
-                {taints.error && <small className="join-missing">{zh ? `看不懂这一行：${taints.error}` : `Cannot read: ${taints.error}`}</small>}
-              </label>
+          <details className="join-node-advanced join-form-advanced" ref={advanced}>
+            <JoinAdvancedSummary zh={zh} hint={advancedHint} />
+            <div className="join-advanced-body join-code-advanced-body">
+              {robot && <fieldset className="join-code-advanced-group">
+                <legend>{zh ? "机器人配置" : "Robot configuration"}</legend>
+                <div className="join-method-fields join-code-advanced-fields">
+                  <label>{zh ? "机器人型号 *" : "Robot model *"}
+                    <select value={model || form.robotModel} onChange={(event) => {
+                      const matching = Object.entries(classProfiles).find(([, item]) => (item.model || item.labels?.["rlark.io/robot-model"]) === event.target.value)?.[0] ?? "";
+                      update({ robotModel: event.target.value, nodeClass: matching, labels: undefined });
+                    }}>
+                      <option value="">{zh ? "选择型号" : "Select model"}</option>
+                      {robotModels.map((item) => <option key={item.name} value={item.name}>{item.displayName || item.name}</option>)}
+                    </select>
+                  </label>
+                  <label>{zh ? "机器人配置（NodeClass）*" : "Robot profile (NodeClass) *"}
+                    <select value={form.nodeClass} onChange={(event) => {
+                      const item = classProfiles[event.target.value];
+                      update({ nodeClass: event.target.value, robotModel: item?.model || item?.labels?.["rlark.io/robot-model"] || form.robotModel, labels: undefined });
+                    }}>
+                      <option value="">{zh ? "选择 NodeClass" : "Select NodeClass"}</option>
+                      {Object.entries(classProfiles).filter(([, item]) => (item.kind === "Robot" || Boolean(item.model || item.labels?.["rlark.io/robot-model"])) && (!form.robotModel || (item.model || item.labels?.["rlark.io/robot-model"]) === form.robotModel)).map(([name, item]) => <option key={name} value={name}>{name}{item.model ? ` · ${item.model}` : ""}</option>)}
+                    </select>
+                  </label>
+                  <label>{zh ? "机器人编号" : "Robot ID"}
+                    <input value={form.robotID} onChange={(event) => update({ robotID: event.target.value, labels: undefined })} maxLength={63} autoComplete="off" placeholder={robotIDOfNode(form.nodeName) || "robot-01"} />
+                    <small>{zh ? "留空时从节点名推导。" : "Derived from the node name when left blank."}</small>
+                  </label>
+                </div>
+              </fieldset>}
+              <fieldset className="join-code-advanced-group">
+                <legend>{zh ? "网络" : "Network"}</legend>
+                <div className="join-method-fields join-code-advanced-fields">
+                  <label>{zh ? "固定隧道地址" : "Pinned tunnel address"}
+                    <input value={form.address} onChange={(event) => update({ address: event.target.value })} maxLength={15} autoComplete="off" placeholder={zh ? "自动分配" : "Automatically assigned"} />
+                  </label>
+                  <label>{zh ? "上联网关" : "Uplink gateway"}
+                    <input value={form.uplink} onChange={(event) => update({ uplink: event.target.value })} maxLength={15} autoComplete="off" placeholder={zh ? "使用默认路由" : "Use the default route"} />
+                    <small>{zh ? "默认路由无法接入时填写。" : "Enter a gateway when the default route cannot reach the site."}</small>
+                  </label>
+                </div>
+              </fieldset>
+              <fieldset className="join-code-advanced-group">
+                <legend>{zh ? "节点调度" : "Scheduling"}</legend>
+                <div className="join-method-fields join-code-advanced-fields">
+                  <div className="join-advanced-field">
+                    <label htmlFor={`${advancedID}-labels`}>{zh ? "节点标签" : "Node labels"}</label>
+                    <textarea id={`${advancedID}-labels`} aria-invalid={!!labels.error}
+                      aria-describedby={`${advancedID}-labels-help${labels.error ? ` ${advancedID}-labels-error` : ""}`}
+                      value={labelText} onChange={(event) => update({ labels: event.target.value })} rows={3} spellCheck={false} />
+                    <small id={`${advancedID}-labels-help`}>{zh ? "每行一个 key=value。" : "One key=value per line."}</small>
+                    {labels.error && <small className="join-advanced-error" id={`${advancedID}-labels-error`} role="alert">{zh ? `标签格式有误：${labels.error}` : `Invalid label: ${labels.error}`}</small>}
+                  </div>
+                  <div className="join-advanced-field">
+                    <label htmlFor={`${advancedID}-taints`}>{zh ? "污点" : "Taints"}</label>
+                    <textarea id={`${advancedID}-taints`} aria-invalid={!!taints.error}
+                      aria-describedby={`${advancedID}-taints-help${taints.error ? ` ${advancedID}-taints-error` : ""}`}
+                      value={taintText} onChange={(event) => update({ taints: event.target.value })} rows={3} spellCheck={false} />
+                    <small id={`${advancedID}-taints-help`}>{zh ? "每行一个 key=value:Effect。" : "One key=value:Effect per line."}</small>
+                    {taints.error && <small className="join-advanced-error" id={`${advancedID}-taints-error`} role="alert">{zh ? `污点格式有误：${taints.error}` : `Invalid taint: ${taints.error}`}</small>}
+                  </div>
+                </div>
+              </fieldset>
             </div>
           </details>
           {error && <div className="cert-error" role="alert">{error}</div>}
@@ -810,14 +925,14 @@ export function JoinNodePage({ zh, reissued, sshJoin, onBack, onScanSettings }: 
   const clusterSite = siteOfCluster(siteNetwork, clusterID);
 
   const methods: { id: Method; icon: ReactNode; title: string; note: string }[] = [
-    { id: "machines", icon: <ListChecks size={15} />, title: zh ? "从扫描列表选择" : "Choose from scan", note: zh ? "选择已发现的机器" : "Select a discovered machine" },
+    { id: "machines", icon: <ListChecks size={15} />, title: zh ? "扫描发现" : "Scan for machines", note: zh ? "手动扫描并选择机器" : "Scan on demand and select machines" },
     { id: "ssh", icon: <Terminal size={15} />, title: zh ? "SSH 入网" : "SSH join", note: zh ? "已知机器地址和 SSH 凭据" : "Use a known address and SSH credentials" },
     { id: "code", icon: <KeyRound size={15} />, title: zh ? "入网码" : "Join code", note: zh ? "在目标机器上运行入网命令" : "Run a command on the target machine" },
   ];
 
   const siteDiscovery = siteNetwork?.sites.find((site) => site.name === clusterSite)?.discovery;
   const siteHint = clusterSite
-    ? (zh ? `站点 ${clusterSite}${siteDiscovery?.enabled ? ` · 间隔 ${siteDiscovery.intervalSeconds} 秒` : " · 扫描未开启"}` : `Site ${clusterSite}${siteDiscovery?.enabled ? ` · Every ${siteDiscovery.intervalSeconds}s` : " · Discovery off"}`)
+    ? (zh ? `站点 ${clusterSite}${siteDiscovery?.enabled ? " · 手动扫描" : " · 扫描待配置"}` : `Site ${clusterSite}${siteDiscovery?.enabled ? " · Manual scan" : " · Scan setup needed"}`)
     : (zh ? "未关联站点" : "No linked site");
   const clusterName = clusters.find((cluster) => cluster.id === clusterID)?.name ?? clusterID;
 
@@ -854,7 +969,7 @@ export function JoinNodePage({ zh, reissued, sshJoin, onBack, onScanSettings }: 
 
     <div className="join-body"><main className="join-main">
       <section className="join-workspace" role="tabpanel" id={`join-panel-${method}`} aria-labelledby={`join-method-${method}`}>
-        {method === "machines" ? <UnjoinedMachines key={`${clusterID}:${clusterSite}`} zh={zh} clusterID={clusterID} clusterName={clusterName} site={clusterSite} ticked={machineSelection} setTicked={setMachineSelection} onViewProgress={() => document.querySelector<HTMLElement>(".join-rail")?.scrollIntoView({ behavior: "smooth", block: "start" })} onUseMethod={setMethod} onOpenSSHJoin={(record) => { setSelectedSSH(record); setMethod("ssh"); }} />
+        {method === "machines" ? <UnjoinedMachines key={`${clusterID}:${clusterSite}`} zh={zh} clusterID={clusterID} clusterName={clusterName} site={clusterSite} scanEnabled={Boolean(siteDiscovery?.enabled)} ticked={machineSelection} setTicked={setMachineSelection} onViewProgress={() => document.querySelector<HTMLElement>(".join-rail")?.scrollIntoView({ behavior: "smooth", block: "start" })} onUseMethod={setMethod} onOpenSSHJoin={(record) => { setSelectedSSH(record); setMethod("ssh"); }} />
           : method === "ssh" ? <SSHJoin key={clusterID} zh={zh} clusterID={clusterID} initial={clusterID === sshJoin?.clusterID ? sshJoin.name : undefined} selectedOperation={selectedSSH} />
           : <JoinCode key={`${clusterID}:${railReissued?.code ?? ""}`} zh={zh} clusterID={clusterID} reissued={railReissued ?? (clusterID === reissued?.admission.cluster_id ? reissued : undefined)} />}
       </section>

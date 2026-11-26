@@ -12,13 +12,14 @@ import "./JoinMachinesDialog.css";
 // Confirms the batch before admitting it: one password block per NodeClass, because every machine of a class logs in
 // with the same accounts. A stored password may be kept by leaving the field empty; a new one is written to the class
 // and used for this join. Nothing typed here is read back.
-export function JoinMachinesDialog({ zh, clusterID, clusterName, machines, classes, labels, onClose, onJoined, onUseCode }: {
+export function JoinMachinesDialog({ zh, clusterID, clusterName, machines, classes, labels, canSubmitMachines, onClose, onJoined, onUseCode }: {
   zh: boolean;
   clusterID: string;
   clusterName: string;
   machines: Machine[];
   classes: MachineList["classes"];
   labels: Record<string, string>;
+  canSubmitMachines: () => boolean;
   onUseCode: () => void;
   onClose: () => void;
   onJoined: () => Promise<unknown> | void;
@@ -104,6 +105,10 @@ export function JoinMachinesDialog({ zh, clusterID, clusterName, machines, class
 
   const submit = () => {
     if (pending) return;
+    if (!canSubmitMachines()) {
+      setProblem(zh ? "所选机器的发现记录已过期或已不可加入。请返回列表重新选择。" : "A selected machine is no longer recently seen or joinable. Return to the list and select again.");
+      return;
+    }
     if (machineType === "Unknown") {
       setProblem(zh ? "请选择机器人或普通服务器。" : "Choose Robot or Server.");
       return;

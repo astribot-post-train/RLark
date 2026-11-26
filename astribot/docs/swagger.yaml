@@ -503,6 +503,7 @@ paths:
                         address: {type: string}
                         mac: {type: string, description: The hardware address of the entry device the machine was last seen through}
                         last_seen: {type: string, format: date-time}
+                        discovery_scan_id: {type: string, format: uuid, description: Manual scan that last observed this entry}
                         cluster_id: {type: string}
                         node_name: {type: string}
                         admissible: {type: boolean, description: "Whether the machine can be admitted now: one that is not a node, was read (serial, inspected_at, node_host_key_fingerprint) and has no problem, or one whose join stopped; never one that is joining"}

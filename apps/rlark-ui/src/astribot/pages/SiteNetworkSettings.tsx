@@ -3,7 +3,8 @@ import { Activity, AlertTriangle, Boxes, ChevronLeft, ChevronDown, CircleCheck, 
 import { ApiError } from "../../api";
 import { useAutoRefresh } from "../../hooks";
 import { RefreshOverlay } from "../../components/shared";
-import { DiscoveryScanControl, useDiscoveryScan } from "../components/DiscoveryScan";
+import { DiscoveryScanControl } from "../components/DiscoveryScan";
+import { useDiscoveryScan } from "../components/useDiscoveryScan";
 import { useAction } from "../components/useAction";
 import { clustersApi } from "../../backend";
 import type { ClusterSummary } from "../../types";

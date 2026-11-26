@@ -191,7 +191,7 @@ The site selector sits above the editor. A site linked to one cluster uses the n
 
 Unreachable paths, and pending configuration appear above the form when reported. Expand **Network status and diagnostics** for network health, configuration generation, site and model details, scope limits, and recent activity.
 
-After saving enabled discovery settings, wait for the status generation to catch up, then choose **Start scan**. The selected site’s enrolled Hubs that have received the settings run once. Concurrent requests share the active run, and the page reports progress and failures or times out after five minutes. Hubs also scan their directly connected private networks and accept 1–8 additional unique IPv4 prefixes from `/22` to `/32`. The management dial-out Hub selection is separate from scan execution. Existing Machine records are retained.
+After saving enabled discovery settings, wait for the status generation to catch up, then choose **Start scan**. The selected site’s enrolled Hubs that have received the settings run once. Concurrent requests share the active run, and the page reports progress and failures or times out after five minutes. Hubs also scan their directly connected private networks and accept 1–8 additional unique IPv4 prefixes from `/22` to `/32`. The management dial-out Hub selection is separate from scan execution. Existing Machine records are retained. The Add node page lists recently observed machines from that run.
 
 Ordinary x86/GPU servers have no discovery declaration and never appear in the scan list. They join over SSH or with a join code; scanning them directly requires a separate direct/entry-only admission mode.
 

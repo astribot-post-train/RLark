@@ -14,6 +14,10 @@ test("the join page is a compact toolbar and one full-width workspace", () => {
   assert.match(page, /<small>\{entry.note\}<\/small>/);
   assert.match(page, /className="join-machine-filters"/);
   assert.match(page, /className="join-machine-blocker"/);
+  assert.match(page, /const scanned = scanJoinMachines\(list\?\.items \?\? \[\], clusterID, now, scanID\)/);
+  assert.match(page, /<DiscoveryScanControl/);
+  assert.doesNotMatch(page, /siteDiscovery\.intervalSeconds/);
+  assert.match(page, /Unknown: zh \? "类型待确认" : "Unclassified"/);
   assert.match(page, /open=\{accessOpen \?\? \(scanClasses.length > 0 && !allClassesConfigured\)\}/);
   assert.match(page, /className="join-body"/);
   assert.match(page, /className="join-main"/);
@@ -58,6 +62,7 @@ test("the password dialog writes class credentials before admitting", () => {
   assert.match(dialog, /aria-modal="true"/);
   assert.match(dialog, /joinCredentialGroups\(machines, classes\)/);
   assert.match(dialog, /joinCredentialProblem\(groups, credentials, zh\)/);
+  assert.ok(dialog.indexOf("!canSubmitMachines()") < dialog.indexOf("machinesApi.setClassAccess"), "stale selection is rejected before writing credentials");
   assert.ok(dialog.indexOf("machinesApi.setClassAccess") < dialog.indexOf("machinesApi.admit"), "credentials are written before admit");
   assert.match(dialog, /node_password: typed\.password/);
   assert.match(dialog, /cluster_id: clusterID/);
@@ -65,4 +70,38 @@ test("the password dialog writes class credentials before admitting", () => {
   assert.doesNotMatch(dialog, /window\.location|URLSearchParams|new URL\(/);
   assert.match(dialogStyles, /\.modal\.join-machines-modal/);
   assert.match(dialogStyles, /@media \(max-width: 620px\)/);
+});
+
+test("SSH advanced settings use labeled controls with visible help and a stacked narrow layout", () => {
+  const advanced = page.slice(page.indexOf("function SSHJoin(")).match(/<details className="join-node-advanced join-form-advanced">([\s\S]*?)<\/details>/)?.[1];
+  assert.ok(advanced);
+  assert.match(advanced, /<JoinAdvancedSummary/);
+  for (const field of ["name", "port", "endpoint"]) {
+    const label = 'htmlFor={`\${advancedID}-' + field + '`}';
+    const input = 'id={`\${advancedID}-' + field + '`}';
+    const help = 'id={`\${advancedID}-' + field + '-help`}';
+    assert.ok(advanced.includes(label) && advanced.includes(input) && advanced.includes(help));
+  }
+  assert.match(advanced, /aria-invalid=\{!!endpointProblem\}/);
+  assert.match(advanced, /role="alert">\{endpointProblem\}/);
+  assert.match(styles, /\.join-form-advanced \.join-ssh-advanced-fields\s*\{[^}]*2fr[^}]*1fr/);
+  assert.match(styles, /@media \(max-width: 760px\)\s*\{[\s\S]*\.join-form-advanced \.join-ssh-advanced-fields[^\n]*\{ grid-template-columns: minmax\(0, 1fr\)/);
+});
+
+test("join code advanced settings group robot and scheduling fields and show validation in place", () => {
+  const code = page.slice(page.indexOf("function JoinCode("));
+  const advanced = code.match(/<details className="join-node-advanced join-form-advanced" ref=\{advanced\}>([\s\S]*?)<\/details>/)?.[1];
+  assert.ok(advanced);
+  assert.match(advanced, /<JoinAdvancedSummary zh=\{zh\} hint=\{advancedHint\}/);
+  assert.match(advanced, /robot && <fieldset[\s\S]*<legend>[\s\S]*机器人配置/);
+  assert.match(advanced, /<legend>[\s\S]*网络[\s\S]*<legend>[\s\S]*节点调度/);
+  assert.match(code, /schedulingInvalid && advanced.current\) advanced.current.open = true/);
+  assert.match(code, /发码前请选择机器人型号和配置/);
+  for (const field of ["labels", "taints"]) {
+    assert.ok(advanced.includes("aria-invalid={!!" + field + ".error}"));
+    assert.ok(advanced.includes('role="alert"'));
+    assert.ok(advanced.includes(field + "-error"));
+  }
+  assert.match(styles, /\.join-code-advanced-fields textarea\s*\{[^}]*resize: vertical/);
+  assert.match(styles, /@media \(max-width: 760px\)\s*\{[\s\S]*\.join-form-advanced \.join-code-advanced-fields\s*\{ grid-template-columns: minmax\(0, 1fr\)/);
 });

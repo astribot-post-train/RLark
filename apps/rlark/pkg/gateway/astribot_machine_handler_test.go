@@ -55,6 +55,8 @@ func TestMachinesAreListedAndAdmittedEachForItself(t *testing.T) {
 	// lab-05 was seen again since it was read last: it is read anew before it can be admitted.
 	unread := handlerMachine("lab-05", "Discovered", "", "1794925031001")
 	unstructured.RemoveNestedField(unread.Object, "status", "inspectedAt")
+	const scanID = "d3feca83-fccd-435d-b270-82f6072f27c7"
+	_ = unstructured.SetNestedField(unread.Object, scanID, "status", "entry", "discoveryScanID")
 	client := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), map[schema.GroupVersionResource]string{
 		stationClusterGVR: "ClusterList", nodeAdmissionGVR: "NodeAdmissionList", machineGVR: "MachineList", nodeClassGVR: "NodeClassList", nodeOperationGVR: "NodeOperationList",
 	}, stationHandlerCluster("cluster-a", "agent-a"), class, earlier, blockedJoin, spentJoin,
@@ -68,7 +70,7 @@ func TestMachinesAreListedAndAdmittedEachForItself(t *testing.T) {
 		Classes map[string]machineClass `json:"classes"`
 	}
 	_ = json.Unmarshal(body, &listed)
-	if status != 200 || len(listed.Items) != 3 || listed.Items[0].Name != "lab-05" || listed.Items[0].Admissible || listed.Items[1].Name != "lab-02" || listed.Items[1].Admissible ||
+	if status != 200 || len(listed.Items) != 3 || listed.Items[0].Name != "lab-05" || listed.Items[0].DiscoveryScanID != scanID || listed.Items[0].Admissible || listed.Items[1].Name != "lab-02" || listed.Items[1].Admissible ||
 		!listed.Items[2].Admissible || listed.Items[2].Serial != "1794925030610" || listed.Items[2].NodeHostKeyFingerprint != "SHA256:x86" ||
 		listed.Classes["s1u"].Labels["rlark.io/robot-body"] != "s1u" {
 		t.Fatalf("list %d: %s", status, body)

@@ -48,9 +48,10 @@ type machine struct {
 	Address                string `json:"address,omitempty"`
 	MAC                    string `json:"mac,omitempty"`
 	// LastSeen is when a hub of its site last saw the machine.
-	LastSeen  string `json:"last_seen,omitempty"`
-	ClusterID string `json:"cluster_id,omitempty"`
-	NodeName  string `json:"node_name,omitempty"`
+	LastSeen        string `json:"last_seen,omitempty"`
+	DiscoveryScanID string `json:"discovery_scan_id,omitempty"`
+	ClusterID       string `json:"cluster_id,omitempty"`
+	NodeName        string `json:"node_name,omitempty"`
 	// Admissible says whether the machine can be admitted now: one that is
 	// not a node, was read and has no problem, or one whose join stopped.
 	Admissible bool `json:"admissible"`
@@ -154,7 +155,8 @@ func machineView(object *unstructured.Unstructured, joins map[string]*machineJoi
 		Phase: text("status", "phase"), Problem: text("status", "problem"), Message: text("status", "message"), Serial: text("status", "serial"),
 		InspectedAt: text("status", "inspectedAt"), NodeHostKeyFingerprint: text("status", "nodeHostKeyFingerprint"), HostKeyFingerprint: text("status", "entry", "hostKeyFingerprint"),
 		Address: text("status", "entry", "address"), MAC: text("status", "entry", "mac"), LastSeen: text("status", "entry", "lastSeen"),
-		Port: nestedInt64(object.Object, "status", "entry", "port"), HostKeyAlgorithm: text("status", "entry", "hostKeyAlgorithm"), Banner: text("status", "entry", "banner"),
+		DiscoveryScanID: text("status", "entry", "discoveryScanID"),
+		Port:            nestedInt64(object.Object, "status", "entry", "port"), HostKeyAlgorithm: text("status", "entry", "hostKeyAlgorithm"), Banner: text("status", "entry", "banner"),
 		ClusterID: text("status", "clusterID"), NodeName: text("status", "nodeName"),
 		RequestedBy: text("spec", "admit", "requestedBy"), RequestedAt: text("spec", "admit", "requestedAt"), AdmitClusterID: text("spec", "admit", "clusterID"),
 		Join: joins[object.GetName()],
@@ -167,8 +169,7 @@ func machineView(object *unstructured.Unstructured, joins map[string]*machineJoi
 	view.IdentityVerified = text("status", "identityVerified")
 	view.IdentityReason = text("status", "identityReason")
 	if nodeJoin, found, _ := unstructured.NestedMap(object.Object, "status", "nodeJoin"); found {
-		reason := stringValue(nodeJoin["reason"])
-		view.NodeJoin = &machineNodeJoin{Phase: stringValue(nodeJoin["phase"]), Stage: stringValue(nodeJoin["stage"]), Reason: reason}
+		view.NodeJoin = &machineNodeJoin{Phase: stringValue(nodeJoin["phase"]), Stage: stringValue(nodeJoin["stage"]), Reason: stringValue(nodeJoin["reason"])}
 	}
 	if view.NodeJoin == nil {
 		if join := joins[object.GetName()]; join != nil {
@@ -265,8 +266,7 @@ func (g *Gateway) machineJoins(ctx context.Context) (map[string]*machineJoin, er
 		phase, stage := string(join.Status.Phase), join.Status.Stage
 		annotations := join.Annotations
 		if machineName != "" {
-			reason := annotations["station.rlark.io/join-reason"]
-			joinOf[machineName] = &machineJoin{Phase: phase, Stage: stage, Reason: reason, MachineType: annotations["station.rlark.io/machine-type"], MachineModel: annotations["station.rlark.io/machine-model"]}
+			joinOf[machineName] = &machineJoin{Phase: phase, Stage: stage, Reason: annotations["station.rlark.io/join-reason"], MachineType: annotations["station.rlark.io/machine-type"], MachineModel: annotations["station.rlark.io/machine-model"]}
 		}
 	}
 	return joinOf, nil

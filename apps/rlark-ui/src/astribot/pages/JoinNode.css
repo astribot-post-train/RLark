@@ -1221,6 +1221,88 @@
 .join-method-fields input, .join-method-fields select { width: 100%; height: 40px; min-width: 0; padding: 0 11px; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--sunken); color: var(--ink); font-size: 13px; font-weight: 400; outline: none; }
 .join-method-fields input:focus, .join-method-fields select:focus { border-color: var(--blue); box-shadow: 0 0 0 3px color-mix(in srgb, var(--blue) 15%, transparent); }
 .join-method-fields small { color: var(--muted); font-size: 10px; font-weight: 400; line-height: 1.45; }
+.join-form-advanced {
+  padding: 0;
+  border-radius: 12px;
+  background: var(--panel-2);
+}
+.join-form-advanced > summary {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  min-height: 58px;
+  padding: 10px 13px;
+  border-radius: 11px;
+  list-style: none;
+}
+.join-form-advanced > summary::-webkit-details-marker { display: none; }
+.join-form-advanced > summary:hover { background: var(--sunken); }
+.join-form-advanced > summary:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+.join-form-advanced[open] > summary { margin-bottom: 0; border-radius: 11px 11px 0 0; }
+.join-advanced-icon {
+  display: grid;
+  flex: 0 0 32px;
+  height: 32px;
+  place-items: center;
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--blue);
+}
+.join-advanced-heading { flex: 1; min-width: 0; display: grid; gap: 3px; }
+.join-advanced-heading strong { font-size: 13px; }
+.join-advanced-heading small { color: var(--muted); font-size: 11px; font-weight: 400; }
+.join-advanced-chevron { flex: 0 0 auto; color: var(--muted); }
+.join-form-advanced[open] .join-advanced-chevron { transform: rotate(180deg); }
+.join-advanced-body {
+  padding: 14px;
+  border-top: 1px solid var(--line);
+  border-radius: 0 0 11px 11px;
+  background: var(--panel);
+}
+.join-form-advanced .join-ssh-advanced-fields {
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+  align-items: start;
+  gap: 16px;
+}
+.join-advanced-field { display: grid; gap: 6px; min-width: 0; }
+.join-advanced-field label { color: var(--ink-2); font-size: 12px; font-weight: 600; }
+.join-advanced-field small { font-size: 11px; overflow-wrap: anywhere; }
+.join-ssh-tunnel-field { grid-column: 1 / -1; }
+.join-advanced-field :is(input, textarea)[aria-invalid="true"] { border-color: var(--red); }
+.join-advanced-field .join-advanced-error { color: var(--red); }
+.join-code-advanced-body { display: grid; gap: 12px; }
+.join-code-advanced-group {
+  min-width: 0;
+  margin: 0;
+  padding: 9px 12px 12px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+}
+.join-code-advanced-group legend { padding: 0 5px; color: var(--ink); font-size: 12px; font-weight: 700; }
+.join-form-advanced .join-code-advanced-fields {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
+  align-items: start;
+}
+.join-code-advanced-fields textarea {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  min-height: 76px;
+  padding: 9px 11px;
+  resize: vertical;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: var(--sunken);
+  color: var(--ink);
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.join-code-advanced-fields textarea:focus {
+  border-color: var(--blue);
+  outline: none;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--blue) 15%, transparent);
+}
 .join-method-actions { display: flex; justify-content: flex-end; gap: 8px; padding-top: 2px; }
 .join-method-side { display: grid; gap: 12px; }
 .join-method-side-card { display: grid; gap: 9px; padding: 13px; border: 1px solid var(--line); border-radius: 11px; background: var(--panel-2); }
@@ -1281,7 +1363,7 @@
   .join-page-head p { font-size: 12.5px; }
   .join-method-layout { grid-template-columns: minmax(0, 1fr); }
   .join-method-side { grid-template-columns: minmax(0, 1fr); }
-  .join-method-fields, .join-method-fields.is-code { grid-template-columns: minmax(0, 1fr); }
+  .join-method-fields, .join-method-fields.is-code, .join-form-advanced .join-ssh-advanced-fields, .join-form-advanced .join-code-advanced-fields { grid-template-columns: minmax(0, 1fr); }
   .join-node-page .join-panel-head { align-items: stretch; }
   .join-panel-tools { width: 100%; }
   .join-node-page .join-machine-search { width: 100%; }
@@ -1306,3 +1388,11 @@
 .join-machine-kind.is-robot { color: var(--blue); }
 .join-machine-kind.is-server { color: var(--green); }
 .join-machine-kind.is-unknown { color: var(--muted); }
+
+
+.join-discovery-bar {
+  display: flex;
+  align-items: center;
+  padding: 12px 16px;
+  border-top: 1px solid var(--line);
+}
