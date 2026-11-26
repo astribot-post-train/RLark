@@ -54,6 +54,6 @@ Gateway、管理面控制器和升级后的成员 Agent 都要求集群明确设
 
 隔离子任务的本地 `rlark-agent-upgrade-policy` ConfigMap 设置 `mode=astribot-managed-node`、`deployment`、摘要固定的 `executorImage`、HTTPS `brokerOrigin` 和可信 PEM `brokerCA`。托管模式的 DeployConfig 要求 `kubernetes.agent-image`、`kubernetes.image` 和 `kubernetes.node-agent-image` 都固定到镜像摘要。可信管理面运维人员在启动该子任务前为 Cluster 写入 `rlark.io/node-image-upgrade-grant`。这份 JSON 授权包含 `ClusterUID`、`DaemonSetUID`、`ChildUID`、`Before`（已观测且固定摘要的节点 Agent 镜像）、`Target`（节点 Agent 目标）、`Deployment`（批准的 `Agent` 和 `Tools` 摘要）、`ExecutorImage`、`Expires`（RFC 3339，晚于 Job 截止时间以覆盖回滚）和初始值为 `Approved` 的 `Phase`。不要替换仍在使用的授权。Job 使用绑定 Pod、可轮换的专用受众令牌；代理通过同一次 Cluster 资源版本检查提交镜像和授权阶段，迟到的正向请求无法撤销回滚。代理核验同一托管 DaemonSet UID、预期模板镜像、已观测代际、已更新节点数和可用节点数。隔离模式要求所有已调度节点收敛。
 
-批量入口仍未开放自动签发授权和混合驱动路由。隔离授权流程不用于生产批量升级。托管 Job 消失后，在能确认本轮任务对应的两个工作负载状态前，仍会报告结果无法核验。开放批量升级前，用标准与托管成员完成混合批次验收，覆盖授权过期、资源替换、成员租约冲突、部分滚动和回滚，并确认成员无法变更其他 Cluster 或已批准镜像以外的字段。
+批量入口仍未开放自动签发授权和混合驱动路由。隔离授权流程不用于生产批量升级。托管 Job 被清理后，恢复流程会核验本轮子任务的完成检查点、实际集群 Agent Deployment、托管节点 DaemonSet 和 Cluster 上已应用的授权。过期授权仍可作为本轮只读证据。证据缺失或发生变化时，报告结果无法核验。开放批量升级前，用标准与托管成员完成混合批次验收，覆盖授权过期、资源替换、成员租约冲突、部分滚动和回滚，并确认成员无法变更其他 Cluster 或已批准镜像以外的字段。
 
 独立 Kind 用例以真实 Kubernetes Job 运行托管执行器，使用投射的 Pod 绑定令牌、独立 HTTPS 代理和受限验证凭据。测试夹具将已授权的声明传给真实 DaemonSet，Job 等待滚动状态。故意停止同步后，滚动超时，执行器恢复原声明、保留节点选择器并释放成员租约。该用例尚未覆盖完整的 Astribot 节点 Agent 调谐器、生产 kcp 接入和混合批次调度。

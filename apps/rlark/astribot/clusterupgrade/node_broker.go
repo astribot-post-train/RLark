@@ -8,11 +8,13 @@ import (
 	"slices"
 	"time"
 
+	rlark "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
 	"github.com/rlinf/rlark/apps/rlark/astribot/nodeagent"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
@@ -124,12 +126,23 @@ func (b NodeImageBroker) execute(ctx context.Context, cluster string, identity E
 }
 
 func currentNodeImageGrant(cluster *unstructured.Unstructured, identity ExecutorIdentity) (NodeImageGrant, error) {
+	grant, err := readNodeImageGrant(cluster, types.UID(identity.ChildUID))
+	if err != nil {
+		return NodeImageGrant{}, err
+	}
+	if !time.Now().Before(grant.Expires) {
+		return NodeImageGrant{}, ErrNodeImageGrant
+	}
+	return grant, nil
+}
+
+func readNodeImageGrant(cluster *unstructured.Unstructured, childUID types.UID) (NodeImageGrant, error) {
 	var grant NodeImageGrant
 	if cluster.GetDeletionTimestamp() != nil || cluster.GetUID() == "" || cluster.GetResourceVersion() == "" ||
 		cluster.GetAnnotations()[DriverAnnotation] != DriverImageOnly ||
 		json.Unmarshal([]byte(cluster.GetAnnotations()[NodeImageGrantAnnotation]), &grant) != nil ||
-		grant.ClusterUID != cluster.GetUID() || grant.ChildUID != types.UID(identity.ChildUID) ||
-		grant.DaemonSetUID == "" || grant.Before == "" || !time.Now().Before(grant.Expires) {
+		grant.ClusterUID != cluster.GetUID() || childUID == "" || grant.ChildUID != childUID ||
+		grant.DaemonSetUID == "" || grant.Before == "" || grant.Expires.IsZero() {
 		return NodeImageGrant{}, ErrNodeImageGrant
 	}
 	for _, image := range []string{grant.Before, grant.Target, grant.Deployment.Agent, grant.Deployment.Tools} {
@@ -208,4 +221,24 @@ func observeNodeImage(ds *appsv1.DaemonSet, grant NodeImageGrant) bool {
 	}) && status.ObservedGeneration >= ds.Generation && status.DesiredNumberScheduled > 0 &&
 		status.UpdatedNumberScheduled == status.DesiredNumberScheduled &&
 		status.NumberAvailable == status.DesiredNumberScheduled && status.NumberMisscheduled == 0
+}
+
+// VerifyManagedNodeCompletion checks persisted management and member evidence
+// after the executor is gone. Grant expiry disables writes, but does not
+// invalidate evidence for the same applied attempt.
+func VerifyManagedNodeCompletion(cluster *rlark.Cluster, ds *appsv1.DaemonSet, job *rlark.ClusterUpgradeJob, checkpoint Checkpoint) bool {
+	images, node, err := parseImagePlan(job.Spec.ConfigPatch, true)
+	if err != nil || !checkpoint.Completed || checkpoint.RollingBack || images != checkpoint.Target || node != checkpoint.NodeImage {
+		return false
+	}
+	object, err := runtime.DefaultUnstructuredConverter.ToUnstructured(cluster)
+	if err != nil {
+		return false
+	}
+	grant, err := readNodeImageGrant(&unstructured.Unstructured{Object: object}, job.UID)
+	if err != nil || grant.Phase != NodeImageApplied || grant.ClusterUID != types.UID(checkpoint.NodeAgent.ClusterUID) ||
+		grant.Before != checkpoint.NodeAgent.Before || grant.Target != node || grant.Deployment != images || grant.ExecutorImage != job.Spec.Image {
+		return false
+	}
+	return ownsNodeDaemonSet(ds, grant) && observeNodeImage(ds, grant)
 }

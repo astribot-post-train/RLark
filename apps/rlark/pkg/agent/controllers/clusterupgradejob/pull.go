@@ -39,6 +39,7 @@ func (r *pullReconciler) newDriver(ctx context.Context, job *rlarkv1alpha1.Clust
 		return nil, fmt.Errorf("unsupported agent type %q for upgrade", r.c.AgentType)
 	}
 	driver := NewK8sDriver(r.c.LocalKubeClient, r.c.ManagementNamespace)
+	driver.management = r.c.ManagementClient
 	if job.Status.Phase == rlarkv1alpha1.ClusterUpgradeJobUpgrading {
 		// A running Job already selected its mode. Read its outcome even
 		// when the member's policy was changed or temporarily unavailable.

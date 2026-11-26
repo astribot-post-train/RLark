@@ -16,12 +16,14 @@ import (
 
 	rlarkv1alpha1 "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
 	"github.com/rlinf/rlark/apps/rlark/astribot/clusterupgrade"
+	"github.com/rlinf/rlark/apps/rlark/astribot/nodeagent"
 )
 
 // K8sDriver implements UpgradeDriver for a Kubernetes data plane.
 // It runs upgrade/rollback as batchv1.Job and stores configs in ConfigMaps.
 type K8sDriver struct {
 	client            client.Client
+	management        client.Reader
 	namespace         string
 	managementCluster string
 	stateStore        StateStore
@@ -46,10 +48,6 @@ func (d *K8sDriver) StateStore() StateStore {
 func (d *K8sDriver) SnapshotsLiveState() bool { return d.policy != nil }
 
 func (d *K8sDriver) VerifyMissingJobSuccess(ctx context.Context, job *rlarkv1alpha1.ClusterUpgradeJob) (bool, error) {
-	images, err := clusterupgrade.ParseImages(job.Spec.ConfigPatch)
-	if err != nil {
-		return false, nil
-	}
 	var object corev1.ConfigMap
 	if err := d.client.Get(ctx, client.ObjectKey{Namespace: d.namespace, Name: clusterupgrade.CheckpointConfigMap}, &object); err != nil {
 		return false, client.IgnoreNotFound(err)
@@ -58,19 +56,37 @@ func (d *K8sDriver) VerifyMissingJobSuccess(ctx context.Context, job *rlarkv1alp
 	if err != nil {
 		return false, fmt.Errorf("read upgrade checkpoint: %w", err)
 	}
-	if !found || !checkpoint.Completed || checkpoint.RollingBack || checkpoint.Target != images ||
-		checkpoint.NodeAgent.ClusterUID != "" || checkpoint.Deployment.UID == "" {
+	if !found || !checkpoint.Completed || checkpoint.RollingBack || checkpoint.Deployment.UID == "" {
+		return false, nil
+	}
+	if checkpoint.NodeAgent.ClusterUID == "" {
+		images, err := clusterupgrade.ParseImages(job.Spec.ConfigPatch)
+		if err != nil || checkpoint.Target != images || checkpoint.NodeImage != "" {
+			return false, nil
+		}
+	} else if d.management == nil {
 		return false, nil
 	}
 	var deployment appsv1.Deployment
 	if err := d.client.Get(ctx, client.ObjectKey{Namespace: d.namespace, Name: checkpoint.Deployment.Name}, &deployment); err != nil {
 		return false, client.IgnoreNotFound(err)
 	}
-	ready, err := clusterupgrade.DeploymentAtTarget(&deployment, checkpoint.Deployment, images)
+	ready, err := clusterupgrade.DeploymentAtTarget(&deployment, checkpoint.Deployment, checkpoint.Target)
 	if errors.Is(err, clusterupgrade.ErrTargetChanged) {
 		return false, nil
 	}
-	return ready, err
+	if !ready || err != nil || checkpoint.NodeAgent.ClusterUID == "" {
+		return ready, err
+	}
+	var cluster rlarkv1alpha1.Cluster
+	if err := d.management.Get(ctx, client.ObjectKey{Name: d.managementCluster}, &cluster); err != nil {
+		return false, client.IgnoreNotFound(err)
+	}
+	var daemonSet appsv1.DaemonSet
+	if err := d.client.Get(ctx, client.ObjectKey{Namespace: d.namespace, Name: nodeagent.Name}, &daemonSet); err != nil {
+		return false, client.IgnoreNotFound(err)
+	}
+	return clusterupgrade.VerifyManagedNodeCompletion(&cluster, &daemonSet, job, checkpoint), nil
 }
 
 func imageOnlyJobName(job *rlarkv1alpha1.ClusterUpgradeJob) string {

@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	rlark "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
 	"github.com/rlinf/rlark/apps/rlark/astribot/nodeagent"
 	"github.com/stretchr/testify/require"
 	appsv1 "k8s.io/api/apps/v1"
@@ -138,4 +139,44 @@ func TestNodeImageBrokerScopesWritesAndRejectsForwardReplay(t *testing.T) {
 	require.NoError(t, err)
 	_, err = client.call(ctx, ReadNodeImage)
 	require.ErrorIs(t, err, ErrTargetChanged)
+}
+
+func TestVerifyManagedCompletionRequiresAppliedAttemptAndSameReadyDaemonSet(t *testing.T) {
+	images := Images{Agent: "registry.example/agent" + brokerDigest, Tools: "registry.example/tools" + brokerDigest}
+	grant := NodeImageGrant{ClusterUID: "cluster", DaemonSetUID: "daemonset", ChildUID: "child",
+		Before: "registry.example/old" + brokerDigest, Target: "registry.example/node" + brokerDigest,
+		ExecutorImage: "registry.example/upgrade" + brokerDigest, Expires: time.Now().Add(-time.Hour), Phase: NodeImageApplied,
+		Deployment: images}
+	encoded, err := json.Marshal(grant)
+	require.NoError(t, err)
+	cluster := &rlark.Cluster{
+		ObjectMeta: metav1.ObjectMeta{Name: "lab", UID: grant.ClusterUID, ResourceVersion: "19",
+			Annotations: map[string]string{DriverAnnotation: DriverImageOnly, NodeImageGrantAnnotation: string(encoded)}},
+		Spec: rlark.ClusterSpec{NodeAgents: &rlark.ClusterNodeAgents{Enabled: true, Image: grant.Target}},
+	}
+	daemon := &appsv1.DaemonSet{
+		ObjectMeta: metav1.ObjectMeta{UID: grant.DaemonSetUID, Generation: 3, Labels: map[string]string{nodeagent.ManagedByLabel: nodeagent.ManagedBy}},
+		Spec: appsv1.DaemonSetSpec{Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{Containers: []corev1.Container{
+			{Name: nodeagent.Name, Image: grant.Target},
+		}}}},
+		Status: appsv1.DaemonSetStatus{ObservedGeneration: 3, DesiredNumberScheduled: 1, UpdatedNumberScheduled: 1, NumberAvailable: 1},
+	}
+	job := &rlark.ClusterUpgradeJob{ObjectMeta: metav1.ObjectMeta{UID: grant.ChildUID},
+		Spec: rlark.ClusterUpgradeJobSpec{Image: grant.ExecutorImage, ConfigPatch: "apiVersion: rlark.io/v1alpha1\nkind: DeployConfig\nplane: data\nkubernetes:\n  agent-image: " +
+			images.Agent + "\n  image: " + images.Tools + "\n  node-agent-image: " + grant.Target + "\n"}}
+	checkpoint := Checkpoint{Target: images, NodeImage: grant.Target,
+		NodeAgent: NodeAgentTarget{ClusterUID: string(grant.ClusterUID), Before: grant.Before}, Completed: true}
+	require.True(t, VerifyManagedNodeCompletion(cluster, daemon, job, checkpoint), "expired grant should still provide read-only evidence")
+	replaced := daemon.DeepCopy()
+	replaced.UID = "replacement"
+	require.False(t, VerifyManagedNodeCompletion(cluster, replaced, job, checkpoint))
+	stale := daemon.DeepCopy()
+	stale.Status.ObservedGeneration--
+	require.False(t, VerifyManagedNodeCompletion(cluster, stale, job, checkpoint))
+	modified := cluster.DeepCopy()
+	modified.Spec.NodeAgents.Image = grant.Before
+	require.False(t, VerifyManagedNodeCompletion(modified, daemon, job, checkpoint))
+	newAttempt := job.DeepCopy()
+	newAttempt.UID = "different-attempt"
+	require.False(t, VerifyManagedNodeCompletion(cluster, daemon, newAttempt, checkpoint))
 }
