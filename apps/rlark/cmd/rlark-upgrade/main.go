@@ -46,7 +46,8 @@ func main() {
 		return
 	}
 
-	if mode := os.Getenv("RLARK_UPGRADE_MODE"); mode != "" {
+	mode := os.Getenv("RLARK_UPGRADE_MODE")
+	if mode != "" && mode != clusterupgrade.DriverStock {
 		if mode != clusterupgrade.ClusterOnlyMode && mode != clusterupgrade.ManagedNodeMode {
 			logger.Error(fmt.Errorf("unrecognized upgrade execution mode"), "invalid configuration")
 			os.Exit(ExitPrecheckFailed)
@@ -79,6 +80,7 @@ func main() {
 
 	// Load configuration
 	config := &upgrade.Config{
+		StockDataPlane:      mode == clusterupgrade.DriverStock,
 		DeployConfigPath:    utils.GetEnv("DEPLOY_CONFIG", "/etc/rlark/deploy-config.yaml"),
 		RollbackConfigPath:  utils.GetEnv("ROLLBACK_CONFIG", "/etc/rlark/rollback-deploy-config.yaml"),
 		AutoRollback:        utils.GetEnvBool("AUTO_ROLLBACK", true),

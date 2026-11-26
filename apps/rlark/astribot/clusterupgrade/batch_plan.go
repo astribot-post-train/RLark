@@ -73,8 +73,8 @@ func ParseBatchPlan(spec rlark.UpgradeJobSpec) (BatchPlan, error) {
 		return BatchPlan{}, errors.New("invalid Astribot BatchDeployConfig")
 	}
 	if batch.Stock != nil && *batch.Stock != "" {
-		var stock types.DeployConfig
-		if err := yaml.UnmarshalStrict([]byte(*batch.Stock), &stock); err != nil {
+		stock, err := types.ParseDeployConfig([]byte(*batch.Stock))
+		if err != nil {
 			return BatchPlan{}, errors.New("invalid stock DeployConfig in batch")
 		}
 		if stock.Plane != types.PlaneData || stock.Kubernetes == nil {

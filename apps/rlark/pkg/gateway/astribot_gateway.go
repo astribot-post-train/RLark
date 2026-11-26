@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/rlinf/rlark/apps/rlark/astribot/provisioning"
 	"github.com/rlinf/rlark/apps/rlark/astribot/stationidentity"
 	"net/http"
 
@@ -59,7 +60,7 @@ func (c *AstribotConfig) setupFlags(fs *pflag.FlagSet) {
 // setupAstribot is NewGateway's part for our state.
 func (g *Gateway) setupAstribot() {
 	g.registryImages = lru.New(registryImageCacheEntries)
-	g.provisionDial = dialProvisionMachine
+	g.provisionDial = provisioning.DialMachine
 }
 
 // initAstribot is init's part for our clients, right after the Kubernetes clients.

@@ -253,6 +253,11 @@ func (d *K8sDriver) StartUpgrade(ctx context.Context, job *rlarkv1alpha1.Cluster
 		clusterupgrade.ConfigureExecutor(k8sJob, *d.policy, string(job.UID), job.Name, d.managementCluster)
 	}
 
+	if d.policy == nil {
+		executor := &k8sJob.Spec.Template.Spec.Containers[0]
+		executor.Env = append(executor.Env, corev1.EnvVar{Name: "RLARK_UPGRADE_MODE", Value: clusterupgrade.DriverStock})
+	}
+
 	if err := d.client.Create(ctx, k8sJob); err != nil {
 		// If the job already exists (e.g. agent restarted after creating it),
 		// return the existing job name so the caller can resume monitoring.

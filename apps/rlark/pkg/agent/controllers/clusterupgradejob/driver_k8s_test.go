@@ -240,3 +240,30 @@ func TestManagedUpgradeJobProjectsOnlyTheBrokerAudience(t *testing.T) {
 		t.Fatalf("unexpected broker token mount: %+v", mount)
 	}
 }
+
+func TestStockBatchJobSelectsStockTopology(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := batchv1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	kube := fake.NewClientBuilder().WithScheme(scheme).Build()
+	driver := NewK8sDriver(kube, "stock")
+	child := &rlarkv1alpha1.ClusterUpgradeJob{
+		ObjectMeta: metav1.ObjectMeta{Name: "stock-child"},
+		Spec:       rlarkv1alpha1.ClusterUpgradeJobSpec{Image: "stock-executor"},
+	}
+	name, err := driver.StartUpgrade(t.Context(), child, "", "config")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var job batchv1.Job
+	if err := kube.Get(t.Context(), client.ObjectKey{Namespace: StateStoreNamespace, Name: name}, &job); err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range job.Spec.Template.Spec.Containers[0].Env {
+		if entry.Name == "RLARK_UPGRADE_MODE" && entry.Value == clusterupgrade.DriverStock {
+			return
+		}
+	}
+	t.Fatal("stock Job did not select the upstream component profile")
+}

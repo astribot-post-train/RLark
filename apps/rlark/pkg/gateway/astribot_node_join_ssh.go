@@ -102,7 +102,7 @@ func (g *Gateway) dialNodeJoinMachine(ctx context.Context, j *rlarkv1alpha1.Node
 	if sudoPassword == nil {
 		sudoPassword = password
 	}
-	connected, shown, err := dialProvisionMachinePinned(ctx, machine, password, sudoPassword, hostKey, annotations[nodeJoinHostKeyAlgorithmAnnotation], "", "")
+	connected, shown, err := provisioning.DialMachinePinned(ctx, machine, password, sudoPassword, hostKey, annotations[nodeJoinHostKeyAlgorithmAnnotation], "", "")
 	if err != nil {
 		var failure *nodessh.Error
 		if errors.As(err, &failure) && failure.Reason == nodessh.Unreachable {
@@ -113,7 +113,7 @@ func (g *Gateway) dialNodeJoinMachine(ctx context.Context, j *rlarkv1alpha1.Node
 			if relayErr != nil {
 				return nil, "", &nodessh.Error{Reason: nodeJoinRelayUnavailable, Err: fmt.Errorf("直连不可达，站点中继不可用：%v", relayErr)}
 			}
-			connected, shown, err = dialProvisionMachineRelay(ctx, machine, password, sudoPassword, hostKey, annotations[nodeJoinHostKeyAlgorithmAnnotation], endpoint, token)
+			connected, shown, err = provisioning.DialMachineRelay(ctx, machine, password, sudoPassword, hostKey, annotations[nodeJoinHostKeyAlgorithmAnnotation], endpoint, token)
 			if err != nil {
 				return nil, "", err
 			}

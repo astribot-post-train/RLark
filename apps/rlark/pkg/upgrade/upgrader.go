@@ -60,6 +60,9 @@ func NewUpgrader(config *Config) (*Upgrader, error) {
 	if err != nil {
 		return nil, fmt.Errorf("load deploy config: %w", err)
 	}
+	if config.StockDataPlane && (deployConfig.Plane != types.PlaneData || deployConfig.Kubernetes == nil) {
+		return nil, fmt.Errorf("stock upgrade requires a Kubernetes data-plane DeployConfig")
+	}
 	if err := deployConfig.ValidateForUpgrade(); err != nil {
 		return nil, fmt.Errorf("validate deploy config: %w", err)
 	}
@@ -145,6 +148,9 @@ func (u *Upgrader) precheck(ctx context.Context) error {
 
 // doUpgrade performs the actual upgrade (rlarkadm built-in)
 func (u *Upgrader) doUpgrade(ctx context.Context) error {
+	if u.config.StockDataPlane {
+		return rlarkadm.UpgradeStockDataPlane(ctx, u.deployConfig, false)
+	}
 	return rlarkadm.Upgrade(u.deployConfig)
 }
 
@@ -206,5 +212,8 @@ func (u *Upgrader) deepHealthCheck(ctx context.Context) error {
 
 // doRollback performs the actual rollback (rlarkadm built-in)
 func (u *Upgrader) doRollback(ctx context.Context) error {
+	if u.config.StockDataPlane {
+		return rlarkadm.UpgradeStockDataPlane(ctx, u.rollbackConfig, true)
+	}
 	return rlarkadm.Rollback(u.rollbackConfig)
 }

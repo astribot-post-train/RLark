@@ -435,7 +435,10 @@ func TestMixedBatchDispatchAndRollbackStopsFurtherScheduling(t *testing.T) {
 	const managedImage = "registry.example/managed-upgrade" + digest
 	const managedConfig = "apiVersion: rlark.io/v1alpha1\nkind: DeployConfig\nplane: data\nkubernetes:\n" +
 		"  agent-image: registry.example/agent" + digest + "\n  image: registry.example/tools" + digest + "\n  node-agent-image: registry.example/node" + digest + "\n"
-	patch := "apiVersion: astribot.rlark.io/v1alpha1\nkind: BatchDeployConfig\nstockDeployConfig: ''\nmanaged:\n  executorImage: " + managedImage + "\n  deployConfig: |\n    " + strings.ReplaceAll(strings.TrimSuffix(managedConfig, "\n"), "\n", "\n    ") + "\n"
+	const stockConfig = "apiVersion: rlark.io/v1alpha1\nkind: DeployConfig\nplane: data\ncontrol-plane-address: https://fixture.invalid:8443\nkubernetes:\n  agent-image: rlark-stock\n  image: rlark-stock\n"
+	patch := "apiVersion: astribot.rlark.io/v1alpha1\nkind: BatchDeployConfig\nstockDeployConfig: |\n  " +
+		strings.ReplaceAll(strings.TrimSuffix(stockConfig, "\n"), "\n", "\n  ") + "\nmanaged:\n  executorImage: " +
+		managedImage + "\n  deployConfig: |\n    " + strings.ReplaceAll(strings.TrimSuffix(managedConfig, "\n"), "\n", "\n    ") + "\n"
 	job := &rlarkv1alpha1.UpgradeJob{
 		ObjectMeta: metav1.ObjectMeta{Name: "mixed-upgrade", UID: "batch-uid"},
 		Spec: rlarkv1alpha1.UpgradeJobSpec{
@@ -468,7 +471,7 @@ func TestMixedBatchDispatchAndRollbackStopsFurtherScheduling(t *testing.T) {
 			child.Status.Phase = rlarkv1alpha1.ClusterUpgradeJobRolledBack
 		case "stock-one":
 			assert.Equal(t, "stock-upgrader", child.Spec.Image)
-			assert.Empty(t, child.Spec.ConfigPatch)
+			assert.Equal(t, stockConfig, child.Spec.ConfigPatch)
 			child.Status.Phase = rlarkv1alpha1.ClusterUpgradeJobSucceeded
 		default:
 			t.Fatalf("unexpected child %s", child.Namespace)

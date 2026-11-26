@@ -64,6 +64,14 @@ Gateway、管理面控制器和升级后的成员 Agent 都要求集群明确设
 
 托管批量调度要求可信 Cluster 声明 `rlark.io/upgrade-driver: astribot-image-only` 和 `rlark.io/managed-upgrade-batch: enabled`。声明前先升级成员 Agent、配置托管策略、重新接入并确认可访问代理。代理配置设置 `autoIssueBatchGrants: true`，并在每个成员条目固定 `executorImage` 摘要。代理管理面身份还需要读取 UpgradeJob 和已选成员的 ClusterUpgradeJob，并能创建 SubjectAccessReview。首次收到持有成员租约的已认证请求时，代理核验成员有效权限、父子任务归属、配置及目标 Cluster UID，再根据实际已收敛的节点 Agent 基线签发授权。同一个子任务无法重新领授权。成员 Agent 只读子任务 Spec，可写状态；若旧 Role 仍可修改子任务 Spec，自动授权会被拦截。
 
-本次变更没有为生产集群自动开启批量入口。仍需验真实 kcp workspace、完整节点 Agent 调谐器以及标准与托管成员的混合批次，再启用生产托管注解。
+本次变更没有为生产集群自动开启批量入口。生产启用前仍需核对目标 workspace 和成员 Agent 版本。
 
 Kind 混合批次用例对标准和托管 Cluster 记录运行了真实控制面调谐器，验证子任务收到不同的配置，并使用真实 TokenReview 和 SubjectAccessReview 自动签发授权。托管 Job 完成了夹具 DaemonSet 滚动，并在第二次滚动超时后恢复声明。标准子任务已核验分发，尚未运行标准安装器。完整 Astribot 调谐器和生产 kcp workspace 仍需独立验收。Gateway 的机器准入已将请求校验、型号匹配和持久化委托给 Astribot stations 包。 独立 kcp v0.30.0 workspace 还验证了 SubjectAccessReview 能识别旧 Agent 的子任务 Spec 写权限，并在收紧 Role 后确认写请求无权执行。
+
+### 完整混合批次隔离验证
+
+独立 kcp v0.30.0 root workspace 加两个 Kind 成员验证了混合批次。测试在真实 API 上运行现有批量调谐器、两个成员升级调谐器、标准安装器，以及 Astribot 节点 Agent 和滚动调谐器。父任务和两个子任务均为 Succeeded。标准 Job 更新了集群 Agent Deployment 和独立节点 Agent DaemonSet；托管 Job 通过 Cluster 声明更新节点 Agent，保留集群 Agent 原有参数。应用容器使用健康检查夹具，Kubernetes 滚动、代理认证和调谐器行为均为实际执行。该用例未使用生产凭据，也未测试 Agent 到 Server 的隧道。 故意失败的节点 Agent 镜像滚动超时后，实际调谐器将同一 UID 的 DaemonSet 恢复到原镜像。模拟发布占用成员租约时，托管子任务报告了持有者，零失败阈值阻止了排队的标准子任务，镜像声明未变更。
+
+标准 Job 显式选择上游组件清单，预检、升级及回滚都覆盖两个标准数据面工作负载。常规 Astribot 安装仍走托管声明。标准批次校验和安装器共用严格 DeployConfig 解析器，接受文档规定的连字符 YAML 字段。
+
+首台机器创建与节点加入共用的 SSH 传输已归入 `astribot/provisioning/ssh.go`。Gateway 保留创建和加入阶段编排，以及 HTTP 和授权接入。

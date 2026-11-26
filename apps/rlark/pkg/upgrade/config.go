@@ -7,6 +7,9 @@ import (
 
 // Config holds the upgrade configuration
 type Config struct {
+	// StockDataPlane selects the upstream workload topology for stock batch jobs.
+	StockDataPlane bool
+
 	// DeployConfigPath is the path to the deploy config file
 	DeployConfigPath string
 

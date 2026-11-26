@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"errors"
+	"github.com/rlinf/rlark/apps/rlark/astribot/provisioning"
 	"io"
 	"net"
 	"strconv"
@@ -100,7 +101,7 @@ func TestNodeJoinDialUsesDirectBeforeRelayAndFallsBackOnlyWhenUnreachable(t *tes
 		_ = conn.Close()
 	}()
 	machine := rlarkv1alpha1.ClusterProvisionMachine{Address: direct.Addr().(*net.TCPAddr).IP.String(), Port: int32(direct.Addr().(*net.TCPAddr).Port), User: "root"}
-	connected, _, err := dialProvisionMachinePinned(context.Background(), machine, []byte("login-password"), []byte("sudo-password"), key, signer.PublicKey().Type(), relay.Addr().String(), "relay-secret")
+	connected, _, err := provisioning.DialMachinePinned(context.Background(), machine, []byte("login-password"), []byte("sudo-password"), key, signer.PublicKey().Type(), relay.Addr().String(), "relay-secret")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -137,7 +138,7 @@ func TestNodeJoinDialUsesDirectBeforeRelayAndFallsBackOnlyWhenUnreachable(t *tes
 	closedTarget := closed.Addr().(*net.TCPAddr)
 	_ = closed.Close()
 	machine = rlarkv1alpha1.ClusterProvisionMachine{Address: closedTarget.IP.String(), Port: int32(closedTarget.Port), User: "root"}
-	connected, _, err = dialProvisionMachinePinned(context.Background(), machine, []byte("login-password"), []byte("sudo-password"), key, signer.PublicKey().Type(), server.Addr().String(), "relay-secret")
+	connected, _, err = provisioning.DialMachinePinned(context.Background(), machine, []byte("login-password"), []byte("sudo-password"), key, signer.PublicKey().Type(), server.Addr().String(), "relay-secret")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -202,7 +203,7 @@ func TestNodeJoinHostKeyMismatchDoesNotFallBack(t *testing.T) {
 		}
 	}()
 	addr := target.Addr().(*net.TCPAddr)
-	_, _, err = dialProvisionMachinePinned(context.Background(), rlarkv1alpha1.ClusterProvisionMachine{Address: addr.IP.String(), Port: int32(addr.Port), User: "root"}, []byte("login"), []byte("sudo"), "SHA256:wrong", "", relay.Addr().String(), "relay-secret")
+	_, _, err = provisioning.DialMachinePinned(context.Background(), rlarkv1alpha1.ClusterProvisionMachine{Address: addr.IP.String(), Port: int32(addr.Port), User: "root"}, []byte("login"), []byte("sudo"), "SHA256:wrong", "", relay.Addr().String(), "relay-secret")
 	var failure *nodessh.Error
 	if !errors.As(err, &failure) || failure.Reason != nodessh.HostKeyChanged {
 		t.Fatalf("expected pinned host-key refusal, got %v", err)
@@ -337,7 +338,7 @@ func TestDirectAuthenticationAndSudoFailuresDoNotFallBack(t *testing.T) {
 				}
 			}()
 			addr := listener.Addr().(*net.TCPAddr)
-			_, _, err = dialProvisionMachinePinned(context.Background(), rlarkv1alpha1.ClusterProvisionMachine{Address: addr.IP.String(), Port: int32(addr.Port), User: "ops"}, []byte("login"), []byte("wrong-sudo"), ssh.FingerprintSHA256(signer.PublicKey()), signer.PublicKey().Type(), relay.Addr().String(), "relay-secret")
+			_, _, err = provisioning.DialMachinePinned(context.Background(), rlarkv1alpha1.ClusterProvisionMachine{Address: addr.IP.String(), Port: int32(addr.Port), User: "ops"}, []byte("login"), []byte("wrong-sudo"), ssh.FingerprintSHA256(signer.PublicKey()), signer.PublicKey().Type(), relay.Addr().String(), "relay-secret")
 			var failure *nodessh.Error
 			if !errors.As(err, &failure) || failure.Reason != test.expectedReason {
 				t.Fatalf("expected %s, got %v", test.expectedReason, err)
