@@ -24,8 +24,7 @@ import (
 
 const (
 	// FinalizerName is the finalizer for UpgradeJob cleanup.
-	FinalizerName  = "upgradejobs.rlinf.io/cleanup"
-	targetRejected = "TargetRejected"
+	FinalizerName = "upgradejobs.rlinf.io/cleanup"
 )
 
 // Reconciler reconciles UpgradeJob resources.
@@ -153,10 +152,7 @@ func (r *Reconciler) reconcileClusterUpgradeJobs(ctx context.Context, job *rlark
 			err = clusterupgrade.ValidateStockTarget(cluster)
 		}
 		if err != nil {
-			job.Status.Conditions = append(job.Status.Conditions, rlarkv1alpha1.UpgradeJobCondition{
-				Type: targetRejected, Cluster: name, Status: string(rlarkv1alpha1.ClusterUpgradeJobFailed),
-				Reason: err.Error(), TargetImage: job.Spec.Image,
-			})
+			job.Status.Conditions = append(job.Status.Conditions, clusterupgrade.RejectedTargetCondition(name, job.Spec.Image, err))
 			return r.Status().Update(ctx, job)
 		}
 	}
@@ -218,7 +214,7 @@ func isTerminalPhase(phase rlarkv1alpha1.ClusterUpgradeJobPhase) bool {
 
 func hasRejectedTarget(job *rlarkv1alpha1.UpgradeJob) bool {
 	return slices.ContainsFunc(job.Status.Conditions, func(condition rlarkv1alpha1.UpgradeJobCondition) bool {
-		return condition.Type == targetRejected
+		return condition.Type == clusterupgrade.TargetRejected
 	})
 }
 
@@ -234,7 +230,7 @@ func (r *Reconciler) aggregateStatus(ctx context.Context, job *rlarkv1alpha1.Upg
 	conditions := make([]rlarkv1alpha1.UpgradeJobCondition, 0, len(clusterUpgradeJobs.Items))
 	rejected := hasRejectedTarget(job)
 	for _, condition := range job.Status.Conditions {
-		if condition.Type == targetRejected {
+		if condition.Type == clusterupgrade.TargetRejected {
 			conditions = append(conditions, condition)
 			failed++
 		}

@@ -10,6 +10,16 @@ import (
 )
 
 const DriverStock = "stock"
+const TargetRejected = "TargetRejected"
+
+// RejectedTargetCondition preserves the upstream UpgradeJobCondition's
+// human-readable reason. Its type remains a stable value for reconciliation.
+func RejectedTargetCondition(cluster, target string, err error) rlark.UpgradeJobCondition {
+	return rlark.UpgradeJobCondition{
+		Type: TargetRejected, Cluster: cluster, Status: string(rlark.ClusterUpgradeJobFailed),
+		Reason: err.Error(), TargetImage: target,
+	}
+}
 
 // ValidateStockTarget requires an explicit opt-in because older Astribot
 // installations may have no driver annotation or local upgrade policy.

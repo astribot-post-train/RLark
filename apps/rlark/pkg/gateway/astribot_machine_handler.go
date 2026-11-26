@@ -74,11 +74,7 @@ func (g *Gateway) machineJoins(ctx context.Context) (map[string]*stations.Machin
 		if machineName == "" {
 			continue
 		}
-		phase, stage := string(join.Status.Phase), join.Status.Stage
-		annotations := join.Annotations
-		if machineName != "" {
-			joinOf[machineName] = &stations.MachineJoin{Phase: phase, Stage: stage, Reason: annotations["station.rlark.io/join-reason"], MachineType: annotations["station.rlark.io/machine-type"], MachineModel: annotations["station.rlark.io/machine-model"]}
-		}
+		joinOf[machineName] = stations.MachineJoinFromNodeJoin(join)
 	}
 	return joinOf, nil
 }

@@ -1,6 +1,10 @@
 package stations
 
-import "k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+import (
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+
+	rlark "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
+)
 
 // Machine describes a machine RLark knows of as an administrator reads it: what was
 // seen of it and how its join goes. Nothing of any account is in it.
@@ -60,6 +64,16 @@ type MachineJoin struct {
 	Reason       string `json:"reason,omitempty"`
 	MachineType  string `json:"machine_type,omitempty"`
 	MachineModel string `json:"machine_model,omitempty"`
+}
+
+// MachineJoinFromNodeJoin projects the join details exposed in the station API.
+func MachineJoinFromNodeJoin(join *rlark.NodeJoin) *MachineJoin {
+	return &MachineJoin{
+		Phase: string(join.Status.Phase), Stage: join.Status.Stage,
+		Reason:       join.Annotations["station.rlark.io/join-reason"],
+		MachineType:  join.Annotations["station.rlark.io/machine-type"],
+		MachineModel: join.Annotations["station.rlark.io/machine-model"],
+	}
 }
 
 type MachineNodeJoin struct {

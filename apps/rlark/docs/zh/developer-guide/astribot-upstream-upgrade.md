@@ -38,7 +38,7 @@ CRD 字段与生成产物、共享角色、鉴权和错误转换、组件接线�
 
 Gateway、管理面控制器和升级后的成员 Agent 都要求集群明确设置 `rlark.io/upgrade-driver: stock` 后才允许使用上游安装器。声明了托管节点 Agent 的集群无法使用该安装器。若成员已有 Astribot 发布租约但未配置执行策略，Agent 同样拒绝启动。隔离测试的仅镜像模式在目标就绪后由 Job 持成员租约写入完成检查点。若本地 Job 消失，Agent 会确认检查点属于本轮子任务 UID，并核验相同 Deployment 的两个目标镜像摘要及实际就绪状态。找不到匹配的检查点时会报告结果无法确认。
 
-机器列表和入网资格共用 `stations/machine_view.go` 中的转换逻辑。集群创建和 SSH 节点入网共用 `provisioning/bundle.go` 中的安装包传输、摘要验证和进度上报。Astribot 的 S3 挂载选项和端点校验归入 `storageconfig/mount_request.go`，复用上游端点标准化逻辑。Gateway 仍负责 HTTP 授权、响应处理、资源持久化以及创建和入网阶段编排。
+机器列表和入网资格共用 `stations/machine_view.go` 中的转换逻辑。集群创建和 SSH 节点入网共用 `provisioning/bundle.go` 中的安装包传输、摘要验证和进度上报。Astribot 的 S3 挂载选项和端点校验归入 `storageconfig/mount_request.go`，复用上游端点标准化逻辑。Gateway 仍负责 HTTP 授权、响应处理、资源持久化以及创建和入网阶段编排。 升级目标被拒绝时的诊断信息，以及节点加入状态的注解转换，也由 Astribot 扩展负责，沿用现有 API 字段。
 
 执行器将托管节点 Agent 镜像作为第三个独立目标写入本轮检查点。开放托管升级前，仍需接通管理面通道，仅允许对已核验的集群和任务比较并变更 `Cluster.spec.nodeAgents.image`，并核验成员集群的实际滚动结果。通过混合双集群验收后再开放 Astribot 批量入口。
 
