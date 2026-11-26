@@ -4,12 +4,14 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
 
+	"github.com/rlinf/rlark/apps/rlark/astribot/clusterupgrade"
 	"github.com/rlinf/rlark/apps/rlark/pkg/log"
 	"github.com/rlinf/rlark/apps/rlark/pkg/upgrade"
 	"github.com/rlinf/rlark/apps/rlark/pkg/utils"
@@ -35,6 +37,36 @@ func main() {
 	logger := log.GetLogger()
 
 	logger.Info("starting rlark-upgrade")
+
+	if mode := os.Getenv("RLARK_UPGRADE_MODE"); mode != "" {
+		if mode != clusterupgrade.ClusterOnlyMode {
+			logger.Error(fmt.Errorf("unrecognized upgrade execution mode"), "invalid configuration")
+			os.Exit(ExitPrecheckFailed)
+		}
+		data, err := os.ReadFile(utils.GetEnv("DEPLOY_CONFIG", "/etc/rlark/deploy-config.yaml"))
+		if err != nil {
+			logger.Error(err, "read image-only upgrade config")
+			os.Exit(ExitPrecheckFailed)
+		}
+		err = clusterupgrade.RunInCluster(ctx, clusterupgrade.JobRequest{
+			JobUID: os.Getenv("RLARK_UPGRADE_JOB_UID"), PodName: os.Getenv("POD_NAME"), PodUID: os.Getenv("POD_UID"),
+			Deployment: os.Getenv("RLARK_UPGRADE_DEPLOYMENT"), DeployConfig: string(data),
+			AutoRollback: utils.GetEnvBool("AUTO_ROLLBACK", true), HealthTimeout: utils.GetEnvDuration("HEALTH_CHECK_TIMEOUT", 5*time.Minute),
+		})
+		if err == nil {
+			os.Exit(ExitSuccess)
+		}
+		logger.Error(err, "image-only upgrade completed with an error")
+		clusterupgrade.WriteJobDiagnostic(err)
+		switch {
+		case errors.Is(err, clusterupgrade.ErrRolledBack):
+			os.Exit(ExitRolledBack)
+		case errors.Is(err, clusterupgrade.ErrRollbackFailed):
+			os.Exit(ExitRollbackFailed)
+		default:
+			os.Exit(ExitUpgradeFailed)
+		}
+	}
 
 	// Load configuration
 	config := &upgrade.Config{

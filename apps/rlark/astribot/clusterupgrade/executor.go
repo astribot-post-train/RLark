@@ -41,11 +41,12 @@ type Checkpoints interface {
 }
 
 type Executor struct {
-	Deployments   apps.DeploymentInterface
-	NodeAgents    NodeAgentImages
-	Checkpoints   Checkpoints
-	CheckLease    func(context.Context) error
-	HealthTimeout time.Duration
+	Deployments        apps.DeploymentInterface
+	ExpectedDeployment string
+	NodeAgents         NodeAgentImages
+	Checkpoints        Checkpoints
+	CheckLease         func(context.Context) error
+	HealthTimeout      time.Duration
 }
 
 var ErrRolledBack = errors.New("upgrade failed and the previous images were restored")
@@ -64,6 +65,9 @@ func (e Executor) Run(ctx context.Context, target Images, autoRollback bool) err
 		if err != nil {
 			return err
 		}
+		if e.ExpectedDeployment != "" && e.ExpectedDeployment != deployment.Name {
+			return ErrTargetChanged
+		}
 		nodes, err := e.NodeAgents.Read(ctx)
 		if err != nil {
 			return err
@@ -72,7 +76,7 @@ func (e Executor) Run(ctx context.Context, target Images, autoRollback bool) err
 		if err := e.Checkpoints.Save(ctx, checkpoint); err != nil {
 			return fmt.Errorf("persist upgrade checkpoint: %w", err)
 		}
-	} else if checkpoint.Target != target {
+	} else if checkpoint.Target != target || (e.ExpectedDeployment != "" && checkpoint.Deployment.Name != e.ExpectedDeployment) {
 		return errors.New("upgrade request differs from the persisted checkpoint")
 	}
 	if checkpoint.RollingBack {

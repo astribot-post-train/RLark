@@ -18,6 +18,9 @@ type UpgradeDriver interface {
 	// (current image + deploy config) across upgrades.
 	StateStore() StateStore
 
+	// SnapshotsLiveState reports whether the Job captures its own rollback baseline.
+	SnapshotsLiveState() bool
+
 	// PrepareConfig persists the deploy config for an upgrade attempt.
 	// It returns an opaque configRef that is passed to StartUpgrade.
 	// The driver decides how to store it (e.g. ConfigMap in K8s mode).
@@ -85,7 +88,3 @@ const (
 	StateStoreName      = "rlark-state"
 	StateStoreNamespace = "rlark-system"
 )
-
-func upgradeConfigMapName(jobName string) string {
-	return "upgrade-" + jobName + "-config"
-}

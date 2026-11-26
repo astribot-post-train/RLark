@@ -97,11 +97,18 @@ func isString(n *yaml.Node, want string) bool {
 
 func imageReference(n *yaml.Node, field string) (string, error) {
 	if n != nil && n.Kind == yaml.ScalarNode && n.Tag == "!!str" {
-		if named, err := reference.ParseNormalizedNamed(n.Value); err == nil {
-			if digested, ok := named.(reference.Digested); ok && digested.Digest().Algorithm().String() == "sha256" {
-				return n.Value, nil
-			}
+		if image, err := pinnedImage(n.Value); err == nil {
+			return image, nil
 		}
 	}
 	return "", fmt.Errorf("DeployConfig kubernetes.%s must be an image pinned by sha256 digest", field)
+}
+
+func pinnedImage(value string) (string, error) {
+	if named, err := reference.ParseNormalizedNamed(value); err == nil {
+		if digested, ok := named.(reference.Digested); ok && digested.Digest().Algorithm().String() == "sha256" {
+			return value, nil
+		}
+	}
+	return "", errors.New("expected an image pinned by sha256 digest")
 }

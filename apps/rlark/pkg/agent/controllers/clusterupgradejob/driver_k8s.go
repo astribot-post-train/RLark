@@ -23,6 +23,7 @@ type K8sDriver struct {
 	namespace         string
 	managementCluster string
 	stateStore        StateStore
+	policy            *clusterupgrade.JobPolicy
 }
 
 // NewK8sDriver creates a K8sDriver.
@@ -40,10 +41,33 @@ func (d *K8sDriver) StateStore() StateStore {
 	return d.stateStore
 }
 
+func (d *K8sDriver) SnapshotsLiveState() bool { return d.policy != nil }
+
+const childUIDLabel = "rlark.io/cluster-upgrade-job-uid"
+
+func imageOnlyJobName(job *rlarkv1alpha1.ClusterUpgradeJob) string {
+	return "upgrade-attempt-" + string(job.UID)
+}
+
+func (d *K8sDriver) attemptName(job *rlarkv1alpha1.ClusterUpgradeJob) string {
+	if d.policy != nil {
+		return imageOnlyJobName(job)
+	}
+	return "upgrade-" + job.Name
+}
+
 // PrepareConfig stores the merged deploy config as a ConfigMap.
 // The configRef returned is the ConfigMap name.
 func (d *K8sDriver) PrepareConfig(ctx context.Context, job *rlarkv1alpha1.ClusterUpgradeJob, config string) (string, error) {
-	cmName := upgradeConfigMapName(job.Name)
+	if d.policy != nil {
+		if job.UID == "" {
+			return "", fmt.Errorf("cluster upgrade job UID is required")
+		}
+		if err := d.policy.Validate(ctx, d.client, job.Spec.Image, config); err != nil {
+			return "", err
+		}
+	}
+	cmName := d.attemptName(job) + "-config"
 	cm := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      cmName,
@@ -53,11 +77,24 @@ func (d *K8sDriver) PrepareConfig(ctx context.Context, job *rlarkv1alpha1.Cluste
 			"deploy-config.yaml": config,
 		},
 	}
+	if d.policy != nil {
+		cm.Immutable = ptr.To(true)
+		cm.Labels = map[string]string{childUIDLabel: string(job.UID)}
+	}
 	if err := d.client.Create(ctx, cm); err != nil {
 		// Tolerate AlreadyExists in case the agent restarted after creating
 		// the ConfigMap but before recording the job status.
 		if !apierrors.IsAlreadyExists(err) {
 			return "", fmt.Errorf("create upgrade configmap: %w", err)
+		}
+		if d.policy != nil {
+			var existing corev1.ConfigMap
+			if err := d.client.Get(ctx, client.ObjectKeyFromObject(cm), &existing); err != nil {
+				return "", err
+			}
+			if existing.Labels[childUIDLabel] != string(job.UID) || existing.Data["deploy-config.yaml"] != config || !ptr.Deref(existing.Immutable, false) {
+				return "", fmt.Errorf("existing upgrade configuration does not belong to this immutable attempt")
+			}
 		}
 	}
 	return cmName, nil
@@ -67,7 +104,7 @@ func (d *K8sDriver) PrepareConfig(ctx context.Context, job *rlarkv1alpha1.Cluste
 func (d *K8sDriver) CleanupConfig(ctx context.Context, job *rlarkv1alpha1.ClusterUpgradeJob) error {
 	err := d.client.Delete(ctx, &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      upgradeConfigMapName(job.Name),
+			Name:      d.attemptName(job) + "-config",
 			Namespace: d.namespace,
 		},
 	})
@@ -122,7 +159,7 @@ func (d *K8sDriver) StartUpgrade(ctx context.Context, job *rlarkv1alpha1.Cluster
 
 	// Use a stable job name so that a restarted agent can find the existing job
 	// instead of creating a duplicate.
-	jobName := "upgrade-" + job.Name
+	jobName := d.attemptName(job)
 	k8sJob := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      jobName,
@@ -160,10 +197,35 @@ func (d *K8sDriver) StartUpgrade(ctx context.Context, job *rlarkv1alpha1.Cluster
 		},
 	}
 
+	if d.policy != nil {
+		k8sJob.Labels[childUIDLabel] = string(job.UID)
+		pod := &k8sJob.Spec.Template.Spec
+		pod.ServiceAccountName = clusterupgrade.JobServiceAccount
+		pod.Volumes = volumes[:1]
+		pod.Containers[0].VolumeMounts = volumeMounts[:1]
+		pod.Containers[0].VolumeMounts[0].ReadOnly = true
+		pod.Containers[0].Env = append(pod.Containers[0].Env,
+			corev1.EnvVar{Name: "RLARK_UPGRADE_MODE", Value: clusterupgrade.ClusterOnlyMode},
+			corev1.EnvVar{Name: "RLARK_UPGRADE_JOB_UID", Value: string(job.UID)},
+			corev1.EnvVar{Name: "RLARK_UPGRADE_DEPLOYMENT", Value: d.policy.Deployment},
+			corev1.EnvVar{Name: "POD_NAME", ValueFrom: &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.name"}}},
+			corev1.EnvVar{Name: "POD_UID", ValueFrom: &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.uid"}}},
+		)
+	}
+
 	if err := d.client.Create(ctx, k8sJob); err != nil {
 		// If the job already exists (e.g. agent restarted after creating it),
 		// return the existing job name so the caller can resume monitoring.
 		if apierrors.IsAlreadyExists(err) {
+			if d.policy != nil {
+				var existing batchv1.Job
+				if err := d.client.Get(ctx, client.ObjectKeyFromObject(k8sJob), &existing); err != nil {
+					return "", err
+				}
+				if existing.Labels[childUIDLabel] != string(job.UID) || existing.Spec.Template.Spec.ServiceAccountName != clusterupgrade.JobServiceAccount {
+					return "", fmt.Errorf("existing upgrade job does not belong to this attempt")
+				}
+			}
 			return jobName, nil
 		}
 		return "", fmt.Errorf("create upgrade job: %w", err)

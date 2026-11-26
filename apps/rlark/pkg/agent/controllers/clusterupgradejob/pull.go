@@ -11,6 +11,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 
 	rlarkv1alpha1 "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
+	"github.com/rlinf/rlark/apps/rlark/astribot/clusterupgrade"
 	"github.com/rlinf/rlark/apps/rlark/pkg/log"
 )
 
@@ -27,32 +28,31 @@ type pullReconciler struct {
 // newDriver returns the UpgradeDriver matching the agent's deployment mode.
 // Docker and Raw modes are not yet implemented; the reconciler returns an
 // error for unsupported modes so the ClusterUpgradeJob surfaces as failed.
-func (r *pullReconciler) newDriver() (UpgradeDriver, error) {
-	switch rlarkv1alpha1.AgentType(r.c.AgentType) {
-	case rlarkv1alpha1.AgentTypeKubernetes:
-		return NewK8sDriver(r.c.LocalKubeClient, r.c.ManagementNamespace), nil
-	default:
+func (r *pullReconciler) newDriver(ctx context.Context, job *rlarkv1alpha1.ClusterUpgradeJob) (UpgradeDriver, error) {
+	if rlarkv1alpha1.AgentType(r.c.AgentType) != rlarkv1alpha1.AgentTypeKubernetes {
 		return nil, fmt.Errorf("unsupported agent type %q for upgrade", r.c.AgentType)
 	}
+	driver := NewK8sDriver(r.c.LocalKubeClient, r.c.ManagementNamespace)
+	if job.Status.Phase == rlarkv1alpha1.ClusterUpgradeJobUpgrading {
+		// A running Job already selected its mode. Read its outcome even
+		// when the member's policy was changed or temporarily unavailable.
+		if job.Status.JobName == imageOnlyJobName(job) {
+			driver.policy = &clusterupgrade.JobPolicy{}
+		}
+		return driver, nil
+	}
+	policy, err := clusterupgrade.ResolveJobPolicy(ctx, r.c.LocalKubeClient)
+	if err != nil {
+		return nil, err
+	}
+	driver.policy = policy
+	return driver, nil
 }
 
 // Reconcile handles a ClusterUpgradeJob CR.
 func (r *pullReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	r.log = log.FromContext(ctx)
 	r.log.Info("reconciling cluster upgrade job", "name", req.Name)
-
-	if r.driver == nil {
-		driver, err := r.newDriver()
-		if err != nil {
-			r.log.Error(err, "failed to create upgrade driver")
-			var job rlarkv1alpha1.ClusterUpgradeJob
-			if getErr := r.c.ManagementClient.Get(ctx, req.NamespacedName, &job); getErr != nil {
-				return ctrl.Result{}, getErr
-			}
-			return ctrl.Result{}, r.updateStatus(ctx, &job, rlarkv1alpha1.ClusterUpgradeJobFailed, "", err.Error())
-		}
-		r.driver = driver
-	}
 
 	var clusterUpgradeJob rlarkv1alpha1.ClusterUpgradeJob
 	if err := r.c.ManagementClient.Get(ctx, req.NamespacedName, &clusterUpgradeJob); err != nil {
@@ -71,6 +71,13 @@ func (r *pullReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 		r.log.V(1).Info("cluster upgrade job already completed", "name", req.Name)
 		return ctrl.Result{}, nil
 	}
+
+	driver, err := r.newDriver(ctx, &clusterUpgradeJob)
+	if err != nil {
+		r.log.Error(err, "failed to create upgrade driver")
+		return ctrl.Result{}, r.updateStatus(ctx, &clusterUpgradeJob, rlarkv1alpha1.ClusterUpgradeJobFailed, "", err.Error())
+	}
+	r.driver = driver
 
 	switch clusterUpgradeJob.Status.Phase {
 	case "", rlarkv1alpha1.ClusterUpgradeJobPending:
@@ -100,7 +107,7 @@ func (r *pullReconciler) startUpgrade(ctx context.Context, job *rlarkv1alpha1.Cl
 	state, err := r.driver.StateStore().Get(ctx)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
-			r.log.Info("state not found, proceeding without rollback capability (first upgrade)")
+			r.log.Info("previous upgrade record absent")
 		} else {
 			return ctrl.Result{}, r.updateStatus(ctx, job, rlarkv1alpha1.ClusterUpgradeJobFailed, "", fmt.Sprintf("get state: %v", err))
 		}
@@ -120,7 +127,7 @@ func (r *pullReconciler) startUpgrade(ctx context.Context, job *rlarkv1alpha1.Cl
 	}
 
 	effectiveJob := job
-	if currentImage == "" && job.Spec.AutoRollback {
+	if currentImage == "" && job.Spec.AutoRollback && !r.driver.SnapshotsLiveState() {
 		r.log.Info("first upgrade, disabling auto rollback")
 		jobCopy := job.DeepCopy()
 		jobCopy.Spec.AutoRollback = false

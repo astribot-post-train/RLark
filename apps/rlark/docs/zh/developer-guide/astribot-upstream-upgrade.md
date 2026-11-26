@@ -17,9 +17,13 @@ Astribot 标准发布在 `crds-rbac` 阶段应用 CRD 和生成的管理面角�
 
 发布工具保留管理面的全站 Lease，同时在写入前按集群顺序获取成员 Kubernetes Lease。遇到冲突会报告持有者并释放本次已经获取的成员锁。使用新版发布工具前，管理员需给每个目标集群应用成员发布 RBAC 并预建 `astribot/release/member-upgrade-lease.yaml`。成员锁到期后仍须确认旧执行者已退出才能接管。旧发布工具只识别全站锁，应避免和新流程同时使用。
 
-升级协调器通过驱动接口读取结果，接受对应升级容器的结构化失败信息，并过滤任意终止文本。原地换镜像执行器和 ConfigMap 检查点已覆盖模板保留、首轮回滚和回滚续跑的本地测试。还需接通 Agent 创建 Job、Job 专用 RBAC、节点 Agent 镜像声明的受限写入接口，并完成隔离集群验收。Gateway 已按命名和选择器预校验目标。带 Astribot 驱动声明的目标会校验配置字段，并拒绝回退到上游重建流程。直连管理 API 创建子任务时的 Agent 校验仍待接入。这些路径验证通过后再将 Astribot 批量升级用于运维。
+升级协调器通过驱动接口读取结果，接受对应升级容器的结构化失败信息，并过滤任意终止文本。原地换镜像执行器和 ConfigMap 检查点已覆盖模板保留、首轮回滚和回滚续跑的本地测试。隔离测试用的 `astribot-cluster-only` 模式已接通 Agent、独立 Job 和执行器。Agent 按成员的本地可信配置固定执行器镜像摘要，以子任务 UID 命名 Job，并挂载不可变配置。Job 使用独立 ServiceAccount，核对自身 Pod 和 Job 的 UID，在成员锁内只写本地 Agent Deployment 的镜像字段。检测到 node Agent DaemonSet 会拒绝执行。直接写入管理 API 的子任务也经过成员策略校验。Gateway 继续拦截标有 Astribot 驱动的批量任务，避免回退到上游重建流程。面向带节点 Agent 的 Astribot 集群，还需接入节点 Agent 镜像声明的受限写入接口和隔离集群完整升级回滚验收。
 
 前端静态热更新使用 `astribot/release/build-ui-static.sh`，传入新的绝对输出目录。此入口与正式镜像使用相同的 IAM 构建设置，产物包含独立的 `login.html` 及其图片。发布后验证未登录跳转和已登录控制台。
+
+要在无 node Agent 的隔离成员运行这条路径，先核对管理面的 `Cluster.spec.nodeAgents` 未开启。应用成员升级 Lease 与 `astribot/release/member-upgrade-cluster-only.yaml`，将 Role 的 Deployment 名称改为该成员实际部署名。成员管理员在 `rlark-system` 建立 `rlark-agent-upgrade-policy` ConfigMap，键为 `mode=astribot-cluster-only`、`deployment` 和 `executorImage`，其中镜像必须按 SHA-256 摘要固定。仅提交该成员的测试用 `ClusterUpgradeJob`，其执行器镜像必须与策略一致，DeployConfig 只允许 `kubernetes.agent-image` 和 `kubernetes.image` 两个摘要镜像字段。这个入口用于隔离验证。
+
+已在隔离 Kind 集群使用真实 Kubernetes Job 和带 Agent 启动参数的测试工作负载验证执行器。正常镜像成功滚动，故障镜像进入 CrashLoopBackOff 后由独立 Job 恢复上一个镜像。无关启动参数保留，成员锁已释放。Agent 创建 Job 和不可变配置另有 Go 测试。
 
 参考文档
 
