@@ -56,9 +56,13 @@ func HoldStockInCluster(ctx context.Context, identity ExecutorIdentity) (*Locked
 }
 
 func holdStock(ctx context.Context, member kubernetes.Interface, reader client.Reader, identity ExecutorIdentity) (*LockedStock, error) {
-	policy, err := ResolveJobPolicy(ctx, reader)
-	if err != nil {
-		return nil, err
+	var policy *JobPolicy
+	if err := retryMemberAPI(ctx, func(call context.Context) error {
+		var err error
+		policy, err = ResolveJobPolicy(call, reader)
+		return err
+	}); err != nil {
+		return nil, stockInterrupted(ctx, err)
 	}
 	if policy == nil || policy.Mode != DriverStock {
 		return nil, errors.New("member has no enabled locked-stock upgrade policy")
@@ -70,16 +74,15 @@ func holdStock(ctx context.Context, member kubernetes.Interface, reader client.R
 		}
 		return pod, job, err
 	}
-	_, job, err := readPod(ctx)
-	if err != nil {
-		return nil, err
-	}
-	holder, jobUID := "upgrade-job/"+identity.ChildUID, string(job.UID)
+	holder := "upgrade-job/" + identity.ChildUID
+	var job *batchv1.Job
 	var guard *Guard
 	var work context.Context
-	err = wait.PollUntilContextTimeout(ctx, 2*time.Second, time.Duration(executorHandoffSeconds)*time.Second, true, func(ctxPoll context.Context) (bool, error) {
+	var lastErr error
+	err := wait.PollUntilContextTimeout(ctx, 2*time.Second, time.Duration(executorHandoffSeconds)*time.Second, true, func(ctxPoll context.Context) (bool, error) {
 		verified, observed, err := readPod(ctxPoll)
 		if err != nil {
+			lastErr = err
 			if temporaryAPIError(err) {
 				return false, nil
 			}
@@ -88,8 +91,9 @@ func holdStock(ctx context.Context, member kubernetes.Interface, reader client.R
 		job = observed
 		guard, work, err = Acquire(ctx, member.CoordinationV1().Leases(Namespace), holder, leaseExecutor(verified),
 			func(call context.Context, previousHolder, executor string) (bool, error) {
-				return executorExited(call, member, previousHolder, executor, holder, jobUID)
+				return executorExited(call, member, previousHolder, executor, holder, string(observed.UID))
 			})
+		lastErr = err
 		var conflict *LeaseConflict
 		if (errors.As(err, &conflict) && conflict.Holder == holder) || apierrors.IsConflict(err) || temporaryAPIError(err) {
 			return false, nil
@@ -97,7 +101,10 @@ func holdStock(ctx context.Context, member kubernetes.Interface, reader client.R
 		return err == nil, err
 	})
 	if err != nil {
-		return nil, err
+		if ctx.Err() == nil && errors.Is(err, context.DeadlineExceeded) && lastErr != nil {
+			err = lastErr
+		}
+		return nil, stockInterrupted(ctx, err)
 	}
 	check := func(ctx context.Context) error {
 		if _, _, err := readPod(ctx); err != nil {
@@ -115,7 +122,7 @@ func holdStock(ctx context.Context, member kubernetes.Interface, reader client.R
 			log.FromContext(ctx).Error(err, "release stock member upgrade lease")
 		}
 	}
-	return &LockedStock{Context: work, Check: check, Release: release, state: member.CoreV1().ConfigMaps(Namespace), childUID: identity.ChildUID, image: policy.ExecutorImage, jobUID: jobUID, podUID: identity.PodUID,
+	return &LockedStock{Context: work, Check: check, Release: release, state: member.CoreV1().ConfigMaps(Namespace), childUID: identity.ChildUID, image: policy.ExecutorImage, jobUID: string(job.UID), podUID: identity.PodUID,
 		replacement: guard.handoff || job.Status.Failed > 0 || job.Status.Succeeded > 0 ||
 			(job.Status.UncountedTerminatedPods != nil && (len(job.Status.UncountedTerminatedPods.Failed) > 0 || len(job.Status.UncountedTerminatedPods.Succeeded) > 0)),
 		stop: func() { guard.cancel(context.Canceled); <-guard.done }}, nil

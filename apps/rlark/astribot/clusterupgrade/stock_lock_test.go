@@ -6,9 +6,11 @@ import (
 	batchv1 "k8s.io/api/batch/v1"
 	coordinationv1 "k8s.io/api/coordination/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/fake"
+	ktesting "k8s.io/client-go/testing"
 	runtimefake "sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
@@ -42,6 +44,14 @@ func TestLockedStockSharesReleaseLeaseAndFencesState(t *testing.T) {
 	if err := releaseGuard.Release(ctx); err != nil {
 		t.Fatal(err)
 	}
+	podReads := 0
+	member.PrependReactor("get", "pods", func(ktesting.Action) (bool, runtime.Object, error) {
+		podReads++
+		if podReads == 1 {
+			return true, nil, apierrors.NewServiceUnavailable("member API restarting")
+		}
+		return false, nil, nil
+	})
 	stock, err := holdStock(ctx, member, reader, identity)
 	if err != nil {
 		t.Fatal(err)

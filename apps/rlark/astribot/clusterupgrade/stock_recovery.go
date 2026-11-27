@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 
+	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -47,9 +49,16 @@ func stockHash(values ...string) string {
 // It never infers a rollback configuration from partially upgraded objects.
 func (s *LockedStock) Run(requested string, fromState, autoRollback bool, prepare func(string, string) (StockOperations, error)) error {
 	ctx := s.Context
-	state, err := s.ReadState(ctx)
-	if err != nil {
+	var state *corev1.ConfigMap
+	if err := retryMemberAPI(ctx, func(call context.Context) error {
+		var err error
+		state, err = s.ReadState(call)
 		return err
+	}); err != nil {
+		if apierrors.IsNotFound(err) {
+			return errors.Join(ErrStockRecoveryUnverified, err)
+		}
+		return stockInterrupted(ctx, err)
 	}
 	if state.UID == "" || s.jobUID == "" || s.podUID == "" {
 		return ErrStockRecoveryUnverified

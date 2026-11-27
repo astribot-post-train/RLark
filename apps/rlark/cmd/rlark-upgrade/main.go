@@ -164,7 +164,7 @@ func runLockedStock(ctx context.Context, config *upgrade.Config) int {
 	if err != nil {
 		logger.Error(err, "acquire stock upgrade lease")
 		clusterupgrade.WriteJobDiagnostic(err)
-		if ctx.Err() != nil {
+		if ctx.Err() != nil || errors.Is(err, clusterupgrade.ErrExecutorInterrupted) {
 			return ExitExecutorInterrupted
 		}
 		return ExitPrecheckFailed
