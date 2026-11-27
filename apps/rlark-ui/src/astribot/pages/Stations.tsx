@@ -844,7 +844,7 @@ export function StationsPage({ copy: c, onJoin, onModels }: { copy: Copy; onJoin
         observation,
         start: actions.start,
       } : undefined}
-      recheck={{ pending: recheckKey === key, run: () => void recheck(item) }}
+      recheck={{ pending: recheckKey === key, run: actions.run }}
       rejoin={{
         liveKey: key,
         notice: rejoinMessage,
@@ -1033,7 +1033,7 @@ export function StationsPage({ copy: c, onJoin, onModels }: { copy: Copy; onJoin
               now={now} zh={zh} busy={power.pending} restartBusy={(item) => Boolean(outstandingRestart(restartObservationOf(item)) ||
                 (restart.pending && restart.activeLabel === item.metadata.name))}
               recheckKey={recheckKey} onChoose={choose} onPower={powerPress} onDetails={toggleOpen} onRecheck={(item) => void recheck(item)}
-              onRejoin={(item) => void rejoin(item)} onPreview={(item, trigger) => {
+              onRejoin={(item) => submitRobotRejoin(item, keyOf(item))} onPreview={(item, trigger) => {
                 const cells = cameraCells(publishedCameras(item.site?.cameras ?? item.annotations?.["rlark.io/cameras"]), zh);
                 const primary = cells.find((cell) => cell.frames && cell.present !== false) ?? cells.find((cell) => cell.present !== false) ?? cells[0];
                 if (primary) openZoom(item, primary.view, trigger);

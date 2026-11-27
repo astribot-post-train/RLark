@@ -17,6 +17,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	rlarkfake "github.com/rlinf/rlark/api/kubeclients/clientset/versioned/fake"
+	rlarkv1alpha1 "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
 	stationv1alpha1 "github.com/rlinf/rlark/astribot/station/api/v1alpha1"
 	"github.com/rlinf/rlark/astribot/station/controller"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -110,7 +111,7 @@ func TestRejoinLoopbackFixture(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	g := &Gateway{astribotState: astribotState{stationClient: stationClient}, kubeClient: rlarkfake.NewSimpleClientset(), jwtSigningKey: []byte(strings.Repeat("r", 32))}
+	g := &Gateway{astribotState: astribotState{stationClient: stationClient}, kubeClient: loopbackManagementClient(), jwtSigningKey: []byte(strings.Repeat("r", 32))}
 	token, _, err := g.issueJWT("loopback-admin", "admin")
 	if err != nil {
 		t.Fatal(err)
@@ -173,7 +174,10 @@ func requireLoopbackAddress(address string) error {
 func loopbackStationClient() (*dynamicfake.FakeDynamicClient, error) {
 	cluster := stationHandlerCluster(rejoinFixtureCluster, rejoinFixtureNamespace)
 	_ = unstructured.SetNestedField(cluster.Object, rejoinFixtureDisplayCluster, "spec", "displayName")
+	cluster.SetGeneration(1)
+	cluster.SetResourceVersion("1")
 	machine := handlerMachine(rejoinFixtureMachine, "Joined", "", rejoinFixtureSerial)
+	_ = unstructured.SetNestedField(machine.Object, "shenzhen", "spec", "site")
 	_ = unstructured.SetNestedField(machine.Object, rejoinFixtureCluster, "status", "clusterID")
 	_ = unstructured.SetNestedField(machine.Object, rejoinFixtureNode, "status", "nodeName")
 	_ = unstructured.SetNestedField(machine.Object, rejoinFixtureModel, "spec", "admit", "model")
@@ -194,10 +198,34 @@ func loopbackStationClient() (*dynamicfake.FakeDynamicClient, error) {
 		"apiVersion": "station.rlark.io/v1alpha1", "kind": "RobotModel", "metadata": map[string]any{"name": rejoinFixtureModel},
 		"spec": map[string]any{"displayName": "S1U fixture"},
 	}}
+	enrollment := &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "station.rlark.io/v1alpha1", "kind": "NetworkEnrollment",
+		"metadata": map[string]any{"name": rejoinFixtureNode, "namespace": rejoinFixtureNamespace,
+			"labels": map[string]any{"rlark.io/robot-model": rejoinFixtureModel, "rlark.io/node-category": "robot"}},
+		"spec": map[string]any{"clusterID": rejoinFixtureCluster, "nodeUID": rejoinFixtureNodeUID, "publicKey": "Rpk1Y6lpJXIGOdNcgLMYs0J6mBG+67d85HVJs+upaR4="},
+		"status": map[string]any{"phase": "Enrolled", "site": "shenzhen", "address": "10.254.240.26",
+			"observation": map[string]any{"nodeUID": rejoinFixtureNodeUID, "systemUUID": "fixture-system-02"},
+			"node":        map[string]any{"state": "Offline", "conditions": []any{map[string]any{"type": "AgentConnected", "status": "False"}}}},
+	}}
+	memberNode := &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "rlinf.io/v1alpha1", "kind": "Node", "metadata": map[string]any{"name": rejoinFixtureNode, "namespace": rejoinFixtureNamespace,
+			"labels": map[string]any{"rlark.io/robot-model": rejoinFixtureModel, "rlark.io/node-category": "robot", "rlark.io/robot-body": "s1u"}},
+		"spec": map[string]any{"displayName": "S02"}, "status": map[string]any{"phase": "Offline"},
+	}}
 	return dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), map[schema.GroupVersionResource]string{
 		stationClusterGVR: "ClusterList", machineGVR: "MachineList", nodeAdmissionGVR: "NodeAdmissionList", nodeClassGVR: "NodeClassList",
-		robotModelGVR: "RobotModelList", nodeOperationGVR: "NodeOperationList",
-	}, cluster, machine, admission, class, model), nil
+		robotModelGVR: "RobotModelList", nodeOperationGVR: "NodeOperationList", networkEnrollmentGVR: "NetworkEnrollmentList", siteNodeGVR: "NodeList",
+	}, cluster, machine, admission, class, model, enrollment, memberNode), nil
+}
+
+func loopbackManagementClient() *rlarkfake.Clientset {
+	cluster := &rlarkv1alpha1.Cluster{ObjectMeta: metav1.ObjectMeta{Name: rejoinFixtureCluster},
+		Spec:   rlarkv1alpha1.ClusterSpec{DisplayName: rejoinFixtureDisplayCluster, AgentNamespace: rejoinFixtureNamespace},
+		Status: rlarkv1alpha1.ClusterStatus{Phase: rlarkv1alpha1.ClusterOnline, TotalNodes: 1, DisconnectedNodes: 1}}
+	node := &rlarkv1alpha1.Node{ObjectMeta: metav1.ObjectMeta{Name: rejoinFixtureNode, Namespace: rejoinFixtureNamespace,
+		Labels: map[string]string{"rlark.io/robot-model": rejoinFixtureModel, "rlark.io/node-category": "robot", "rlark.io/robot-body": "s1u"}},
+		Spec: rlarkv1alpha1.NodeSpec{DisplayName: "S02"}, Status: rlarkv1alpha1.NodeStatus{Phase: rlarkv1alpha1.NodeOffline}}
+	return rlarkfake.NewSimpleClientset(cluster, node)
 }
 
 func loopbackReconcilers(mode string, delay time.Duration) (client.Client, *controller.MachineReconciler, *controller.NodeOperationReconciler, error) {

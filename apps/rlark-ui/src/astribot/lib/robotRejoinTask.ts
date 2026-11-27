@@ -228,7 +228,8 @@ export function pickRejoinOperation(operations: NodeOperation[], clusterID: stri
 
 // One joined robot Machine for this cluster and node. Zero or several means the card must not guess.
 export function machinesForRejoin(machines: Machine[], clusterID: string, nodeName: string): Machine[] {
-  return machines.filter((machine) => machine.phase === "Joined"
+  return machines.filter((machine) => (machine.phase === "Joined"
+    || (machine.phase === "Admitted" && ["Failed", "Blocked"].includes(machine.join?.phase ?? "")))
     && machine.node_name === nodeName
     && machine.machine_type !== "Server"
     && (machine.cluster_id === clusterID || machine.admit_cluster_id === clusterID));
