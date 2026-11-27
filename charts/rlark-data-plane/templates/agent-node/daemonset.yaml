@@ -24,6 +24,15 @@ rules:
   - apiGroups: [""]
     resources: ["events"]
     verbs: ["list", "watch"]
+  # The Gateway serves a Job's logs by proxying the member cluster's pod-log endpoint through the
+  # node agent (/api/proxy/<agent>/api/kubernetes/...); without these the agent answers 403 and the
+  # Job logs page only shows the proxy error.
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
