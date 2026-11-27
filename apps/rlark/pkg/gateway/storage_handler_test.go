@@ -10,38 +10,41 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/rlinf/rlark/apps/rlark/astribot/storageconfig"
+	"github.com/rlinf/rlark/apps/rlark/astribot/storageref"
+	"github.com/rlinf/rlark/apps/rlark/pkg/configs"
+	"github.com/rlinf/rlark/apps/rlark/pkg/distribution"
+	"github.com/rlinf/rlark/apps/rlark/pkg/gateway/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/client-go/kubernetes/fake"
-
-	"github.com/rlinf/rlark/apps/rlark/pkg/configs"
-	"github.com/rlinf/rlark/apps/rlark/pkg/distribution"
-	"github.com/rlinf/rlark/apps/rlark/pkg/gateway/storage"
 )
 
-func TestBuildStorageClassReplicationSecret(t *testing.T) {
+func TestRenderStorageClassReplication(t *testing.T) {
 	req := CreateStorageClassRequest{
 		Name: "object-storage", Description: "test storage", Clusters: []string{"rlark-cluster-a", "rlark-cluster-b"},
 		Provider: "Minio", Endpoint: "https://minio.example.com", AccessKeyId: "access", AccessKeySecret: "secret", Bucket: "bucket",
 	}
-	stored, err := normalizeStorageClass(req)
+	stored, err := storageconfig.NormalizeClass(req)
 	require.NoError(t, err)
-	secret, err := buildStorageClassReplicationSecret("management", "sc-0123456789abcdef", stored)
+	secret, err := storageconfig.RenderReplication("management", "sc-0123456789abcdef", stored)
 	require.NoError(t, err)
 
 	assert.Equal(t, "sc-0123456789abcdef-replication", secret.Name)
 	assert.Equal(t, "management", secret.Namespace)
 	assert.Equal(t, distribution.ReplicationSecretType, secret.Type)
-	assert.Equal(t, "true", secret.Labels[storageClassReplicationLabel])
+	assert.Equal(t, "true", secret.Labels[storageconfig.ReplicationLabel])
 
 	replication, err := distribution.Parse(secret.Data)
 	require.NoError(t, err)
 	require.NotNil(t, replication.Config.Targets.Namespaces)
 	assert.Equal(t, []string{"rlark-cluster-a", "rlark-cluster-b"}, replication.Config.Targets.Namespaces.Include)
-	require.Len(t, replication.Objects, 1)
+	require.Len(t, replication.Objects, 2)
+	assert.Equal(t, "ConfigMap", replication.Objects[1].GetKind())
+	assert.Equal(t, storageref.ViewConfigMapName("sc-0123456789abcdef"), replication.Objects[1].GetName())
 
 	delivery := replication.Objects[0]
 	assert.Equal(t, "sc-0123456789abcdef-delivery", delivery.GetName())
@@ -53,14 +56,13 @@ func TestBuildStorageClassReplicationSecret(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.True(t, deliveryDefinition.Config.Security.AllowClusterScoped)
-	require.Len(t, deliveryDefinition.Objects, 2)
 
 	var storageSecret, storageClass *unstructured.Unstructured
 	for _, object := range deliveryDefinition.Objects {
-		switch object.GetKind() {
-		case "Secret":
+		switch {
+		case object.GetKind() == "Secret" && object.GetName() == "sc-0123456789abcdef-secret":
 			storageSecret = object
-		case "StorageClass":
+		case object.GetKind() == "StorageClass" && object.GetName() == "sc-0123456789abcdef":
 			storageClass = object
 		}
 	}
@@ -69,7 +71,7 @@ func TestBuildStorageClassReplicationSecret(t *testing.T) {
 	assert.Equal(t, "sc-0123456789abcdef-secret", storageSecret.GetName())
 	assert.Equal(t, "kube-system", storageSecret.GetNamespace())
 	assert.Equal(t, "sc-0123456789abcdef", storageClass.GetName())
-	assert.Equal(t, "object-storage", storageClass.GetAnnotations()[annoStorageClassName])
+	assert.Equal(t, "object-storage", storageClass.GetAnnotations()[storageconfig.NameAnnotation])
 	assert.Empty(t, storageClass.GetNamespace())
 	assert.Equal(t, "rclone.csi.veloxpack.io", nestedString(t, storageClass.Object, "provisioner"))
 	parameters, found, err := unstructured.NestedStringMap(storageClass.Object, "parameters")
@@ -79,14 +81,14 @@ func TestBuildStorageClassReplicationSecret(t *testing.T) {
 	assert.Equal(t, "kube-system", parameters["csi.storage.k8s.io/node-publish-secret-namespace"])
 }
 
-func TestBuildStorageClassReplicationSecretSkipsInvalidNameAnnotation(t *testing.T) {
+func TestRenderStorageClassReplicationSkipsInvalidNameAnnotation(t *testing.T) {
 	req := CreateStorageClassRequest{
 		Name: "invalid name", Clusters: []string{"rlark-cluster-a"},
 		Provider: "Minio", Endpoint: "https://minio.example.com", AccessKeySecret: "secret", Bucket: "bucket",
 	}
-	stored, err := normalizeStorageClass(req)
+	stored, err := storageconfig.NormalizeClass(req)
 	require.NoError(t, err)
-	secret, err := buildStorageClassReplicationSecret("management", "sc-0123456789abcdef", stored)
+	secret, err := storageconfig.RenderReplication("management", "sc-0123456789abcdef", stored)
 	require.NoError(t, err)
 
 	replication, err := distribution.Parse(secret.Data)
@@ -99,7 +101,7 @@ func TestBuildStorageClassReplicationSecretSkipsInvalidNameAnnotation(t *testing
 	require.NoError(t, err)
 	for _, object := range deliveryDefinition.Objects {
 		if object.GetKind() == "StorageClass" {
-			assert.NotContains(t, object.GetAnnotations(), annoStorageClassName)
+			assert.NotContains(t, object.GetAnnotations(), storageconfig.NameAnnotation)
 			return
 		}
 	}
@@ -112,9 +114,9 @@ func TestListStorageClassReadsReplicationDeclarations(t *testing.T) {
 		Name: "object-storage", Description: "test storage", Clusters: []string{"rlark-cluster-a", "rlark-cluster-b"},
 		Provider: "Minio", Endpoint: "https://minio.example.com", AccessKeyId: "access", AccessKeySecret: "secret", Bucket: "bucket",
 	}
-	stored, err := normalizeStorageClass(req)
+	stored, err := storageconfig.NormalizeClass(req)
 	require.NoError(t, err)
-	secret, err := buildStorageClassReplicationSecret("management", "sc-0123456789abcdef", stored)
+	secret, err := storageconfig.RenderReplication("management", "sc-0123456789abcdef", stored)
 	require.NoError(t, err)
 	gateway := &Gateway{
 		config:    Config{KubeClientConfig: configs.KubernetesClientConfig{Namespace: "management"}},
@@ -149,7 +151,7 @@ func TestListStorageClassReadsReplicationDeclarations(t *testing.T) {
 
 func TestUpdateStorageClassTreatsMaskedAccessKeyIDAsUnchanged(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	initial, err := normalizeStorageClass(CreateStorageClassRequest{
+	initial, err := storageconfig.NormalizeClass(CreateStorageClassRequest{
 		Name: "object-storage", Clusters: []string{"rlark-cluster-a"}, Provider: "Minio",
 		Endpoint: "https://minio.example.com", AccessKeyId: "access", AccessKeySecret: "stored-secret", Bucket: "bucket",
 	})
@@ -161,7 +163,7 @@ func TestUpdateStorageClassTreatsMaskedAccessKeyIDAsUnchanged(t *testing.T) {
 		return nil
 	}
 	t.Cleanup(func() { validateStorageClassCredentials = originalValidate })
-	secret, err := buildStorageClassReplicationSecret("management", "sc-0123456789abcdef", initial)
+	secret, err := storageconfig.RenderReplication("management", "sc-0123456789abcdef", initial)
 	require.NoError(t, err)
 	gateway := &Gateway{
 		config:         Config{KubeClientConfig: configs.KubernetesClientConfig{Namespace: "management"}},
@@ -179,7 +181,7 @@ func TestUpdateStorageClassTreatsMaskedAccessKeyIDAsUnchanged(t *testing.T) {
 
 	updated, err := gateway.rawClient.CoreV1().Secrets("management").Get(context.Background(), secret.Name, metav1.GetOptions{})
 	require.NoError(t, err)
-	_, stored, err := storageClassFromSecret(updated)
+	_, stored, err := storageconfig.ClassFromSecret(updated)
 	require.NoError(t, err)
 	assert.Equal(t, "updated description", stored.Description)
 	assert.Equal(t, "stored-secret", stored.AccessKey)
@@ -190,7 +192,7 @@ func TestUpdateStorageClassTreatsMaskedAccessKeyIDAsUnchanged(t *testing.T) {
 
 func TestUpdateStorageClassRetainsStoredAccessSecret(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	initial, err := normalizeStorageClass(CreateStorageClassRequest{
+	initial, err := storageconfig.NormalizeClass(CreateStorageClassRequest{
 		Name: "object-storage", Clusters: []string{"rlark-cluster-a"}, Provider: "Minio",
 		Endpoint: "https://minio.example.com", AccessKeyId: "access", AccessKeySecret: "stored-secret", Bucket: "bucket",
 	})
@@ -202,7 +204,7 @@ func TestUpdateStorageClassRetainsStoredAccessSecret(t *testing.T) {
 		return nil
 	}
 	t.Cleanup(func() { validateStorageClassCredentials = originalValidate })
-	secret, err := buildStorageClassReplicationSecret("management", "sc-0123456789abcdef", initial)
+	secret, err := storageconfig.RenderReplication("management", "sc-0123456789abcdef", initial)
 	require.NoError(t, err)
 	gateway := &Gateway{
 		config:         Config{KubeClientConfig: configs.KubernetesClientConfig{Namespace: "management"}},
@@ -220,7 +222,7 @@ func TestUpdateStorageClassRetainsStoredAccessSecret(t *testing.T) {
 
 	updated, err := gateway.rawClient.CoreV1().Secrets("management").Get(context.Background(), secret.Name, metav1.GetOptions{})
 	require.NoError(t, err)
-	_, stored, err := storageClassFromSecret(updated)
+	_, stored, err := storageconfig.ClassFromSecret(updated)
 	require.NoError(t, err)
 	assert.Equal(t, "stored-secret", stored.AccessKey)
 	assert.Equal(t, "access", stored.AccessKeyID)
@@ -288,12 +290,12 @@ func TestCreateStorageClassRejectsInvalidCredentials(t *testing.T) {
 
 func TestUpdateStorageClassRejectsInvalidCredentials(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	initial, err := normalizeStorageClass(CreateStorageClassRequest{
+	initial, err := storageconfig.NormalizeClass(CreateStorageClassRequest{
 		Name: "object-storage", Clusters: []string{"rlark-cluster-a"}, Provider: "Minio",
 		Endpoint: "https://minio.example.com", AccessKeyId: "access", AccessKeySecret: "stored-secret", Bucket: "bucket",
 	})
 	require.NoError(t, err)
-	secret, err := buildStorageClassReplicationSecret("management", "sc-0123456789abcdef", initial)
+	secret, err := storageconfig.RenderReplication("management", "sc-0123456789abcdef", initial)
 	require.NoError(t, err)
 	originalValidate := validateStorageClassCredentials
 	validateStorageClassCredentials = func(context.Context, storedStorageClass) error {
@@ -321,19 +323,19 @@ func TestUpdateStorageClassRejectsInvalidCredentials(t *testing.T) {
 
 	current, err := gateway.rawClient.CoreV1().Secrets("management").Get(context.Background(), secret.Name, metav1.GetOptions{})
 	require.NoError(t, err)
-	_, stored, err := storageClassFromSecret(current)
+	_, stored, err := storageconfig.ClassFromSecret(current)
 	require.NoError(t, err)
 	assert.Equal(t, initial, stored)
 }
 
 func TestUpdateStorageClassReportsStructuredRequiredFieldErrors(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	initial, err := normalizeStorageClass(CreateStorageClassRequest{
+	initial, err := storageconfig.NormalizeClass(CreateStorageClassRequest{
 		Name: "object-storage", Clusters: []string{"rlark-cluster-a"}, Provider: "Minio",
 		Endpoint: "https://minio.example.com", AccessKeyId: "access", AccessKeySecret: "stored-secret", Bucket: "bucket",
 	})
 	require.NoError(t, err)
-	secret, err := buildStorageClassReplicationSecret("management", "sc-0123456789abcdef", initial)
+	secret, err := storageconfig.RenderReplication("management", "sc-0123456789abcdef", initial)
 	require.NoError(t, err)
 	gateway := &Gateway{
 		config:         Config{KubeClientConfig: configs.KubernetesClientConfig{Namespace: "management"}},
@@ -406,7 +408,7 @@ func TestNormalizeStorageClassResolvesProviderAndEndpoint(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			stored, err := normalizeStorageClass(tc.req)
+			stored, err := storageconfig.NormalizeClass(tc.req)
 			require.NoError(t, err)
 			assert.Equal(t, tc.wantProvider, stored.Provider)
 			assert.Equal(t, tc.wantEndpoint, stored.Endpoint)
@@ -452,19 +454,19 @@ func TestNormalizeStorageClassRejectsInvalidProviderAndEndpoint(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := normalizeStorageClass(tc.req)
+			_, err := storageconfig.NormalizeClass(tc.req)
 			require.Error(t, err)
 		})
 	}
 }
 
 func TestGetStorageClientDoesNotRequireConfiguredCluster(t *testing.T) {
-	stored, err := normalizeStorageClass(CreateStorageClassRequest{
+	stored, err := storageconfig.NormalizeClass(CreateStorageClassRequest{
 		Name: "object-storage", Clusters: []string{"rlark-cluster-a"}, Provider: "Minio",
 		Endpoint: "https://minio.example.com", AccessKeyId: "access", AccessKeySecret: "secret", Bucket: "bucket",
 	})
 	require.NoError(t, err)
-	secret, err := buildStorageClassReplicationSecret("management", "sc-0123456789abcdef", stored)
+	secret, err := storageconfig.RenderReplication("management", "sc-0123456789abcdef", stored)
 	require.NoError(t, err)
 	gateway := &Gateway{
 		config:         Config{KubeClientConfig: configs.KubernetesClientConfig{Namespace: "management"}},
@@ -481,7 +483,7 @@ func TestStorageClassFromSecretCanonicalizesLegacyRecords(t *testing.T) {
 	// 旧版 UI 提交的是展示名, 并且允许把 path_style 置为 true, 这里验证读取
 	// 路径会把两者修正为与新写入记录一致的形式.
 	stored := storedStorageClass{
-		Version: storageClassVersion, Name: "object-storage", Clusters: []string{"rlark-cluster-a"},
+		Version: storageconfig.DeclarationVersion, Name: "object-storage", Clusters: []string{"rlark-cluster-a"},
 		Provider: "Aliyun OSS", Endpoint: "https://oss-cn-beijing.aliyuncs.com", Region: "cn-beijing",
 		Bucket: "bucket", PathStyle: true,
 	}
@@ -489,15 +491,15 @@ func TestStorageClassFromSecretCanonicalizesLegacyRecords(t *testing.T) {
 	require.NoError(t, err)
 	secret := &v1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      storageClassReplicationName("sc-0123456789abcdef"),
+			Name:      storageconfig.ReplicationName("sc-0123456789abcdef"),
 			Namespace: "management",
-			Labels:    map[string]string{storageClassReplicationLabel: "true"},
+			Labels:    map[string]string{storageconfig.ReplicationLabel: "true"},
 		},
 		Type: distribution.ReplicationSecretType,
 		Data: map[string][]byte{"storageclass": storedJSON},
 	}
 
-	id, decoded, err := storageClassFromSecret(secret)
+	id, decoded, err := storageconfig.ClassFromSecret(secret)
 	require.NoError(t, err)
 	assert.Equal(t, "sc-0123456789abcdef", id)
 	assert.Equal(t, "Alibaba", decoded.Provider)

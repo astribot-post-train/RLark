@@ -7,6 +7,9 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"github.com/rlinf/rlark/apps/rlark/astribot/provisioning/workflow"
+	"github.com/rlinf/rlark/apps/rlark/astribot/stationidentity"
+	"github.com/rlinf/rlark/apps/rlark/astribot/storageconfig"
 	"github.com/spf13/pflag"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/rest"
@@ -17,7 +20,7 @@ import (
 type astribotState struct {
 	stationClient    dynamic.Interface
 	networkSummary   nodeNetworkSummaryClient
-	stationBootstrap stationBootstrap
+	stationBootstrap workflow.Bootstrap
 
 	// registryHTTPClient overrides the registry browsing client (tests).
 	registryHTTPClient *http.Client
@@ -26,11 +29,7 @@ type astribotState struct {
 	// digest is a content address, so an entry never goes stale; tags are resolved every time.
 	registryImages *lru.Cache
 
-	// provisions are the clusters being made, nodeJoins the machines being joined over SSH; provisionDial logs in to
-	// a machine of either.
-	provisions    stagedRuns
-	nodeJoins     stagedRuns
-	provisionDial provisionDialFunc
+	provisioningWorkflow *workflow.Service
 }
 
 // AstribotConfig is our part of the Gateway's configuration; Config embeds it. Every field is required.
@@ -58,7 +57,6 @@ func (c *AstribotConfig) setupFlags(fs *pflag.FlagSet) {
 // setupAstribot is NewGateway's part for our state.
 func (g *Gateway) setupAstribot() {
 	g.registryImages = lru.New(registryImageCacheEntries)
-	g.provisionDial = dialProvisionMachine
 }
 
 // initAstribot is init's part for our clients, right after the Kubernetes clients.
@@ -71,27 +69,56 @@ func (g *Gateway) initAstribot(restConfig *rest.Config) error {
 	if len(g.config.RegistryBrowseAllowedHosts) == 0 {
 		return errors.New("--registry-browse-allowed-hosts is required")
 	}
-	g.networkSummary, err = newStationNetworkClient(g.config.StationAPIAddress, g.config.StationAPICAFile, g.config.StationGatewayCredentialFile)
+	g.networkSummary, err = stationidentity.NewNetworkClient(g.config.StationAPIAddress, g.config.StationAPICAFile, g.config.StationGatewayCredentialFile)
 	if err != nil {
 		return fmt.Errorf("configure Station network summaries: %w", err)
 	}
-	g.stationBootstrap, err = newStationBootstrapClient(g.config.StationAPIBootstrapURL, g.config.StationAPIAddress, g.config.StationAPICAFile)
+	g.stationBootstrap, err = stationidentity.NewBootstrapClient(g.config.StationAPIBootstrapURL, g.config.StationAPIAddress, g.config.StationAPICAFile)
 	if err != nil {
 		return fmt.Errorf("configure join codes: %w", err)
 	}
+	g.setupProvisioningWorkflow()
 	return nil
+}
+
+func (g *Gateway) setupProvisioningWorkflow() {
+	g.provisioningWorkflow = workflow.New(workflow.Config{
+		ManagementNamespace: g.managementNamespace(),
+		ServerAddress:       g.config.ServerAddress,
+		StationCAFile:       g.config.StationAPICAFile,
+	}, g.kubeClient, g.rawClient, g.stationClient, g.stationBootstrap, workflow.Hooks{
+		GetKCPAdminCerts:          g.getKCPAdminCerts,
+		SignCertViaServer:         g.signCertViaServer,
+		StoreOwnedAgentCertSecret: g.storeOwnedAgentCertSecret,
+		ImagePullSecretsOf:        g.imagePullSecretsOf,
+		ProxyKubeRequest:          g.proxyKubeRequest,
+		PublishAddonPackage:       g.publishAddonPackage,
+		FetchPodLogs:              g.fetchPodLogs,
+		DistributeJobSecret:       g.distributeJobSecret,
+	}, workflow.HTTP{
+		RespondError:              respondError,
+		RespondKubeError:          respondKubeError,
+		DecodeOneJSON:             decodeOneJSON,
+		Actor:                     func(c *gin.Context) string { return c.GetString(authSubjectKey) },
+		StationNamespace:          g.stationNamespace,
+		CodeInvalidRequestBody:    CodeInvalidRequestBody,
+		CodeInvalidRequest:        CodeInvalidRequest,
+		CodeResourceConflict:      CodeResourceConflict,
+		CodeResourceAlreadyExists: CodeResourceAlreadyExists,
+		CodeNotConfigured:         CodeNotConfigured,
+	})
 }
 
 // startAstribot is Run's part once init is done, before the HTTP server starts.
 func (g *Gateway) startAstribot(ctx context.Context) error {
-	g.rerenderStorageClasses(ctx)
-	if err := g.interruptProvisions(ctx); err != nil {
+	storageconfig.RerenderClasses(ctx, g.rawClient, g.managementNamespace())
+	if err := g.provisioningWorkflow.InterruptProvisions(ctx); err != nil {
 		return err
 	}
-	if err := g.interruptNodeJoins(ctx); err != nil {
+	if err := g.provisioningWorkflow.InterruptNodeJoins(ctx); err != nil {
 		return err
 	}
-	go g.sweepRobotClaims(ctx)
+	go g.robotControlRoutes().SweepClaims(ctx)
 	return nil
 }
 
@@ -119,7 +146,7 @@ func (g *Gateway) registerAstribotRoutes(api *gin.RouterGroup) {
 	{
 		station.GET("", g.handleListStations)
 		station.GET("/:name", g.handleGetStation)
-		station.GET("/:name/running-images", g.handleStationRunningImages)
+		g.registerStationObservation(station)
 		station.DELETE("/:name", g.handleDeleteStation)
 	}
 	stationNodeOperations := adminAPI.Group("/station/node-operations")
@@ -130,8 +157,7 @@ func (g *Gateway) registerAstribotRoutes(api *gin.RouterGroup) {
 	}
 	adminAPI.GET("/station/site-network", g.handleGetSiteNetwork)
 	adminAPI.PUT("/station/site-network/sites/:site/discovery", g.handleUpdateSiteDiscovery)
-	adminAPI.GET("/station/robot-models", g.handleListRobotModels)
-	adminAPI.DELETE("/station/robot-models/:name", g.handleDeleteRobotModel)
+	g.registerRobotModelRoutes(adminAPI)
 	nodeAdmissions := adminAPI.Group("/station/node-admissions")
 	{
 		nodeAdmissions.GET("", g.handleListNodeAdmissions)
@@ -141,19 +167,19 @@ func (g *Gateway) registerAstribotRoutes(api *gin.RouterGroup) {
 	}
 	nodeJoins := adminAPI.Group("/station/node-joins")
 	{
-		nodeJoins.GET("", g.handleListNodeJoins)
-		nodeJoins.POST("", g.handleCreateNodeJoin)
-		nodeJoins.GET("/:name", g.handleGetNodeJoin)
-		nodeJoins.POST("/:name/retry", g.handleRetryNodeJoin)
-		nodeJoins.POST("/:name/clear", g.handleClearNodeJoin)
+		nodeJoins.GET("", g.provisioningWorkflow.HandleListNodeJoins)
+		nodeJoins.POST("", g.provisioningWorkflow.HandleCreateNodeJoin)
+		nodeJoins.GET("/:name", g.provisioningWorkflow.HandleGetNodeJoin)
+		nodeJoins.POST("/:name/retry", g.provisioningWorkflow.HandleRetryNodeJoin)
+		nodeJoins.POST("/:name/clear", g.provisioningWorkflow.HandleClearNodeJoin)
 	}
 	clusterProvisions := adminAPI.Group("/cluster-provisions")
 	{
-		clusterProvisions.GET("", g.handleListClusterProvisions)
-		clusterProvisions.POST("", g.handleCreateClusterProvision)
-		clusterProvisions.GET("/:name", g.handleGetClusterProvision)
-		clusterProvisions.POST("/:name/retry", g.handleRetryClusterProvision)
-		clusterProvisions.POST("/:name/clear", g.handleClearClusterProvision)
+		clusterProvisions.GET("", g.provisioningWorkflow.HandleListClusterProvisions)
+		clusterProvisions.POST("", g.provisioningWorkflow.HandleCreateClusterProvision)
+		clusterProvisions.GET("/:name", g.provisioningWorkflow.HandleGetClusterProvision)
+		clusterProvisions.POST("/:name/retry", g.provisioningWorkflow.HandleRetryClusterProvision)
+		clusterProvisions.POST("/:name/clear", g.provisioningWorkflow.HandleClearClusterProvision)
 	}
 	adminAPI.GET("/station/machines", g.handleListMachines)
 	adminAPI.POST("/station/machines/admit", g.handleAdmitMachines)

@@ -35,11 +35,11 @@ test("IAM controls preserve the shared dropdown indicator", () => {
 test("the Astribot edition places RLark in the footer and Astribot in the sidebar", () => {
   const footer = shared.slice(shared.indexOf("export function PlatformFooter("), shared.indexOf("export type SortDirection"));
   const logo = shared.slice(shared.indexOf("export function Logo("), shared.indexOf("export function StatusBadge("));
-  assert.match(logo, /const astribot = iamPortalEnabled\(\)/);
-  assert.match(logo, /const brand = astribot \? "Astribot" : "RLark"/);
-  assert.match(logo, /src=\{astribot \? astribotLight : [^}]+\}/);
-  assert.match(logo, /src=\{astribot \? astribotDark : [^}]+\}/);
-  assert.match(footer, /\{astribot && \([\s\S]+platform-footer-logo brand-logo-light[\s\S]+platform-footer-logo brand-logo-dark[\s\S]+RLark Open Source/);
+  assert.match(logo, /const edition = consoleBrand\(\)/);
+  assert.match(logo, /const brand = edition\?\.name \?\? "RLark"/);
+  assert.match(logo, /src=\{edition\?\.lightLogo \?\? [^}]+\}/);
+  assert.match(logo, /src=\{edition\?\.darkLogo \?\? [^}]+\}/);
+  assert.match(footer, /\{edition && \([\s\S]+platform-footer-logo brand-logo-light[\s\S]+platform-footer-logo brand-logo-dark[\s\S]+RLark Open Source/);
   assert.match(edition, /\.platform-footer-astribot \.platform-footer-links\s*\{[^}]+flex-wrap: wrap/);
   assert.match(edition, /\.sidebar-collapsed \.brand-astribot\s*\{[^}]+--edition-logo-fit: cover/);
   assert.match(edition, /@media \(max-width: 780px\)\s*\{\s*\.sidebar \.brand-astribot\s*\{[^}]+--edition-logo-fit: cover/);

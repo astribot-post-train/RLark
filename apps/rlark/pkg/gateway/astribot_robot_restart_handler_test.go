@@ -3,6 +3,7 @@ package gateway
 import (
 	"context"
 	"encoding/json"
+	"github.com/rlinf/rlark/apps/rlark/astribot/stations"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -17,8 +18,8 @@ func TestRobotRestartIsTheClaimHoldersAndLeavesTheDesiredPower(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	node := &rlarkv1alpha1.Node{ObjectMeta: metav1.ObjectMeta{
 		Name: "s1u-01-x86", Namespace: "robots", ResourceVersion: "7",
-		Labels:      map[string]string{"rlark.io/robot-id": "s1u_01", robotClaimLabel: "run_a", robotPowerLabel: "ready.1"},
-		Annotations: map[string]string{robotClaimSetAnnotation: `{"holder":"run_a","by":"service-account:fleet-runner"}`},
+		Labels:      map[string]string{"rlark.io/robot-id": "s1u_01", stations.RobotClaimLabel: "run_a", stations.RobotPowerLabel: "ready.1"},
+		Annotations: map[string]string{stations.RobotClaimSetAnnotation: `{"holder":"run_a","by":"service-account:fleet-runner"}`},
 	}}
 	var patches []string
 	g := &Gateway{accessors: map[string]*resourceAccessor{"nodes": {
@@ -68,19 +69,19 @@ func TestRobotRestartIsTheClaimHoldersAndLeavesTheDesiredPower(t *testing.T) {
 			t.Fatalf("the holder's restart: %d %s", response.Code, response.Body)
 		}
 	}
-	var restart robotRestart
-	if err := json.Unmarshal([]byte(node.Annotations[robotRestartAnnotation]), &restart); err != nil || len(patches) != 1 ||
-		restart != (robotRestart{ID: "20", Level: "power", Holder: "run_a", By: "service-account:fleet-runner", At: restart.At}) || restart.At.IsZero() {
+	var restart stations.RobotRestart
+	if err := json.Unmarshal([]byte(node.Annotations[stations.RobotRestartAnnotation]), &restart); err != nil || len(patches) != 1 ||
+		restart != (stations.RobotRestart{ID: "20", Level: "power", Holder: "run_a", By: "service-account:fleet-runner", At: restart.At}) || restart.At.IsZero() {
 		t.Fatalf("one request recorded with its holder and actor: %+v, %d patches, %v", restart, len(patches), err)
 	}
-	if node.Labels[robotPowerLabel] != "ready.1" {
-		t.Fatalf("the desired power changed: %s", node.Labels[robotPowerLabel])
+	if node.Labels[stations.RobotPowerLabel] != "ready.1" {
+		t.Fatalf("the desired power changed: %s", node.Labels[stations.RobotPowerLabel])
 	}
 	actor, role = "user:operator", roleOperator
 	if response := post(`{"level":"driver","holder":"run_a","request_id":"22"}`); response.Code != 200 {
 		t.Fatalf("an operator's restart for the holder: %d %s", response.Code, response.Body)
 	}
-	node.Labels[stationMarkLabel] = "repair"
+	node.Labels[stations.StationMarkLabel] = "repair"
 	if response := post(`{"level":"driver","holder":"run_a","request_id":"21"}`); response.Code != 409 {
 		t.Fatalf("a marked station restarted: %d %s", response.Code, response.Body)
 	}

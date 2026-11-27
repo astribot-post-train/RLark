@@ -3,16 +3,15 @@ package gateway
 import (
 	"fmt"
 	"net/http"
-	"slices"
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	rlarkv1alpha1 "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
+	"github.com/rlinf/rlark/apps/rlark/astribot/provisioning"
+	"github.com/rlinf/rlark/apps/rlark/pkg/log"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	metav1validation "k8s.io/apimachinery/pkg/apis/meta/v1/validation"
 	"k8s.io/apimachinery/pkg/util/validation/field"
-
-	rlarkv1alpha1 "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
-	"github.com/rlinf/rlark/apps/rlark/pkg/log"
 )
 
 // setClusterNodeAgents replaces spec.nodeAgents. The cluster Agent then keeps (or removes) the cluster's
@@ -94,27 +93,19 @@ func (g *Gateway) setClusterDisplayName(c *gin.Context) {
 		"cluster", c.Param("cluster_id"), "was", was, "now", displayName, "set", c.Writer.Status() == http.StatusOK)
 }
 
-// clusterTypeLabel is, on a Cluster, what kind of cluster it is: gpu (GPU 集群: training and inference machines)
-// or robot (机器人集群: robots and their site's machines). It is set when the cluster is made (POST
-// /cluster-provisions, the ClusterProvision carries it until the Cluster exists) or with PUT
-// /clusters/{id}/cluster-type. A Node's kind stays the official rlark.io/node-category-{cloud,edge,robot}.
-const clusterTypeLabel = "rlark.io/cluster-type"
-
-var clusterTypes = []string{"gpu", "robot"}
-
-// setClusterType sets the Cluster's type (clusterTypeLabel).
+// setClusterType sets the Cluster's type (provisioning.ClusterTypeLabel).
 func (g *Gateway) setClusterType(c *gin.Context) {
 	var request struct {
 		ClusterType string `json:"clusterType"`
 	}
-	if err := c.ShouldBindJSON(&request); err != nil || !slices.Contains(clusterTypes, request.ClusterType) {
+	if err := c.ShouldBindJSON(&request); err != nil || !provisioning.ValidClusterType(request.ClusterType) {
 		respondError(c, http.StatusBadRequest, CodeInvalidRequestBody, "clusterType must be gpu or robot")
 		return
 	}
 	var was string
 	g.updateCluster(c, func(cluster *rlarkv1alpha1.Cluster) error {
-		was = cluster.Labels[clusterTypeLabel]
-		metav1.SetMetaDataLabel(&cluster.ObjectMeta, clusterTypeLabel, request.ClusterType)
+		was = cluster.Labels[provisioning.ClusterTypeLabel]
+		metav1.SetMetaDataLabel(&cluster.ObjectMeta, provisioning.ClusterTypeLabel, request.ClusterType)
 		return nil
 	})
 	log.FromContext(c.Request.Context()).WithName("audit").Info("cluster type", "action", "set", "actor", c.GetString(authSubjectKey),
@@ -134,7 +125,7 @@ type AstribotClusterInfo struct {
 
 func setAstribotClusterInfo(info *ClusterInfo, cluster rlarkv1alpha1.Cluster) {
 	info.NodeAgents = cluster.Spec.NodeAgents
-	info.ClusterType = cluster.Labels[clusterTypeLabel]
+	info.ClusterType = cluster.Labels[provisioning.ClusterTypeLabel]
 	if displayName := strings.TrimSpace(cluster.Spec.DisplayName); displayName != "" {
 		info.Name = displayName
 		info.DisplayName = displayName

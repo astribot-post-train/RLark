@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/rlinf/rlark/apps/rlark/astribot/storageconfig"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	v1 "k8s.io/api/core/v1"
@@ -13,22 +14,20 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 	k8stesting "k8s.io/client-go/testing"
 	"sigs.k8s.io/yaml"
-
-	"github.com/rlinf/rlark/apps/rlark/pkg/configs"
 )
 
 func TestRerenderStorageClassesRewritesOnlyStaleRenders(t *testing.T) {
-	object, err := normalizeStorageClass(CreateStorageClassRequest{
+	object, err := storageconfig.NormalizeClass(CreateStorageClassRequest{
 		Name: "object-storage", Clusters: []string{"rlark-cluster-a"}, Provider: "Minio",
 		Endpoint: "https://minio.example.com", AccessKeyId: "access", AccessKeySecret: "stored-secret", Bucket: "bucket",
 	})
 	require.NoError(t, err)
-	share, err := normalizeStorageClass(CreateStorageClassRequest{
+	share, err := storageconfig.NormalizeClass(CreateStorageClassRequest{
 		Name: "share", Clusters: []string{"rlark-cluster-a"},
-		astribotStorageClassRequest: astribotStorageClassRequest{Type: "smb", Host: "nas.example.com", Share: "group", Username: "user", Password: "stored-password"},
+		SpecialClassRequest: storageconfig.SpecialClassRequest{Type: "smb", Host: "nas.example.com", Share: "group", Username: "user", Password: "stored-password"},
 	})
 	require.NoError(t, err)
-	stale, err := buildAstribotStorageReplicationSecret("management", "sc-0123456789abcdef", object)
+	stale, err := storageconfig.RenderReplication("management", "sc-0123456789abcdef", object)
 	require.NoError(t, err)
 	// The render of an earlier Gateway: the class kept its volumes.
 	var objects []json.RawMessage
@@ -40,7 +39,7 @@ func TestRerenderStorageClassesRewritesOnlyStaleRenders(t *testing.T) {
 	delivery.Data["manifests"] = bytes.Replace(delivery.Data["manifests"], []byte("reclaimPolicy: Delete"), []byte("reclaimPolicy: Retain"), 1)
 	stale.Data["manifests"], err = yaml.Marshal([]any{delivery, objects[1]})
 	require.NoError(t, err)
-	current, err := buildAstribotStorageReplicationSecret("management", "sc-fedcba9876543210", share)
+	current, err := storageconfig.RenderReplication("management", "sc-fedcba9876543210", share)
 	require.NoError(t, err)
 	// A declaration stored with its fields in another order is the same render.
 	var fields map[string]any
@@ -48,10 +47,9 @@ func TestRerenderStorageClassesRewritesOnlyStaleRenders(t *testing.T) {
 	current.Data["storageclass"], err = json.Marshal(fields)
 	require.NoError(t, err)
 	client := fake.NewSimpleClientset(stale, current)
-	gateway := &Gateway{config: Config{KubeClientConfig: configs.KubernetesClientConfig{Namespace: "management"}}, rawClient: client}
 
-	gateway.rerenderStorageClasses(context.Background())
-	gateway.rerenderStorageClasses(context.Background())
+	storageconfig.RerenderClasses(context.Background(), client, "management")
+	storageconfig.RerenderClasses(context.Background(), client, "management")
 
 	var updated []string
 	for _, action := range client.Actions() {
@@ -68,7 +66,7 @@ func TestRerenderStorageClassesRewritesOnlyStaleRenders(t *testing.T) {
 	require.NoError(t, json.Unmarshal(manifests, &objects))
 	require.NoError(t, json.Unmarshal(objects[0], &delivery))
 	assert.NotContains(t, string(delivery.Data["manifests"]), "reclaimPolicy: Retain")
-	_, stored, err := storageClassFromSecret(rewritten)
+	_, stored, err := storageconfig.ClassFromSecret(rewritten)
 	require.NoError(t, err)
 	assert.Equal(t, "stored-secret", stored.AccessKey)
 }

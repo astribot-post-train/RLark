@@ -7,18 +7,18 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"github.com/rlinf/rlark/apps/rlark/astribot/nodepath"
+	"github.com/rlinf/rlark/apps/rlark/astribot/storageconfig"
+	"github.com/rlinf/rlark/apps/rlark/astribot/storageref"
+	"github.com/rlinf/rlark/apps/rlark/pkg/configs"
+	"github.com/rlinf/rlark/apps/rlark/pkg/distribution"
+	"github.com/rlinf/rlark/apps/rlark/pkg/gateway/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/client-go/kubernetes/fake"
-
-	"github.com/rlinf/rlark/apps/rlark/astribot/nodepath"
-	"github.com/rlinf/rlark/apps/rlark/astribot/storageref"
-	"github.com/rlinf/rlark/apps/rlark/pkg/configs"
-	"github.com/rlinf/rlark/apps/rlark/pkg/distribution"
-	"github.com/rlinf/rlark/apps/rlark/pkg/gateway/storage"
 )
 
 func newStorageTestGateway(t *testing.T) (*Gateway, *gin.Engine) {
@@ -62,7 +62,7 @@ func replicationView(t *testing.T, secret *v1.Secret) (storageref.View, []string
 
 func endpointSecrets(t *testing.T, g *Gateway) []v1.Secret {
 	t.Helper()
-	list, err := g.rawClient.CoreV1().Secrets("management").List(context.Background(), metav1.ListOptions{LabelSelector: storageClassEndpointLabel})
+	list, err := g.rawClient.CoreV1().Secrets("management").List(context.Background(), metav1.ListOptions{LabelSelector: storageconfig.EndpointLabel})
 	require.NoError(t, err)
 	return list.Items
 }
@@ -72,9 +72,9 @@ func TestStorageClusterEndpointGetsItsOwnDeclaration(t *testing.T) {
 	response := performJSONRequest(t, router, http.MethodPost, "/storage", ks3Request())
 	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
 
-	primary, err := getStorageClassSecretByName(context.Background(), g.rawClient, "management", "ks3")
+	primary, err := storageconfig.ClassSecretByName(context.Background(), g.rawClient, "management", "ks3")
 	require.NoError(t, err)
-	id, _, err := storageClassFromSecret(primary)
+	id, _, err := storageconfig.ClassFromSecret(primary)
 	require.NoError(t, err)
 	view, clusters := replicationView(t, primary)
 	assert.Equal(t, []string{"rlark-robot"}, clusters, "the primary declaration reaches only clusters on the default endpoint")
@@ -87,7 +87,7 @@ func TestStorageClusterEndpointGetsItsOwnDeclaration(t *testing.T) {
 	require.Len(t, parts, 1)
 	assert.Equal(t, id+"-at-rlark-ksyun-gpu", parts[0].Name)
 	assert.Equal(t, distribution.ReplicationSecretType, parts[0].Type)
-	assert.Empty(t, parts[0].Labels[storageClassReplicationLabel], "an endpoint declaration is not listed as a storage")
+	assert.Empty(t, parts[0].Labels[storageconfig.ReplicationLabel], "an endpoint declaration is not listed as a storage")
 	partView, partClusters := replicationView(t, &parts[0])
 	assert.Equal(t, []string{"rlark-ksyun-gpu"}, partClusters)
 	assert.Equal(t, view, partView)
@@ -102,7 +102,7 @@ func TestStorageClusterEndpointGetsItsOwnDeclaration(t *testing.T) {
 	response = performJSONRequest(t, router, http.MethodPut, "/storage/ks3", update)
 	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
 	assert.Empty(t, endpointSecrets(t, g))
-	primary, err = getStorageClassSecretByName(context.Background(), g.rawClient, "management", "ks3")
+	primary, err = storageconfig.ClassSecretByName(context.Background(), g.rawClient, "management", "ks3")
 	require.NoError(t, err)
 	_, clusters = replicationView(t, primary)
 	assert.Equal(t, []string{"rlark-ksyun-gpu", "rlark-robot"}, clusters)
@@ -128,7 +128,7 @@ func TestStorageRenameKeepsIDAndRejectsTakenName(t *testing.T) {
 	other := ks3Request()
 	other["name"] = "taken"
 	require.Equal(t, http.StatusOK, performJSONRequest(t, router, http.MethodPost, "/storage", other).Code)
-	before, err := getStorageClassSecretByName(context.Background(), g.rawClient, "management", "fleet-ks3-post-train")
+	before, err := storageconfig.ClassSecretByName(context.Background(), g.rawClient, "management", "fleet-ks3-post-train")
 	require.NoError(t, err)
 
 	rename := ks3Request()
@@ -142,21 +142,21 @@ func TestStorageRenameKeepsIDAndRejectsTakenName(t *testing.T) {
 	delete(rename, "access_key_secret")
 	response = performJSONRequest(t, router, http.MethodPut, "/storage/fleet-ks3-post-train", rename)
 	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
-	after, err := getStorageClassSecretByName(context.Background(), g.rawClient, "management", "ks3")
+	after, err := storageconfig.ClassSecretByName(context.Background(), g.rawClient, "management", "ks3")
 	require.NoError(t, err)
 	assert.Equal(t, before.Name, after.Name, "the storage keeps its id and StorageClasses")
-	_, stored, err := storageClassFromSecret(after)
+	_, stored, err := storageconfig.ClassFromSecret(after)
 	require.NoError(t, err)
 	assert.Equal(t, "secret", stored.AccessKey)
 	view, _ := replicationView(t, after)
 	assert.Equal(t, "ks3", view.Name)
 	for _, part := range endpointSecrets(t, g) {
-		if part.Labels[storageClassEndpointLabel] == before.Name[:len(before.Name)-len("-replication")] {
+		if part.Labels[storageconfig.EndpointLabel] == before.Name[:len(before.Name)-len("-replication")] {
 			partView, _ := replicationView(t, &part)
 			assert.Equal(t, "ks3", partView.Name, "the endpoint declaration's View follows the rename")
 		}
 	}
-	_, err = getStorageClassSecretByName(context.Background(), g.rawClient, "management", "fleet-ks3-post-train")
+	_, err = storageconfig.ClassSecretByName(context.Background(), g.rawClient, "management", "fleet-ks3-post-train")
 	assert.Error(t, err)
 }
 
@@ -174,9 +174,9 @@ func TestHostPathStorageDeliversNodeDirectoryStorageClasses(t *testing.T) {
 		"fs_type": "kingstorage",
 	})
 	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
-	secret, err := getStorageClassSecretByName(context.Background(), g.rawClient, "management", "kpfs")
+	secret, err := storageconfig.ClassSecretByName(context.Background(), g.rawClient, "management", "kpfs")
 	require.NoError(t, err)
-	id, _, err := storageClassFromSecret(secret)
+	id, _, err := storageconfig.ClassFromSecret(secret)
 	require.NoError(t, err)
 	view, clusters := replicationView(t, secret)
 	assert.Equal(t, []string{"rlark-ksyun-gpu"}, clusters)
@@ -191,7 +191,7 @@ func TestHostPathStorageDeliversNodeDirectoryStorageClasses(t *testing.T) {
 	for i, profile := range []string{"default", "read"} {
 		class := objects[i]
 		assert.Equal(t, "StorageClass", class.GetKind())
-		assert.Equal(t, profile, class.GetAnnotations()[annoStorageProfile])
+		assert.Equal(t, profile, class.GetAnnotations()[storageconfig.ProfileAnnotation])
 		assert.Equal(t, nodepath.Name, nestedString(t, class.Object, "provisioner"))
 		assert.Equal(t, "WaitForFirstConsumer", nestedString(t, class.Object, "volumeBindingMode"))
 		assert.Equal(t, "/mnt/xc_kpfs/regular/post_train", nestedString(t, class.Object, "parameters", "root"))

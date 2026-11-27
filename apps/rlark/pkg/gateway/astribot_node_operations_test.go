@@ -2,13 +2,14 @@ package gateway
 
 import (
 	"encoding/json"
-	rlarkfake "github.com/rlinf/rlark/api/kubeclients/clientset/versioned/fake"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	rlarkfake "github.com/rlinf/rlark/api/kubeclients/clientset/versioned/fake"
+	"github.com/rlinf/rlark/apps/rlark/astribot/stationidentity"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/client-go/kubernetes/fake"
@@ -90,7 +91,7 @@ func TestCreateNodeOperationRejectsASecondRemovalWhileOneIsActive(t *testing.T) 
 		t.Fatalf("another node status=%d body=%s", got.Code, got.Body.String())
 	}
 	// A terminal operation may be retried with a new request ID.
-	stored, err := client.Resource(nodeOperationGVR).Namespace("agent-a").Get(t.Context(), nodeOperationName(first.ClusterID, first.RequestID), metav1.GetOptions{})
+	stored, err := client.Resource(nodeOperationGVR).Namespace("agent-a").Get(t.Context(), stationidentity.NodeOperationName(first.ClusterID, first.RequestID), metav1.GetOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -146,7 +147,7 @@ func TestARemovalLogsInNowhere(t *testing.T) {
 	if recorder.Code != http.StatusAccepted {
 		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
 	}
-	stored, err := client.Resource(nodeOperationGVR).Namespace("agent-a").Get(t.Context(), nodeOperationName(request.ClusterID, request.RequestID), metav1.GetOptions{})
+	stored, err := client.Resource(nodeOperationGVR).Namespace("agent-a").Get(t.Context(), stationidentity.NodeOperationName(request.ClusterID, request.RequestID), metav1.GetOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -160,7 +161,7 @@ func TestARemovalLogsInNowhere(t *testing.T) {
 	if got := nodeOperationCall(gateway, byName); got.Code != http.StatusAccepted {
 		t.Fatalf("a removal by name: status=%d body=%s", got.Code, got.Body.String())
 	}
-	stored, err = client.Resource(nodeOperationGVR).Namespace("agent-a").Get(t.Context(), nodeOperationName(byName.ClusterID, byName.RequestID), metav1.GetOptions{})
+	stored, err = client.Resource(nodeOperationGVR).Namespace("agent-a").Get(t.Context(), stationidentity.NodeOperationName(byName.ClusterID, byName.RequestID), metav1.GetOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}

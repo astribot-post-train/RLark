@@ -7,13 +7,13 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"github.com/rlinf/rlark/apps/rlark/astribot/storageconfig"
+	"github.com/rlinf/rlark/apps/rlark/pkg/configs"
+	"github.com/rlinf/rlark/apps/rlark/pkg/distribution"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
-
-	"github.com/rlinf/rlark/apps/rlark/pkg/configs"
-	"github.com/rlinf/rlark/apps/rlark/pkg/distribution"
 )
 
 func TestStorageMountEndpointLifecycle(t *testing.T) {
@@ -44,9 +44,9 @@ func TestStorageMountEndpointLifecycle(t *testing.T) {
 			response = performJSONRequest(t, router, http.MethodPut, "/storage/cloud", payload)
 			require.Equal(t, http.StatusOK, response.Code, response.Body.String())
 		}
-		secret, err := getStorageClassSecretByName(context.Background(), g.rawClient, "management", "cloud")
+		secret, err := storageconfig.ClassSecretByName(context.Background(), g.rawClient, "management", "cloud")
 		require.NoError(t, err)
-		_, stored, err := storageClassFromSecret(secret)
+		_, stored, err := storageconfig.ClassFromSecret(secret)
 		require.NoError(t, err)
 		assert.Equal(t, mount, stored.MountEndpoint)
 		assert.Equal(t, "ks3-regular", stored.Prefix)
@@ -94,9 +94,9 @@ func TestStorageMountEndpointLifecycle(t *testing.T) {
 
 func TestNormalizeMountEndpointRejectsInvalidAndSMB(t *testing.T) {
 	for _, endpoint := range []string{"ftp://internal.example.com", "https://", "https://internal.example.com\nkey=value"} {
-		_, err := normalizeStorageClass(CreateStorageClassRequest{Name: "cloud", Clusters: []string{"cloud"}, Provider: "Other", Endpoint: "https://public.example.com", AccessKeySecret: "secret", Bucket: "bucket", astribotStorageClassRequest: astribotStorageClassRequest{MountEndpoint: endpoint}})
+		_, err := storageconfig.NormalizeClass(CreateStorageClassRequest{Name: "cloud", Clusters: []string{"cloud"}, Provider: "Other", Endpoint: "https://public.example.com", AccessKeySecret: "secret", Bucket: "bucket", SpecialClassRequest: storageconfig.SpecialClassRequest{MountEndpoint: endpoint}})
 		require.ErrorContains(t, err, "mount_endpoint")
 	}
-	_, err := normalizeStorageClass(CreateStorageClassRequest{Name: "nas", Clusters: []string{"cloud"}, astribotStorageClassRequest: astribotStorageClassRequest{Type: "smb", Host: "nas.example.com", Share: "share", Username: "user", Password: "password", MountEndpoint: "https://internal.example.com"}})
+	_, err := storageconfig.NormalizeClass(CreateStorageClassRequest{Name: "nas", Clusters: []string{"cloud"}, SpecialClassRequest: storageconfig.SpecialClassRequest{Type: "smb", Host: "nas.example.com", Share: "share", Username: "user", Password: "password", MountEndpoint: "https://internal.example.com"}})
 	require.ErrorContains(t, err, "mount_endpoint is only supported for S3")
 }

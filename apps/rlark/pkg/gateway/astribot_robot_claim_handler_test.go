@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/rlinf/rlark/apps/rlark/astribot/stations"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -31,7 +32,7 @@ func TestARobotIsHeldByOneRunAtATimeUntilItIsReleasedOrItsLeaseIsOver(t *testing
 		get: func(context.Context, string, string, metav1.GetOptions) (any, error) { return node.DeepCopy(), nil },
 		list: func(context.Context, string, metav1.ListOptions) (any, error) {
 			list := &rlarkv1alpha1.NodeList{}
-			if node.Labels[robotClaimLabel] != "" {
+			if node.Labels[stations.RobotClaimLabel] != "" {
 				list.Items = append(list.Items, *node.DeepCopy())
 			}
 			return list, nil
@@ -92,8 +93,8 @@ func TestARobotIsHeldByOneRunAtATimeUntilItIsReleasedOrItsLeaseIsOver(t *testing
 	claim := func(subject, body string) (int, map[string]any) {
 		return call(http.MethodPut, "/robot-claim?namespace=rlark-robot", subject, "user", body)
 	}
-	stored := func() (claim robotClaim) {
-		_ = json.Unmarshal([]byte(node.Annotations[robotClaimSetAnnotation]), &claim)
+	stored := func() (claim stations.RobotClaim) {
+		_ = json.Unmarshal([]byte(node.Annotations[stations.RobotClaimSetAnnotation]), &claim)
 		return claim
 	}
 	// age makes the claim as it would be this much later.
@@ -101,7 +102,7 @@ func TestARobotIsHeldByOneRunAtATimeUntilItIsReleasedOrItsLeaseIsOver(t *testing
 		claim := stored()
 		claim.GrantedAt, claim.Until = claim.GrantedAt.Add(-by), claim.Until.Add(-by)
 		text, _ := json.Marshal(claim)
-		node.Annotations[robotClaimSetAnnotation] = string(text)
+		node.Annotations[stations.RobotClaimSetAnnotation] = string(text)
 	}
 	audit := func() map[string]any {
 		entries := logged.FilterMessage("robot claim").All()
@@ -114,7 +115,7 @@ func TestARobotIsHeldByOneRunAtATimeUntilItIsReleasedOrItsLeaseIsOver(t *testing
 	// A free robot is the applicant's, for a minute unless it says otherwise; who applied is the caller.
 	status, answer := claim("service-account:fleet", `{"holder":"run-a","job":"job-1","by":"mallory"}`)
 	if granted := stored(); status != http.StatusOK || answer["holder"] != "run-a" || answer["by"] != "service-account:fleet" ||
-		node.Labels[robotClaimLabel] != "run-a" || granted.Job != "job-1" || granted.Until.Sub(granted.GrantedAt) != time.Minute {
+		node.Labels[stations.RobotClaimLabel] != "run-a" || granted.Job != "job-1" || granted.Until.Sub(granted.GrantedAt) != time.Minute {
 		t.Fatalf("grant: %d %v, %v", status, answer, node.ObjectMeta)
 	}
 	// Anyone else is told who holds it: another holder, and the same holder's name from another caller.
@@ -157,7 +158,7 @@ func TestARobotIsHeldByOneRunAtATimeUntilItIsReleasedOrItsLeaseIsOver(t *testing
 	if status, answer := claim("carol", `{"holder":"run-c"}`); status != http.StatusConflict || holderOf(answer) != "run-a" {
 		t.Fatalf("a claim over and not swept, applied for by another: %d %v", status, answer)
 	}
-	if !g.expireRobotClaims(ctx, true) || len(node.Labels) != 0 {
+	if !g.robotControlRoutes().ExpireClaims(ctx, true) || len(node.Labels) != 0 {
 		t.Fatalf("sweep of a claim that is over: %v", node.Labels)
 	}
 	// Of two who apply at once one gets the robot: the other's write is on a Node that changed, and it is told who
@@ -170,14 +171,14 @@ func TestARobotIsHeldByOneRunAtATimeUntilItIsReleasedOrItsLeaseIsOver(t *testing
 			t.Fatalf("the grant's audit line: %v", line)
 		}
 	}
-	if status, answer := claim("bob", `{"holder":"run-b"}`); status != http.StatusConflict || holderOf(answer) != "run-c" || node.Labels[robotClaimLabel] != "run-c" {
+	if status, answer := claim("bob", `{"holder":"run-b"}`); status != http.StatusConflict || holderOf(answer) != "run-c" || node.Labels[stations.RobotClaimLabel] != "run-c" {
 		t.Fatalf("the second of two applicants: %d %v", status, answer)
 	}
 	// Only the holder gives the robot back; the Node's own PATCH and PUT do not touch the claim.
 	if status, _ := call(http.MethodDelete, "/robot-claim?namespace=rlark-robot&holder=run-c", "bob", "user", ""); status != http.StatusConflict {
 		t.Fatalf("release by another: %d", status)
 	}
-	if status, _ := call(http.MethodPatch, "", "admin", roleAdmin, `{"metadata":{"labels":{"rlark.io/robot-claim":null}}}`); status != http.StatusBadRequest || node.Labels[robotClaimLabel] != "run-c" {
+	if status, _ := call(http.MethodPatch, "", "admin", roleAdmin, `{"metadata":{"labels":{"rlark.io/robot-claim":null}}}`); status != http.StatusBadRequest || node.Labels[stations.RobotClaimLabel] != "run-c" {
 		t.Fatalf("PATCH of the claim: %d", status)
 	}
 	// Nor who made it, nor a restart for its holder.
@@ -212,7 +213,7 @@ func TestARobotIsHeldByOneRunAtATimeUntilItIsReleasedOrItsLeaseIsOver(t *testing
 	if status, _ := call(http.MethodDelete, force+"&reason=stuck", "bob", "user", ""); status != http.StatusForbidden {
 		t.Fatalf("forced release by a user: %d", status)
 	}
-	if status, _ := call(http.MethodDelete, force, "olga", roleOperator, ""); status != http.StatusBadRequest || node.Labels[robotClaimLabel] != "run-a" {
+	if status, _ := call(http.MethodDelete, force, "olga", roleOperator, ""); status != http.StatusBadRequest || node.Labels[stations.RobotClaimLabel] != "run-a" {
 		t.Fatalf("forced release without a reason: %d", status)
 	}
 	if status, answer := call(http.MethodDelete, force+"&reason=stuck", "olga", roleOperator, ""); status != http.StatusOK || answer["holder"] != "run-a" || len(node.Labels) != 0 {
@@ -223,15 +224,15 @@ func TestARobotIsHeldByOneRunAtATimeUntilItIsReleasedOrItsLeaseIsOver(t *testing
 	}
 	// The sweeper ends a claim whose lease is over, and no other.
 	claim("service-account:fleet", `{"holder":"run-a"}`)
-	if !g.expireRobotClaims(ctx, true) || node.Labels[robotClaimLabel] != "run-a" {
+	if !g.robotControlRoutes().ExpireClaims(ctx, true) || node.Labels[stations.RobotClaimLabel] != "run-a" {
 		t.Fatal("a claim within its lease was swept")
 	}
 	age(61 * time.Second)
 	// The first list after the upstream comes back ends nothing: the holders renew within the minute that follows.
-	if !g.expireRobotClaims(ctx, false) || node.Labels[robotClaimLabel] != "run-a" {
+	if !g.robotControlRoutes().ExpireClaims(ctx, false) || node.Labels[stations.RobotClaimLabel] != "run-a" {
 		t.Fatal("a claim was swept by the first list after an outage")
 	}
-	g.expireRobotClaims(ctx, true)
+	g.robotControlRoutes().ExpireClaims(ctx, true)
 	if line := audit(); len(node.Labels)+len(node.Annotations) != 0 || line["action"] != "expire" || line["holder"] != "run-a" {
 		t.Fatalf("sweep: %v, %v", node.ObjectMeta, line)
 	}
@@ -239,7 +240,7 @@ func TestARobotIsHeldByOneRunAtATimeUntilItIsReleasedOrItsLeaseIsOver(t *testing
 	if status, _ := call(http.MethodPut, "/robot-power?namespace=rlark-robot", "bob", "user", `{"desired":"off"}`); status != http.StatusForbidden {
 		t.Fatalf("power set by a user: %d", status)
 	}
-	if status, _ := call(http.MethodPut, "/robot-power?namespace=rlark-robot", "olga", roleOperator, `{"desired":"off"}`); status != http.StatusOK || !strings.HasPrefix(node.Labels[robotPowerLabel], "off.") {
+	if status, _ := call(http.MethodPut, "/robot-power?namespace=rlark-robot", "olga", roleOperator, `{"desired":"off"}`); status != http.StatusOK || !strings.HasPrefix(node.Labels[stations.RobotPowerLabel], "off.") {
 		t.Fatalf("power set by an operator: %d", status)
 	}
 }

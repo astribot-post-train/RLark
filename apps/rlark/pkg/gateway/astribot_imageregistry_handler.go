@@ -4,15 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/rlinf/rlark/apps/rlark/astribot/registry"
 	"net/http"
 	"slices"
 	"sort"
 
 	"github.com/gin-gonic/gin"
-	corev1 "k8s.io/api/core/v1"
-
 	"github.com/rlinf/rlark/apps/rlark/pkg/common"
 	"github.com/rlinf/rlark/apps/rlark/pkg/log"
+	corev1 "k8s.io/api/core/v1"
 )
 
 // auditRegistryPasswordAccess records authorization outcomes without credential values.
@@ -36,20 +36,14 @@ func (g *Gateway) handleGetImageRegistryPassword(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"password": credential.Password})
 }
 
-// agentImagePullSecret is an image registry credential as a cluster's pull Secret has it.
-type agentImagePullSecret struct {
-	Name             string `json:"name"`
-	DockerConfigJSON string `json:"docker_config_json"`
-}
-
 // imagePullSecretsOf is every image registry credential whose cluster selection takes the cluster in, as the
 // Secret the delivery makes of it in the cluster's rlark-system.
-func (g *Gateway) imagePullSecretsOf(ctx context.Context, clusterID string) ([]agentImagePullSecret, error) {
+func (g *Gateway) imagePullSecretsOf(ctx context.Context, clusterID string) ([]registry.ImagePullSecret, error) {
 	secrets, err := listImageRegistrySecrets(ctx, g.rawClient, g.managementNamespace())
 	if err != nil {
 		return nil, err
 	}
-	out := []agentImagePullSecret{}
+	out := []registry.ImagePullSecret{}
 	for i := range secrets {
 		id, ok := parseImageRegistryID(secrets[i].Name)
 		if !ok {
@@ -67,7 +61,7 @@ func (g *Gateway) imagePullSecretsOf(ctx context.Context, clusterID string) ([]a
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, agentImagePullSecret{Name: imageRegistryCredentialName(id), DockerConfigJSON: string(config)})
+		out = append(out, registry.ImagePullSecret{Name: imageRegistryCredentialName(id), DockerConfigJSON: string(config)})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out, nil

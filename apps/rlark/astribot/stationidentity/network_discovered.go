@@ -16,6 +16,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/dynamic"
 )
 
 var machineGVR = schema.GroupVersionResource{Group: stationGroup, Version: stationVersion, Resource: "machines"}
@@ -321,4 +322,11 @@ func validDiscoverySSH(host discoveredHost) bool {
 	default:
 		return false
 	}
+}
+func ReadSiteNetwork(ctx context.Context, station dynamic.Interface) (*unstructured.Unstructured, error) {
+	network, err := station.Resource(siteNetworkGVR).Namespace("station-system").Get(ctx, "default", metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		return &unstructured.Unstructured{Object: map[string]interface{}{}}, nil
+	}
+	return network, err
 }
