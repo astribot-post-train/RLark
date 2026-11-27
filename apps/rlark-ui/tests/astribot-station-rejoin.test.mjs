@@ -14,10 +14,14 @@ const assess = (admission, extra = {}) => assessRobotRejoin({
 });
 const admission = (state, fields = {}) => ({ state, ...fields });
 
-test("an unreadable site view is reported as unknown, not as a reconnect path", () => {
+test("an unreadable or still-loading site view is reported as unknown, not as a reconnect path", () => {
   const result = assess(undefined, { siteDataState: "unavailable" });
   assert.equal(result.kind, "no-data");
   assert.match(result.message, /没有可安全触发的远程重连命令/);
+  const loading = assess(undefined, { siteDataState: "loading" });
+  assert.equal(loading.kind, "no-data");
+  assert.match(loading.message, /还在加载/);
+  assert.doesNotMatch(loading.message, /没有这台机器人的入网记录/);
 });
 
 test("an identity conflict is never auto-applied under the old configuration", () => {

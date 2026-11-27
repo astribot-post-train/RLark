@@ -50,12 +50,18 @@ function why(text: string | undefined, zh: boolean): string {
 // offered there too. The card never opens the Server SSH form for a robot.
 export function assessRobotRejoin(input: RobotRejoinInput): RobotRejoinAssessment {
   const zh = input.zh;
-  if (input.siteDataState === "unavailable") {
+  if (input.siteDataState !== "ready") {
+    // Loading is unknown too: judging it as "no admission" would be a confident wrong answer.
+    const loading = input.siteDataState === "loading";
     return {
       kind: "no-data",
-      message: note(zh,
-        "读不到场站与入网记录，无法判断恢复方式；请先重新检测或检查 Station API。机器人离线时，控制台没有可安全触发的远程重连命令。",
-        "The site data and admission record cannot be read, so the recovery path is unknown; re-check or check Station API first. While a robot is offline, the console has no safe remote reconnect command."),
+      message: loading
+        ? note(zh,
+          "场站与入网记录还在加载，暂时无法判断恢复方式；请稍后重新接入或点“重新检测”。机器人离线时，控制台没有可安全触发的远程重连命令。",
+          "The site data and admission records are still loading, so the recovery path is not known yet; try Rejoin or Re-check again shortly. While a robot is offline, the console has no safe remote reconnect command.")
+        : note(zh,
+          "读不到场站与入网记录，无法判断恢复方式；请先重新检测或检查 Station API。机器人离线时，控制台没有可安全触发的远程重连命令。",
+          "The site data and admission record cannot be read, so the recovery path is unknown; re-check or check Station API first. While a robot is offline, the console has no safe remote reconnect command."),
     };
   }
   if (input.stationPhase === "Conflict" || input.identityVerified === "False") {
