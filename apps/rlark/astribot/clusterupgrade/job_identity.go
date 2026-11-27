@@ -33,26 +33,31 @@ func readExecutor(ctx context.Context, member kubernetes.Interface, identity Exe
 }
 
 func readOwnedExecutor(ctx context.Context, member kubernetes.Interface, identity ExecutorIdentity, name, account string) (*corev1.Pod, error) {
+	pod, _, err := readOwnedExecutorJob(ctx, member, identity, name, account)
+	return pod, err
+}
+
+func readOwnedExecutorJob(ctx context.Context, member kubernetes.Interface, identity ExecutorIdentity, name, account string) (*corev1.Pod, *batchv1.Job, error) {
 	if identity.ChildUID == "" || identity.PodName == "" || identity.PodUID == "" {
-		return nil, ErrUnverifiedExecutor
+		return nil, nil, ErrUnverifiedExecutor
 	}
 	pod, err := member.CoreV1().Pods(Namespace).Get(ctx, identity.PodName, metav1.GetOptions{})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	owner := metav1.GetControllerOf(pod)
 	if pod.DeletionTimestamp != nil || string(pod.UID) != identity.PodUID || pod.Spec.ServiceAccountName != account ||
 		owner == nil || owner.Kind != "Job" || owner.APIVersion != batchv1.SchemeGroupVersion.String() || owner.Name != name {
-		return nil, ErrUnverifiedExecutor
+		return nil, nil, ErrUnverifiedExecutor
 	}
 	job, err := member.BatchV1().Jobs(Namespace).Get(ctx, owner.Name, metav1.GetOptions{})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if job.DeletionTimestamp != nil || job.UID == "" || job.UID != owner.UID || job.Labels[ChildUIDLabel] != identity.ChildUID {
-		return nil, ErrUnverifiedExecutor
+		return nil, nil, ErrUnverifiedExecutor
 	}
-	return pod, nil
+	return pod, job, nil
 }
 
 func leaseExecutor(pod *corev1.Pod) string {

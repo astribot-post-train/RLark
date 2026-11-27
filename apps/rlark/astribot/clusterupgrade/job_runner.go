@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -13,6 +14,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -165,43 +167,44 @@ func runImageJob(ctx context.Context, member kubernetes.Interface, reader client
 	return executor.Run(work, target, nodeImage, request.AutoRollback)
 }
 
-// After expiry, another attempt may take over only when the old Pod or its Job
-// is terminal, or the original Job no longer exists and can no longer fence writes.
+// The expired Lease keeps the exact old Pod identity. An unrelated operation
+// must also establish that the old Job cannot launch another writer.
 func executorExited(ctx context.Context, member kubernetes.Interface, previousHolder, previous, holder, jobUID string) (bool, error) {
 	parts := strings.Split(previous, "/")
-	if len(parts) < 2 || len(parts) > 3 || parts[0] == "" || parts[1] == "" {
-		return false, nil
-	}
-	old, err := member.CoreV1().Pods(Namespace).Get(ctx, parts[0], metav1.GetOptions{})
 	child, ok := strings.CutPrefix(previousHolder, "upgrade-job/")
-	if !ok || child == "" {
+	if !ok || child == "" || len(parts) < 2 || len(parts) > 3 || parts[0] == "" || parts[1] == "" {
 		return false, nil
 	}
-	sameJob := previousHolder == holder && len(parts) == 3 && parts[2] != "" && parts[2] == jobUID
-	missing := apierrors.IsNotFound(err) || err == nil && string(old.UID) != parts[1]
-	if !missing {
-		if err != nil {
-			return false, err
+	names := []string{JobName(child), LockedStockJobName(child)}
+	podUID := types.UID(parts[1])
+	var originalJobUID string
+	if len(parts) == 3 {
+		originalJobUID = parts[2]
+		if originalJobUID == "" {
+			return false, nil
 		}
+	}
+
+	old, err := member.CoreV1().Pods(Namespace).Get(ctx, parts[0], metav1.GetOptions{})
+	if err != nil && !apierrors.IsNotFound(err) {
+		return false, err
+	}
+	if err == nil && old.UID == podUID {
 		owner := metav1.GetControllerOf(old)
-		if owner == nil || (owner.Name != JobName(child) && owner.Name != LockedStockJobName(child)) ||
+		if owner == nil || !slices.Contains(names, owner.Name) || owner.UID == "" ||
 			owner.Kind != "Job" || owner.APIVersion != batchv1.SchemeGroupVersion.String() ||
-			(len(parts) == 3 && string(owner.UID) != parts[2]) {
+			(originalJobUID != "" && string(owner.UID) != originalJobUID) {
 			return false, nil
 		}
 		if old.Status.Phase != corev1.PodSucceeded && old.Status.Phase != corev1.PodFailed {
 			return false, nil
 		}
+		originalJobUID = string(owner.UID)
+		names = []string{owner.Name}
 	}
-	if sameJob {
-		return true, nil
-	}
-	if len(parts) != 3 || parts[2] == "" {
-		return !missing, nil
-	}
-	// The Job names are deterministic. A Pod and Job must still match their
-	// original UIDs before an executor write. A missing Job breaks that fence.
-	for _, name := range []string{JobName(child), LockedStockJobName(child)} {
+
+	var identified *batchv1.Job
+	for _, name := range names {
 		job, err := member.BatchV1().Jobs(Namespace).Get(ctx, name, metav1.GetOptions{})
 		if apierrors.IsNotFound(err) {
 			continue
@@ -209,20 +212,36 @@ func executorExited(ctx context.Context, member kubernetes.Interface, previousHo
 		if err != nil {
 			return false, err
 		}
-		if string(job.UID) != parts[2] {
+		if originalJobUID != "" && string(job.UID) != originalJobUID {
 			continue
 		}
-		if job.Labels[ChildUIDLabel] != child {
-			return false, nil
-		}
-		for _, condition := range job.Status.Conditions {
-			if condition.Status == corev1.ConditionTrue && (condition.Type == batchv1.JobComplete || condition.Type == batchv1.JobFailed) {
-				return true, nil
+		if originalJobUID == "" {
+			// Legacy holders omitted the Job UID. Only controller accounting
+			// for the exact old Pod UID can bind a missing Pod to this Job.
+			pods := job.Status.UncountedTerminatedPods
+			if pods == nil || (!slices.Contains(pods.Succeeded, podUID) && !slices.Contains(pods.Failed, podUID)) {
+				continue
 			}
 		}
-		return false, nil
+		if job.UID == "" || job.Labels[ChildUIDLabel] != child || identified != nil {
+			return false, nil
+		}
+		identified = job
 	}
-	return true, nil
+	if identified == nil {
+		// A proven original Job UID no longer exists. With a legacy
+		// holder and no UID evidence, keep the Lease untouched.
+		return originalJobUID != "", nil
+	}
+	if previousHolder == holder && string(identified.UID) == jobUID && identified.DeletionTimestamp == nil {
+		return true, nil
+	}
+	for _, condition := range identified.Status.Conditions {
+		if condition.Status == corev1.ConditionTrue && (condition.Type == batchv1.JobComplete || condition.Type == batchv1.JobFailed) {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // PreviousUpgradeExecutorExited allows a release to take over a terminal
@@ -267,6 +286,8 @@ func WriteJobDiagnostic(err error) {
 		diagnostic.Kind = "managed-authority"
 	case errors.Is(err, ErrManagedBaseline):
 		diagnostic.Kind = "managed-baseline"
+	case errors.Is(err, ErrStockRecoveryUnverified):
+		diagnostic.Kind = "stock-recovery-unverified"
 	}
 	data, marshalErr := json.Marshal(diagnostic)
 	if marshalErr == nil {

@@ -5,8 +5,11 @@ import (
 	"errors"
 	"time"
 
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/kubernetes"
 	core "k8s.io/client-go/kubernetes/typed/core/v1"
 	"k8s.io/client-go/rest"
@@ -23,33 +26,13 @@ type LockedStock struct {
 	Release         func()
 	state           core.ConfigMapInterface
 	childUID, image string
+	jobUID, podUID  string
+	replacement     bool
+	stop            func()
 }
 
 func (s *LockedStock) ReadState(ctx context.Context) (*corev1.ConfigMap, error) {
 	return s.state.Get(ctx, StockStateName, metav1.GetOptions{})
-}
-
-func (s *LockedStock) SaveState(ctx context.Context, baseline *corev1.ConfigMap, applied string) error {
-	record := baseline.DeepCopy()
-	if record.Data == nil {
-		record.Data = map[string]string{}
-	}
-	record.Data["image"] = s.image
-	record.Data["deploy-config"] = applied
-	record.Data[StockAttemptKey] = s.childUID
-	if err := s.Check(ctx); err != nil {
-		return err
-	}
-	_, err := s.state.Update(ctx, record, metav1.UpdateOptions{})
-	if err == nil {
-		return nil
-	}
-	current, readErr := s.ReadState(ctx)
-	if readErr == nil && current.Data[StockAttemptKey] == s.childUID &&
-		current.Data["image"] == s.image && current.Data["deploy-config"] == applied {
-		return nil
-	}
-	return errors.Join(err, readErr)
 }
 
 // HoldStockInCluster acquires the same member Lease as rlarkctl release.
@@ -80,25 +63,47 @@ func holdStock(ctx context.Context, member kubernetes.Interface, reader client.R
 	if policy == nil || policy.Mode != DriverStock {
 		return nil, errors.New("member has no enabled locked-stock upgrade policy")
 	}
-	readPod := func(ctx context.Context) (*corev1.Pod, error) {
-		return readOwnedExecutor(ctx, member, identity, LockedStockJobName(identity.ChildUID), StockJobServiceAccount)
+	readPod := func(ctx context.Context) (*corev1.Pod, *batchv1.Job, error) {
+		pod, job, err := readOwnedExecutorJob(ctx, member, identity, LockedStockJobName(identity.ChildUID), StockJobServiceAccount)
+		if err == nil && executorImage(pod) != policy.ExecutorImage {
+			return nil, nil, ErrUnverifiedExecutor
+		}
+		return pod, job, err
 	}
-	pod, err := readPod(ctx)
+	_, job, err := readPod(ctx)
 	if err != nil {
 		return nil, err
 	}
-	if executorImage(pod) != policy.ExecutorImage {
-		return nil, ErrUnverifiedExecutor
-	}
-	guard, work, err := Acquire(ctx, member.CoordinationV1().Leases(Namespace), "upgrade-job/"+identity.ChildUID, leaseExecutor(pod),
-		func(ctx context.Context, holder, executor string) (bool, error) {
-			return PreviousUpgradeExecutorExited(ctx, member, holder, executor)
-		})
+	holder, jobUID := "upgrade-job/"+identity.ChildUID, string(job.UID)
+	var guard *Guard
+	var work context.Context
+	err = wait.PollUntilContextTimeout(ctx, 2*time.Second, time.Duration(executorHandoffSeconds)*time.Second, true, func(ctxPoll context.Context) (bool, error) {
+		verified, observed, err := readPod(ctxPoll)
+		if err != nil {
+			if temporaryAPIError(err) {
+				return false, nil
+			}
+			return false, err
+		}
+		job = observed
+		guard, work, err = Acquire(ctx, member.CoordinationV1().Leases(Namespace), holder, leaseExecutor(verified),
+			func(call context.Context, previousHolder, executor string) (bool, error) {
+				return executorExited(call, member, previousHolder, executor, holder, jobUID)
+			})
+		var conflict *LeaseConflict
+		if (errors.As(err, &conflict) && conflict.Holder == holder) || apierrors.IsConflict(err) || temporaryAPIError(err) {
+			return false, nil
+		}
+		return err == nil, err
+	})
 	if err != nil {
 		return nil, err
 	}
 	check := func(ctx context.Context) error {
-		if _, err := readPod(ctx); err != nil {
+		if _, _, err := readPod(ctx); err != nil {
+			if apierrors.IsNotFound(err) || errors.Is(err, ErrUnverifiedExecutor) {
+				return errors.Join(ErrExecutorInterrupted, err)
+			}
 			return err
 		}
 		return guard.Check(ctx)
@@ -110,5 +115,8 @@ func holdStock(ctx context.Context, member kubernetes.Interface, reader client.R
 			log.FromContext(ctx).Error(err, "release stock member upgrade lease")
 		}
 	}
-	return &LockedStock{Context: work, Check: check, Release: release, state: member.CoreV1().ConfigMaps(Namespace), childUID: identity.ChildUID, image: policy.ExecutorImage}, nil
+	return &LockedStock{Context: work, Check: check, Release: release, state: member.CoreV1().ConfigMaps(Namespace), childUID: identity.ChildUID, image: policy.ExecutorImage, jobUID: jobUID, podUID: identity.PodUID,
+		replacement: guard.handoff || job.Status.Failed > 0 || job.Status.Succeeded > 0 ||
+			(job.Status.UncountedTerminatedPods != nil && (len(job.Status.UncountedTerminatedPods.Failed) > 0 || len(job.Status.UncountedTerminatedPods.Succeeded) > 0)),
+		stop: func() { guard.cancel(context.Canceled); <-guard.done }}, nil
 }

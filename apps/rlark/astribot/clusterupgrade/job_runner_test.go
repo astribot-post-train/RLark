@@ -11,6 +11,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes/fake"
 	"k8s.io/utils/ptr"
 	runtimefake "sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -133,6 +134,15 @@ func TestVanishedUpgradePodUsesOriginalJobEvidence(t *testing.T) {
 	original := &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: JobName("child"), Namespace: Namespace, UID: "job-uid", Labels: map[string]string{ChildUIDLabel: "child"}}}
 	failed := original.DeepCopy()
 	failed.Status.Conditions = []batchv1.JobCondition{{Type: batchv1.JobFailed, Status: corev1.ConditionTrue}}
+	legacyProof := original.DeepCopy()
+	legacyProof.Status.UncountedTerminatedPods = &batchv1.UncountedTerminatedPods{Failed: []types.UID{"pod-uid"}}
+	legacyTerminal := legacyProof.DeepCopy()
+	legacyTerminal.Status.Conditions = failed.Status.Conditions
+	oldPod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "missing", Namespace: Namespace, UID: "pod-uid",
+		OwnerReferences: []metav1.OwnerReference{*metav1.NewControllerRef(original, batchv1.SchemeGroupVersion.WithKind("Job"))}},
+		Status: corev1.PodStatus{Phase: corev1.PodFailed}}
+	reusedName := oldPod.DeepCopy()
+	reusedName.UID = "new-pod"
 	for _, test := range []struct {
 		name, holder, job, executor string
 		objects                     []runtime.Object
@@ -143,6 +153,12 @@ func TestVanishedUpgradePodUsesOriginalJobEvidence(t *testing.T) {
 		{"terminal original job", "", "", "missing/pod-uid/job-uid", []runtime.Object{failed}, true},
 		{"job and pod garbage collected", "", "", "missing/pod-uid/job-uid", nil, true},
 		{"legacy executor with no job UID", "", "", "missing/pod-uid", nil, false},
+		{"legacy expired terminal Pod cannot preempt an active Job", "", "", "missing/pod-uid", []runtime.Object{original, oldPod}, false},
+		{"legacy expired terminal Pod permits its own Job", "upgrade-job/child", "job-uid", "missing/pod-uid", []runtime.Object{original, oldPod}, true},
+		{"legacy missing Pod has matching accounting for replacement", "upgrade-job/child", "job-uid", "missing/pod-uid", []runtime.Object{legacyProof}, true},
+		{"legacy missing Pod belongs to terminal Job", "", "", "missing/pod-uid", []runtime.Object{legacyTerminal}, true},
+		{"legacy missing Pod with active Job blocks unrelated holder", "", "", "missing/pod-uid", []runtime.Object{legacyProof}, false},
+		{"same-name Pod and Job alone do not prove legacy termination", "", "", "missing/pod-uid", []runtime.Object{failed, reusedName}, false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			member := fake.NewClientset(test.objects...)

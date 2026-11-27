@@ -67,6 +67,7 @@ type Guard struct {
 	leases   coordination.LeaseInterface
 	holder   string
 	executor string
+	handoff  bool
 	cancel   context.CancelCauseFunc
 	done     chan struct{}
 	stop     sync.Once
@@ -116,7 +117,8 @@ func Acquire(ctx context.Context, leases coordination.LeaseInterface, holder, ex
 		return nil, ctx, fmt.Errorf("claim member upgrade lease: %w", err)
 	}
 	work, cancel := context.WithCancelCause(ctx)
-	guard := &Guard{leases: leases, holder: holder, executor: executor, cancel: cancel, done: make(chan struct{})}
+	guard := &Guard{leases: leases, holder: holder, executor: executor,
+		handoff: previous == holder && previousExecutor != executor, cancel: cancel, done: make(chan struct{})}
 	go guard.renew(work, now.Add(leaseDurationSeconds*time.Second))
 	return guard, work, nil
 }

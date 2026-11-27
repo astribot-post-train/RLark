@@ -102,38 +102,8 @@ func runStock(ctx context.Context, mode string) int {
 		return ExitPrecheckFailed
 	}
 
-	var saveStockState func() error
-	if mode == clusterupgrade.DriverStock && os.Getenv("RLARK_UPGRADE_STOCK_LOCK") == "1" {
-		stock, err := clusterupgrade.HoldStockInCluster(ctx, clusterupgrade.ExecutorIdentity{
-			ChildUID: os.Getenv("RLARK_UPGRADE_JOB_UID"), PodName: os.Getenv("POD_NAME"), PodUID: os.Getenv("POD_UID"),
-		})
-		if err != nil {
-			logger.Error(err, "acquire stock upgrade lease")
-			clusterupgrade.WriteJobDiagnostic(err)
-			return ExitPrecheckFailed
-		}
-		defer stock.Release()
-		ctx = stock.Context
-		baseline, err := stock.ReadState(ctx)
-		if err != nil {
-			logger.Error(err, "read locked stock rollback state")
-			return ExitPrecheckFailed
-		}
-		applied, err := os.ReadFile(config.DeployConfigPath)
-		if err != nil {
-			logger.Error(err, "read locked stock deploy config")
-			return ExitPrecheckFailed
-		}
-		effective := string(applied)
-		if os.Getenv("RLARK_UPGRADE_STOCK_CONFIG_FROM_STATE") == "1" {
-			effective = baseline.Data["deploy-config"]
-			config.StockDeployConfig = &effective
-		}
-		rollbackConfig := baseline.Data["deploy-config"]
-		config.StockRollbackConfig = &rollbackConfig
-		config.AutoRollback = config.AutoRollback && baseline.Data["image"] != "" && rollbackConfig != ""
-		config.CheckStockWrite = stock.Check
-		saveStockState = func() error { return stock.SaveState(ctx, baseline, effective) }
+	if config.StockDataPlane && os.Getenv("RLARK_UPGRADE_STOCK_LOCK") == "1" {
+		return runLockedStock(ctx, config)
 	}
 
 	logger.Info("loaded config",
@@ -151,11 +121,6 @@ func runStock(ctx context.Context, mode string) int {
 
 	// Perform upgrade (includes multi-stage health check)
 	err = upgrader.Upgrade(ctx)
-	if err == nil && saveStockState != nil {
-		if stateErr := saveStockState(); stateErr != nil {
-			err = fmt.Errorf("persist locked stock upgrade state: %w", stateErr)
-		}
-	}
 	if err == nil {
 		logger.Info("upgrade completed successfully")
 		return ExitSuccess
@@ -179,4 +144,54 @@ func runStock(ctx context.Context, mode string) int {
 
 	logger.Info("rollback completed successfully")
 	return ExitRolledBack
+}
+
+func runLockedStock(ctx context.Context, config *upgrade.Config) int {
+	logger := log.GetLogger()
+	fromState := os.Getenv("RLARK_UPGRADE_STOCK_CONFIG_FROM_STATE") == "1"
+	var requested []byte
+	if !fromState {
+		var err error
+		requested, err = os.ReadFile(config.DeployConfigPath)
+		if err != nil {
+			logger.Error(err, "read locked stock deploy config")
+			return ExitPrecheckFailed
+		}
+	}
+	stock, err := clusterupgrade.HoldStockInCluster(ctx, clusterupgrade.ExecutorIdentity{
+		ChildUID: os.Getenv("RLARK_UPGRADE_JOB_UID"), PodName: os.Getenv("POD_NAME"), PodUID: os.Getenv("POD_UID"),
+	})
+	if err != nil {
+		logger.Error(err, "acquire stock upgrade lease")
+		clusterupgrade.WriteJobDiagnostic(err)
+		if ctx.Err() != nil {
+			return ExitExecutorInterrupted
+		}
+		return ExitPrecheckFailed
+	}
+	err = stock.Run(string(requested), fromState, config.AutoRollback, func(effective, baseline string) (clusterupgrade.StockOperations, error) {
+		config.StockDeployConfig = &effective
+		config.StockRollbackConfig = &baseline
+		config.CheckStockWrite = stock.Check
+		return upgrade.NewUpgrader(config)
+	})
+	if ctx.Err() != nil || errors.Is(err, clusterupgrade.ErrExecutorInterrupted) || errors.Is(err, clusterupgrade.ErrLeaseLost) {
+		stock.RetainForRecovery()
+		return ExitExecutorInterrupted
+	}
+	stock.Release()
+	if err == nil {
+		logger.Info("stock upgrade completed successfully")
+		return ExitSuccess
+	}
+	logger.Error(err, "stock upgrade completed with an error")
+	clusterupgrade.WriteJobDiagnostic(err)
+	switch {
+	case errors.Is(err, clusterupgrade.ErrRolledBack):
+		return ExitRolledBack
+	case errors.Is(err, clusterupgrade.ErrRollbackFailed):
+		return ExitRollbackFailed
+	default:
+		return ExitUpgradeFailed
+	}
 }

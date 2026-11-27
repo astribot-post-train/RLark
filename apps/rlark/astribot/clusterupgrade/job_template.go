@@ -11,15 +11,7 @@ import (
 // image-only Job. The launcher attaches only the immutable DeployConfig volume.
 func ConfigureExecutor(job *batchv1.Job, policy JobPolicy, childUID, childName, cluster string) {
 	metav1.SetMetaDataLabel(&job.ObjectMeta, ChildUIDLabel, childUID)
-	// Retry a lost/disrupted executor, but preserve structured terminal
-	// results (including completed rollback) without replaying the work.
-	job.Spec.BackoffLimit = ptr.To(int32(2))
-	job.Spec.PodReplacementPolicy = ptr.To(batchv1.Failed)
-	job.Spec.PodFailurePolicy = &batchv1.PodFailurePolicy{Rules: []batchv1.PodFailurePolicyRule{
-		{Action: batchv1.PodFailurePolicyActionFailJob, OnExitCodes: &batchv1.PodFailurePolicyOnExitCodesRequirement{
-			ContainerName: ptr.To("upgrade"), Operator: batchv1.PodFailurePolicyOnExitCodesOpNotIn, Values: []int32{137, 143},
-		}},
-	}}
+	configureExecutorRetry(job)
 	if job.Spec.ActiveDeadlineSeconds != nil {
 		job.Spec.ActiveDeadlineSeconds = ptr.To(*job.Spec.ActiveDeadlineSeconds + executorHandoffSeconds)
 	}
@@ -58,10 +50,17 @@ func ConfigureExecutor(job *batchv1.Job, policy JobPolicy, childUID, childName, 
 	)
 }
 
-// ConfigureLockedStock keeps the upstream Pod policy and stock ServiceAccount.
+// ConfigureLockedStock keeps the stock ServiceAccount and enables checkpoint recovery.
 // Only the locally pinned executor can be trusted to honor the lock.
 func ConfigureLockedStock(job *batchv1.Job, childUID string, useStateConfig bool) {
 	metav1.SetMetaDataLabel(&job.ObjectMeta, ChildUIDLabel, childUID)
+	configureExecutorRetry(job)
+	if job.Spec.ActiveDeadlineSeconds != nil {
+		// Reserve a rollout timeout for rollback after the forward attempt, and
+		// time for two replacement Pods to wait out the previous Lease.
+		original := *job.Spec.ActiveDeadlineSeconds
+		job.Spec.ActiveDeadlineSeconds = ptr.To(original + original/2 + 2*executorHandoffSeconds)
+	}
 	container := &job.Spec.Template.Spec.Containers[0]
 	container.Env = append(container.Env,
 		corev1.EnvVar{Name: "RLARK_UPGRADE_MODE", Value: DriverStock},
@@ -73,4 +72,16 @@ func ConfigureLockedStock(job *batchv1.Job, childUID string, useStateConfig bool
 	if useStateConfig {
 		container.Env = append(container.Env, corev1.EnvVar{Name: "RLARK_UPGRADE_STOCK_CONFIG_FROM_STATE", Value: "1"})
 	}
+}
+
+func configureExecutorRetry(job *batchv1.Job) {
+	// Retry a lost/disrupted executor, but preserve structured terminal
+	// results (including completed rollback) without replaying the work.
+	job.Spec.BackoffLimit = ptr.To(int32(2))
+	job.Spec.PodReplacementPolicy = ptr.To(batchv1.Failed)
+	job.Spec.PodFailurePolicy = &batchv1.PodFailurePolicy{Rules: []batchv1.PodFailurePolicyRule{
+		{Action: batchv1.PodFailurePolicyActionFailJob, OnExitCodes: &batchv1.PodFailurePolicyOnExitCodesRequirement{
+			ContainerName: ptr.To("upgrade"), Operator: batchv1.PodFailurePolicyOnExitCodesOpNotIn, Values: []int32{137, 143},
+		}},
+	}}
 }

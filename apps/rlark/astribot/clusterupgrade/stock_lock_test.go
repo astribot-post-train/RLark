@@ -17,7 +17,7 @@ func TestLockedStockSharesReleaseLeaseAndFencesState(t *testing.T) {
 	image := "registry.example/upgrade@" + digest
 	policy := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: PolicyConfigMap, Namespace: Namespace},
 		Data: map[string]string{"mode": DriverStock, "executorImage": image}}
-	state := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: StockStateName, Namespace: Namespace, ResourceVersion: "12"},
+	state := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: StockStateName, Namespace: Namespace, UID: "state", ResourceVersion: "12"},
 		Data: map[string]string{"deploy-config": "original", "other": "preserved"}}
 	identity := ExecutorIdentity{ChildUID: "child", PodName: "stock-pod", PodUID: "pod"}
 	job := &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: LockedStockJobName(identity.ChildUID), Namespace: Namespace,
@@ -51,21 +51,25 @@ func TestLockedStockSharesReleaseLeaseAndFencesState(t *testing.T) {
 		_ = guard.Release(ctx)
 		t.Fatal("release entered while stock installer held the Lease")
 	}
-	baseline, err := stock.ReadState(stock.Context)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := stock.SaveState(stock.Context, baseline, "effective"); err != nil {
+	if err := stock.Run("effective", false, true, func(_, _ string) (StockOperations, error) {
+		return stockTestOperations{}, nil
+	}); err != nil {
 		t.Fatal(err)
 	}
 	read, err := stock.ReadState(stock.Context)
 	if err != nil || read.Data["deploy-config"] != "effective" || read.Data["other"] != "preserved" || read.Data[StockAttemptKey] != identity.ChildUID {
 		t.Fatalf("state = %v, %v", read, err)
 	}
+	if err := stock.Run("effective", false, true, func(_, _ string) (StockOperations, error) {
+		t.Fatal("a completed attempt prepared the installer again")
+		return nil, nil
+	}); err != nil {
+		t.Fatalf("retry did not recognize the recorded success: %v", err)
+	}
 	if err := member.CoreV1().Pods(Namespace).Delete(ctx, pod.Name, metav1.DeleteOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	if err := stock.SaveState(stock.Context, read, "not permitted"); err == nil {
+	if err := stock.Check(ctx); err == nil {
 		t.Fatal("deleted executor wrote state")
 	}
 	stock.Release()

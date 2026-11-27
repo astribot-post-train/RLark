@@ -332,8 +332,8 @@ func TestLockedStockKeepsUpstreamPolicyAndBindsJobIdentity(t *testing.T) {
 	if err := kube.Get(t.Context(), client.ObjectKey{Namespace: StateStoreNamespace, Name: name}, &job); err != nil {
 		t.Fatal(err)
 	}
-	if !driver.ownsAttempt(child, &job) || job.Spec.PodFailurePolicy != nil || *job.Spec.BackoffLimit != 0 ||
-		*job.Spec.ActiveDeadlineSeconds != 240 || job.Spec.Template.Spec.ServiceAccountName != clusterupgrade.StockJobServiceAccount {
+	if !driver.ownsAttempt(child, &job) || job.Spec.PodFailurePolicy == nil || *job.Spec.BackoffLimit != 2 ||
+		*job.Spec.PodReplacementPolicy != batchv1.Failed || *job.Spec.ActiveDeadlineSeconds != 1080 || job.Spec.Template.Spec.ServiceAccountName != clusterupgrade.StockJobServiceAccount {
 		t.Fatalf("invalid stock Job: %+v", job.Spec)
 	}
 	flags := map[string]string{}

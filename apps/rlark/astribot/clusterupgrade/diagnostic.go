@@ -43,6 +43,8 @@ func PublicMessage(raw string) string {
 		return "member upgrade permissions must be verified before approving the managed job"
 	case "managed-baseline":
 		return "wait for the current node Agent rollout to converge"
+	case "stock-recovery-unverified":
+		return "the original stock upgrade or rollback baseline could not be verified"
 	case "rollback-conflict":
 		return "rollback stopped because the target changed during the upgrade"
 	}

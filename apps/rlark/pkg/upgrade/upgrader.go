@@ -38,6 +38,8 @@ func (e *UpgradeError) Error() string {
 	return fmt.Sprintf("[%s] %s", e.Stage, e.Message)
 }
 
+func (e *UpgradeError) Unwrap() error { return e.Err }
+
 // Upgrader wraps rlarkadm's upgrade functionality with enhanced health check and rollback
 type Upgrader struct {
 	config        *Config
