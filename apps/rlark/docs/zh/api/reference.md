@@ -2,7 +2,7 @@
 
 本页仅列出 Gateway 在 [`pkg/gateway/router.go`](https://github.com/RLinf/RLark/tree/main/apps/rlark/pkg/gateway/router.go) 中实际注册的 HTTP 路由。可运行请求参见 [API 调用样例](examples.md)，机器可读子集参见 [OpenAPI 规范](../../api/swagger.yaml)。
 
-除 `POST /api/v1/auth/login` 和 `/metrics` 外，Gateway 路由均要求在 `Authorization: Bearer <token>` 请求头中携带登录返回的 JWT。token 默认 8 小时过期，可通过 `--jwt-token-ttl` 配置。缺失或无效 token 返回 `401`；已认证 `user` 调用仅管理员接口返回 `403`。
+除 `POST /api/v1/auth/login` 和 `/metrics` 外，Gateway 路由均要求有效的 Bearer 凭据。除非启用 `--disable-native-login`，原生登录会签发 JWT；启用后该接口返回 HTTP `403`，错误码为 `native_login_disabled`，文案为 `Native username/password login is disabled; use IAM authentication`，且不会设置访问令牌 Cookie。JWT 默认 8 小时过期，可通过 `--jwt-token-ttl` 配置。此开关不影响服务账号令牌。
 
 仅管理员操作包括 Node 和 Domain 变更，以及全部证书、镜像仓库、Addon 接口、系统配置更新和 StorageClass provider/变更接口。系统配置读取及全部 SSH 密钥操作允许任一已认证角色访问。
 
@@ -28,6 +28,16 @@ Gateway Router 未暴露 CRD status 子资源路由；状态随普通资源响�
 Job 日志接口已实现：`logs` 支持 `from`、`to`、`task`、`pod`、`query`、`cursor`、`order`。`from`、`to` 使用 RFC 3339 时间；`order=asc` 表示后端结果升序，其他值均为降序。提供 `from` 且已配置日志后端时，成功响应包含 `source: "backend"`、`entries`、`hasMore`、`nextCursor`；其他情况（包括后端查询失败）回退到 Pod 日志，响应包含 `source: "pod"` 和 `pods` 数组，数组项含 `taskName`、`podName`、`phase`、`node`、`logs`。
 
 `logs/label-values` 支持 `label`（默认 `pod`）、`from`、`to`、`task`、`pod`，返回 `{ "values": [...] }`；未配置日志后端时数组为空。Job `metrics` 已注册，但当前仅返回 HTTP `501 Not Implemented`。
+
+## 站点机器重接
+
+`POST /api/v1/station/machines/{name}/rejoin` 仅管理员可调用。请求体为 `{ "cluster_id": "cluster-a", "request_id": "retry-001", "robot_model": "s1u" }`；当已有 admission 和 NodeClass 可确定机型时，`robot_model` 可省略。接口返回 `202 Accepted` 和 `{ "data": <NodeOperation> }`。使用 `GET /api/v1/station/node-operations/{name}?cluster_id=cluster-a` 轮询，或使用 `GET /api/v1/station/node-operations?cluster_id=cluster-a` 列表查询，直到 `status.phase` 为 `Succeeded`、`Failed` 或 `Blocked`；失败详情位于有界的 `status.conditions` reason/message，不包含 SSH 密码。
+
+目标机器必须已加入请求中的集群，且具有匹配的 Robot NodeAdmission 和已注册的 RobotModel/NodeClass。使用相同 request ID 重放会返回同一操作。存在活动 Join 时返回 `409`；机型无效或未知时返回 `400`，Machine 不存在时返回 `404`，查询失败时返回 `502`。重接操作进入 `Failed` 或 `Blocked` 终态后，控制台可使用新的 request ID 重试，Gateway 会重新校验原 Machine 和 admission。controller 仅在本地 WireGuard key、原 NodeAdmission、NetworkEnrollment 和成员 Node UID 一致时恢复已有 WireGuard 文档，不会运行普通 Join 的 `Uplink`、`Push`、`Install` 或 `RotateEntryHostKey` 阶段。缺少或不匹配的本地身份会以 `RejoinStateUnavailable` 进入可轮询 `Blocked`，原 admission 和 Node 保持不变。重接使用 NodeClass 已存凭据和现有网络配置，不接受 SSH 密码，不删除或替换 Node/NodeAdmission，也不签发或撤销入网码。
+
+| 方法 | 路径 |
+|------|------|
+| `POST` | `/api/v1/station/machines/{name}/rejoin` |
 
 ## 集群与证书
 
@@ -109,3 +119,10 @@ StorageClass 接口管理控制面声明。Replication 和 Delivery 控制器会
 | `GET` | `/api/v1/installed-addons` |
 | `GET, POST` | `/api/v1/clusters/{cluster_id}/addons` |
 | `GET, PUT, DELETE` | `/api/v1/clusters/{cluster_id}/addons/{name}` |
+# 站点集群态势摘要
+
+`GET /api/v1/station/summary` 会遍历所有 `NetworkEnrollment` 分页，可选传入 `cluster_id`。Gateway 会按 namespace 和同名 RLark Node 关联入网记录。阶段统计读取 `status.node.state`，`Retired` 优先。机器人、电源、占用、自检和相机统计读取该 Node 的标签、注解及条件。Node 缺失时回退到入网记录自身的元数据和条件。
+
+`GET /api/v1/station/stations` 支持 `q`、`phase`、`model`、`zone`、`power_state`、`occupancy`、`alert_only` 和 `sort` 参数。带过滤条件的请求会聚合全部分页后再应用现有 `limit`（1–500）和数字偏移量 `continue`，响应包含 `totalMatched`。`phase` 参数不区分大小写。不带过滤条件时继续使用 Kubernetes 原生 continuation token。
+
+指定的集群缺少唯一的 `spec.agentNamespace` 映射时，两个接口均返回 `409 Conflict`。查询全场站汇总或筛选列表时，如果多个集群共用的命名空间内有入网记录，也会返回 `409 Conflict`。请为各集群分配独立的 agent 命名空间后重试。

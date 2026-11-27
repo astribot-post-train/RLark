@@ -39,6 +39,15 @@ type MachineSpec struct {
 	// Admit is the administrator's decision that the machine is to be a
 	// node. Without it the machine is not joined.
 	Admit *MachineAdmit `json:"admit,omitempty"`
+	// RejoinRequestID identifies a one-shot retry for the existing node.
+	// It never changes or replaces the NodeAdmission.
+	// +optional
+	// +kubebuilder:validation:MaxLength=128
+	RejoinRequestID string `json:"rejoinRequestID,omitempty"`
+	// RejoinRequestedBy is the authenticated Gateway actor for that request.
+	// +optional
+	// +kubebuilder:validation:MaxLength=256
+	RejoinRequestedBy string `json:"rejoinRequestedBy,omitempty"`
 }
 
 type MachineAdmit struct {
@@ -147,6 +156,9 @@ type MachineStatus struct {
 	// Operation is the NodeOperation that joins the machine.
 	// +kubebuilder:validation:MaxLength=253
 	Operation string `json:"operation,omitempty"`
+	// RejoinRequestID is the last rejoin request started by station-controller.
+	// +kubebuilder:validation:MaxLength=128
+	RejoinRequestID string `json:"rejoinRequestID,omitempty"`
 	// NodeJoin is the NodeJoin progress projected by station-controller.
 	NodeJoin *MachineNodeJoinStatus `json:"nodeJoin,omitempty"`
 	// ObservedIdentity is read from the node's authenticated observation, never
@@ -182,6 +194,9 @@ type MachineEntry struct {
 	// +kubebuilder:validation:MaxLength=21
 	Via      string       `json:"via,omitempty"`
 	LastSeen *metav1.Time `json:"lastSeen,omitempty"`
+	// DiscoveryScanID identifies the manual scan that last observed this entry.
+	// +kubebuilder:validation:MaxLength=36
+	DiscoveryScanID string `json:"discoveryScanID,omitempty"`
 }
 
 // +kubebuilder:validation:Enum=Robot;Server

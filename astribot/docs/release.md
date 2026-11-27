@@ -72,6 +72,8 @@ astribot/release/build.sh base <RLark 提交>                      # 安装器�
 
 - `s1u-robot` v1.7.2（Run 里重启、时钟）：电源容器执行认领者经 Gateway `POST nodes/{name}/robot-restart` 要的重启，只在每个在用标记都写着该 Run（`... Run <id> ...`）时做，所以要和在用标记写明 Run 的 Fleet 设备层（`deviceImage`）同一次 `apply`，旧设备层的标记会让重启以“in use by others”失败（不动机器人）。`clock` 容器只读挂载 `/run/rlark/in-use`，只在驱动停、没认领、没在用时跳；`timeSource` 由 `pinned.yaml` 带来（`time.rlark.internal`，每个站点在 SiteNetwork `names` 里指到本站 Hub；`clock` 容器挂机器自己的 `/etc/hosts`，Hub 换地址只改 `names`，不用重启 Pod）。新的 Gateway 和 agent（`rlark/agent`）同一次上线：agent 把管理面的 `rlark.io/robot-restart` 和 Station 标记 `rlark.io/station-mark-set` 带到成员集群的节点上（机器人灯的停用/维修从这里读）。重启在设备层还有会话时（`s1u-device` 标记在）失败，Fleet Runner 先排空会话再请求。
 
+- `s1u-robot` v1.7.3 提供本体快照与相机采集时间戳。与包含本体接口的 Gateway 和控制台配套发布。旧 Addon 仍可提供相机画面，页面在缺少采集时间戳时将端到端延迟显示为「—」。正式发布保持现有按空闲逐台替换策略，首台验证关节、末端位姿、两路相机、FPS 和延迟后再继续观察其余节点。
+
 - `s1u-robot` v1.7.4（发件箱；v1.7.3 这个版本号 11-26 14:55 已被一次没进仓库的构建发布到机器人集群，内容和 v1.7.2 相同，一个版本号只有一份内容，所以跳过）：多一个 `episodes` 容器（`deviceImage` 的 `/device/start --episodes`，Fleet 952cd5e9 起才有这个入口），所以 `deviceImage` 要换成那之后的 Fleet 镜像，同一次 `apply`；场站的 `fleet-episode-relay`（下一节）也在这次里装上，机器人的发件箱把 episode 发给它。Pod 的内存上限合计 5888 MiB，正好是节点规格给 Pod 的 6144 MiB 减去留给集群自己 Pod 的 256 MiB：`episodes` 的上限因此是 832 MiB（编码峰值 0.55 GiB）；再给它加内存要先提高节点规格的 `S1U_KUBERNETES_MEMORY_MIB`（每台机器人重启一次 kubelet）。
 
 ## 站点自己装的 Addon（`live.yaml` 的 `addons`）
@@ -125,7 +127,7 @@ rlarkctl release apply -e environments/live.yaml -r releases/<名字>.yaml --tre
 |---|---|---|
 | `images` | 发布里办公室仓库缺的镜像，从金山云仓库按摘要拷进来 | 逐个读回 |
 | `prewarm` | 控制面的镜像预先拉到管理机 | `nodes-unpressured` |
-| `crds-rbac` | `rlinf.io`、`station.rlark.io` 的 CRD；station-api / controller 的管理面 RBAC；各成员集群的 Station RBAC | — |
+| `crds-rbac` | `rlinf.io`、`station.rlark.io` 的 CRD；RLark 组件（含集群升级所需的 Gateway 和 Controller Manager 角色）和 Station 的管理面 RBAC；各成员集群的 Station RBAC | — |
 | `gateway` | 控制面 gateway 容器（和 compose、env 文件） | `clusters-online`、`addons-ready` |
 | `station-api` | Deployment station-api；安装器放到 Station API 的机器上 | `enrollments-enrolled`、`observations-fresh` |
 | `controller` | Deployment station-controller（先等所有网关认得新文档级别） | `documents-unchanged`、`enrollments-enrolled`、`network-connected` |

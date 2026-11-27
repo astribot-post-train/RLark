@@ -2,7 +2,7 @@
 
 This page lists the HTTP routes registered by the Gateway in [`pkg/gateway/router.go`](https://github.com/RLinf/RLark/tree/main/apps/rlark/pkg/gateway/router.go). For runnable requests, see [API Examples](examples.md). The machine-readable subset is available as the [OpenAPI specification](swagger.yaml).
 
-Except for `POST /api/v1/auth/login` and `/metrics`, Gateway routes require the JWT returned by login in the `Authorization: Bearer <token>` header. Tokens expire after 8 hours by default; configure the lifetime with `--jwt-token-ttl`. A missing or invalid token returns `401`; an authenticated `user` calling an admin-only route returns `403`.
+Except for `POST /api/v1/auth/login` and `/metrics`, Gateway routes require a valid bearer credential. Native login issues a JWT unless `--disable-native-login` is enabled. That option returns HTTP `403` with code `native_login_disabled` and message `Native username/password login is disabled; use IAM authentication`; it does not set an access-token cookie. JWTs expire after 8 hours by default (`--jwt-token-ttl`). Service-account tokens remain valid independently of this option.
 
 Admin-only operations are Node and Domain mutations, all certificate, image registry, and Addon routes, system configuration updates, plus StorageClass provider and mutation routes. System configuration reads and all SSH key operations accept either authenticated role.
 
@@ -28,6 +28,16 @@ The Gateway router does not expose CRD status subresource routes. Status is retu
 The Job `logs` route is implemented and accepts `from`, `to`, `task`, `pod`, `query`, `cursor`, and `order`. `from` and `to` are RFC 3339 timestamps; `order=asc` requests ascending backend results, while any other value uses descending order. When `from` is supplied and a log backend is configured, a successful response contains `source: "backend"`, `entries`, `hasMore`, and `nextCursor`. Otherwise—including backend errors—it falls back to Pod logs and returns `source: "pod"` plus a `pods` array containing `taskName`, `podName`, `phase`, `node`, and `logs`.
 
 `logs/label-values` accepts `label` (default `pod`), `from`, `to`, `task`, and `pod`, and returns `{ "values": [...] }`; without a configured backend the array is empty. Job `metrics` is registered but currently only returns HTTP `501 Not Implemented`.
+
+## Station machine rejoin
+
+`POST /api/v1/station/machines/{name}/rejoin` is admin-only. Send `{ "cluster_id": "cluster-a", "request_id": "retry-001", "robot_model": "s1u" }`; `robot_model` is optional when the existing admission and NodeClass identify the model. The endpoint returns `202 Accepted` with `{ "data": <NodeOperation> }`. Poll `GET /api/v1/station/node-operations/{name}?cluster_id=cluster-a` or list operations with `GET /api/v1/station/node-operations?cluster_id=cluster-a` until `status.phase` is `Succeeded`, `Failed`, or `Blocked`; failure details are in the bounded `status.conditions` reason/message and contain no SSH passwords.
+
+The machine must already be joined to the requested cluster with a matching Robot NodeAdmission and registered RobotModel/NodeClass. Replaying the same request ID returns the same operation. An active Join returns `409`; invalid or unknown model inputs return `400`, missing Machines return `404`, and lookup failures return `502`. After a rejoin operation ends in `Failed` or `Blocked`, the console can retry it with a new request ID, subject to the Gateway revalidating the original Machine and admission. Rejoin uses the NodeClass credentials and existing admission and network configuration. The controller recovers only the existing WireGuard document when the local key, original NodeAdmission, NetworkEnrollment and member Node UID still agree. It does not run Join's `Uplink`, `Push`, `Install`, or `RotateEntryHostKey` stages. Missing or mismatched local identity ends as `Blocked` with `RejoinStateUnavailable` and leaves the admission and Node in place. The API does not accept SSH passwords, delete or replace Nodes or NodeAdmissions, or issue/revoke enrollment codes.
+
+| Method | Path |
+|--------|------|
+| `POST` | `/api/v1/station/machines/{name}/rejoin` |
 
 ## Clusters and certificates
 
@@ -109,3 +119,10 @@ StorageClass routes manage control-plane declarations. Replication and Delivery 
 | `GET` | `/api/v1/installed-addons` |
 | `GET, POST` | `/api/v1/clusters/{cluster_id}/addons` |
 | `GET, PUT, DELETE` | `/api/v1/clusters/{cluster_id}/addons/{name}` |
+# Station fleet summary
+
+`GET /api/v1/station/summary` aggregates every `NetworkEnrollment` page and accepts optional `cluster_id`. The Gateway associates each enrollment with the same-name RLark Node in its namespace. Phase counts use `status.node.state` with `Retired` taking precedence. Robot, power, occupancy, self-check, and camera metrics come from that Node's labels, annotations, and conditions. Missing Nodes fall back to the enrollment's own metadata and conditions.
+
+`GET /api/v1/station/stations` accepts `q`, `phase`, `model`, `zone`, `power_state`, `occupancy`, `alert_only`, and `sort`. Filtered requests aggregate all pages before applying the existing `limit` (1–500) and a numeric offset in `continue`; responses include `totalMatched`. Phase filters are case-insensitive. Requests without filters retain Kubernetes continuation tokens.
+
+Both endpoints return `409 Conflict` when the requested cluster lacks a unique `spec.agentNamespace` mapping. Fleet-wide summary and filtered list requests also return `409 Conflict` if a namespace shared by multiple clusters contains an enrollment. Assign each cluster a distinct agent namespace before retrying.
