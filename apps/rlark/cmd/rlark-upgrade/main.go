@@ -70,7 +70,7 @@ func main() {
 		logger.Error(err, "image-only upgrade completed with an error")
 		clusterupgrade.WriteJobDiagnostic(err)
 		switch {
-		case ctx.Err() != nil || errors.Is(err, clusterupgrade.ErrExecutorInterrupted):
+		case ctx.Err() != nil || errors.Is(err, clusterupgrade.ErrExecutorInterrupted) || errors.Is(err, clusterupgrade.ErrLeaseLost):
 			os.Exit(ExitExecutorInterrupted)
 		case errors.Is(err, clusterupgrade.ErrRolledBack):
 			os.Exit(ExitRolledBack)

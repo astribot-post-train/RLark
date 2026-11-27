@@ -11,6 +11,7 @@ import (
 	core "k8s.io/client-go/kubernetes/typed/core/v1"
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
 const StockStateName = "rlark-state"
@@ -105,7 +106,9 @@ func holdStock(ctx context.Context, member kubernetes.Interface, reader client.R
 	release := func() {
 		cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer cancel()
-		_ = guard.Release(cleanup)
+		if err := guard.Release(cleanup); err != nil {
+			log.FromContext(ctx).Error(err, "release stock member upgrade lease")
+		}
 	}
 	return &LockedStock{Context: work, Check: check, Release: release, state: member.CoreV1().ConfigMaps(Namespace), childUID: identity.ChildUID, image: policy.ExecutorImage}, nil
 }

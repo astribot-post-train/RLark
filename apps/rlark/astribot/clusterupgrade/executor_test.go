@@ -8,6 +8,7 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/fake"
@@ -95,12 +96,19 @@ func TestExecutorKeepsNodeAgentImageIndependent(t *testing.T) {
 	client := fake.NewClientset(deployment, &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{Name: CheckpointConfigMap, Namespace: Namespace},
 	})
-	held := func(context.Context) error { return nil }
+	checks := 0
+	held := func(context.Context) error {
+		checks++
+		if checks == 4 {
+			return apierrors.NewServiceUnavailable("member API restarting during readiness check")
+		}
+		return nil
+	}
 	store := ConfigMapCheckpoint{ConfigMaps: client.CoreV1().ConfigMaps(Namespace), JobUID: "job-two", CheckLease: held}
 	nodes := &fakeNodeImages{image: "old-node"}
 	executor := Executor{
 		Deployments: client.AppsV1().Deployments(Namespace), NodeAgents: nodes, Checkpoints: store,
-		CheckLease: held, HealthTimeout: time.Second,
+		CheckLease: held, HealthTimeout: 3 * time.Second,
 	}
 	if err := executor.Run(t.Context(), target, "", true); err == nil {
 		t.Fatal("a managed node Agent upgrade accepted a missing node image")

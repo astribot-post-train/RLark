@@ -107,8 +107,10 @@ func (r *pullReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 	if err != nil {
 		run.log.Error(err, "failed to create upgrade driver")
 		var networkErr net.Error
+		var status apierrors.APIStatus
 		if apierrors.IsTimeout(err) || apierrors.IsServerTimeout(err) || apierrors.IsTooManyRequests(err) ||
-			apierrors.IsServiceUnavailable(err) || apierrors.IsInternalError(err) || errors.As(err, &networkErr) {
+			apierrors.IsServiceUnavailable(err) || apierrors.IsInternalError(err) || apierrors.IsForbidden(err) ||
+			(errors.As(err, &status) && (status.Status().Code == 502 || status.Status().Code == 504)) || errors.As(err, &networkErr) {
 			return ctrl.Result{}, err
 		}
 		return ctrl.Result{}, run.updateStatus(ctx, &clusterUpgradeJob, rlarkv1alpha1.ClusterUpgradeJobFailed, "", err.Error())

@@ -77,7 +77,7 @@ func TestHistoricalTunnelClaimRefusesChangedMarkerOrDocument(t *testing.T) {
 			}
 			proof := fmt.Sprintf("%x/%x", sha256.Sum256([]byte(before)), sha256.Sum256([]byte(oldDocument)))
 			script := strings.Replace(claimDetachedTunnel(j, proof), detachedJoinHost, "", 1)
-			script = strings.NewReplacer(joinTunnelHostMarker, markerPath, legacyTunnelConfig, documentPath, "/var/lib/rlark", dir).Replace(script)
+			script = strings.NewReplacer(joinTunnelHostMarker, markerPath, legacyTunnelConfig, documentPath, "/var/lib/rlark", dir, "/etc/kubernetes/", dir+"/").Replace(script)
 			out, err := exec.Command("sh", "-c", script).CombinedOutput()
 			if (err == nil) != tc.want {
 				t.Fatalf("claim expected %v: %s %v", tc.want, out, err)
@@ -85,6 +85,42 @@ func TestHistoricalTunnelClaimRefusesChangedMarkerOrDocument(t *testing.T) {
 			got, _ := os.ReadFile(markerPath)
 			if tc.want && string(got) != "new-attempt\n" || !tc.want && string(got) != tc.marker+"\n" {
 				t.Fatalf("unexpected owner %q", got)
+			}
+		})
+	}
+}
+
+func TestResidualWorkerRequiresMatchingJoinIdentityAndResets(t *testing.T) {
+	for _, test := range []struct {
+		identity string
+		want     bool
+	}{
+		{"", false}, {"another-cluster/box", false}, {"cluster-a/other", false}, {"cluster-a/box", true},
+	} {
+		t.Run(test.identity, func(t *testing.T) {
+			dir := t.TempDir()
+			marker := filepath.Join(dir, "tunnel.uid")
+			kubelet := filepath.Join(dir, "kubelet.conf")
+			if err := os.WriteFile(kubelet, nil, 0600); err != nil {
+				t.Fatal(err)
+			}
+			if test.identity != "" {
+				if err := os.WriteFile(marker+".identity", []byte(test.identity), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			fakeKubeadm := filepath.Join(dir, "kubeadm")
+			if err := os.WriteFile(fakeKubeadm, []byte("#!/bin/sh\nrm -f "+kubelet+"\n"), 0700); err != nil {
+				t.Fatal(err)
+			}
+			script := "set -eu\nmarker=" + marker + "\njoin_identity=cluster-a/box\nsystemctl() { :; }\n" + workerJoinIdentity + resetDetachedWorker
+			script = strings.NewReplacer("/etc/kubernetes/", dir+"/", "/opt/rlark/bin/kubeadm", fakeKubeadm).Replace(script)
+			out, err := exec.Command("sh", "-c", script).CombinedOutput()
+			if (err == nil) != test.want {
+				t.Fatalf("allowed = %v, output %s", err, out)
+			}
+			if _, err := os.Stat(kubelet); os.IsNotExist(err) != test.want {
+				t.Fatalf("credentials: %v", err)
 			}
 		})
 	}

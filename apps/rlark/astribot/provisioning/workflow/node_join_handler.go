@@ -464,8 +464,12 @@ case "$state" in
   inactive|failed) ;;
   *) echo 'SSH join is still active on the host' >&2; exit 1;;
 esac
-[ ! -e /etc/kubernetes/kubelet.conf ] && [ ! -e /etc/kubernetes/admin.conf ] ||
-  { echo 'host still has Kubernetes credentials; use a verified node removal' >&2; exit 1; }
+` + detachedJoinHost + `
+if [ -e /etc/kubernetes/kubelet.conf ] || [ -e /etc/kubernetes/bootstrap-kubelet.conf ]; then
+  [ "${reset_worker:-}" = yes ] ||
+    { echo 'host still has Kubernetes credentials; use a verified node removal' >&2; exit 1; }
+  ` + workerJoinIdentity + resetDetachedWorker + `
+fi
 systemctl disable --now rlark-station-gateway >/dev/null 2>&1 || true
 rm -f /etc/systemd/system/rlark-station-gateway.service /etc/rlark/station/bootstrap.json /var/lib/station/wg/last-applied.json
 ip link del st-wg0 2>/dev/null || true
@@ -600,8 +604,20 @@ func (g *Service) clearUnredeemedJoin(ctx context.Context, j *rlarkv1alpha1.Node
 		if err != nil {
 			return steps, fmt.Errorf("登录 %s@%s：%w", j.Spec.Machine.User, j.Spec.Machine.Address, err)
 		}
-		clearHost := "owner=" + nodessh.Quote(string(j.UID)) + "\n" + clearTunnelScript
+		defer func() { _ = machine.Close() }()
+		clearHost := "owner=" + nodessh.Quote(string(j.UID)) + "\n" + joinHostIdentity(j) + clearTunnelScript
+		// Keep the ordinary pre-install clear path independent of member API availability.
+		// Only a confirmed absent native Node can authorize a local worker reset.
 		out, err := machine.Run(ctx, clearHost, nil, nil)
+		if err != nil && strings.Contains(out, "host still has Kubernetes credentials") {
+			if j.Status.HostKey == "" {
+				return steps, fmt.Errorf("the SSH host fingerprint is required before resetting a worker")
+			}
+			if proofErr := g.confirmNativeNodeAbsent(ctx, j); proofErr != nil {
+				return steps, proofErr
+			}
+			out, err = machine.Run(ctx, "reset_worker=yes\n"+clearHost, nil, nil)
+		}
 		if err != nil && strings.Contains(out, "host has no matching ownership record") {
 			digest, proofErr := g.authorizeLegacyTunnel(ctx, machine, j)
 			if proofErr == nil {
@@ -612,7 +628,6 @@ func (g *Service) clearUnredeemedJoin(ctx context.Context, j *rlarkv1alpha1.Node
 				err = proofErr
 			}
 		}
-		_ = machine.Close()
 		if err != nil {
 			return steps, fmt.Errorf("撤掉机器上的隧道：%w", err)
 		}

@@ -96,6 +96,7 @@ const provisionHostUnused = `[ ! -d /var/lib/rlark/control-plane ] &&
 
 const joinTunnelHostUnused = `[ ! -e /etc/systemd/system/rlark-station-gateway.service ] &&
   [ ! -e /etc/rlark/station/bootstrap.json ] && [ ! -e /etc/kubernetes/kubelet.conf ] &&
+  [ ! -e /etc/kubernetes/bootstrap-kubelet.conf ] &&
   [ ! -e /etc/kubernetes/admin.conf ]`
 
 func claimHostMarker(path string, uid types.UID, unused string) string {
@@ -113,7 +114,7 @@ if [ -e "$marker" ]; then
     "$owner") ;;
     *)
       host_unused || { echo 'host belongs to another attempt and still has installation artifacts' >&2; exit 1; }
-      rm -f "$marker.cluster" "$marker.node"
+      rm -f "$marker.cluster" "$marker.node" "$marker.identity"
       (umask 077; printf '%s\n' "$owner" > "$marker");;
   esac
 else

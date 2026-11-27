@@ -56,6 +56,8 @@ var ErrRolledBack = errors.New("upgrade failed and the previous images were rest
 var ErrRollbackFailed = errors.New("upgrade failed and rollback did not complete")
 
 func (e Executor) Run(ctx context.Context, target Images, nodeImage string, autoRollback bool) error {
+	checkLease := e.CheckLease
+	e.CheckLease = func(ctx context.Context) error { return retryMemberAPI(ctx, checkLease) }
 	checkpoint, exists, err := e.Checkpoints.Load(ctx)
 	if err != nil {
 		return fmt.Errorf("load upgrade checkpoint: %w", err)
@@ -79,7 +81,7 @@ func (e Executor) Run(ctx context.Context, target Images, nodeImage string, auto
 			return errors.New("an explicit node Agent target is required exactly when managed node Agents are present")
 		}
 		checkpoint = Checkpoint{Deployment: deployment, Target: target, NodeImage: nodeImage, NodeAgent: nodes}
-		if err := e.Checkpoints.Save(ctx, checkpoint); err != nil {
+		if err := e.saveCheckpoint(ctx, checkpoint); err != nil {
 			return fmt.Errorf("persist upgrade checkpoint: %w", err)
 		}
 	} else if checkpoint.Target != target || checkpoint.NodeImage != nodeImage || (e.ExpectedDeployment != "" && checkpoint.Deployment.Name != e.ExpectedDeployment) {
@@ -111,22 +113,29 @@ func (e Executor) Run(ctx context.Context, target Images, nodeImage string, auto
 	err = e.apply(ctx, checkpoint, checkpoint.Deployment.Before, target, checkpoint.NodeAgent.Before, checkpoint.NodeImage, false)
 	if err == nil {
 		checkpoint.Completed = true
-		if err := e.Checkpoints.Save(ctx, checkpoint); err != nil {
+		if err := e.saveCheckpoint(ctx, checkpoint); err != nil {
 			return fmt.Errorf("record completed upgrade: %w", err)
 		}
 		return nil
 	}
-	if !autoRollback || ctx.Err() != nil || errors.Is(err, ErrExecutorInterrupted) {
+	if cause := context.Cause(ctx); cause != nil {
+		return errors.Join(err, cause)
+	}
+	if !autoRollback || errors.Is(err, ErrExecutorInterrupted) || errors.Is(err, ErrLeaseLost) {
 		return err
 	}
 	if leaseErr := e.CheckLease(ctx); leaseErr != nil {
 		return errors.Join(err, ErrRollbackFailed, leaseErr)
 	}
 	checkpoint.RollingBack = true
-	if saveErr := e.Checkpoints.Save(ctx, checkpoint); saveErr != nil {
+	if saveErr := e.saveCheckpoint(ctx, checkpoint); saveErr != nil {
 		return errors.Join(err, ErrRollbackFailed, saveErr)
 	}
 	return e.rollback(ctx, checkpoint, err)
+}
+
+func (e Executor) saveCheckpoint(ctx context.Context, checkpoint Checkpoint) error {
+	return retryMemberAPI(ctx, func(call context.Context) error { return e.Checkpoints.Save(call, checkpoint) })
 }
 
 func (e Executor) rollback(ctx context.Context, checkpoint Checkpoint, upgradeErr error) error {
@@ -141,12 +150,16 @@ func (e Executor) apply(ctx context.Context, checkpoint Checkpoint, from, to Ima
 	// A degraded cluster Agent must not prevent the second image rollback.
 	var nodeRollbackErr error
 	if rollback && checkpoint.NodeAgent.ClusterUID != "" {
-		if err := e.CheckLease(ctx); err != nil {
-			return err
-		}
-		nodeRollbackErr = e.NodeAgents.CompareAndSet(ctx, checkpoint.NodeAgent, oldNodeImage, nodeImage, true)
+		nodeRollbackErr = retryMemberAPI(ctx, func(call context.Context) error {
+			if err := e.CheckLease(call); err != nil {
+				return err
+			}
+			return e.NodeAgents.CompareAndSet(call, checkpoint.NodeAgent, oldNodeImage, nodeImage, true)
+		})
 	}
-	if err := WriteDeploymentImages(ctx, e.Deployments, checkpoint.Deployment, from, to, e.CheckLease); err != nil {
+	if err := retryMemberAPI(ctx, func(call context.Context) error {
+		return WriteDeploymentImages(call, e.Deployments, checkpoint.Deployment, from, to, e.CheckLease)
+	}); err != nil {
 		return errors.Join(nodeRollbackErr, err)
 	}
 	if nodeRollbackErr != nil {
@@ -160,6 +173,9 @@ func (e Executor) apply(ctx context.Context, checkpoint Checkpoint, from, to Ima
 		}
 		deployment, err := e.Deployments.Get(ctx, checkpoint.Deployment.Name, metav1.GetOptions{})
 		if err != nil {
+			if temporaryAPIError(err) {
+				return false, nil
+			}
 			return false, err
 		}
 		return DeploymentAtTarget(deployment, checkpoint.Deployment, to)
@@ -170,11 +186,13 @@ func (e Executor) apply(ctx context.Context, checkpoint Checkpoint, from, to Ima
 	if checkpoint.NodeAgent.ClusterUID == "" {
 		return nil
 	}
-	if err := e.CheckLease(health); err != nil {
-		return err
-	}
 	if !rollback {
-		if err := e.NodeAgents.CompareAndSet(health, checkpoint.NodeAgent, oldNodeImage, nodeImage, false); err != nil {
+		if err := retryMemberAPI(health, func(call context.Context) error {
+			if err := e.CheckLease(call); err != nil {
+				return err
+			}
+			return e.NodeAgents.CompareAndSet(call, checkpoint.NodeAgent, oldNodeImage, nodeImage, false)
+		}); err != nil {
 			return err
 		}
 	}

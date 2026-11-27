@@ -13,6 +13,8 @@ import (
 	"net/url"
 	"time"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/wait"
 )
 
@@ -107,6 +109,9 @@ func (a *BrokerNodeImages) CompareAndSet(ctx context.Context, snap NodeAgentTarg
 func (a *BrokerNodeImages) WaitReady(ctx context.Context, snap NodeAgentTarget, image string) error {
 	return wait.PollUntilContextCancel(ctx, 2*time.Second, true, func(ctx context.Context) (bool, error) {
 		state, err := a.call(ctx, ObserveNodeRollout)
+		if temporaryAPIError(err) {
+			return false, nil
+		}
 		if err != nil {
 			return false, err
 		}
@@ -155,6 +160,8 @@ func (a *BrokerNodeImages) call(ctx context.Context, action NodeImageAction) (No
 			return NodeImageResult{}, ErrNodeImageGrant
 		case http.StatusConflict:
 			return NodeImageResult{}, ErrTargetChanged
+		case http.StatusBadGateway, http.StatusInternalServerError, http.StatusServiceUnavailable, http.StatusGatewayTimeout, http.StatusTooManyRequests:
+			return NodeImageResult{}, apierrors.NewGenericServerResponse(response.StatusCode, "POST", schema.GroupResource{}, "", "node image broker temporarily unavailable", 0, false)
 		default:
 			return NodeImageResult{}, fmt.Errorf("node image broker returned HTTP %d", response.StatusCode)
 		}

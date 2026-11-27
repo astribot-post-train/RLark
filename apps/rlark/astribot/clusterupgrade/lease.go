@@ -4,21 +4,51 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"strings"
 	"sync"
 	"time"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/wait"
 	coordination "k8s.io/client-go/kubernetes/typed/coordination/v1"
 	"k8s.io/utils/ptr"
 )
 
 const (
-	LeaseName            = "rlark-agent-upgrade"
-	Namespace            = "rlark-system"
-	leaseDurationSeconds = 300
-	renewPeriod          = time.Minute
+	LeaseName              = "rlark-agent-upgrade"
+	Namespace              = "rlark-system"
+	leaseDurationSeconds   = 300
+	renewPeriod            = time.Minute
+	executorHandoffSeconds = leaseDurationSeconds + 60
 )
+
+// ErrLeaseLost stops this executor before another holder can write.
+var ErrLeaseLost = errors.New("member upgrade lease lost")
+
+func temporaryAPIError(err error) bool {
+	var network net.Error
+	var status apierrors.APIStatus
+	return apierrors.IsTimeout(err) || apierrors.IsServerTimeout(err) || apierrors.IsTooManyRequests(err) ||
+		apierrors.IsServiceUnavailable(err) || apierrors.IsInternalError(err) ||
+		(errors.As(err, &status) && (status.Status().Code == 502 || status.Status().Code == 504)) ||
+		(errors.As(err, &network) && !errors.Is(err, context.Canceled))
+}
+
+func retryMemberAPI(ctx context.Context, action func(context.Context) error) error {
+	retryCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
+	defer cancel()
+	var last error
+	err := wait.PollUntilContextCancel(retryCtx, time.Second, true, func(call context.Context) (bool, error) {
+		last = action(call)
+		if temporaryAPIError(last) {
+			return false, nil
+		}
+		return last == nil, last
+	})
+	return errors.Join(err, last)
+}
 
 const executorAnnotation = "rlark.io/upgrade-executor"
 
@@ -97,15 +127,18 @@ func (g *Guard) Check(ctx context.Context) error {
 		return err
 	}
 	current, err := g.leases.Get(ctx, LeaseName, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		return errors.Join(ErrLeaseLost, err)
+	}
 	if err != nil {
 		return err
 	}
 	if ptr.Deref(current.Spec.HolderIdentity, "") != g.holder || current.Annotations[executorAnnotation] != g.executor {
-		return &LeaseConflict{Holder: ptr.Deref(current.Spec.HolderIdentity, "")}
+		return errors.Join(ErrLeaseLost, &LeaseConflict{Holder: ptr.Deref(current.Spec.HolderIdentity, "")})
 	}
 	if current.Spec.RenewTime == nil || current.Spec.LeaseDurationSeconds == nil ||
 		!time.Now().Before(current.Spec.RenewTime.Add(time.Duration(*current.Spec.LeaseDurationSeconds)*time.Second)) {
-		return fmt.Errorf("member upgrade lease expired")
+		return fmt.Errorf("%w: expired", ErrLeaseLost)
 	}
 	return nil
 }
@@ -133,7 +166,7 @@ func (g *Guard) renew(ctx context.Context, expires time.Time) {
 				timer.Reset(min(5*time.Second, remaining))
 				continue
 			}
-			g.cancel(fmt.Errorf("lost member upgrade lease: %w", err))
+			g.cancel(errors.Join(ErrLeaseLost, err))
 			return
 		}
 	}

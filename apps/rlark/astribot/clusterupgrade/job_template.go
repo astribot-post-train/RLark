@@ -21,7 +21,7 @@ func ConfigureExecutor(job *batchv1.Job, policy JobPolicy, childUID, childName, 
 		}},
 	}}
 	if job.Spec.ActiveDeadlineSeconds != nil {
-		job.Spec.ActiveDeadlineSeconds = ptr.To(*job.Spec.ActiveDeadlineSeconds + leaseDurationSeconds)
+		job.Spec.ActiveDeadlineSeconds = ptr.To(*job.Spec.ActiveDeadlineSeconds + executorHandoffSeconds)
 	}
 	pod := &job.Spec.Template.Spec
 	executor := &pod.Containers[0]

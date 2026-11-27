@@ -81,38 +81,28 @@ func prepareMemberLease(ctx context.Context, member kubernetes.Interface) error 
 	namespace := clusterupgrade.Namespace
 	leases := member.CoordinationV1().Leases(namespace)
 	_, err := leases.Get(ctx, clusterupgrade.LeaseName, metav1.GetOptions{})
-	if err == nil {
-		return nil
-	}
-	if !apierrors.IsForbidden(err) && !apierrors.IsNotFound(err) {
+	exists := err == nil
+	if err != nil && !apierrors.IsForbidden(err) && !apierrors.IsNotFound(err) {
 		return err
 	}
 	roles := member.RbacV1().Roles(namespace)
 	err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		role, err := roles.Get(ctx, "rlark-release", metav1.GetOptions{})
+		if exists && apierrors.IsNotFound(err) {
+			return nil
+		}
 		if err != nil {
 			return err
 		}
-		rules := []rbacv1.PolicyRule{
-			{APIGroups: []string{"coordination.k8s.io"}, Resources: []string{"leases"}, ResourceNames: []string{clusterupgrade.LeaseName}, Verbs: []string{"get", "update"}},
-			{APIGroups: []string{"coordination.k8s.io"}, Resources: []string{"leases"}, Verbs: []string{"create"}},
-		}
 		before := len(role.Rules)
-		for _, rule := range rules {
-			if !slices.ContainsFunc(role.Rules, func(current rbacv1.PolicyRule) bool {
-				return slices.Equal(current.APIGroups, rule.APIGroups) && slices.Equal(current.Resources, rule.Resources) &&
-					slices.Equal(current.ResourceNames, rule.ResourceNames) && slices.Equal(current.Verbs, rule.Verbs)
-			}) {
-				role.Rules = append(role.Rules, rule)
-			}
-		}
+		addMemberLeaseRules(role)
 		if before == len(role.Rules) {
 			return nil
 		}
 		_, err = roles.Update(ctx, role, metav1.UpdateOptions{})
 		return err
 	})
-	if err != nil {
+	if err != nil || exists {
 		return err
 	}
 	return wait.PollUntilContextTimeout(ctx, 250*time.Millisecond, 5*time.Second, true, func(ctx context.Context) (bool, error) {
@@ -139,4 +129,20 @@ func (r *Run) checkMemberLease(ctx context.Context, name string) error {
 		return fmt.Errorf("cluster %s: %w", name, err)
 	}
 	return nil
+}
+
+func addMemberLeaseRules(role *rbacv1.Role) {
+	rules := []rbacv1.PolicyRule{
+		{APIGroups: []string{"coordination.k8s.io"}, Resources: []string{"leases"}, ResourceNames: []string{clusterupgrade.LeaseName}, Verbs: []string{"get", "update"}},
+		{APIGroups: []string{"coordination.k8s.io"}, Resources: []string{"leases"}, Verbs: []string{"create"}},
+		{APIGroups: []string{"batch"}, Resources: []string{"jobs"}, Verbs: []string{"get"}},
+	}
+	for _, rule := range rules {
+		if !slices.ContainsFunc(role.Rules, func(current rbacv1.PolicyRule) bool {
+			return slices.Equal(current.APIGroups, rule.APIGroups) && slices.Equal(current.Resources, rule.Resources) &&
+				slices.Equal(current.ResourceNames, rule.ResourceNames) && slices.Equal(current.Verbs, rule.Verbs)
+		}) {
+			role.Rules = append(role.Rules, rule)
+		}
+	}
 }

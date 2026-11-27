@@ -279,6 +279,7 @@ func (s *joinScene) enrolled() {
 func TestAMachineThatReachesStationAPIJoinsInStages(t *testing.T) {
 	s := newJoinScene(t, joinNetwork(nil, nil), readyNode(2),
 		&rlarkv1alpha1.Addon{ObjectMeta: metav1.ObjectMeta{Name: "nvidia-gpu", Namespace: "cluster-a"}})
+	s.nativeNodeUID("original-native-uid")
 	s.follow = "RLARK_SSH_JOIN created-join-1\nRLARK_JOIN_NODE_UID box original-native-uid\n" + s.follow
 	s.reach["10.11.14.128:18443"] = true
 	s.precheck = "gpu=NVIDIA H20\ngpu=NVIDIA H20\n"
@@ -502,6 +503,7 @@ func TestARetryOfInstallFollowsTheUnitThatStillRuns(t *testing.T) {
 // the retry, not run again with a new code.
 func TestALineThatEndedWhileTheGatewayWasDownIsNotRunAgain(t *testing.T) {
 	s := newJoinScene(t, joinNetwork(nil, nil), readyNode(0))
+	s.nativeNodeUID("original-native-uid")
 	s.reach["10.11.14.128:18443"] = true
 	s.enrolled()
 	s.follow = "10:00:00 loading the installer"
@@ -676,9 +678,14 @@ func TestClearInterruptedJoinUsesOriginalUIDOrRefusesLegacyRecord(t *testing.T) 
 }
 
 func TestJoinUIDReceiptCannotBeReplacedOrAdoptedFromOlderAttempt(t *testing.T) {
-	j := &rlarkv1alpha1.NodeJoin{ObjectMeta: metav1.ObjectMeta{Name: "cluster-a.box", UID: "join-1"}, Spec: rlarkv1alpha1.NodeJoinSpec{NodeName: "box"}}
+	j := &rlarkv1alpha1.NodeJoin{ObjectMeta: metav1.ObjectMeta{Name: "cluster-a.box", UID: "join-1"}, Spec: rlarkv1alpha1.NodeJoinSpec{ClusterID: "cluster-a", NodeName: "box"}}
 	s := newJoinScene(t, joinNetwork(nil, nil), j)
 	ctx := context.Background()
+	s.nativeNodeUID("different-current-uid")
+	if err := s.g.recordJoinedNodeUID(ctx, j, "RLARK_SSH_JOIN join-1\nRLARK_JOIN_NODE_UID box original"); err == nil {
+		t.Fatal("a receipt did not match the member API")
+	}
+	s.nativeNodeUID("original")
 	if err := s.g.recordJoinedNodeUID(ctx, j, "RLARK_SSH_JOIN older-join\nRLARK_JOIN_NODE_UID box unknown\nRLARK_SSH_JOIN join-1\nRLARK_JOIN_NODE_UID box original"); err != nil {
 		t.Fatal(err)
 	}
@@ -735,5 +742,15 @@ func TestAbandonUnverifiedJoinOnlyDeletesOwnedUnusedAdmission(t *testing.T) {
 				t.Fatalf("unknown identity triggered a native Node removal: %v %v", operations, err)
 			}
 		})
+	}
+}
+
+func (s *joinScene) nativeNodeUID(uid string) {
+	s.g.hooks.ProxyKubeRequest = func(_ context.Context, method, member, path string, _ []byte) (*http.Response, error) {
+		if method != http.MethodGet || member != "cluster-a" || path != "api/v1/nodes/box" {
+			return nil, fmt.Errorf("unexpected member request: %s %s %s", method, member, path)
+		}
+		body := fmt.Sprintf(`{"metadata":{"name":"box","uid":%q}}`, uid)
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(body))}, nil
 	}
 }

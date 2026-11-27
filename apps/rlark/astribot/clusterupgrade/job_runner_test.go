@@ -129,19 +129,27 @@ func TestUnconfiguredMembersResolveNoPolicyOnlyWithoutAstribotLease(t *testing.T
 	}
 }
 
-func TestVanishedUpgradePodRequiresSameJobAndChild(t *testing.T) {
-	member := fake.NewClientset()
-	for _, scenario := range []struct {
-		holder, job string
-		want        bool
+func TestVanishedUpgradePodUsesOriginalJobEvidence(t *testing.T) {
+	original := &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: JobName("child"), Namespace: Namespace, UID: "job-uid", Labels: map[string]string{ChildUIDLabel: "child"}}}
+	failed := original.DeepCopy()
+	failed.Status.Conditions = []batchv1.JobCondition{{Type: batchv1.JobFailed, Status: corev1.ConditionTrue}}
+	for _, test := range []struct {
+		name, holder, job, executor string
+		objects                     []runtime.Object
+		want                        bool
 	}{
-		{"upgrade-job/child", "job-uid", true},
-		{"upgrade-job/child", "replacement-job", false},
-		{"upgrade-job/other", "job-uid", false},
+		{"same job resumes", "upgrade-job/child", "job-uid", "missing/pod-uid/job-uid", []runtime.Object{original}, true},
+		{"another attempt waits for active job", "", "", "missing/pod-uid/job-uid", []runtime.Object{original}, false},
+		{"terminal original job", "", "", "missing/pod-uid/job-uid", []runtime.Object{failed}, true},
+		{"job and pod garbage collected", "", "", "missing/pod-uid/job-uid", nil, true},
+		{"legacy executor with no job UID", "", "", "missing/pod-uid", nil, false},
 	} {
-		ok, err := executorExited(t.Context(), member, scenario.holder, "missing/pod-uid/job-uid", "upgrade-job/child", scenario.job)
-		if err != nil || ok != scenario.want {
-			t.Fatalf("%+v: got %v %v", scenario, ok, err)
-		}
+		t.Run(test.name, func(t *testing.T) {
+			member := fake.NewClientset(test.objects...)
+			ok, err := executorExited(t.Context(), member, "upgrade-job/child", test.executor, test.holder, test.job)
+			if err != nil || ok != test.want {
+				t.Fatalf("allowed = %v, err = %v", ok, err)
+			}
+		})
 	}
 }

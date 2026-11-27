@@ -52,13 +52,13 @@ Gateway、管理面控制器和升级后的成员 Agent 都要求集群明确设
 
 发布工具以当前阶段读取的状态为基线更新已启用的节点 Agent 镜像声明。它核对 Cluster UID，保留资源版本做条件写入，并在变更镜像前复核成员租约。镜像被改为其他值、Cluster 被替换或正在删除、或者声明已被禁用时，停止镜像变更。重试发现镜像已是目标值时，核对身份和租约后即视为成功。节点选择器、滚动规则及其他 Cluster 字段保留。首次启用声明仍由发布初始化流程负责。
 
-仅集群 Agent 模式的 Job 使用本轮检查点执行仅镜像升级。Agent 校验本地 Job 名称、子任务 UID 标签和执行器 ServiceAccount 后才读取结果。上游安装器继续使用 `rlark-state` 作为回滚基线。仅镜像模式的 Agent 不会在 Job 释放租约后写入这份共享记录。
+仅镜像执行器在阶段时限内重试成员 API 的临时错误，每次写入前均校验 Pod、Job 与租约身份。确认失去所有权时中断执行，由符合条件的替代 Pod 接续检查点。仅集群 Agent 模式的 Job 使用本轮检查点执行仅镜像升级。Agent 校验本地 Job 名称、子任务 UID 标签和执行器 ServiceAccount 后才读取结果。上游安装器继续使用 `rlark-state` 作为回滚基线。仅镜像模式的 Agent 不会在 Job 释放租约后写入这份共享记录。
 
 托管模式的管理面授权和成员滚动必须能在集群 Agent 重启或故障时继续。继续用 UpgradeJob 和 ClusterUpgradeJob 作为运维入口。管理面授权绑定 Cluster UID、子任务 UID 和已批准的目标镜像摘要，并在首次写入前由管理面记录回滚基线。成员 Job 使用绑定本轮任务的凭据。管理面独立核验成员 Job 和当前成员租约，仅开放受限的镜像操作，授权和凭据留在成员不可写的位置。成员 Job 不挂载通用 Cluster 写权限或全站发布凭据。节点 Agent DaemonSet 仍由集群 Agent 独占调谐。声明变更后，必须核验同一工作负载实例、目标镜像和本轮滚动，包括替换后的 Pod，才能判定成功。节点 Agent 镜像独立于集群 Agent 和工具镜像。
 
 独立代理和 Job 适配器已可用于托管模式的隔离验证。在一次性成员集群中安装现有的执行器 ServiceAccount、检查点和租约，并应用 `astribot/release/member-upgrade-verifier.yaml`。验证身份能发起 TokenReview，并读取成员的执行器 Pod、Job、Lease 和节点 Agent DaemonSet。凭据只挂载给代理。运行 `rlark-upgrade` 时，把 `RLARK_NODE_IMAGE_BROKER_CONFIG` 指向一份 JSON 配置，其中包含 `listen`、`tlsCert`、`tlsKey`、`managementKubeconfig` 和 `members`。后者按管理面 Cluster 名称索引，每项填写 `clusterUID` 和该成员验证身份的 `kubeconfig`。代理的管理面身份只授予已批准的 Cluster 名称上的读取和更新权限。代理监听指定的内网地址并要求直连 TLS。
 
-隔离子任务的本地 `rlark-agent-upgrade-policy` ConfigMap 设置 `mode=astribot-managed-node`、`deployment`、摘要固定的 `executorImage`、HTTPS `brokerOrigin` 和可信 PEM `brokerCA`。托管模式的 DeployConfig 要求 `kubernetes.agent-image`、`kubernetes.image` 和 `kubernetes.node-agent-image` 都固定到镜像摘要。可信管理面运维人员在启动该子任务前为 Cluster 写入 `rlark.io/node-image-upgrade-grant`。这份 JSON 授权包含 `ClusterUID`、`DaemonSetUID`、`ChildUID`、`Before`（已观测且固定摘要的节点 Agent 镜像）、`Target`（节点 Agent 目标）、`Deployment`（批准的 `Agent` 和 `Tools` 摘要）、`ExecutorImage`、`Expires`（RFC 3339，晚于 Job 截止时间以覆盖回滚）和初始值为 `Approved` 的 `Phase`。不要替换仍在使用的授权。Job 使用绑定 Pod、可轮换的专用受众令牌；代理通过同一次 Cluster 资源版本检查提交镜像和授权阶段，迟到的正向请求无法撤销回滚。代理核验同一托管 DaemonSet UID、预期模板镜像、已观测代际、已更新节点数和可用节点数。隔离模式要求所有已调度节点收敛。
+隔离子任务的本地 `rlark-agent-upgrade-policy` ConfigMap 设置 `mode=astribot-managed-node`、`deployment`、摘要固定的 `executorImage`、HTTPS `brokerOrigin` 和可信 PEM `brokerCA`。托管模式的 DeployConfig 要求 `kubernetes.agent-image`、`kubernetes.image` 和 `kubernetes.node-agent-image` 都固定到镜像摘要。可信管理面运维人员在启动该子任务前为 Cluster 写入 `rlark.io/node-image-upgrade-grant`。这份 JSON 授权包含 `ClusterUID`、`DaemonSetUID`、`ChildUID`、`Before`（已观测且固定摘要的节点 Agent 镜像）、`Target`（节点 Agent 目标）、`Deployment`（批准的 `Agent` 和 `Tools` 摘要）、`ExecutorImage`、`Expires`（RFC 3339，晚于 Job 截止时间以覆盖回滚）和初始值为 `Approved` 的 `Phase`。不要替换仍在使用的授权。Job 使用绑定 Pod、可轮换的专用受众令牌；代理通过同一次 Cluster 资源版本检查提交镜像和授权阶段，迟到的正向请求无法撤销回滚。代理核验同一托管 DaemonSet UID、预期模板镜像、已观测代际、已更新节点数和可用节点数。隔离模式检查符合条件的节点是否收敛，滚动开始时已排除的不可用节点不阻塞升级或回滚。
 
 托管 Job 被清理后，恢复流程会核验本轮子任务的完成检查点、实际集群 Agent Deployment、托管节点 DaemonSet 和 Cluster 上已应用的授权。过期授权仍可作为本轮只读证据。证据缺失或发生变化时，报告结果无法核验。开放批量升级前，用标准与托管成员完成混合批次验收，覆盖授权过期、资源替换、成员租约冲突、部分滚动和回滚，并确认成员无法变更其他 Cluster 或已批准镜像以外的字段。
 
@@ -90,7 +90,7 @@ Kind 混合批次用例对标准和托管 Cluster 记录运行了真实控制面
 
 SSH 安装器在 Kubernetes boot ID 与主机一致时即记录原生 Node UID，包括尚未 Ready 的节点。存在原 UID 时，清理提交绑定该 UID 的 Remove 操作。缺少 UID 时可提供 SSH 凭据，清理已核实未使用的许可及隧道，也可以选择 `machine_gone` 清除失败的尝试。已兑换或归属不明的许可及隧道会保留，由站点节点页面继续处理。清理不会读取当前同名 Node 的 UID 作为删除目标。新版安装器加入的 SSH 节点完成 UID 绑定的主机重置后，会清除匹配的隧道标记，允许重新入网。留下安装痕迹且缺少归属记录的历史主机需单独核实。需同时发布新的 Station 安装包、Station Controller 和 Gateway 才能使用这些路径。
 
-历史 SSH 隧道清理和复用需核对固定的 SSH 主机指纹及匹配的 WireGuard 公钥，确认无运行中的安装、无 kubelet 或控制面凭据，并由成员 API 返回原生 Node NotFound。写入前，主机持锁重新核对旧标记和隧道文档的指纹。旧标记缺失时也适用。有同名替换节点、公钥不符或成员 API 无法确认时，清理会停止。缺少原归属证据的历史集群凭据和网络声明仍需运维单独核实。
+隧道模式的 SSH 入网会在主机上同时记录所属集群和节点名。清理或重新入网时，若该主机留有匹配的工作节点安装，且成员 API 确认原生 Node 不存在，可先重置该主机。同名节点仍存在、成员 API 不可用、安装进程还在运行、主机为控制面或缺少归属证据时，均停止重置。Gateway 保存从日志恢复的 Node UID 前，还会与成员 API 核对。历史 SSH 隧道清理和复用需核对固定的 SSH 主机指纹及匹配的 WireGuard 公钥，确认无运行中的安装、无未经验证的工作节点凭据或控制面安装，并由成员 API 返回原生 Node NotFound。写入前，主机持锁重新核对旧标记和隧道文档的指纹。旧标记缺失时也适用。有同名替换节点、公钥不符或成员 API 无法确认时，清理会停止。缺少原归属证据的历史集群凭据和网络声明仍需运维单独核实。
 
 ### Server 隧道验收
 

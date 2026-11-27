@@ -48,7 +48,7 @@ func TestPrepareMemberLeaseMigratesExistingReleaseRole(t *testing.T) {
 		t.Fatal(err)
 	}
 	updated, err := member.RbacV1().Roles(namespace).Get(ctx, role.Name, metav1.GetOptions{})
-	if err != nil || len(updated.Rules) != 3 || updated.Rules[0].Resources[0] != "deployments" {
+	if err != nil || len(updated.Rules) != 4 || updated.Rules[0].Resources[0] != "deployments" {
 		t.Fatalf("unexpected member role: %+v, %v", updated, err)
 	}
 	leases := member.CoordinationV1().Leases(namespace)
@@ -128,5 +128,28 @@ func TestBootstrapMemberLeaseWithLegacyKubernetesRBAC(t *testing.T) {
 	}
 	if err := guard.Release(ctx); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestLegacyReleaseTreeRetainsMemberFenceRules(t *testing.T) {
+	definitions, err := ParseDefinitions(releaseMemberRBAC, []byte(`apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: rlark-release
+  namespace: rlark-system
+rules:
+- apiGroups: ["apps"]
+  resources: ["deployments"]
+  verbs: ["update"]
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var parsed rbacv1.Role
+	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(definitions[0].Object, &parsed); err != nil {
+		t.Fatal(err)
+	}
+	if len(parsed.Rules) != 4 || parsed.Rules[0].Resources[0] != "deployments" || parsed.Rules[1].ResourceNames[0] != clusterupgrade.LeaseName || parsed.Rules[3].Resources[0] != "jobs" {
+		t.Fatalf("unexpected rules: %+v", parsed.Rules)
 	}
 }

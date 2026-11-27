@@ -206,6 +206,23 @@ func ParseDefinitions(name string, data []byte) ([]*unstructured.Unstructured, e
 			continue
 		}
 		definition := &unstructured.Unstructured{Object: object}
+		if name == releaseMemberRBAC && definition.GetKind() == "Role" &&
+			definition.GetName() == "rlark-release" && definition.GetNamespace() == agentNamespace {
+			// Applying an older release tree must preserve permissions this tool
+			// needs to fence writes and release the member Lease.
+			var role rbacv1.Role
+			if err := runtime.DefaultUnstructuredConverter.FromUnstructured(object, &role); err != nil {
+				return nil, fmt.Errorf("%s: %w", name, err)
+			}
+			addMemberLeaseRules(&role)
+			canonical, err := runtime.DefaultUnstructuredConverter.ToUnstructured(&role)
+			if err != nil {
+				return nil, fmt.Errorf("%s: %w", name, err)
+			}
+			if err := unstructured.SetNestedField(definition.Object, canonical["rules"], "rules"); err != nil {
+				return nil, fmt.Errorf("%s: %w", name, err)
+			}
+		}
 		if _, known := definitionKinds[definition.GetKind()]; !known {
 			return nil, fmt.Errorf("%s: a %s is not a definition the release writes", name, definition.GetKind())
 		}

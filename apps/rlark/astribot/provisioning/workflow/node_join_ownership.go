@@ -2,11 +2,14 @@ package workflow
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"net/http"
 	"strings"
 
 	rlarkv1alpha1 "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
 	"github.com/rlinf/rlark/apps/rlark/astribot/nodessh"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/client-go/util/retry"
@@ -67,6 +70,9 @@ func (g *Service) recordJoinedNodeUID(ctx context.Context, j *rlarkv1alpha1.Node
 			}
 			return nil
 		}
+		if err := g.verifyNativeJoinUID(ctx, current, uid); err != nil {
+			return err
+		}
 		metav1.SetMetaDataAnnotation(&current.ObjectMeta, nodeJoinNodeUID, uid)
 		_, err = client.Update(ctx, current, metav1.UpdateOptions{})
 		return err
@@ -75,4 +81,21 @@ func (g *Service) recordJoinedNodeUID(ctx context.Context, j *rlarkv1alpha1.Node
 		metav1.SetMetaDataAnnotation(&j.ObjectMeta, nodeJoinNodeUID, uid)
 	}
 	return err
+}
+
+func (g *Service) verifyNativeJoinUID(ctx context.Context, j *rlarkv1alpha1.NodeJoin, uid string) error {
+	if g.hooks.ProxyKubeRequest == nil {
+		return fmt.Errorf("member API is unavailable to verify the SSH join's Node UID")
+	}
+	response, err := g.hooks.ProxyKubeRequest(ctx, http.MethodGet, provisionAgentID(j.Spec.ClusterID), "api/v1/nodes/"+j.Spec.NodeName, nil)
+	if err != nil {
+		return fmt.Errorf("verify the SSH join's Node UID: %w", err)
+	}
+	defer func() { _ = response.Body.Close() }()
+	var node corev1.Node
+	if response.StatusCode != http.StatusOK || json.NewDecoder(response.Body).Decode(&node) != nil ||
+		node.Name != j.Spec.NodeName || string(node.UID) != uid || node.DeletionTimestamp != nil {
+		return fmt.Errorf("the member API did not confirm the SSH join's original Node UID")
+	}
+	return nil
 }

@@ -17,6 +17,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
 // ErrExecutorInterrupted is retryable by the same Job. It denotes a Pod
@@ -85,8 +86,11 @@ func runImageJob(ctx context.Context, member kubernetes.Interface, reader client
 	leases := member.CoordinationV1().Leases(Namespace)
 	var guard *Guard
 	var work context.Context
-	if err := wait.PollUntilContextTimeout(ctx, 2*time.Second, time.Duration(leaseDurationSeconds+10)*time.Second, true, func(call context.Context) (bool, error) {
+	if err := wait.PollUntilContextTimeout(ctx, 2*time.Second, time.Duration(executorHandoffSeconds)*time.Second, true, func(call context.Context) (bool, error) {
 		if _, err := readExecutor(call, member, identity); err != nil {
+			if temporaryAPIError(err) {
+				return false, nil
+			}
 			return false, err
 		}
 		// The guard belongs to the Job lifetime, not the polling deadline.
@@ -95,7 +99,7 @@ func runImageJob(ctx context.Context, member kubernetes.Interface, reader client
 		if errors.As(err, &conflict) && conflict.Holder == holder {
 			return false, nil
 		}
-		if apierrors.IsConflict(err) {
+		if apierrors.IsConflict(err) || temporaryAPIError(err) {
 			return false, nil
 		}
 		return err == nil, err
@@ -116,7 +120,9 @@ func runImageJob(ctx context.Context, member kubernetes.Interface, reader client
 	defer func() {
 		cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer cancel()
-		_ = guard.Release(cleanup)
+		if err := guard.Release(cleanup); err != nil {
+			log.FromContext(ctx).Error(err, "release member upgrade lease")
+		}
 	}()
 	checkpoint := ConfigMapCheckpoint{ConfigMaps: member.CoreV1().ConfigMaps(Namespace), JobUID: request.JobUID, CheckLease: check}
 	var nodes NodeAgentImages = clusterOnlyNodeImages{reader: reader}
@@ -159,32 +165,68 @@ func runImageJob(ctx context.Context, member kubernetes.Interface, reader client
 	return executor.Run(work, target, nodeImage, request.AutoRollback)
 }
 
-// A vanished Pod is only replaceable by a live Pod of the same immutable Job
-// after lease expiry. Unrelated attempts still need positive terminal evidence.
+// After expiry, another attempt may take over only when the old Pod or its Job
+// is terminal, or the original Job no longer exists and can no longer fence writes.
 func executorExited(ctx context.Context, member kubernetes.Interface, previousHolder, previous, holder, jobUID string) (bool, error) {
 	parts := strings.Split(previous, "/")
 	if len(parts) < 2 || len(parts) > 3 || parts[0] == "" || parts[1] == "" {
 		return false, nil
 	}
 	old, err := member.CoreV1().Pods(Namespace).Get(ctx, parts[0], metav1.GetOptions{})
-	sameJob := previousHolder == holder && len(parts) == 3 && parts[2] != "" && parts[2] == jobUID
-	if apierrors.IsNotFound(err) || err == nil && string(old.UID) != parts[1] {
-		return sameJob, nil
-	}
-	if err != nil {
-		return false, err
-	}
 	child, ok := strings.CutPrefix(previousHolder, "upgrade-job/")
-	owner := metav1.GetControllerOf(old)
-	if !ok || child == "" || owner == nil || (owner.Name != JobName(child) && owner.Name != LockedStockJobName(child)) || owner.Kind != "Job" ||
-		owner.APIVersion != batchv1.SchemeGroupVersion.String() || (len(parts) == 3 && string(owner.UID) != parts[2]) {
+	if !ok || child == "" {
 		return false, nil
 	}
-	return old.Status.Phase == corev1.PodSucceeded || old.Status.Phase == corev1.PodFailed, nil
+	sameJob := previousHolder == holder && len(parts) == 3 && parts[2] != "" && parts[2] == jobUID
+	missing := apierrors.IsNotFound(err) || err == nil && string(old.UID) != parts[1]
+	if !missing {
+		if err != nil {
+			return false, err
+		}
+		owner := metav1.GetControllerOf(old)
+		if owner == nil || (owner.Name != JobName(child) && owner.Name != LockedStockJobName(child)) ||
+			owner.Kind != "Job" || owner.APIVersion != batchv1.SchemeGroupVersion.String() ||
+			(len(parts) == 3 && string(owner.UID) != parts[2]) {
+			return false, nil
+		}
+		if old.Status.Phase != corev1.PodSucceeded && old.Status.Phase != corev1.PodFailed {
+			return false, nil
+		}
+	}
+	if sameJob {
+		return true, nil
+	}
+	if len(parts) != 3 || parts[2] == "" {
+		return !missing, nil
+	}
+	// The Job names are deterministic. A Pod and Job must still match their
+	// original UIDs before an executor write. A missing Job breaks that fence.
+	for _, name := range []string{JobName(child), LockedStockJobName(child)} {
+		job, err := member.BatchV1().Jobs(Namespace).Get(ctx, name, metav1.GetOptions{})
+		if apierrors.IsNotFound(err) {
+			continue
+		}
+		if err != nil {
+			return false, err
+		}
+		if string(job.UID) != parts[2] {
+			continue
+		}
+		if job.Labels[ChildUIDLabel] != child {
+			return false, nil
+		}
+		for _, condition := range job.Status.Conditions {
+			if condition.Status == corev1.ConditionTrue && (condition.Type == batchv1.JobComplete || condition.Type == batchv1.JobFailed) {
+				return true, nil
+			}
+		}
+		return false, nil
+	}
+	return true, nil
 }
 
 // PreviousUpgradeExecutorExited allows a release to take over a terminal
-// executor after expiry. Missing or replaced Pods are not positive evidence.
+// executor after expiry. A missing Pod also requires proof about its Job.
 func PreviousUpgradeExecutorExited(ctx context.Context, member kubernetes.Interface, holder, executor string) (bool, error) {
 	return executorExited(ctx, member, holder, executor, "", "")
 }
