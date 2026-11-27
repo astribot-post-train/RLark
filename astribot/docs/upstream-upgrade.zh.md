@@ -13,10 +13,6 @@ Astribot 标准发布在 `crds-rbac` 阶段应用 CRD 和生成的管理面角�
 
 ## 兼容分支实现进度
 
-机器人操作、场站观测、相机和日志代理、手动扫描及型号目录在 `apps/rlark/astribot/stations/`。入网码签发和撤销、有效期校验、安装命令和记录转换在 `stationidentity/`。成员集群网络规划和机器安装脚本在 `provisioning/`。专用 Addon 目录、Agent 就绪判定、节点服务代理、任务适配器、存储声明渲染和 OCI 清单校验已归入相应的 Astribot 包。控制台扩展和测试分别位于 `apps/rlark-ui/src/astribot/` 和 `apps/rlark-ui/tests/astribot/`。
-
-CRD 字段与生成产物、共享角色、鉴权和错误转换、组件接线及其集成测试随共享契约维护。已有安装通过同名同版本的 `csi-driver-rclone` 使用 Astribot 参数，因此该扩展仍在原 Addon 定义内。依赖共享组件状态的镜像仓库和 Agent／提供商代码保留各自的接入点。
-
 本次变更覆盖托管升级执行器和历史归属迁移。场站功能、控制台样式和相机改动不在本次修订范围内。
 
 发布工具保留管理面的全站 Lease，并在发布写入前按集群顺序获取成员 Kubernetes Lease。已有标准发布权限的成员会自动补齐发布 Role 的租约规则，并在缺少 Lease 时创建。冲突时报告持有者并释放本次已获取的锁。过期的发布 CLI 锁可接管，所有成员写入都会重新核对 Lease。不同升级 Job 接管已过期的 Job 锁时，仍需独立核实原 Pod 已退出。发布期间使用同一代发布工具。
@@ -28,8 +24,6 @@ CRD 字段与生成产物、共享角色、鉴权和错误转换、组件接线�
 在隔离 Kind 验收中，执行器写下检查点并变更 Agent Deployment 后，其 Pod 被强制删除。测试回拨旧 Lease 续租时间以模拟过期。Kubernetes 使用原 Job UID 创建替代 Pod，替代 Pod 复用检查点、完成滚动并释放租约。
 
 托管节点升级在 DaemonSet 完全收敛时使用聚合状态。出现降级时，代理核对原 DaemonSet 拥有的 Pod 及对应成员节点。至少一个 Ready 节点必须运行目标镜像且 Agent 就绪，其他 Ready 目标也必须符合条件。只有明确为 NotReady 或 Unknown 且关联 Pod 可核验的节点可以延期。缺少 Pod 或恢复在线的节点仍使用旧镜像时，升级不算就绪。回滚先恢复节点 Agent 镜像声明，再等待集群 Agent Deployment，避免后者卡住而跳过节点镜像恢复。成员验证账号需具备命名空间范围的 Pod 列表权限和集群范围的 Node 列表权限。
-
-前端静态热更新使用 `astribot/release/build-ui-static.sh`，传入新的绝对输出目录。此入口与正式镜像使用相同的 IAM 构建设置，产物包含独立的 `login.html` 及其图片。发布后验证未登录跳转和已登录控制台。
 
 要在无 node Agent 的隔离成员运行这条路径，先核对管理面的 `Cluster.spec.nodeAgents` 未开启。应用成员升级 Lease 与 `astribot/release/member-upgrade-cluster-only.yaml`，将 Role 的 Deployment 名称改为该成员实际部署名。成员管理员在 `rlark-system` 建立 `rlark-agent-upgrade-policy` ConfigMap，键为 `mode=astribot-cluster-only`、`deployment` 和 `executorImage`，其中镜像必须按 SHA-256 摘要固定。仅提交该成员的测试用 `ClusterUpgradeJob`，其执行器镜像必须与策略一致，DeployConfig 只允许 `kubernetes.agent-image` 和 `kubernetes.image` 两个摘要镜像字段。这个入口用于隔离验证。
 
@@ -45,8 +39,6 @@ CRD 字段与生成产物、共享角色、鉴权和错误转换、组件接线�
 Gateway、管理面控制器和升级后的成员 Agent 都要求集群明确设置 `rlark.io/upgrade-driver: stock` 后才允许使用上游安装器。声明了托管节点 Agent 的集群无法使用该安装器。若成员已有 Astribot 发布租约但未配置执行策略，Agent 同样拒绝启动。隔离测试的仅镜像模式在目标就绪后由 Job 持成员租约写入完成检查点。若本地 Job 消失，Agent 会确认检查点属于本轮子任务 UID，并核验相同 Deployment 的两个目标镜像摘要及实际就绪状态。找不到匹配的检查点时会报告结果无法确认。 纯标准批次单独统计已成功回滚的子任务，不将其计入失败阈值，与上游 `d06745e` 一致。在混合批次中，托管子任务回滚仍计入 Astribot 的失败预算，标准子任务回滚则单独统计。未使用共享 Lease 的标准成员沿用上游的 Job 重试和截止时间。显式声明驱动、批次预检拒绝不支持的目标、已有 Astribot 发布 Lease 的成员须使用经过批准且按摘要固定的标准执行器，均为 Astribot 保留的兼容边界。
 
 机器列表和入网资格共用 `stations/machine_view.go` 中的转换逻辑。集群创建和 SSH 节点入网共用 `provisioning/bundle.go` 中的安装包传输、摘要验证和进度上报。Astribot 的 S3 挂载选项和端点校验归入 `storageconfig/mount_request.go`，复用上游端点标准化逻辑。Gateway 沿用现有授权和响应契约，再调用 Astribot 工作流。 升级目标被拒绝时的诊断信息，以及节点加入状态的注解转换，也由 Astribot 扩展负责，沿用现有 API 字段。
-
-执行器将托管节点 Agent 镜像作为第三个独立目标写入本轮检查点。开放托管升级前，仍需接通管理面通道，仅允许对已核验的集群和任务比较并变更 `Cluster.spec.nodeAgents.image`，并核验成员集群的实际滚动结果。通过混合双集群验收后再开放 Astribot 批量入口。
 
 ### 托管节点 Agent 的升级边界
 
@@ -75,6 +67,8 @@ Gateway、管理面控制器和升级后的成员 Agent 都要求集群明确设
 Kind 混合批次用例对标准和托管 Cluster 记录运行了真实控制面调谐器，验证子任务收到不同的配置，并使用真实 TokenReview 和 SubjectAccessReview 自动签发授权。托管 Job 完成了夹具 DaemonSet 滚动，并在第二次滚动超时后恢复声明。标准子任务已核验分发，尚未运行标准安装器。完整 Astribot 调谐器和生产 kcp workspace 仍需独立验收。Gateway 的机器准入已将请求校验、型号匹配和持久化委托给 Astribot stations 包。 独立 kcp v0.30.0 workspace 还验证了 SubjectAccessReview 能识别旧 Agent 的子任务 Spec 写权限，并在收紧 Role 后确认写请求无权执行。
 
 ### 完整混合批次隔离验证
+
+以下为原合并分支的验收结果。转为可合并状态前，请在拆分后的分支重跑完整用例。
 
 独立 kcp v0.30.0 root workspace 加两个 Kind 成员验证了混合批次。测试在真实 API 上运行现有批量调谐器、两个成员升级调谐器、标准安装器，以及 Astribot 节点 Agent 和滚动调谐器。父任务和两个子任务均为 Succeeded。标准 Job 更新了集群 Agent Deployment 和独立节点 Agent DaemonSet；托管 Job 通过 Cluster 声明更新节点 Agent，保留集群 Agent 原有参数。应用容器使用健康检查夹具，Kubernetes 滚动、代理认证和调谐器行为均为实际执行。该用例未使用生产凭据，也未测试 Agent 到 Server 的隧道。 故意失败的节点 Agent 镜像滚动超时后，实际调谐器将同一 UID 的 DaemonSet 恢复到原镜像。模拟发布占用成员租约时，托管子任务报告了持有者，零失败阈值阻止了排队的标准子任务，镜像声明未变更。
 
