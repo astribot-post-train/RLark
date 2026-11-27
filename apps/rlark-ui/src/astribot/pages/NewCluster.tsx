@@ -14,6 +14,7 @@ import {
   selfHealApi,
   type ClusterType,
 } from "../api";
+import { ProvisionMigrationDialog } from "../components/ProvisionMigrationDialog";
 import { RetryClear } from "../components/RetryClear";
 import { StageList } from "../components/StageList";
 import { useAction } from "../components/useAction";
@@ -64,6 +65,8 @@ export function NewClusterPage({ lang }: { lang: Lang }) {
   const [submitted, setSubmitted] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [loadError, setLoadError] = useState("");
+  const [migration, setMigration] = useState<{ name: string; uid: string }>();
+  const [migrationNotice, setMigrationNotice] = useState("");
   const [cleared, setCleared] = useState<string[]>([]);
   const { pending: busy, error, setError, run } = useAction();
   const refs = useRef<Partial<Record<NewClusterField, HTMLElement | null>>>({});
@@ -616,6 +619,33 @@ export function NewClusterPage({ lang }: { lang: Lang }) {
                 </p>
               )}
               <StageList stages={view.stages} zh={zh} />
+              {current.metadata?.name &&
+                current.metadata.uid &&
+                (view.phase === "Failed" || view.phase === "Succeeded") && (
+                  <div className="provision-migration-entry">
+                    <button
+                      type="button"
+                      className="secondary-button"
+                      disabled={busy}
+                      onClick={() => {
+                        setMigrationNotice("");
+                        setMigration({
+                          name: current.metadata!.name!,
+                          uid: current.metadata!.uid!,
+                        });
+                      }}
+                    >
+                      {zh ? "核对历史归属" : "Review historical ownership"}
+                    </button>
+                    {migrationNotice === current.metadata.name && (
+                      <p role="status">
+                        {zh
+                          ? "已记录归属，可按原流程清理。"
+                          : "Ownership recorded. You can use the existing cleanup action."}
+                      </p>
+                    )}
+                  </div>
+                )}
               <RetryClear
                 zh={zh}
                 view={view}
@@ -669,6 +699,19 @@ export function NewClusterPage({ lang }: { lang: Lang }) {
           )}
         </aside>
       </div>
+      {migration && (
+        <ProvisionMigrationDialog
+          key={migration.uid}
+          {...migration}
+          zh={zh}
+          onClose={() => setMigration(undefined)}
+          onRecorded={() => {
+            setMigrationNotice(migration.name);
+            setMigration(undefined);
+            void refresh();
+          }}
+        />
+      )}
       {provisions.length > 0 && (
         <section className="signed-clusters-panel new-cluster-history">
           <div className="signed-clusters-heading">

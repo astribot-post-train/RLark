@@ -286,6 +286,8 @@ func provisionCall(t *testing.T, g *Service, method, path, name, body string) (i
 	router.POST("/cluster-provisions/:name/retry", g.HandleRetryClusterProvision)
 	router.POST("/cluster-provisions/:name/clear", g.HandleClearClusterProvision)
 	router.POST("/cluster-provisions/:name/migrate-ownership", g.HandleMigrateClusterProvision)
+	router.GET("/cluster-provisions/:name/migration-candidates", g.HandleClusterProvisionMigrationCandidates)
+	router.POST("/cluster-provisions/:name/migration-candidates/host", g.HandleClusterProvisionMigrationHost)
 	recorder := httptest.NewRecorder()
 	router.ServeHTTP(recorder, httptest.NewRequest(method, path, bytes.NewBufferString(body)))
 	var out map[string]any

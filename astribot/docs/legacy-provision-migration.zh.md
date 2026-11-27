@@ -6,23 +6,12 @@
 
 如果安装仍在运行、主机是控制面、已有同名节点、API 地址或 CA 不一致，或者缺少证据，自动恢复会停止。请保留旧记录，核实归属后再重试。
 
-## 记录历史开集群归属
+## 核对并记录历史开集群归属
 
-清理历史开集群记录前，通过管理员接口 `POST /api/v1/cluster-provisions/{name}/migrate-ownership` 补记归属。先查安装记录、审计记录或备份，独立确认原始归属，再填写已核实资源的当前 `metadata.uid` 和 `metadata.resourceVersion`。同名、当前 DNS 或当前资源列表本身无法证明历史归属。
+管理员在控制台打开 **新建集群**，从 **新建历史** 选择记录，再点 **核对历史归属**。控制台自动读取当前 Cluster、SiteNetwork 和相关凭据元数据，为候选显示状态，并在可用时显示 UID 和创建时间。请对照原安装记录、审计或备份，只勾选能确认归属的候选，填写证据引用并确认。当前仍有同名 Cluster 时，除非原归属已记录，否则须同时核对该集群。SiteNetwork 已部分清理时，剩余条目与原开集群记录一致即可选中。
 
-原管理面 Cluster 已不存在时，停止的开集群记录可以这样迁移：
+如需核对历史控制面，展开 **核对原控制面主机**，输入 SSH 口令并点 **读取主机身份**。Gateway 使用已记录的主机指纹连接，以只读方式取得原生 `kube-system` UID。请对照原集群证据并单独确认该 UID。读取完成后控制台清除口令。主机或原生 API 不可用时，仍可核对管理面资源。
 
-```json
-{
-  "provision_uid": "original-provision-uid",
-  "evidence": "变更单 CHG-1234",
-  "site_network": {"uid": "reviewed-site-network-uid", "resource_version": "764"},
-  "credentials": {
-    "station-read": {"uid": "reviewed-secret-uid", "resource_version": "738"}
-  }
-}
-```
+UID 和资源版本由控制台提交。资源变化时，重新加载候选并核对。确认只写归属元数据，并审计证据引用。主机安装、Secret 数据和独立节点记录保持原样。确认后按原流程清理。
 
-原 Cluster 仍在时，通过 `cluster` 提供它的资源身份。接口要求核对当前 Cluster 实例，否则会拒绝迁移。凭据键支持 `station-read`、`station-operations`、`release` 和 `agent-certificate`。只提交你已核实的资源。SiteNetwork 声明已部分清理时，剩余条目与原开集群记录一致即可迁移。若要迁移历史控制面主机，还需要从原集群记录取得 `kube-system` 命名空间 UID，填入 `native_cluster_uid`。后续清理登录主机时，会核对已保存的 SSH 指纹和主机上的原生 UID，再补写清理所需的标记。
-
-迁移写入归属元数据，并在审计日志记录管理员和证据引用。主机安装、Secret 数据以及独立的 NodeAdmission 和 NetworkEnrollment 都保留。核实后使用原清理入口。已成功创建且仍存在的 Cluster 要先走正常的集群删除流程。写入冲突时重新核实剩余资源，用最新资源版本重试。同一 UID 已写入的归属记录可继续复用。原始归属无法确认时，请保留相应历史记录。
+管理员 API 提供 `GET /api/v1/cluster-provisions/{name}/migration-candidates`、`POST /api/v1/cluster-provisions/{name}/migration-candidates/host` 和 `POST /api/v1/cluster-provisions/{name}/migrate-ownership`。原程序化确认接口继续支持。原始归属无法核实时，保留相应记录。

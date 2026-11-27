@@ -6,23 +6,12 @@ Retry SSH join on the original host. Gateway requires the pinned SSH fingerprint
 
 An active installer, a control plane, a current same-named Node, a different API endpoint or CA, or missing evidence stops automatic recovery. Keep the old record and resolve its ownership before trying again.
 
-## Record historical cluster ownership
+## Review and record historical cluster ownership
 
-Use the administrator endpoint `POST /api/v1/cluster-provisions/{name}/migrate-ownership` before clearing a historical ClusterProvision. Independently establish the original ownership from the installation records, an audit record or a backup. Copy each verified object's current `metadata.uid` and `metadata.resourceVersion`. A matching name, current DNS or current resource list alone cannot prove original ownership.
+In the administrator console, open **New Cluster**, select a record under **Creation history**, and choose **Review historical ownership**. The console reads the current Cluster, SiteNetwork and relevant credential metadata. It shows each candidate's status, UID and creation time when available. Compare these with independent installation, audit or backup records. Select only resources whose original ownership you can verify, enter the evidence reference, and confirm. If a live Cluster still exists, you must also review it unless its original ownership is already recorded. Partial SiteNetwork declarations can be selected when the remaining entries agree with the original provision.
 
-A request for a stopped provision whose original management Cluster is already absent can look like this:
+For a historical control-plane host, open **Review original control-plane host**, enter its SSH password and choose **Read host identity**. Gateway connects using the recorded host fingerprint and reads the native `kube-system` UID. Compare the returned UID with the original cluster evidence and confirm it separately. The console clears the password after the read. If the host or its native API is unavailable, you can still review the management resources.
 
-```json
-{
-  "provision_uid": "original-provision-uid",
-  "evidence": "change record CHG-1234",
-  "site_network": {"uid": "reviewed-site-network-uid", "resource_version": "764"},
-  "credentials": {
-    "station-read": {"uid": "reviewed-secret-uid", "resource_version": "738"}
-  }
-}
-```
+The console submits the observed UIDs and resource versions for you. If a selected object changes, reload and verify the candidates again. Confirmation writes only ownership metadata and audits the evidence reference. It does not clear the provision, reset a host, expose Secret data or delete independent node records. Use the existing cleanup action after confirmation.
 
-If the original Cluster still exists, supply its identity as `cluster`. The operation rejects a live Cluster unless its exact instance is included. Supported credential keys are `station-read`, `station-operations`, `release` and `agent-certificate`. Include only resources you verified. A partially removed SiteNetwork declaration can be migrated when its remaining entries agree with the original provision. For a historical control-plane host, also supply `native_cluster_uid` from the original Kubernetes `kube-system` namespace. Later cleanup uses the recorded SSH fingerprint and verifies the native UID on the host before adopting its cleanup marker.
-
-Migration writes ownership metadata and records the administrator and evidence reference in the audit log. It leaves the installation, Secret data and independent NodeAdmission and NetworkEnrollment objects in place. Use the ordinary clear action when ready. A completed provision with a live Cluster still follows the regular cluster-removal workflow first. If a write conflicts, recheck the remaining objects and retry with their current resource versions. Receipts already written for the same object UID can be reused. Retain any record whose original ownership cannot be established.
+The administrator API exposes `GET /api/v1/cluster-provisions/{name}/migration-candidates`, `POST /api/v1/cluster-provisions/{name}/migration-candidates/host`, and `POST /api/v1/cluster-provisions/{name}/migrate-ownership`. The existing programmatic confirmation request remains supported. A record whose original ownership cannot be verified should be retained.

@@ -27,12 +27,13 @@ type reviewedObject struct {
 	ResourceVersion string    `json:"resource_version" binding:"required"`
 }
 type provisionMigration struct {
-	ProvisionUID     types.UID                 `json:"provision_uid" binding:"required"`
-	Evidence         string                    `json:"evidence" binding:"required,max=256"`
-	Cluster          *reviewedObject           `json:"cluster"`
-	SiteNetwork      *reviewedObject           `json:"site_network"`
-	Credentials      map[string]reviewedObject `json:"credentials"`
-	NativeClusterUID types.UID                 `json:"native_cluster_uid"`
+	ProvisionResourceVersion string                    `json:"provision_resource_version"`
+	ProvisionUID             types.UID                 `json:"provision_uid" binding:"required"`
+	Evidence                 string                    `json:"evidence" binding:"required,max=256"`
+	Cluster                  *reviewedObject           `json:"cluster"`
+	SiteNetwork              *reviewedObject           `json:"site_network"`
+	Credentials              map[string]reviewedObject `json:"credentials"`
+	NativeClusterUID         types.UID                 `json:"native_cluster_uid"`
 }
 
 type provisionCredentialRef struct{ namespace, name string }
@@ -69,7 +70,7 @@ func (g *Service) HandleMigrateClusterProvision(c *gin.Context) {
 		g.http.RespondKubeError(c, "read historical provision", err)
 		return
 	}
-	if p.UID != request.ProvisionUID || p.DeletionTimestamp != nil || p.Status.Phase == rlark.ClusterProvisionRunning {
+	if p.UID != request.ProvisionUID || (request.ProvisionResourceVersion != "" && p.ResourceVersion != request.ProvisionResourceVersion) || p.DeletionTimestamp != nil || p.Status.Phase == rlark.ClusterProvisionRunning {
 		c.JSON(http.StatusConflict, gin.H{"error": "the provision UID changed or the operation is active"})
 		return
 	}
@@ -127,7 +128,7 @@ func (g *Service) planLegacyProvision(ctx context.Context, p *rlark.ClusterProvi
 		if err := verifyReviewedObject(cluster, *request.Cluster, bound); err != nil {
 			return nil, reject(err)
 		}
-		if cluster.Spec.AgentNamespace != p.Name || (savedCluster != "" && savedCluster != string(cluster.UID)) || (savedOwner != "" && !already) {
+		if !compatibleProvisionCluster(p, cluster) {
 			return nil, reject(fmt.Errorf("the Cluster already has a different owner or namespace"))
 		}
 		if !already {
@@ -175,11 +176,8 @@ func (g *Service) planLegacyProvision(ctx context.Context, p *rlark.ClusterProvi
 		if err != nil {
 			return nil, err
 		}
-		facts := p.Status.Facts
-		name := "cp." + p.Name + ".rlark.internal"
 		key := siteProvisionAnnotation(p.Name)
-		owner := object.GetAnnotations()[key]
-		receipt := siteProvisionReceipt(p.UID, object.GetUID(), name, facts.NodeName, facts.TunnelAddress, facts.PublicKey, p.Spec.Site)
+		owner, receipt := provisionNetworkReceipt(p, object)
 		if err := verifyReviewedObject(object, *request.SiteNetwork, owner == receipt); err != nil {
 			return nil, reject(err)
 		}
@@ -210,6 +208,18 @@ func (g *Service) planLegacyProvision(ctx context.Context, p *rlark.ClusterProvi
 	}
 
 	return actions, nil
+}
+
+func compatibleProvisionCluster(p *rlark.ClusterProvision, cluster *rlark.Cluster) bool {
+	savedCluster := p.Annotations[provisionClusterReceipt]
+	savedOwner := cluster.Annotations[ownership.ProvisionUID]
+	return cluster.Spec.AgentNamespace == p.Name && (savedCluster == "" || savedCluster == string(cluster.UID)) &&
+		(savedOwner == "" || savedOwner == string(p.UID))
+}
+
+func provisionNetworkReceipt(p *rlark.ClusterProvision, object *unstructured.Unstructured) (owner, receipt string) {
+	facts := p.Status.Facts
+	return object.GetAnnotations()[siteProvisionAnnotation(p.Name)], siteProvisionReceipt(p.UID, object.GetUID(), "cp."+p.Name+".rlark.internal", facts.NodeName, facts.TunnelAddress, facts.PublicKey, p.Spec.Site)
 }
 
 // A historical declaration can be partially removed. Remaining entries must

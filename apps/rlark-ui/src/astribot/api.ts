@@ -20,6 +20,11 @@ import type {
 } from "./lib/bodyCapabilities.js";
 import type { CRDNode } from "../types.js";
 
+import type {
+  MigrationConfirmation,
+  MigrationPreview,
+} from "./lib/provisionMigration.js";
+
 interface Condition {
   type: string;
   status: string;
@@ -113,6 +118,37 @@ export const clusterProvisionsApi = {
       "/api/v1/cluster-provisions",
     );
     return response.data ?? [];
+  },
+  async migrationCandidates(name: string, signal: AbortSignal) {
+    const response = await requestJson<{ data: MigrationPreview }>(
+      `/api/v1/cluster-provisions/${encodeURIComponent(name)}/migration-candidates`,
+      { signal },
+    );
+    return response.data;
+  },
+  async readMigrationHost(
+    name: string,
+    preview: MigrationPreview,
+    password: string,
+  ) {
+    const response = await requestJson<{ data: { uid: string } }>(
+      `/api/v1/cluster-provisions/${encodeURIComponent(name)}/migration-candidates/host`,
+      {
+        method: "POST",
+        body: {
+          provision_uid: preview.provision_uid,
+          provision_resource_version: preview.provision_resource_version,
+          password,
+        },
+      },
+    );
+    return response.data.uid;
+  },
+  migrateOwnership(name: string, confirmation: MigrationConfirmation) {
+    return requestJson<{ success: boolean }>(
+      `/api/v1/cluster-provisions/${encodeURIComponent(name)}/migrate-ownership`,
+      { method: "POST", body: confirmation },
+    );
   },
   // The new cluster's name, left empty, is rlark-<site>-<clusterType>.
   async create(form: NewClusterForm & { clusterType: ClusterType }) {

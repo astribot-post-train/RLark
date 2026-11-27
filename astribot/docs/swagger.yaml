@@ -220,6 +220,73 @@ paths:
         '202': {description: Going on}
         '400': {description: The stage logs in to the machine and no password was given}
         '409': {description: The making runs, or has finished}
+  /api/v1/cluster-provisions/{name}/migration-candidates:
+    get:
+      tags: [Clusters]
+      summary: Preview historical ownership candidates (administrator only)
+      description: Returns candidate metadata without assigning ownership or exposing Secret data.
+      parameters:
+        - {name: name, in: path, required: true, schema: {type: string}}
+      responses:
+        '200':
+          description: Current provision and candidate snapshots
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      provision_uid: {type: string}
+                      provision_resource_version: {type: string}
+                      native_state: {type: string, enum: [review, recorded, blocked]}
+                      candidates:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            key: {type: string}
+                            name: {type: string}
+                            namespace: {type: string}
+                            created_at: {type: string, format: date-time}
+                            state: {type: string, enum: [review, recorded, absent, blocked]}
+                            identity: {$ref: '#/components/schemas/ReviewedProvisionObject'}
+        '404': {description: The provision no longer exists}
+        '409': {description: The provision is active or has no stable identity}
+  /api/v1/cluster-provisions/{name}/migration-candidates/host:
+    post:
+      tags: [Clusters]
+      summary: Read the native UID from the recorded SSH host (administrator only)
+      description: Runs a read against the original pinned host. The password is used only for this read.
+      parameters:
+        - {name: name, in: path, required: true, schema: {type: string}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [provision_uid, provision_resource_version, password]
+              properties:
+                provision_uid: {type: string}
+                provision_resource_version: {type: string}
+                password: {type: string, format: password}
+      responses:
+        '200':
+          description: Candidate native kube-system namespace UID
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      uid: {type: string}
+        '400': {description: Missing preview identity or password}
+        '409': {description: The original host or provision changed}
+        '502': {description: The pinned host or native API could not be read}
   /api/v1/cluster-provisions/{name}/migrate-ownership:
     post:
       tags: [Clusters]
@@ -236,6 +303,7 @@ paths:
               required: [provision_uid, evidence]
               properties:
                 provision_uid: {type: string}
+                provision_resource_version: {type: string, description: Snapshot from the console preview}
                 evidence: {type: string, maxLength: 256, description: Reference to the audit record or backup establishing original ownership}
                 native_cluster_uid: {type: string, description: Original kube-system namespace UID for a verified historical control-plane host}
                 cluster: {$ref: '#/components/schemas/ReviewedProvisionObject'}
