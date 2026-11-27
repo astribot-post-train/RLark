@@ -129,17 +129,19 @@ func verifyStockRBACUpgrade(t *testing.T, run *Run, ctx context.Context) {
 			len(differences(jsonValue(current.Object), jsonValue(stated(definition)), false)) != 0 {
 			t.Fatalf("RBAC was not updated in place: %v, %v", current, err)
 		}
-		current.SetAnnotations(nil)
-		field := "rules"
-		if definition.GetKind() == "RoleBinding" {
-			field = "subjects"
-		}
-		current.Object[field] = []any{}
-		if _, err := client.Update(ctx, current, metav1.UpdateOptions{}); err != nil {
-			t.Fatal(err)
-		}
-		break
 	}
+	role := defs[0]
+	client := definitionClient(run.Site.MemberDefinitions["lab"], role)
+	current, err := client.Get(ctx, role.GetName(), metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	current.SetAnnotations(nil)
+	current.Object["rules"] = []any{}
+	if _, err := client.Update(ctx, current, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+
 	if _, err := run.stockChanges(ctx, "lab"); err == nil {
 		t.Fatal("plan proposed overwriting manual RBAC")
 	}
