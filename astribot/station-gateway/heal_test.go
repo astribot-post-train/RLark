@@ -1,0 +1,74 @@
+package main
+
+import (
+	"testing"
+	"time"
+)
+
+// An outage takes the uplink, then the device, then asks for a restart, each
+// once; restarts that do not hold the tunnel wait twice as long each time.
+func TestLinkStepsUpThroughAnOutage(t *testing.T) {
+	start := time.Unix(1_800_000_000, 0)
+	l := link{State: "up", Since: start.Unix()}
+	at := func(d time.Duration) time.Time { return start.Add(d) }
+	steps := func(d time.Duration, answered bool, keepUplink string) string {
+		step := l.next(answered, at(d), keepUplink)
+		if step == "restart" {
+			l.Restarts++
+			l.Restart = &restartRequest{ID: l.Restarts, At: at(d).Unix()}
+		}
+		if step != "" {
+			l.Done = append(l.Done, step)
+		}
+		return step
+	}
+	for _, want := range []struct {
+		at       time.Duration
+		answered bool
+		step     string
+	}{
+		{0, true, ""},
+		{time.Minute, false, "uplink"},
+		{90 * time.Second, false, ""},
+		{2 * time.Minute, false, "wireguard"},
+		{3 * time.Minute, false, ""},
+		{4 * time.Minute, false, "restart"},
+		{10 * time.Minute, false, ""},
+		{19 * time.Minute, false, "restart"}, // 15 min after the first
+		{40 * time.Minute, false, ""},
+		{49 * time.Minute, false, "restart"}, // 30 min after the second
+		{50 * time.Minute, true, ""},
+	} {
+		if got := steps(want.at, want.answered, ""); got != want.step {
+			t.Fatalf("at %s: step %q, want %q (%+v)", want.at, got, want.step, l)
+		}
+	}
+	if l.State != "up" || l.Restarts != 3 || l.Actions[len(l.Actions)-1].Step != "recovered" {
+		t.Fatalf("after recovery: %+v", l)
+	}
+	// Up for half an hour: the next outage restarts as soon as the first.
+	steps(81*time.Minute, true, "")
+	if l.Restarts != 0 {
+		t.Fatalf("restarts not forgotten: %+v", l)
+	}
+	// An uplink kept as it is (whole, or the machine in use): the device is still made anew.
+	if got := steps(90*time.Minute, false, "the machine is in use"); got != "" || l.Actions[len(l.Actions)-1].Result != "skipped: the machine is in use" {
+		t.Fatalf("in use: step %q, %+v", got, l.Actions)
+	}
+	if got := steps(91*time.Minute, false, "x"); got != "wireguard" {
+		t.Fatalf("in use: step %q, want wireguard", got)
+	}
+	if got := steps(93*time.Minute, false, "x"); got != "restart" {
+		t.Fatalf("in use: step %q, want restart", got)
+	}
+}
+
+func TestLinkKeepsTheLastActions(t *testing.T) {
+	var l link
+	for i := range 25 {
+		l.record(time.Unix(int64(i), 0), "down", "")
+	}
+	if len(l.Actions) != healActions || l.Actions[0].At != 15 {
+		t.Fatalf("actions %+v", l.Actions)
+	}
+}

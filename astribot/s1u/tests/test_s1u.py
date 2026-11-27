@@ -1110,3 +1110,36 @@ def test_an_unclaimed_idle_robot_whose_clock_is_off_has_its_driver_stopped_for_t
     follow(-250.0)
     follow(-250.0, seconds=node_tuner.CLOCK_SECONDS)
     assert robot.maintenance()[0] == "failed" and robot.lease()["kind"] == ""
+
+
+def test_a_robot_cut_off_from_the_site_is_lowered_and_restarted_when_its_gateway_asks(tmp_path, monkeypatch):
+    # s1u-01-x86, 11-27: the tunnel stayed down for hours with nobody on site; nothing restarted the robot.
+    robot = Tuned(monkeypatch, tmp_path / "run")
+    (tmp_path / "run").mkdir()
+    link = tmp_path / "link.json"
+    monkeypatch.setattr(node_tuner, "LINK_FILE", str(link))
+    booted = next(int(line.split()[1]) for line in open("/proc/stat") if line.startswith("btime"))
+    robot.now = booted + 3600.0
+    assert node_tuner.relink() is False  # no gateway file: nothing asked
+    link.write_text(json.dumps(dict(state="down", since=robot.now - 400, restart=dict(id=2, at=booted - 60, why="w"))))
+    assert node_tuner.relink() is False  # asked before this boot: done
+    link.write_text(json.dumps(dict(state="down", since=robot.now - 400, restart=dict(id=3, at=robot.now - 5, why="w"))))
+    robot.said[("up", "host")] = "astribot_driver runs\n"
+    assert node_tuner.relink() is True and ("reboot",) not in robot.calls
+    lease = robot.lease()
+    assert (lease["kind"], lease["of"], lease["power"], lease["held"]) == ("host", "link restart 3", "off", True)
+    robot.said[("up", "host")] = ""  # the power service stopped the driver, let the arms sink, powered off
+    robot.now += 30
+    assert node_tuner.relink() is True and robot.calls[-1] == ("reboot",) and robot.lease()["since"] == lease["since"]
+    # Not restarted after all: given up once LOWER_SECONDS have passed, the robot back to its desired state.
+    robot.now += node_tuner.LOWER_SECONDS
+    assert node_tuner.relink() is False and robot.lease()["kind"] == ""
+    # Another maintenance that holds the robot is left alone; a tunnel that answers again asks for nothing.
+    node_tuner.lease(kind="payload", of="payload x", power="ready", why="p", since=robot.now, held=True)
+    link.write_text(json.dumps(dict(state="down", since=robot.now, restart=dict(id=4, at=robot.now, why="w"))))
+    assert node_tuner.relink() is False and robot.lease()["of"] == "payload x"
+    link.write_text(json.dumps(dict(state="up", since=robot.now, restart=dict(id=4, at=robot.now, why="w"))))
+    assert node_tuner.relink() is False
+    # Once the site is back the file is on the Node.
+    robot.follow()
+    assert json.loads(robot.annotations[node_tuner.LINK])["state"] == "up"

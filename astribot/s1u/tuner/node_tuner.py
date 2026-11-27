@@ -67,6 +67,14 @@ the cluster the result, with no shell on the box:
 - tells the robot's device layer which robot this x86 is: the host's /run/rlark/s1u/robot.json, {"robot_identifier",
   "body"}, its Node's labels rlark.io/robot-id and rlark.io/robot-body (the admission record's), once the host's CPUs
   follow the profile (no restart of the host or of kubelet is due). The device container starts on it;
+- restarts the whole robot when the site has been unreachable for minutes and the host's station-gateway, having
+  taken its uplink and its WireGuard device up again to no avail, asks for it (its link.json beside the node's key:
+  {"state", "since", "restart": {"id", "at", "why"}, "actions"}; relink). This needs no API server, and so it waits
+  for no one's use: with the site gone no Run reaches the robot. It is the maintenance of a host restart all the
+  same: the lease held, the robot lowered by its power service (the driver stopped, the arms let sink, the motors off
+  S1U_DRIVER_STOP_SECONDS later), then the vendor's restart of the whole robot (the Orin, then this x86). A robot not
+  down and restarted within LOWER_SECONDS is left to the gateway's next request. The file is on the Node as annotation rlark.io/link once
+  the site is back;
 - publishes the robot's self-check, which its device layer runs by itself and leaves on the host
   (/run/rlark/s1u/self-check.json: the round without motor power after the robot joined, the full round at every
   session's attach): label rlark.io/self-check-state = ok | failed | pending (none yet), annotation
@@ -121,6 +129,8 @@ POWER_STATE, ORIN_ALL = "rlark.io/power-state", "s1u.rlark.io/orin"  # the power
 SERIAL, PARAMETERS = "rlark.io/body-serial", "s1u.rlark.io/body-parameters"
 ROBOT, BODY = "rlark.io/robot-id", "rlark.io/robot-body"
 SELF_CHECK_STATE, SELF_CHECK = "rlark.io/self-check-state", "rlark.io/self-check"
+LINK = "rlark.io/link"
+LINK_FILE = "/proc/1/root/var/lib/station/wg/link.json"  # the host's station-gateway's (this Pod is in its PID namespace)
 
 
 def host(*arguments, quiet=False):
@@ -309,6 +319,32 @@ def restart(kind, record, profile, current, now):
     return dict(record, was=current, at=now, attempts=record["attempts"] + 1), None
 
 
+def relink():
+    """Whether a restart the host's station-gateway asks for holds the robot (relink above): lowers it, restarts it once
+    it is down. A request older than the host's boot was done."""
+    link = json.load(open(LINK_FILE)) if os.path.exists(LINK_FILE) else {}
+    asked = link.get("restart")
+    booted = next(int(line.split()[1]) for line in open("/proc/stat") if line.startswith("btime"))
+    if link.get("state") != "down" or not asked or asked["at"] < booted:
+        return False
+    held = json.load(open(f"{HOST}/maintenance")) if os.path.exists(f"{HOST}/maintenance") else {}
+    of, now = "link restart %d" % asked["id"], time.time()
+    if held.get("held") and held["of"] != of:
+        return False  # another maintenance holds the robot: its restart, if any, is the one
+    since = held["since"] if held.get("of") == of else now
+    if now - since > LOWER_SECONDS:
+        print("%s: not restarted within %d s; the lease is given up" % (of, LOWER_SECONDS), flush=True)
+        lease()
+        return False
+    lease(kind="host", of=of, power=CEILING["host"], why="restarting the robot: %s" % asked["why"], since=since, held=True)
+    up = lowered("host")
+    if up:
+        print("%s: lowering the robot: %s" % (of, up), flush=True)
+        return True
+    host("reboot")
+    return True
+
+
 def follow(profile, source):
     """One pass against the API server: the state on the Node, and one step of the maintenance the robot needs.
     Whether the next pass should come at once (the robot queued for its lease just now)."""
@@ -443,6 +479,8 @@ def follow(profile, source):
     identity[ROLLOUT], identity[MAINTENANCE] = json.dumps(rollout), json.dumps(maintenance)
     if asked:
         identity[REQUESTED] = json.dumps(asked)
+    if os.path.exists(LINK_FILE):
+        identity[LINK] = open(LINK_FILE).read().strip()
     # The attempt is on the Node before it is made: a restart of the host ends this Pod.
     publish(value, report, conforms, **dict(identity, **({work["record"]: json.dumps(attempt)} if attempt else {})))
     if attempt:
@@ -488,7 +526,8 @@ def main():
         host("apply")  # what needs no API server: a robot cut off from the site still follows its profile
         again = False
         try:
-            again = follow(profile, source)
+            # The restart a cut-off robot needs first: with it held, nothing of the API server's is done meanwhile.
+            again = relink() or follow(profile, source)
         except OSError as error:  # the API server is away (s1u-02-x86 11-13: its service address timed out for hours)
             print("the Node is not reached, again in a minute: %s" % error, flush=True)
         if "--once" in sys.argv:

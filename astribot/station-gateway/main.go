@@ -685,6 +685,7 @@ func main() {
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
 	origin := ""
+	links := newHealer(filepath.Join(filepath.Dir(*keyPath), "link.json"), time.Now())
 	for {
 		data, d, source, e := from.read()
 		if e == nil {
@@ -692,6 +693,14 @@ func main() {
 				origin = source
 				log.Printf("using the %s configuration", source)
 			}
+			// Before apply: a pass whose apply fails (the uplink lost its
+			// address) is the one that most needs it.
+			var current *wgtypes.Device
+			if client, err := wgctrl.New(); err == nil {
+				current, _ = client.Device(d.Interface)
+				client.Close()
+			}
+			links.pass(d, current, time.Now())
 			e = apply(d, key, *prune)
 		}
 		// The tunnel does not depend on these two files: a failure to write
