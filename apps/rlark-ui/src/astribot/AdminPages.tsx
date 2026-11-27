@@ -18,8 +18,8 @@ export function AstribotAdminPages({ page, sub, copy, zh, navigate }: {
 }) {
   // A reissued code, shown once on the page that adds a node.
   const [reissued, setReissued] = useState<IssuedNodeAdmission>();
-  // An SSH join to show on that page, or the target a station's Rejoin opens (from the admission records, or the
-  // station's own cluster, node name and mapped login).
+  // The join target a station's Rejoin opens: an SSH join for a Server (the admission records or the station's own
+  // cluster, node name and mapped login), or the machine workspace a robot's manual rejoin opens.
   const [sshJoin, setSSHJoin] = useState<NodeJoinTarget>();
   if (page === "iam") return <IAMPage zh={zh} />;
   if (page !== "stations") return null;

@@ -7,7 +7,9 @@ export type NodeJoin = INodeJoin;
 // values the SSH form starts with when none does. Nothing here submits a join; the operator still does that.
 export interface NodeJoinTarget {
   clusterID?: string;
-  // An existing NodeJoin's metadata.name (cluster.node), to open instead of a blank form.
+  // The method to open: an SSH join (the default when the target carries SSH fields), or the machine workspace a
+  // robot's manual rejoin opens. An existing NodeJoin's metadata.name (cluster.node) opens instead of a blank form.
+  method?: "machines" | "code";
   name?: string;
   nodeName?: string;
   address?: string;

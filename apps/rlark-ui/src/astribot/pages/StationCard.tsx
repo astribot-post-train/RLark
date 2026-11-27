@@ -16,7 +16,6 @@ import {
 import { readCameraFrames, sameCameraFrame } from "../lib/cameraStream";
 import { stationFacts } from "../lib/stationDrawer";
 import { shortUID, stationNetworkState, stationPhase, stationPhaseLabel, stationRecoveryHint, stationStatusClass } from "../lib/stationDisplay";
-import type { StationRejoinState } from "../lib/stationRejoin";
 import {
   outstandingRestartText, restartProgressText,
   type NodeRestartObservation, type NodeRestartOutstanding, type NodeRestartProgress,
@@ -442,14 +441,14 @@ export interface StationRecheck {
   run: () => void;
 }
 
-// The recovery line's automatic rejoin: pressing it retries the node's existing SSH join record in place, and the
-// card reports submitting, following, succeeded, failed or a reason the plan cannot retry. The manual page is only
-// an explicit fallback; the primary button never navigates.
+// The recovery line's Rejoin for a robot: pressing it starts nothing by itself. It shows the assessed recovery path
+// — why the management plane has no safe automatic reconnect and what the operator can do — and only then offers the
+// explicit manual entry. The primary button never navigates.
 export interface StationRejoinControl {
-  state?: StationRejoinState;
-  // Why a press cannot retry (or what a retry does), used as the button's tooltip.
-  reason?: string;
-  pending: boolean;
+  // The assessment shown after a click; absent until the operator asks.
+  notice?: string;
+  // The button's tooltip: why a robot's recovery cannot be started from here.
+  reason: string;
   press: () => void;
   manual: () => void;
 }
@@ -653,15 +652,13 @@ export const StationCard = memo(function StationCard({
       <CameraWall cells={cameraList} node={station.metadata.name} namespace={station.metadata.namespace} zh={zh} online={online} expanded={expanded} liveEnabled={liveEnabled} fps={previewFps} measuredFps={measuredFps} onZoom={onZoom} overlayTop={overlayTop} />
       {dock}
       <dl className="station-tile-facts">{facts.slice(0, 3).map((fact) => <div key={fact.key}><dt>{fact.label}</dt><dd>{fact.value}</dd></div>)}</dl>
-      {(recoveryHint || rejoin.state) && <div className={`station-tile-recovery${rejoin.state ? ` is-${rejoin.state.phase}` : ""}`} role="note">
-        <small className="station-tile-recovery-note" aria-live="polite">{rejoin.state?.message || recoveryHint}</small>
+      {(recoveryHint || rejoin.notice) && <div className={`station-tile-recovery${rejoin.notice ? " is-unavailable" : ""}`} role="note">
+        <small className="station-tile-recovery-note" aria-live="polite">{rejoin.notice || recoveryHint}</small>
         {recoveryHint && <div className="station-tile-recovery-actions">
           <button type="button" className="station-tile-recheck" disabled={recheck.pending} onClick={recheck.run}>{recheck.pending ? (zh ? "检测中…" : "Checking…") : (zh ? "重新检测" : "Re-check")}</button>
-          <button type="button" className="station-tile-recheck station-tile-rejoin" disabled={recheck.pending || rejoin.pending}
-            title={rejoin.reason || (zh ? "自动接入：复用这条节点已保存的 SSH 接入记录，从停下的步骤继续；不会新建记录。" : "Automatic rejoin: retries this node's saved SSH join record from the stage it stopped at; it never creates a record.")}
-            onClick={rejoin.press}>{rejoin.pending ? (zh ? "接入中…" : "Rejoining…") : (zh ? "重新接入" : "Rejoin")}</button>
-          {rejoin.state && (rejoin.state.phase === "failed" || rejoin.state.phase === "unavailable" || rejoin.state.phase === "timed-out") &&
-            <button type="button" className="station-tile-recheck station-tile-rejoin-manual" onClick={rejoin.manual}>{zh ? "手动重新接入" : "Manual rejoin"}</button>}
+          <button type="button" className="station-tile-recheck station-tile-rejoin" disabled={recheck.pending}
+            title={rejoin.reason} onClick={rejoin.press}>{zh ? "重新接入" : "Rejoin"}</button>
+          {rejoin.notice && <button type="button" className="station-tile-recheck station-tile-rejoin-manual" onClick={rejoin.manual}>{zh ? "手动重新接入" : "Manual rejoin"}</button>}
         </div>}
       </div>}
     </article>;

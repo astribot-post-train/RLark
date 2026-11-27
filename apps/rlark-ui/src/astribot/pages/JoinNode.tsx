@@ -925,7 +925,7 @@ export function JoinNodePage({ zh, reissued, sshJoin, onBack, onScanSettings }: 
   const [clusters, setClusters] = useState<ClusterSummary[]>([]);
   const [siteNetwork, setSiteNetwork] = useState<SiteNetworkView>();
   const [clusterID, setClusterID] = useState(reissued?.admission.cluster_id ?? sshJoin?.clusterID ?? "");
-  const [method, setMethod] = useState<Method>(reissued ? "code" : sshJoin ? "ssh" : "machines");
+  const [method, setMethod] = useState<Method>(reissued ? "code" : sshJoin?.method ?? (sshJoin ? "ssh" : "machines"));
   const [error, setError] = useState("");
   const [selectedSSH, setSelectedSSH] = useState("");
   const [railReissued, setRailReissued] = useState<IssuedNodeAdmission>();

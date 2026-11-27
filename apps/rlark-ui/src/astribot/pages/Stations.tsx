@@ -11,13 +11,12 @@ import type { ClusterSummary, CRDNode } from "../../types";
 import { RobotControls } from "../components/RobotControls";
 import { NodeName } from "../components/NodeName";
 import { useNodeRestart } from "../components/useNodeRestart";
-import { useStationRejoin } from "../components/useStationRejoin";
 import { useRobotPower } from "../components/useRobotPower";
 import { outstandingRestart, readNodeRestart, restartPhaseLabel } from "../lib/nodeRestart";
 import { nodeLabel } from "../lib/displayName";
 import { clusterForStation, stationPhase } from "../lib/stationDisplay";
-import { parseSSHLogin, type NodeJoinTarget } from "../lib/nodeJoin";
-import { planStationRejoin, rejoinPlanReason } from "../lib/stationRejoin";
+import { type NodeJoinTarget } from "../lib/nodeJoin";
+import { assessRobotRejoin } from "../lib/robotRejoin";
 import { isControlPlaneLabels } from "../../utils/nodeVisibility";
 import { admissionStateLabel, isRobotNode, machineModel, robotPowerAfter, robotPowerDesired, type IssuedNodeAdmission, type NodeAdmission, type RobotPowerAction, type SiteNode } from "../lib/siteNodeDisplay";
 import { cameraCells, publishedCameras, type CameraCell, type CameraFps, type CameraView } from "../lib/cameras";
@@ -444,9 +443,8 @@ export function StationsPage({ copy: c, onJoin, onModels }: { copy: Copy; onJoin
   };
   const power = useRobotPower(zh, load, { observe: observeRobotPower }, { onCoalescedRefresh: refreshRobotPowerNodes });
   const restart = useNodeRestart(zh, () => load());
-  // Automatic rejoin retries an existing NodeJoin only; the page's own load follows the record after a terminal
-  // result, so the admission's join_phase/join_stage and the card both reflect what the Gateway wrote.
-  const rejoin = useStationRejoin(zh, () => load());
+  // Rejoin assessment is advisory until the Station Machine endpoint is available.
+  const [rejoinNotice, setRejoinNotice] = useState<Record<string, string>>({});
 
   const count = (value: string) => stationsOfPhase(items, value).length;
   const phaseTabs = [
@@ -477,34 +475,26 @@ export function StationsPage({ copy: c, onJoin, onModels }: { copy: Copy; onJoin
     }
   };
 
-  // The manual fallback: opens the join page at this station. The automatic path never navigates; it retries the
-  // existing record in place. This page is offered only when automation is impossible or has failed. The cluster is
-  // prefilled only when one cluster claims its namespace; an existing SSH join is opened when the admission says the
-  // node has one, otherwise the SSH form starts with the node's name and what was reliably mapped to it (its last SSH
-  // login, or the address its Node reports).
-  const manualRejoin = async (item: StationItem) => {
-    const cluster = clusterForStation(clusters, item.metadata.namespace);
-    let admission = admissionOf(item);
-    if (cluster && !admission) {
-      try {
-        const response = await nodeAdmissionsApi.list(cluster.id, AbortSignal.timeout(4000));
-        admission = response.items.find((entry) => entry.node_name === item.metadata.name);
-      } catch {
-        // The join form can still open with the Node's address.
-      }
-    }
-    const login = parseSSHLogin(admission?.ssh_login);
-    const node = nodesByKey[`${item.metadata.namespace}/${item.metadata.name}`];
-    const address = login?.address ?? node?.status?.addresses?.find((entry) => entry.type === "InternalIP")?.address;
-    const existing = Boolean(cluster && (admission?.join_phase || admission?.ssh_login));
-    onJoin(undefined, {
-      ...(cluster ? { clusterID: cluster.id } : {}),
-      nodeName: item.metadata.name,
-      ...(existing && cluster ? { name: `${cluster.id}.${item.metadata.name}` } : {}),
-      ...(!existing && address ? { address } : {}),
-      ...(!existing && login?.user ? { user: login.user } : {}),
-      ...(!existing && login?.port ? { port: login.port } : {}),
+  // A robot's Rejoin explains the path instead of starting a write: robots are admitted through a Machine and its
+  // NodeClass, never through the Server-only SSH NodeJoin, and an offline robot that already joined recovers only by
+  // its own station-agent reporting again. The assessment is computed from data the page already holds.
+  const explainRobotRejoin = (item: StationItem, key: string) => {
+    const assessment = assessRobotRejoin({
+      zh,
+      stationPhase: stationPhase(item),
+      identityVerified: siteNodeOf(item)?.identity_verified,
+      siteDataState,
+      admission: admissionOf(item),
     });
+    setRejoinNotice((current) => ({ ...current, [key]: assessment.message }));
+  };
+
+  // The explicit manual fallback: Add node's machine workspace, with the station's cluster preselected. It never
+  // opens the Server-only SSH form for a robot; the machine row there carries its own problem and the NodeClass
+  // credentials RLark already stores.
+  const manualRobotRejoin = (item: StationItem) => {
+    const cluster = clusterForStation(clusters, item.metadata.namespace);
+    onJoin(undefined, { ...(cluster ? { clusterID: cluster.id } : {}), method: "machines" });
   };
 
   // A whole-machine restart is written as one one-shot Node label, never as a command: the robot's node tuner keeps
@@ -554,10 +544,10 @@ export function StationsPage({ copy: c, onJoin, onModels }: { copy: Copy; onJoin
     </div>;
   };
 
-  const cardHandlers = useRef({ powerPress, restartPress, recheck, rejoin: manualRejoin, toggleOpen, openZoom });
-  cardHandlers.current = { powerPress, restartPress, recheck, rejoin: manualRejoin, toggleOpen, openZoom };
+  const cardHandlers = useRef({ powerPress, restartPress, recheck, toggleOpen, openZoom });
+  cardHandlers.current = { powerPress, restartPress, recheck, toggleOpen, openZoom };
   const cardActions = useMemo(() => {
-    type Actions = Pick<ComponentProps<typeof StationCard>, "onToggle" | "onChoose" | "onZoom" | "rejoin"> & {
+    type Actions = Pick<ComponentProps<typeof StationCard>, "onToggle" | "onChoose" | "onZoom"> & {
       press: ComponentProps<typeof StationCard>["power"]["press"];
       start: () => void;
       run: () => void;
@@ -566,7 +556,6 @@ export function StationsPage({ copy: c, onJoin, onModels }: { copy: Copy; onJoin
       press: (action, label) => cardHandlers.current.powerPress(item, action, label),
       start: () => cardHandlers.current.restartPress(item),
       run: () => void cardHandlers.current.recheck(item),
-      rejoin: () => void cardHandlers.current.rejoin(item),
       onToggle: () => cardHandlers.current.toggleOpen(item),
       onChoose: (checked) => choose(item, checked),
       onZoom: (camera, trigger, fps) => cardHandlers.current.openZoom(item, camera, trigger, fps),
@@ -576,12 +565,8 @@ export function StationsPage({ copy: c, onJoin, onModels }: { copy: Copy; onJoin
     const key = keyOf(item);
     const labels = labelsOf(item);
     const actions = cardActions.get(key)!;
-    const rejoinClusterID = clusterForStation(clusters, item.metadata.namespace)?.id;
-    // The plan is derived only from what the plane already reports; a click on a plan that cannot retry explains
-    // itself on the card and leaves the manual page as the explicit fallback.
-    const rejoinPlan = planStationRejoin({ clusterID: rejoinClusterID, nodeName: item.metadata.name, admission: admissionOf(item) });
-    const rejoinState = rejoin.entries[key];
-    const rejoinPending = Boolean(rejoinState && (rejoinState.phase === "retrying" || rejoinState.phase === "running"));
+    // The card shows the assessed recovery path after a click; until then only the page's own recovery line is shown.
+    const rejoinMessage = rejoinNotice[key];
     const observation = restartObservationOf(item);
     const outstanding = outstandingRestart(observation);
     const local = restart.requests[key];
@@ -622,27 +607,12 @@ export function StationsPage({ copy: c, onJoin, onModels }: { copy: Copy; onJoin
       } : undefined}
       recheck={{ pending: recheckKey === key, run: () => void recheck(item) }}
       rejoin={{
-        state: rejoinState,
-        reason: rejoinPlan.kind === "retry"
-          ? (zh
-            ? "复用这条节点已保存的 SSH 接入记录（地址、账号、主机密钥），从停下的步骤继续重试；不新建记录，也不需要重新输入。只有需要登录机器的步骤不能自动继续。"
-            : "Retries this node's saved SSH join record (address, account and pinned host key) from the stage it stopped at; no new record and no re-entry. Only a stage that logs in to the machine cannot continue automatically.")
-          : rejoinPlanReason(rejoinPlan, zh),
-        pending: rejoinPending,
-        press: () => {
-          if (rejoinPlan.kind === "retry" && rejoinClusterID) {
-            void rejoin.start({
-              key,
-              clusterID: rejoinClusterID,
-              nodeName: item.metadata.name,
-              name: rejoinPlan.name,
-              stage: rejoinPlan.stage,
-            });
-          } else {
-            rejoin.explain(key, rejoinPlanReason(rejoinPlan, zh));
-          }
-        },
-        manual: () => manualRejoin(item),
+        notice: rejoinMessage,
+        reason: zh
+          ? "机器人不通过 SSH 入网（该入口只支持 Server）；点击查看这台机器人当前能做什么、为什么不能自动重连，以及人工入口。不会新建记录或重复接入。"
+          : "Robots do not join over SSH (that entry supports Server only); click to see what this robot can do, why it cannot reconnect automatically, and the manual entry. No record is created or duplicated.",
+        press: () => explainRobotRejoin(item, key),
+        manual: () => manualRobotRejoin(item),
       }}
       variant={variant}
       onToggle={actions.onToggle}
