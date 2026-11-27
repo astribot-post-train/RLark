@@ -52,6 +52,61 @@ export function FleetPagination({
   );
 }
 
+type WallFit = {
+  wallW: number;
+  pictureH: number;
+  gridH: number;
+  fits: boolean;
+};
+
+// The scrollport is the stations page, not the window. 100dvh still counts the
+// top bar and the platform footer, which is how a wide 16:9 grid lost its
+// second row under the fold while a fixed picture cap left the wall narrow.
+function pageScrollport(wall: HTMLElement): HTMLElement {
+  return wall.closest<HTMLElement>(".page-content") ?? document.documentElement;
+}
+
+function measureWall(wall: HTMLElement, columns: 2 | 3): WallFit | null {
+  const grid = wall.querySelector<HTMLElement>(".stations-wall-grid");
+  if (!grid) return null;
+  const scrollport = pageScrollport(wall);
+  const portRect = scrollport.getBoundingClientRect();
+  const gridRect = grid.getBoundingClientRect();
+  const gridTop = gridRect.top - portRect.top + scrollport.scrollTop;
+  const frame = wall.closest<HTMLElement>(".stations-frame");
+  const frameStyle = frame ? getComputedStyle(frame) : undefined;
+  const frameGap = frameStyle ? Number.parseFloat(frameStyle.rowGap || frameStyle.gap) || 0 : 0;
+  const admission = frame?.querySelector<HTMLElement>(".stations-admission-section");
+  const admissionH = admission?.offsetHeight ?? 0;
+  const admissionMargin = admission ? Number.parseFloat(getComputedStyle(admission).marginTop) || 0 : 0;
+  const sample = grid.querySelector<HTMLElement>(".stations-wall-tile");
+  const picture = sample?.querySelector<HTMLElement>(".station-tile-main");
+  const extra = sample && picture ? Math.max(0, sample.offsetHeight - picture.offsetHeight) : 28;
+  const gridStyle = getComputedStyle(grid);
+  const gap = Number.parseFloat(gridStyle.columnGap || gridStyle.gap) || 8;
+  const host = wall.parentElement ?? wall;
+  const portStyle = getComputedStyle(scrollport);
+  const padBottom = Number.parseFloat(portStyle.paddingBottom) || 0;
+  // Full content width. The picture stays 16:9 inside the cell (object-fit: contain).
+  // When that frame is shorter than the cell, the cell letterboxes instead of
+  // shrinking the whole wall into a centered strip or pushing the next row away.
+  const availableW = Math.max(1, host.clientWidth);
+  const naturalPicture = ((availableW - (columns - 1) * gap) / columns) * (9 / 16);
+  const naturalGrid = columns * (naturalPicture + extra) + (columns - 1) * gap;
+  const budget = scrollport.clientHeight - gridTop - padBottom - admissionH - admissionMargin - frameGap - 2;
+  const minPicture = columns === 3 ? 72 : 88;
+  const minGrid = columns * (minPicture + extra) + (columns - 1) * gap;
+  const fits = budget >= minGrid;
+  const gridH = fits ? Math.min(naturalGrid, Math.max(minGrid, budget)) : minGrid;
+  const pictureH = (gridH - (columns - 1) * gap) / columns - extra;
+  return {
+    wallW: Math.round(availableW),
+    pictureH: Math.max(1, Math.round(pictureH)),
+    gridH: Math.max(1, Math.round(gridH)),
+    fits,
+  };
+}
+
 function WallTile({
   item,
   meta,
@@ -124,6 +179,8 @@ export function CameraWallView({
 }) {
   const [columns, setColumns] = useState<2 | 3>(2);
   const [page, setPage] = useState(1);
+  const [fit, setFit] = useState<WallFit>();
+  const wallRef = useRef<HTMLElement>(null);
   const size = columns * columns;
   const pageCount = Math.max(1, Math.ceil(items.length / size));
   const currentPage = Math.min(page, pageCount);
@@ -131,11 +188,43 @@ export function CameraWallView({
     cameraMediaScheduler.setMaxLiveStreams(size);
     return () => cameraMediaScheduler.setMaxLiveStreams(3);
   }, [size]);
+  useLayoutEffect(() => {
+    const wall = wallRef.current;
+    if (!wall) return;
+    let frame = 0;
+    const apply = () => {
+      const next = measureWall(wall, columns);
+      if (!next) return;
+      setFit((current) =>
+        current
+        && current.wallW === next.wallW
+        && current.pictureH === next.pictureH
+        && current.gridH === next.gridH
+        && current.fits === next.fits
+          ? current
+          : next,
+      );
+    };
+    apply();
+    const scrollport = pageScrollport(wall);
+    const observer = new ResizeObserver(() => {
+      window.cancelAnimationFrame(frame);
+      frame = window.requestAnimationFrame(apply);
+    });
+    observer.observe(scrollport);
+    observer.observe(wall);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      observer.disconnect();
+    };
+  }, [columns, items.length, currentPage]);
 
   return (
     <section
+      ref={wallRef}
       className="stations-wall"
       aria-label={zh ? "监控墙" : "Camera wall"}
+      data-wall-fits={fit ? String(fit.fits) : undefined}
     >
       <div className="stations-view-options">
         <div
@@ -184,7 +273,12 @@ export function CameraWallView({
         />
       </div>
       {items.length ? (
-        <div className={`stations-wall-grid is-${columns}`}>
+        <div
+          className={`stations-wall-grid is-${columns}`}
+          data-wall-width={fit?.wallW}
+          data-wall-picture-h={fit?.pictureH}
+          style={fit ? { width: "100%", height: fit.gridH } : { width: "100%" }}
+        >
           {items
             .slice((currentPage - 1) * size, currentPage * size)
             .map((item) => {

@@ -66,6 +66,40 @@ const offlineConditions = () => [
   condition("Rebooted", "Unknown", "NoRecentReboot", "No recent reboot was observed.", 7200),
 ];
 
+// Enough healthy robots for a full 3×3 wall, on top of s1u-01 (healthy) and the two faulted machines.
+const wallHealthyNames = Array.from({ length: 8 }, (_, offset) => `s1u-${String(offset + 4).padStart(2, "0")}-x86`);
+const wallHealthyStation = (name: string, offset: number): StationItem => {
+  const index = 10 + offset;
+  return {
+    metadata: { name, namespace: mockStationClusterNames.robot },
+    spec: { nodeUID: uid(index) },
+    status: {
+      observation: { nodeUID: uid(index), systemUUID: system(index) },
+      node: { state: "Bound", bootTime: ago((index + 1) * 86400), lastSeenTime: ago(20 + index), reboots: 0, conditions: healthyConditions() },
+    },
+  };
+};
+const wallHealthySite = (name: string, offset: number): SiteNode => ({
+  cluster_id: mockStationClusterNames.robot,
+  node_name: name,
+  online: true,
+  labels: robot({ "rlark.io/power-state": "ready", "rlark.io/power-desired": "ready", "rlark.io/self-check-state": "ok" }),
+  cameras: cameras({ head: camera("ok"), torso: camera("ok"), wrist_left: camera("ok"), wrist_right: camera("ok") }),
+  network: network(10 + offset),
+});
+const wallHealthyAdmission = (name: string, offset: number): NodeAdmission => ({
+  cluster_id: mockStationClusterNames.robot,
+  node_name: name,
+  state: "Joined",
+  labels: robot(),
+  expires_at: ago(-86400),
+  issued_by: "admin",
+  public_key: network(10 + offset).public_key,
+  tunnel_address: `10.254.240.${30 + offset}`,
+  ssh_login: `astri@10.254.240.${30 + offset}:22`,
+  ssh_host_key: `SHA256:h3GxpQ5FwUu32tTMo0sErSj72l9aW1L1f85A7eD3K${offset}`,
+});
+
 export const mockStations: StationItem[] = [
   { metadata: { name: "10-0-2-57", namespace: mockStationClusterNames.cloud }, spec: { nodeUID: uid(0) }, status: { observation: { nodeUID: uid(0), systemUUID: system(0) }, node: { state: "Bound", bootTime: ago(14 * 86400), lastSeenTime: ago(33), reboots: 0, conditions: healthyConditions() } } },
   { metadata: { name: "10-0-2-196", namespace: mockStationClusterNames.cloud }, spec: { nodeUID: uid(1) }, status: { observation: { nodeUID: uid(1), systemUUID: system(1) }, node: { state: "Bound", bootTime: ago(2 * 86400 + 14400), lastSeenTime: ago(16), reboots: 1, conditions: healthyConditions() } } },
@@ -75,6 +109,7 @@ export const mockStations: StationItem[] = [
   { metadata: { name: "s1u-01-x86", namespace: mockStationClusterNames.robot }, spec: { nodeUID: uid(5) }, status: { observation: { nodeUID: uid(5), systemUUID: system(5) }, node: { state: "Bound", bootTime: ago(6 * 86400 + 14400), lastSeenTime: ago(48), reboots: 2, conditions: healthyConditions() } } },
   { metadata: { name: "s1u-02-x86", namespace: mockStationClusterNames.robot }, spec: { nodeUID: uid(6) }, status: { observation: { nodeUID: uid(6), systemUUID: system(6) }, node: { state: "Offline", lastSeenTime: ago(2 * 3600), reboots: 0, conditions: offlineConditions() } } },
   { metadata: { name: "s1u-03-x86", namespace: mockStationClusterNames.robot }, spec: { nodeUID: uid(7) }, status: { observation: { nodeUID: uid(8), systemUUID: system(7) }, node: { state: "Conflict", lastSeenTime: ago(64), reboots: 1, conditions: conflictConditions() } } },
+  ...wallHealthyNames.map(wallHealthyStation),
 ];
 
 export const mockSiteNodes: SiteNode[] = [
@@ -86,6 +121,7 @@ export const mockSiteNodes: SiteNode[] = [
   { cluster_id: mockStationClusterNames.robot, node_name: "s1u-01-x86", online: true, labels: robot({ "rlark.io/power-state": "ready", "rlark.io/power-desired": "ready", "rlark.io/self-check-state": "ok" }), cameras: cameras({ head: camera("ok"), torso: camera("ok"), wrist_left: camera("slow", { fps: 7 }), wrist_right: camera("ok") }), network: network(5) },
   { cluster_id: mockStationClusterNames.robot, node_name: "s1u-02-x86", online: false, labels: robot({ "rlark.io/power-state": "powered", "rlark.io/power-desired": "ready", "rlark.io/self-check-state": "pending" }), cameras: cameras({ head: camera("stale"), torso: camera("absent") }), network: network(6) },
   { cluster_id: mockStationClusterNames.robot, node_name: "s1u-03-x86", online: true, labels: robot({ "rlark.io/power-state": "estop", "rlark.io/power-desired": "off", "rlark.io/self-check-state": "failed", "rlark.io/maintenance-state": "waiting" }), cameras: cameras({ head: camera("ok"), torso: camera("stale", { step: 3, attempts: 4, last_result: "USB reset did not hold", diagnosis: "Orbbec camera on USB 2.1" }) }), network: network(7) },
+  ...wallHealthyNames.map(wallHealthySite),
 ];
 
 export const mockAdmissions: NodeAdmission[] = [
@@ -95,6 +131,7 @@ export const mockAdmissions: NodeAdmission[] = [
   { cluster_id: mockStationClusterNames.robot, node_name: "s1u-01-x86", state: "Joined", labels: robot(), expires_at: ago(-86400), issued_by: "admin", public_key: network(5).public_key, tunnel_address: "10.254.240.25", ssh_login: "astri@10.254.240.25:22", ssh_host_key: "SHA256:h3GxpQ5FwUu32tTMo0sErSj72l9aW1L1f85A7eD3Kr5" },
   { cluster_id: mockStationClusterNames.robot, node_name: "s1u-02-x86", state: "Joined", labels: robot(), expires_at: ago(-86400), issued_by: "admin", public_key: network(6).public_key, tunnel_address: "10.254.240.26", ssh_login: "astri@10.254.240.26:22", ssh_host_key: "SHA256:h3GxpQ5FwUu32tTMo0sErSj72l9aW1L1f85A7eD3Kr6" },
   { cluster_id: mockStationClusterNames.robot, node_name: "s1u-03-x86", state: "Redeemed", labels: robot(), expires_at: ago(86400), issued_by: "admin", public_key: network(7).public_key, tunnel_address: "10.254.240.27", ssh_login: "astri@10.254.240.27:22", ssh_host_key: "SHA256:h3GxpQ5FwUu32tTMo0sErSj72l9aW1L1f85A7eD3Kr7" },
+  ...wallHealthyNames.map(wallHealthyAdmission),
 ];
 
 export const mockStationCameraReport = (nodeName: string) => {
