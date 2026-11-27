@@ -19,7 +19,7 @@ CRD 字段与生成产物、共享角色、鉴权和错误转换、组件接线�
 
 兼容分支已纳入 v1.7.3 发布构建使用的 S1U 遥测源码。Gateway 内嵌的硬件能力定义与 S1U 镜像复制的文件相同。使用该分支发布前，在测试环境验收本体状态、两路相机及其延迟指标和手动扫描。
 
-发布工具保留管理面的全站 Lease，同时在写入前按集群顺序获取成员 Kubernetes Lease。遇到冲突会报告持有者并释放本次已经获取的成员锁。使用新版发布工具前，管理员需给每个目标集群应用成员发布 RBAC 并预建 `astribot/release/member-upgrade-lease.yaml`。成员锁到期后仍须确认旧执行者已退出才能接管。旧发布工具只识别全站锁，应避免和新流程同时使用。
+发布工具保留管理面的全站 Lease，并在发布写入前按集群顺序获取成员 Kubernetes Lease。已有标准发布权限的成员会自动补齐发布 Role 的租约规则，并在缺少 Lease 时创建。冲突时报告持有者并释放本次已获取的锁。过期的发布 CLI 锁可接管，所有成员写入都会重新核对 Lease。接管已过期的升级 Job 锁仍需独立核实原 Pod 已退出。发布期间使用同一代发布工具。
 
 升级协调器通过驱动接口读取结果，接受对应升级容器的结构化失败信息，并过滤任意终止文本。原地换镜像执行器和 ConfigMap 检查点已覆盖模板保留、首轮回滚和回滚续跑的本地测试。隔离测试用的 `astribot-cluster-only` 模式已接通 Agent、独立 Job 和执行器。Agent 按成员的本地可信配置固定执行器镜像摘要，以子任务 UID 命名 Job，并挂载不可变配置。Job 使用独立 ServiceAccount，核对自身 Pod 和 Job 的 UID，在成员锁内只写本地 Agent Deployment 的镜像字段。检测到 node Agent DaemonSet 会拒绝执行。直接写入管理 API 的子任务也经过成员策略校验。Gateway 继续拦截标有 Astribot 驱动的批量任务，避免回退到上游重建流程。面向带节点 Agent 的 Astribot 集群，还需接入节点 Agent 镜像声明的受限写入接口和隔离集群完整升级回滚验收。
 
@@ -80,9 +80,9 @@ Kind 混合批次用例对标准和托管 Cluster 记录运行了真实控制面
 - `astribot/storageconfig/` 负责存储声明校验、渲染、Secret 持久化、端点协调，以及为新集群接入共享 S3 存储。Gateway 保留现有路由、HTTP 错误映射和对象浏览客户端缓存。集群创建因部分写入而重试时会补齐缺失的端点声明。Astribot 复用上游 `pkg/gateway/storage` 的提供商目录和 S3 客户端。
 - Gateway 接入共用的 JWT 和管理员鉴权，提供操作人身份和 Station 命名空间解析，并注入现有证书服务、Kubernetes 代理、镜像仓库凭据、Addon 发布、任务密钥分发及日志访问。这些接入点复用 Gateway 的已认证客户端。CRD 和生成客户端仍归 API 层维护。
 
-集群创建在 Agent 注册前预留管理面 Cluster 并记录其 UID。存在同名 Cluster，但 UID 与原记录不符，或者历史记录缺少绑定 UID 时，清理在执行前返回 HTTP 409。如果原 Cluster 已删除，仍可清理遗留的创建记录。清理只移除能核对原 Secret UID 的凭据，以及能核对创建操作和 SiteNetwork UID 的原声明。场站入网许可和节点登记须各自核实后处理。宿主机回退校验创建操作标记，已安装 Kubernetes 时还会校验原 `kube-system` 命名空间 UID。无法验证宿主机原身份时，先由运维核实并单独处理，再使用 `machine_gone`。
+集群创建在 Agent 注册前预留管理面 Cluster 并记录 UID。有同名 Cluster 且原 UID 未绑定或不符时，清理前返回 HTTP 409。凭据和 SiteNetwork 仍按原归属证据清理。宿主机清理先核对原 SSH 主机与操作标记，再验证已记录的原生集群 UID，或验证半途失败的安装器日志目录中的原操作 UID。尚未认领且无安装痕迹的主机无需清理。已初始化的控制面仍需能响应，以便安装器确认没有其他节点并备份快照。原宿主机无法恢复时，由运维另行核实后选择 `machine_gone`。
 
-SSH 入网通过安装机上的原安装进程取得原生 Kubernetes Node UID。清理已进入安装阶段的中断记录时，提交绑定该 UID 的 Remove 操作。HTTP 200 表示已提交，具体结果由 Station 的操作状态报告。历史记录或中断记录缺少原生 UID 时返回 HTTP 409，并保留记录供排查。当前同名节点的 UID 不会用于补写旧记录。清理已成功的入网只移除历史记录。先更新 Station Controller 并发布新的 Station 安装包，再启用更新后的 Gateway，使 SSH 移除的各阶段都执行新的身份校验。
+SSH 安装器在 Kubernetes boot ID 与主机一致时即记录原生 Node UID，包括尚未 Ready 的节点。存在原 UID 时，清理提交绑定该 UID 的 Remove 操作。缺少 UID 时可提供 SSH 凭据，清理已核实未使用的许可及隧道，也可以选择 `machine_gone` 清除失败的尝试。已兑换或归属不明的许可及隧道会保留，由站点节点页面继续处理。清理不会读取当前同名 Node 的 UID 作为删除目标。新版安装器加入的 SSH 节点完成 UID 绑定的主机重置后，会清除匹配的隧道标记，允许重新入网。留下安装痕迹且缺少归属记录的历史主机需单独核实。需同时发布新的 Station 安装包、Station Controller 和 Gateway 才能使用这些路径。
 
 ### Server 隧道验收
 

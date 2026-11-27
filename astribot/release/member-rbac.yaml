@@ -77,6 +77,10 @@ rules:
   resources: ["leases"]
   resourceNames: ["rlark-agent-upgrade"]
   verbs: ["get", "update"]
+# RBAC cannot restrict resourceNames on create. This Role is namespace-scoped.
+- apiGroups: ["coordination.k8s.io"]
+  resources: ["leases"]
+  verbs: ["create"]
 - apiGroups: [""]
   resources: ["secrets"]
   resourceNames: ["rlark-release-token"]

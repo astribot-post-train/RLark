@@ -666,7 +666,7 @@ function SSHJoin({ zh, clusterID, initial, selectedOperation }: { zh: boolean; c
               {j === current && view && <div className="provision-progress">
                 <small className="muted">{zh ? `主机指纹 ${j.status?.hostKey ?? ""} · 由 ${j.spec.requestedBy ?? ""} 发起` : `Host key ${j.status?.hostKey ?? ""} · by ${j.spec.requestedBy ?? ""}`}</small>
                 <StageList stages={view.stages} zh={zh} />
-                <RetryClear zh={zh} view={view} clearReach={zh ? "要登录机器撤掉隧道" : "to take the tunnel away"} user={j.spec.machine.user} pending={pending} run={run} showSudo={j.metadata?.annotations?.["station.rlark.io/machine-type"] === "Server"}
+                <RetryClear zh={zh} view={view} clearReach={zh ? "用于复核安装并清理隧道" : "to verify installation state and clean up the tunnel"} user={j.spec.machine.user} pending={pending} run={run} showSudo={j.metadata?.annotations?.["station.rlark.io/machine-type"] === "Server"}
                   retry={async (user, password, sudoPassword) => {
                     await nodeJoinsApi.retry(selected, password, user, sudoPassword);
                     await refresh();
@@ -678,7 +678,7 @@ function SSHJoin({ zh, clusterID, initial, selectedOperation }: { zh: boolean; c
                   }}
                   clearNote={view.phase === "Succeeded"
                     ? (zh ? "清掉这条记录。节点还在集群里；要删节点，到场站节点页删。" : "Clear this record. The node stays in its cluster; remove it on the Site Nodes page.")
-                    : (zh ? "不从这一步重试（机器或名字填错）：清掉这次入网。还没执行入网码的，撤掉这次的 Hub 声明和机器上的隧道；已执行的，按名字删除节点。之后可以重新入网。" : "Not retrying (a wrong machine or name): clear this join. Before its code's line ran, its hub declaration and the tunnel on the machine go; after, the node is removed by name. Then it can join again.")}
+                    : (zh ? "清除这次入网。只有记录了原节点 UID 才会提交节点移除。机器已不在时，可以清除旧的 SSH 入网记录。" : "Clear this attempt. Removing a node requires the original Node UID. If the machine is gone, you can clear the old SSH join record.")}
                   clearLabel={view.phase === "Succeeded" ? (zh ? "清掉这条记录" : "Clear this record") : (zh ? "清掉这次入网" : "Clear this join")} />
               </div>}
             </div>)}

@@ -2,7 +2,9 @@ package clusterupgrade
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -21,7 +23,7 @@ const (
 const executorAnnotation = "rlark.io/upgrade-executor"
 
 // LeaseConflict describes who must release the member cluster before it can be
-// changed. Expiry alone cannot prove a partitioned writer has exited.
+// changed. Job executors require independent termination evidence.
 type LeaseConflict struct {
 	Holder string
 }
@@ -41,8 +43,8 @@ type Guard struct {
 }
 
 // Acquire claims the provisioned Lease with an optimistic concurrency check.
-// confirmExited must independently prove the previous executor terminated
-// before an expired lease can be taken over. A nil callback refuses takeover.
+// An expired release CLI is fenced by the renewed Lease. A Job executor also
+// requires confirmExited to independently prove it terminated.
 func Acquire(ctx context.Context, leases coordination.LeaseInterface, holder, executor string, confirmExited func(context.Context, string, string) (bool, error)) (*Guard, context.Context, error) {
 	if holder == "" || executor == "" {
 		return nil, ctx, fmt.Errorf("lease holder and executor identity are required")
@@ -56,15 +58,20 @@ func Acquire(ctx context.Context, leases coordination.LeaseInterface, holder, ex
 	now := time.Now()
 	if previous != "" && (previous != holder || previousExecutor != executor) {
 		if current.Spec.RenewTime == nil || current.Spec.LeaseDurationSeconds == nil ||
-			now.Before(current.Spec.RenewTime.Add(time.Duration(*current.Spec.LeaseDurationSeconds)*time.Second)) || confirmExited == nil {
+			now.Before(current.Spec.RenewTime.Add(time.Duration(*current.Spec.LeaseDurationSeconds)*time.Second)) {
 			return nil, ctx, &LeaseConflict{Holder: previous}
 		}
-		exited, err := confirmExited(ctx, previous, previousExecutor)
-		if err != nil {
-			return nil, ctx, fmt.Errorf("cannot verify that %q exited: %w", previous, err)
-		}
-		if !exited {
-			return nil, ctx, &LeaseConflict{Holder: previous}
+		if !strings.HasPrefix(previous, "rlarkctl-release/") || previous != "rlarkctl-release/"+previousExecutor || previousExecutor == "" {
+			if confirmExited == nil {
+				return nil, ctx, &LeaseConflict{Holder: previous}
+			}
+			exited, err := confirmExited(ctx, previous, previousExecutor)
+			if err != nil {
+				return nil, ctx, fmt.Errorf("cannot verify that %q exited: %w", previous, err)
+			}
+			if !exited {
+				return nil, ctx, &LeaseConflict{Holder: previous}
+			}
 		}
 	}
 	if current.Annotations == nil {
@@ -80,7 +87,7 @@ func Acquire(ctx context.Context, leases coordination.LeaseInterface, holder, ex
 	}
 	work, cancel := context.WithCancelCause(ctx)
 	guard := &Guard{leases: leases, holder: holder, executor: executor, cancel: cancel, done: make(chan struct{})}
-	go guard.renew(work)
+	go guard.renew(work, now.Add(leaseDurationSeconds*time.Second))
 	return guard, work, nil
 }
 
@@ -103,22 +110,31 @@ func (g *Guard) Check(ctx context.Context) error {
 	return nil
 }
 
-func (g *Guard) renew(ctx context.Context) {
+func (g *Guard) renew(ctx context.Context, expires time.Time) {
 	defer close(g.done)
-	ticker := time.NewTicker(renewPeriod)
-	defer ticker.Stop()
+	timer := time.NewTimer(renewPeriod)
+	defer timer.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-ticker.C:
-			call, cancel := context.WithTimeout(ctx, 10*time.Second)
+		case <-timer.C:
+			started := time.Now()
+			call, cancel := context.WithTimeout(ctx, min(10*time.Second, time.Until(expires)))
 			err := g.update(call, false)
 			cancel()
-			if err != nil {
-				g.cancel(fmt.Errorf("lost member upgrade lease: %w", err))
-				return
+			if err == nil {
+				expires = started.Add(leaseDurationSeconds * time.Second)
+				timer.Reset(renewPeriod)
+				continue
 			}
+			var conflict *LeaseConflict
+			if remaining := time.Until(expires); remaining > 0 && !errors.As(err, &conflict) {
+				timer.Reset(min(5*time.Second, remaining))
+				continue
+			}
+			g.cancel(fmt.Errorf("lost member upgrade lease: %w", err))
+			return
 		}
 	}
 }

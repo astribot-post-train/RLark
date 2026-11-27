@@ -147,21 +147,35 @@ kubeadm join --config "$B"/join.yaml > "$B"/join.log 2>&1 || { tail -20 "$B"/joi
 stamp "joined $JOIN_API_SERVER as $NODE_NAME"
 tries=0
 boot_id=$(cat /proc/sys/kernel/random/boot_id 2>/dev/null || true)
+observed_uid=
 while :; do
-  # Obtain readiness, boot identity and UID from the same Node read. The
-  # original installer is the only process that can attest what it joined.
+  # Persist the node identity as soon as the boot ID matches, including when
+  # readiness never arrives. A name alone cannot identify the original Node.
   observation=$(kubectl --kubeconfig /etc/kubernetes/kubelet.conf get node "$NODE_NAME" \
     -o jsonpath='{.metadata.uid}{" "}{.status.nodeInfo.bootID}{" "}{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || true)
-  case "$observation" in
-    *" $boot_id True")
-      uid=${observation%% *}
-      if [ -n "$boot_id" ] && [ -n "$uid" ]; then
-        printf 'RLARK_JOIN_NODE_UID %s %s\n' "$NODE_NAME" "$uid"
+  read -r uid node_boot_id ready <<EOF
+$observation
+EOF
+  if [ -n "$boot_id" ] && [ "$node_boot_id" = "$boot_id" ] && [ -n "$uid" ]; then
+    [ -z "$observed_uid" ] || [ "$observed_uid" = "$uid" ] || fail "node UID changed while waiting for readiness"
+    if [ -z "$observed_uid" ]; then
+      observed_uid=$uid
+      printf 'RLARK_JOIN_NODE_UID %s %s\n' "$NODE_NAME" "$uid"
+      marker=/var/lib/rlark/node-join-tunnel.uid
+      if [ -n "${RLARK_SSH_JOIN_OWNER:-}" ] && [ -f "$marker" ]; then
+        (
+          flock -x 8
+          if [ "$(cat "$marker")" = "$RLARK_SSH_JOIN_OWNER" ]; then
+            umask 077
+            printf '%s %s\n' "$RLARK_SSH_JOIN_OWNER" "$uid" > "$marker.node"
+          fi
+        ) 8>"$marker.lock"
       fi
-      break
-      ;;
-    *"  True") break ;;
-  esac
+    fi
+    [ "$ready" != True ] || break
+  elif [ "$observation" = "$uid  True" ] && [ -n "$uid" ]; then
+    break
+  fi
   tries=$((tries + 1))
   [ $tries -lt 90 ] || { node_install "$SETTINGS" "not Ready 3 min after its join" || true; fail "the node is registered but not Ready after 3 min: kubectl describe node $NODE_NAME"; }
   sleep 2

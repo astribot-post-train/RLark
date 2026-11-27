@@ -22,7 +22,7 @@ const (
 // The log is cleared before launching the unit. The attempt header makes
 // recovery safe when an earlier unit's log survives a Gateway restart.
 func joinInstallCommand(j *rlarkv1alpha1.NodeJoin, command string) string {
-	return "exec >" + sshJoinLog + " 2>&1; printf '%s\\n' " +
+	return "export RLARK_SSH_JOIN_OWNER=" + nodessh.Quote(string(j.UID)) + "; exec >" + sshJoinLog + " 2>&1; printf '%s\\n' " +
 		nodessh.Quote(joinAttemptLogPrefix+string(j.UID)) + "; (" + command + "); " +
 		"echo \"" + sshJoinExit + "$?\""
 }

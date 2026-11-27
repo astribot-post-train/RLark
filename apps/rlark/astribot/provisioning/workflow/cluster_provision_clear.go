@@ -37,7 +37,7 @@ type clearClusterProvisionRequest struct {
 // this script and the shells it runs under hold the installer's name in their own command lines and are left out.
 // The machine keeps its tunnel key and the installer: a making that starts over finds the same machine.
 const clearMachineScript = `set -eu
-marker=` + provisionHostMarker + "\n" + verifyHostMarker + verifyProvisionHostCluster + `B=` + provisioning.BootstrapDir + `
+marker=` + provisionHostMarker + "\n" + lockHostMarker + allowUnclaimedHostStart + provisionHostUnused + allowUnclaimedHostEnd + verifyLockedHostMarker + verifyProvisionHostCluster + `B=` + provisioning.BootstrapDir + `
 mine=" "; p=$$; while [ "$p" -gt 1 ]; do mine="$mine$p "; p=$(awk '{print $4}' /proc/$p/stat); done
 for p in $(pgrep -f 'control-plane\.sh|station-bootstrap control-plane' || true); do
   case "$mine" in *" $p "*) ;; *) kill "$p" 2>/dev/null || true ;; esac

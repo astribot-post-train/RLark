@@ -8,6 +8,7 @@ import (
 	"time"
 
 	rlarkv1alpha1 "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
+	"github.com/rlinf/rlark/apps/rlark/astribot/nodessh"
 	"github.com/rlinf/rlark/apps/rlark/astribot/provisioning"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/rest"
@@ -106,15 +107,15 @@ func (r *provisionRun) controlPlane(ctx context.Context, p *rlarkv1alpha1.Cluste
 	if err != nil {
 		return tunnel, err
 	}
-	out, err := machine.Run(ctx, provisioning.ControlPlaneScript(facts), strings.NewReader(document), func(line string) { r.line(ctx, stageControlPlane, line) })
+	out, err := machine.Run(ctx, "export RLARK_PROVISION_UID="+nodessh.Quote(string(p.UID))+"\n"+provisioning.ControlPlaneScript(facts), strings.NewReader(document), func(line string) { r.line(ctx, stageControlPlane, line) })
 	if err != nil {
 		return tunnel, err
 	}
-	if ready := provisioning.OutputValues(out)["ready"]; ready != "True" {
-		return tunnel + "; node " + facts.NodeName + " Ready=" + ready, fmt.Errorf("the control plane is made, but node %s is not Ready", facts.NodeName)
-	}
 	if _, err := machine.Run(ctx, recordProvisionHostCluster(p.UID), nil, nil); err != nil {
 		return tunnel, fmt.Errorf("record the host's Kubernetes cluster UID: %w", err)
+	}
+	if ready := provisioning.OutputValues(out)["ready"]; ready != "True" {
+		return tunnel + "; node " + facts.NodeName + " Ready=" + ready, fmt.Errorf("the control plane is made, but node %s is not Ready", facts.NodeName)
 	}
 	// The management plane reaches the API through the tunnel: the first handshake shows the hub's UDP port is open.
 	address := net.JoinHostPort(facts.TunnelAddress, "6443")

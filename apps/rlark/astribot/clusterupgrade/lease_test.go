@@ -66,3 +66,36 @@ func TestExpiredMemberUpgradeLeaseNeedsExitEvidence(t *testing.T) {
 		t.Fatalf("lease was not released: %v, %v", released, err)
 	}
 }
+
+func TestExpiredReleaseLeaseCanBeRecoveredAndFencesOriginalWriter(t *testing.T) {
+	ctx := t.Context()
+	leases := fake.NewClientset(&coordinationv1.Lease{ObjectMeta: metav1.ObjectMeta{Name: LeaseName, Namespace: Namespace}}).CoordinationV1().Leases(Namespace)
+	first, work, err := Acquire(ctx, leases, "rlarkctl-release/old", "old", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = first.Release(ctx) }()
+	current, err := leases.Get(ctx, LeaseName, metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	current.Spec.RenewTime = ptr.To(metav1.NewMicroTime(time.Now().Add(-time.Hour)))
+	if _, err := leases.Update(ctx, current, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := first.Check(work); err == nil {
+		t.Fatal("expired CLI can still write")
+	}
+	next, nextWork, err := Acquire(ctx, leases, "upgrade-job/next", "pod/uid", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = next.Release(ctx) }()
+	var conflict *LeaseConflict
+	if err := first.Release(ctx); !errors.As(err, &conflict) {
+		t.Fatalf("stale release erased its successor: %v", err)
+	}
+	if err := next.Check(nextWork); err != nil {
+		t.Fatal(err)
+	}
+}

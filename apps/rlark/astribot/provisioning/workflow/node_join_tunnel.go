@@ -39,7 +39,7 @@ func (r *nodeJoinRun) tunnel(ctx context.Context, j *rlarkv1alpha1.NodeJoin) (st
 	if err != nil {
 		return "", err
 	}
-	out, err := machine.Run(ctx, claimHostMarker(joinTunnelHostMarker, j.UID, `[ ! -e /etc/systemd/system/rlark-station-gateway.service ]`)+"\n"+tunnelScript, strings.NewReader(document), nil)
+	out, err := machine.Run(ctx, claimHostMarker(joinTunnelHostMarker, j.UID, joinTunnelHostUnused)+"\n"+tunnelScript, strings.NewReader(document), nil)
 	if err != nil {
 		return "", err
 	}

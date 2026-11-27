@@ -25,8 +25,23 @@ const nodeResetScript = `sleep 10
 PATH=/opt/rlark/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 [ ! -e /etc/kubernetes/manifests/kube-apiserver.yaml ] || exit 1
 socket=$(sed -n 's|.*--container-runtime-endpoint=\(unix://[^ "]*\).*|\1|p' /var/lib/kubelet/kubeadm-flags.env 2>/dev/null)
-kubeadm reset --force ${socket:+--cri-socket "$socket"}
+kubeadm reset --force ${socket:+--cri-socket "$socket"} || exit 1
 rm -rf /etc/cni/net.d/*
+marker=/var/lib/rlark/node-join-tunnel.uid
+if [ -f "$marker.node" ]; then
+  (
+    flock -x 8
+    read -r owner uid < "$marker.node"
+    if [ -n "$owner" ] && [ "$uid" = "$1" ] && [ "$(cat "$marker" 2>/dev/null)" = "$owner" ]; then
+      systemctl disable --now rlark-station-gateway >/dev/null 2>&1 || exit 1
+      rm -f /etc/systemd/system/rlark-station-gateway.service /etc/rlark/station/bootstrap.json /var/lib/station/wg/last-applied.json
+      ip link del st-wg0 2>/dev/null || true
+      systemctl daemon-reload || exit 1
+      printf 'cleared-%s\n' "$owner" > "$marker"
+      rm -f "$marker.node"
+    fi
+  ) 8>"$marker.lock"
+fi
 `
 
 // InClusterNodeReset resets a removed node from inside its cluster, with no
@@ -119,7 +134,7 @@ func nodeResetPod(ctx context.Context, member kubernetes.Interface, op *stationv
 			Containers: []corev1.Container{{
 				Name: "reset", Image: agent.Containers[0].Image,
 				Command: []string{"nsenter", "--target", "1", "--mount", "--uts", "--ipc", "--net", "--pid", "--",
-					"systemd-run", "--unit", "rlark-node-reset-" + string(op.UID)[:8], "--collect", "--quiet", "/bin/sh", "-c", nodeResetScript},
+					"systemd-run", "--unit", "rlark-node-reset-" + string(op.UID)[:8], "--collect", "--quiet", "/bin/sh", "-c", nodeResetScript, "rlark-node-reset", op.Spec.NodeUID},
 				SecurityContext: &corev1.SecurityContext{Privileged: &privileged},
 			}},
 		},

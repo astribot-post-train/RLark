@@ -459,11 +459,11 @@ func (r *Run) act(ctx context.Context, stage string, current State) error {
 			}
 		}
 	case "crds-rbac":
-		if err := applyDefinitions(ctx, site.Management, r.Tree.Definitions, ""); err != nil {
+		if err := applyDefinitions(ctx, site.Management, r.Tree.Definitions, "", nil); err != nil {
 			return err
 		}
 		for _, cluster := range slices.Sorted(maps.Keys(site.MemberDefinitions)) {
-			if err := applyDefinitions(ctx, site.MemberDefinitions[cluster], r.Tree.MemberDefinitions, cluster); err != nil {
+			if err := applyDefinitions(ctx, site.MemberDefinitions[cluster], r.Tree.MemberDefinitions, cluster, func(ctx context.Context) error { return r.checkMemberLease(ctx, cluster) }); err != nil {
 				return err
 			}
 		}
@@ -471,11 +471,16 @@ func (r *Run) act(ctx context.Context, stage string, current State) error {
 	case "gateway":
 		return r.setPlane(ctx, current, "rlark-gateway")
 	case "station-api":
-		member, pullSecret := site.Members[site.Environment.Station.Cluster], site.Environment.Station.PullSecret
+		cluster := site.Environment.Station.Cluster
+		member, pullSecret := site.Members[cluster], site.Environment.Station.PullSecret
+		check := func(ctx context.Context) error { return r.checkMemberLease(ctx, cluster) }
 		if desired.Installer == "" || current.Installer == desired.Installer {
-			return setDeployment(ctx, member, stationNamespace, stationAPI, desired.StationAPI, pullSecret)
+			return setDeployment(ctx, member, stationNamespace, stationAPI, desired.StationAPI, pullSecret, check)
 		}
 		// The installer first, then both Deployments read it: Station API with its new image, the controller as it is.
+		if err := check(ctx); err != nil {
+			return err
+		}
 		file, sum, err := site.Installer.Put(ctx, desired.Installer)
 		if err != nil {
 			return fmt.Errorf("lay down the installer %s: %w", short(desired.Installer), err)
@@ -496,6 +501,9 @@ func (r *Run) act(ctx context.Context, stage string, current State) error {
 				}
 			}
 			deployment.Spec.Template.Spec.ImagePullSecrets = []corev1.LocalObjectReference{{Name: pullSecret}}
+			if err := check(ctx); err != nil {
+				return err
+			}
 			if _, err := member.AppsV1().Deployments(stationNamespace).Update(ctx, deployment, metav1.UpdateOptions{}); err != nil {
 				return err
 			}
@@ -508,11 +516,14 @@ func (r *Run) act(ctx context.Context, stage string, current State) error {
 		container := &deployment.Spec.Template.Spec.Containers[0]
 		container.Image = desired.StationController
 		deployment.Spec.Template.Spec.ImagePullSecrets = []corev1.LocalObjectReference{{Name: site.Environment.Station.PullSecret}}
+		if err := r.checkMemberLease(ctx, site.Environment.Station.Cluster); err != nil {
+			return err
+		}
 		_, err = site.Members[site.Environment.Station.Cluster].AppsV1().Deployments(stationNamespace).Update(ctx, deployment, metav1.UpdateOptions{})
 		return err
 	case "cluster-agents":
 		for _, name := range slices.Sorted(maps.Keys(desired.Clusters)) {
-			deployment, err := setAgent(ctx, site.Members[name], desired.Clusters[name])
+			deployment, err := setAgent(ctx, site.Members[name], desired.Clusters[name], func(ctx context.Context) error { return r.checkMemberLease(ctx, name) })
 			if err != nil {
 				return fmt.Errorf("cluster %s: %w", name, err)
 			}
@@ -537,6 +548,9 @@ func (r *Run) act(ctx context.Context, stage string, current State) error {
 					return fmt.Errorf("cluster %s: %w", name, err)
 				}
 				for _, namespace := range retired {
+					if err := r.checkMemberLease(ctx, name); err != nil {
+						return err
+					}
 					if err := site.Members[name].CoreV1().Namespaces().Delete(ctx, namespace, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
 						return fmt.Errorf("cluster %s: namespace %s: %w", name, namespace, err)
 					}
@@ -547,6 +561,9 @@ func (r *Run) act(ctx context.Context, stage string, current State) error {
 				if err := r.retryWrite(ctx, func() error {
 					has, made, err := r.stationDaemonSet(ctx, name, daemonSet)
 					if err != nil || has == nil {
+						return err
+					}
+					if err := r.checkMemberLease(ctx, name); err != nil {
 						return err
 					}
 					_, err = site.Members[name].AppsV1().DaemonSets(stationNamespace).Update(ctx, made, metav1.UpdateOptions{})
@@ -568,7 +585,12 @@ func (r *Run) act(ctx context.Context, stage string, current State) error {
 				if installed && was.Version == want.Version && maps.Equal(was.Values, want.Values) {
 					continue
 				}
-				if err := r.retryWrite(ctx, func() error { return site.PutAddon(ctx, cluster, name, want, !installed) }); err != nil {
+				if err := r.retryWrite(ctx, func() error {
+					if err := r.checkMemberLease(ctx, cluster); err != nil {
+						return err
+					}
+					return site.PutAddon(ctx, cluster, name, want, !installed)
+				}); err != nil {
 					return err
 				}
 				if was.Version != want.Version {
@@ -842,7 +864,7 @@ func outOfService(node corev1.Node) string {
 
 // setDeployment gives one of Station's Deployments its image, which it pulls with the site registry's account as
 // Station's DaemonSets do: the node it runs on need not have had the image pulled for it.
-func setDeployment(ctx context.Context, member kubernetes.Interface, namespace, name, image, pullSecret string) error {
+func setDeployment(ctx context.Context, member kubernetes.Interface, namespace, name, image, pullSecret string, check func(context.Context) error) error {
 	deployment, err := member.AppsV1().Deployments(namespace).Get(ctx, name, metav1.GetOptions{})
 	if err != nil {
 		return err
@@ -851,6 +873,9 @@ func setDeployment(ctx context.Context, member kubernetes.Interface, namespace, 
 		deployment.Spec.Template.Spec.Containers[i].Image = image
 	}
 	deployment.Spec.Template.Spec.ImagePullSecrets = []corev1.LocalObjectReference{{Name: pullSecret}}
+	if err := check(ctx); err != nil {
+		return err
+	}
 	_, err = member.AppsV1().Deployments(namespace).Update(ctx, deployment, metav1.UpdateOptions{})
 	return err
 }
@@ -861,7 +886,7 @@ const agentReadyPort = 10382
 // setAgent gives the cluster agent its image, the tools it hands to Tasks and its readiness probe. The agent is one
 // Pod on its node's network: the one before goes before the next comes, or the two want the same ports. It returns
 // the agent's Deployment's name.
-func setAgent(ctx context.Context, member kubernetes.Interface, want ClusterState) (string, error) {
+func setAgent(ctx context.Context, member kubernetes.Interface, want ClusterState, check func(context.Context) error) (string, error) {
 	deployment, at, err := clusterAgent(ctx, member)
 	if err != nil {
 		return "", err
@@ -882,6 +907,9 @@ func setAgent(ctx context.Context, member kubernetes.Interface, want ClusterStat
 	}
 	if deployment.Spec.Template.Spec.HostNetwork {
 		deployment.Spec.Strategy = appsv1.DeploymentStrategy{Type: appsv1.RecreateDeploymentStrategyType}
+	}
+	if err := check(ctx); err != nil {
+		return "", err
 	}
 	_, err = member.AppsV1().Deployments(agentNamespace).Update(ctx, deployment, metav1.UpdateOptions{})
 	return deployment.Name, err

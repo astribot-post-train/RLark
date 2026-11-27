@@ -89,11 +89,15 @@ func TestClusterOnlyPolicyRejectsNodeAgentDaemonSet(t *testing.T) {
 	if err := appsv1.AddToScheme(scheme); err != nil {
 		t.Fatal(err)
 	}
-	reader := runtimefake.NewClientBuilder().WithScheme(scheme).WithObjects(&appsv1.DaemonSet{
-		ObjectMeta: metav1.ObjectMeta{Name: "rlark-node-agent", Namespace: Namespace},
-	}).Build()
-	if err := ValidateClusterOnly(t.Context(), reader); err == nil || !strings.Contains(err.Error(), "node Agents") {
-		t.Fatalf("got %v", err)
+	for _, name := range []string{"rlark-agent-node", "rlark-node-agent"} {
+		t.Run(name, func(t *testing.T) {
+			reader := runtimefake.NewClientBuilder().WithScheme(scheme).WithObjects(&appsv1.DaemonSet{
+				ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: Namespace},
+			}).Build()
+			if err := ValidateClusterOnly(t.Context(), reader); err == nil || !strings.Contains(err.Error(), "node Agents") {
+				t.Fatalf("got %v", err)
+			}
+		})
 	}
 }
 

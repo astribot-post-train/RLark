@@ -38,6 +38,9 @@ export function nodeJoinView(j: NodeJoin, lang: Lang) {
     // A join that does not run can be cleared.
     canClear: phase !== "Running",
     // It started the machine's own tunnel and its code's line has not run: clearing logs in to take the tunnel away.
-    clearReachesMachine: !["Pending", "Skipped"].includes(state("tunnel")) && state("install") === "Pending",
+    clearReachesMachine: phase !== "Succeeded" && (
+      (state("install") === "Pending" && !["Pending", "Skipped"].includes(state("tunnel"))) ||
+      (state("install") !== "Pending" && !j.metadata?.annotations?.["rlark.io/ssh-join-node-uid"])
+    ),
   };
 }

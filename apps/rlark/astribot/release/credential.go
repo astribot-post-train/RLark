@@ -51,7 +51,7 @@ func IssueMemberCredential(ctx context.Context, member kubernetes.Interface, mem
 	if err != nil {
 		return err
 	}
-	if err := applyDefinitions(ctx, memberDefinitions, definitions, cluster); err != nil {
+	if err := applyDefinitions(ctx, memberDefinitions, definitions, cluster, nil); err != nil {
 		return err
 	}
 	var token *corev1.Secret

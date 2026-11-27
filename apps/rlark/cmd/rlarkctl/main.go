@@ -1,7 +1,10 @@
 package main
 
 import (
+	"context"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/spf13/cobra"
 
@@ -23,7 +26,10 @@ func main() {
 	cmd.AddCommand(astribotctl.Commands()...)
 	rlarkctl.SetupPersistentFlags(cmd.PersistentFlags())
 
-	if err := cmd.Execute(); err != nil {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	err := cmd.ExecuteContext(ctx)
+	stop()
+	if err != nil {
 		os.Exit(1)
 	}
 }

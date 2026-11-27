@@ -690,3 +690,50 @@ func TestJoinUIDReceiptCannotBeReplacedOrAdoptedFromOlderAttempt(t *testing.T) {
 		t.Fatalf("join UID receipt = %v, %v", current, err)
 	}
 }
+
+func TestAbandonUnverifiedJoinOnlyDeletesOwnedUnusedAdmission(t *testing.T) {
+	for _, scenario := range []struct {
+		name, owner, redeemed string
+		remove                bool
+	}{
+		{name: "unused", owner: "join-1", remove: true},
+		{name: "redeemed", owner: "join-1", redeemed: "2026-11-01T00:00:00Z"},
+		{name: "replacement", owner: "join-2"},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			status := newJoinStatus("SHA256:box")
+			status.Phase = rlarkv1alpha1.ClusterProvisionFailed
+			setStage(&status.Stages, &status.Stage, stageInstall, rlarkv1alpha1.ClusterProvisionStageFailed, "", "interrupted")
+			j := &rlarkv1alpha1.NodeJoin{
+				ObjectMeta: metav1.ObjectMeta{Name: "cluster-a.box", UID: "join-1"},
+				Spec:       rlarkv1alpha1.NodeJoinSpec{ClusterID: "cluster-a", NodeName: "box"},
+				Status:     status,
+			}
+			s := newJoinScene(t, joinNetwork(nil, nil), j, readyNode(0))
+			ctx := t.Context()
+			admissions := s.g.stationClient.Resource(nodeAdmissionGVR).Namespace("agent-a")
+			admission := &unstructured.Unstructured{Object: map[string]any{
+				"apiVersion": "station.rlark.io/v1alpha1", "kind": "NodeAdmission",
+				"spec": map[string]any{"redeemedAt": scenario.redeemed},
+			}}
+			admission.SetName("box")
+			admission.SetNamespace("agent-a")
+			admission.SetUID("admission-uid")
+			admission.SetResourceVersion("1")
+			admission.SetAnnotations(map[string]string{stationidentity.SSHJoinUIDAnnotation: scenario.owner})
+			if _, err := admissions.Create(ctx, admission, metav1.CreateOptions{}); err != nil {
+				t.Fatal(err)
+			}
+			if code, body := s.call(http.MethodPost, "/station/node-joins/cluster-a.box/clear", `{"machine_gone":true}`); code != http.StatusOK {
+				t.Fatalf("clear = %d %v", code, body)
+			}
+			if _, err := admissions.Get(ctx, "box", metav1.GetOptions{}); scenario.remove != apierrors.IsNotFound(err) {
+				t.Fatalf("unexpected admission after clear: %v", err)
+			}
+			operations, err := s.g.stationClient.Resource(nodeOperationGVR).Namespace("agent-a").List(ctx, metav1.ListOptions{})
+			if err != nil || len(operations.Items) != 0 {
+				t.Fatalf("unknown identity triggered a native Node removal: %v %v", operations, err)
+			}
+		})
+	}
+}

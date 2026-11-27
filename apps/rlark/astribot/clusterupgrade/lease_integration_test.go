@@ -4,11 +4,13 @@ import (
 	"errors"
 	"os"
 	"testing"
+	"time"
 
 	coordinationv1 "k8s.io/api/coordination/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 )
 
@@ -65,6 +67,31 @@ func TestMemberLeaseOnKubernetesAPI(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := second.Release(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	stale, staleWork, err := Acquire(ctx, leases, "rlarkctl-release/stale", "stale", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = stale.Release(ctx) }()
+	record, err := leases.Get(ctx, LeaseName, metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	record.Spec.RenewTime = ptr.To(metav1.NewMicroTime(time.Now().Add(-time.Hour)))
+	if _, err := leases.Update(ctx, record, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	takeover, takeoverWork, err := Acquire(ctx, leases, "upgrade-job/recovery", "recovery/pod-uid", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = takeover.Release(ctx) }()
+	if err := stale.Check(staleWork); !errors.As(err, &conflict) {
+		t.Fatalf("stale release could still write: %v", err)
+	}
+	if err := takeover.Check(takeoverWork); err != nil {
 		t.Fatal(err)
 	}
 }

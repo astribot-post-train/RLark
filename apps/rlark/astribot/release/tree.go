@@ -263,11 +263,16 @@ func stated(definition *unstructured.Unstructured) map[string]any {
 	return want
 }
 
-func applyDefinitions(ctx context.Context, plane dynamic.Interface, definitions []*unstructured.Unstructured, where string) error {
+func applyDefinitions(ctx context.Context, plane dynamic.Interface, definitions []*unstructured.Unstructured, where string, check func(context.Context) error) error {
 	for _, definition := range definitions {
 		data, err := json.Marshal(definition.Object)
 		if err != nil {
 			return err
+		}
+		if check != nil {
+			if err := check(ctx); err != nil {
+				return err
+			}
 		}
 		force := true
 		if _, err := definitionClient(plane, definition).Patch(ctx, definition.GetName(), types.ApplyPatchType, data,

@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"slices"
 
+	"github.com/rlinf/rlark/apps/rlark/astribot/nodeagent"
+
 	appsv1 "k8s.io/api/apps/v1"
 	coordinationv1 "k8s.io/api/coordination/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -87,7 +89,7 @@ func ValidateClusterOnly(ctx context.Context, kube client.Reader) error {
 		return err
 	}
 	for _, ds := range workloads.Items {
-		if ds.Name == "rlark-node-agent" {
+		if ds.Name == nodeagent.Name || ds.Name == "rlark-node-agent" {
 			return errors.New("cluster-only upgrade cannot change a member with node Agents")
 		}
 		for _, container := range ds.Spec.Template.Spec.Containers {

@@ -38,7 +38,8 @@ func TestAReportingNodeIsResetFromInsideItsCluster(t *testing.T) {
 	container := pod.Spec.Containers[0]
 	if pod.Spec.NodeName != "nb260706069" || !pod.Spec.HostPID || !pod.Spec.HostNetwork || container.Image != "registry.rlark.internal:5443/rlark/agent@sha256:b3a7" ||
 		len(pod.Spec.ImagePullSecrets) != 1 || !*container.SecurityContext.Privileged || container.Command[0] != "nsenter" || !strings.Contains(strings.Join(container.Command, " "), "systemd-run") ||
-		!strings.Contains(container.Command[len(container.Command)-1], "kubeadm reset --force") {
+		!strings.Contains(container.Command[len(container.Command)-3], "kubeadm reset --force") ||
+		container.Command[len(container.Command)-1] != op.Spec.NodeUID {
 		t.Fatalf("reset pod: %+v", pod.Spec)
 	}
 	// The pod has run, but the kubelet still reports: not done.

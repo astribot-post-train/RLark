@@ -693,3 +693,31 @@ func TestHostRollbackRejectsReplacementOrMissingNativeClusterUID(t *testing.T) {
 		})
 	}
 }
+
+func TestPartialProvisionRollbackRequiresOriginalInstallJournal(t *testing.T) {
+	dir := t.TempDir()
+	marker := filepath.Join(dir, "marker")
+	journal := filepath.Join(dir, "journal")
+	admin := filepath.Join(dir, "admin.conf")
+	if err := os.Mkdir(journal, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(admin, nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	script := strings.NewReplacer(
+		"/var/lib/rlark/control-plane", journal,
+		"/etc/kubernetes/admin.conf", admin,
+	).Replace(strings.TrimPrefix(verifyProvisionHostCluster, readHostClusterUID))
+	for _, owner := range []string{"", "replacement", "original"} {
+		t.Run(owner, func(t *testing.T) {
+			if err := os.WriteFile(filepath.Join(journal, "provision-uid"), []byte(owner), 0600); err != nil {
+				t.Fatal(err)
+			}
+			out, err := exec.Command("sh", "-c", "set -eu\nowner=original\nmarker="+nodessh.Quote(marker)+"\n"+script).CombinedOutput()
+			if (err == nil) != (owner == "original") {
+				t.Fatalf("unexpected guard result for %q: %s %v", owner, out, err)
+			}
+		})
+	}
+}

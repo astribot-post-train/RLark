@@ -36,13 +36,16 @@ test("a retry logs in again up to install; after it, it does not", () => {
   assert.equal(ready.retryNeedsPassword, false);
 });
 
-test("clearing logs in to the machine only to take away a tunnel its code's line has not used", () => {
+test("interrupted joins with unknown identity expose the explicit cleanup choices", () => {
   const atTunnel = nodeJoinView(join("Failed", "tunnel", [{ name: "tunnel", state: "Failed" }]), "zh");
   assert.equal(atTunnel.canClear, true);
   assert.equal(atTunnel.clearReachesMachine, true);
   const direct = nodeJoinView(join("Failed", "install", [{ name: "tunnel", state: "Skipped" }, { name: "install", state: "Failed" }]), "zh");
-  assert.equal(direct.clearReachesMachine, false);
+  assert.equal(direct.clearReachesMachine, true);
   const installed = nodeJoinView(join("Failed", "station", [{ name: "tunnel", state: "Done" }, { name: "install", state: "Done" }, { name: "station", state: "Failed" }]), "zh");
-  assert.equal(installed.clearReachesMachine, false);
+  assert.equal(installed.clearReachesMachine, true);
+  const recorded = join("Failed", "station", [{ name: "tunnel", state: "Done" }, { name: "install", state: "Done" }]);
+  recorded.metadata = { annotations: { "rlark.io/ssh-join-node-uid": "original-node" } };
+  assert.equal(nodeJoinView(recorded, "zh").clearReachesMachine, false);
   assert.equal(nodeJoinView(join("Failed", "precheck", [{ name: "precheck", state: "Failed" }]), "zh").clearReachesMachine, false);
 });
