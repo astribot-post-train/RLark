@@ -161,6 +161,6 @@ rlarkctl release apply -e environments/live.yaml --to /var/lib/rlark/release/run
   ```bash
   astribot/csi-rclone-ks3/build.sh /abs/new/dir   # 单测 + 静态编译出 rcloneplugin
   docker build -f astribot/csi-rclone-ks3/Dockerfile --build-arg BASE=<仓库>/csi-rclone/csi-driver-rclone:v0.2.0 \
-    -t <仓库>/csi-rclone/csi-driver-rclone:v0.2.0-ks3.3 /abs/new/dir
+    -t <仓库>/csi-rclone/csi-driver-rclone:v0.2.0-ks3.4 /abs/new/dir
   ```
   新摘要写进 `pinned.yaml` 的 `csi-rclone`，在 `addons` 阶段上线。替换插件 Pod 会断开该节点所有 rclone 卷。Addon 设了 `nodeUpdateStrategy=OnDelete` 的集群，确认没有 Pod 在用卷后逐个节点替换；默认的 `RollingUpdate` 下，新的 `rcloneImage` 会自己滚完每个节点、断开所有挂载，所以发布新摘要前先看各集群的取值。

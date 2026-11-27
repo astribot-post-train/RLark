@@ -126,7 +126,7 @@
 | `csi-driver-nodepath` | 节点上已挂好的文件系统（如 KPFS）当存储：核对挂载类型后 bind mount 进 Pod，给有它的节点打 `storage.rlark.io/<sc-id>=true` |
 | `nvidia-gpu` | GPU 节点：NVIDIA Container Toolkit 装进运行时并设为默认，加设备插件；节点只需自带驱动 |
 
-官方的 `csi-driver-rclone` 我们加了 `nodeUpdateStrategy`、`nodeImagePullPolicy`、`controllerNodeSelector`、`nodeTpsLimit`；镜像用 `astribot/csi-rclone-ks3` 的 KS3 补丁版（`v0.2.0-ks3.3`）。补丁只对 `ks3-*.ksyuncs.com` 生效：不把 KS3 分块上传的 ETag 当 MD5（KS3 的这个 ETag 不是内容的 MD5，否则 close 报 EIO）、改用长度和 CRC64 校验、HTML 的 429 交给 rclone 重试、改名覆盖时先删目标、每个卷用自己的 remote。
+官方的 `csi-driver-rclone` 我们加了 `nodeUpdateStrategy`、`nodeImagePullPolicy`、`controllerNodeSelector`、`nodeTpsLimit`；镜像用 `astribot/csi-rclone-ks3` 的 KS3 补丁版（`v0.2.0-ks3.4`）。补丁只对 `ks3-*.ksyuncs.com` 生效：不把 KS3 分块上传的 ETag 当 MD5（KS3 的这个 ETag 不是内容的 MD5，否则 close 报 EIO）、改用长度和 CRC64 校验、HTML 的 429 和 408（错误码 `Request Timeout`，KS3 没在时限内收完请求）交给 rclone 重试、改名覆盖时先删目标、每个卷用自己的 remote。
 
 Addon 的包：装或更新时，Gateway（或发布命令）把“名字@版本”发布成集群管理命名空间里的不可变 ConfigMap `addon-package-<名字>-<版本>`；集群 agent 只从包渲染，每个 generation 一次，结果在 Secret `addon-rendered-<名字>`。参数可以写 `requiredWith`：另一个参数有值时本参数必填。
 
@@ -207,6 +207,7 @@ Station 容器：机器人被一个 Run 占用时，带站点令牌向 `stationC
 - 按名字引用：卷写 `csi.driver: storage.rlark.io`、`volumeAttributes: {storage: <名字>, profile: <可选>}`。Job 控制器按 Task 所在集群解析，解析不了时不建 Task，条件 `StorageAvailable=False`。存储视图是各集群命名空间里的 ConfigMap `<sc-id>-storage`，不含凭据。
 - 改名不换 id 和 StorageClass。
 - KS3 上未知长度的流在默认分片下最大约 48.8 GiB。
+- 不带写缓存的挂载（归档档）里，一个文件在 `close` 里上传：不到 100 KiB 的一次 PutObject，更大的分片；`close` 返回成功即对象已在桶里、长度（和 CRC64）已核对。上传中可重试的失败（断连、超时、429/500/503，KS3 上还有 408）在插件里重发，次数是 `low-level-retries`（默认 10，间隔 10 ms 起翻倍到 2 s），重发都在 `close` 返回之前；用完仍失败，`close` 报 EIO、桶里没有这个对象。哪些失败算可重试由插件定，挂载参数只定次数。
 
 ## 镜像仓库
 
