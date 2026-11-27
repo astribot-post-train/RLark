@@ -1828,10 +1828,26 @@
 }
 .stations-page button.station-camera-pin { cursor: pointer; }
 
+/* Square 16:9 wall. Picture height still follows the viewport (two or three rows under the page
+   chrome, with the same caps as before) and the wall's width is that height times 16:9.
+   An ultrawide page centers this block instead of stretching each cell into side bars.
+   A narrower page keeps width 100% and the cells shrink together, still at 16:9. */
+.stations-page .stations-wall {
+  --wall-cols: 2;
+  --wall-gap: 8px;
+  --wall-picture-h: clamp(115px, calc((100dvh - 340px) / 2), 310px);
+  width: min(100%, calc(var(--wall-cols) * var(--wall-picture-h) * 16 / 9 + (var(--wall-cols) - 1) * var(--wall-gap)));
+  margin-inline: auto;
+}
+.stations-page .stations-wall:has(.stations-wall-grid.is-3) {
+  --wall-cols: 3;
+  --wall-picture-h: clamp(90px, calc((100dvh - 365px) / 3), 240px);
+}
 .stations-wall-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
+  gap: var(--wall-gap, 8px);
+  align-items: start;
 }
 .stations-wall-grid.is-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .stations-wall-tile {
@@ -1843,16 +1859,43 @@
 }
 .stations-wall-tile[data-severity="3"] { border-color: var(--red); }
 .stations-page .stations-wall-tile .station-tile-main {
-  height: clamp(115px, calc((100dvh - 340px) / 2), 310px);
+  position: relative;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 16 / 9;
   min-height: 0;
   border-radius: 0;
+  background: #101418;
 }
-.stations-page .stations-wall-grid.is-3 .station-tile-main {
-  height: clamp(90px, calc((100dvh - 365px) / 3), 240px);
+/* The button fills the ratio box in both the live and the failed states, so a missing
+   frame, a still, or a broken image cannot change the cell size. */
+.stations-page .stations-wall-tile .station-camera.is-big {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
 }
-.stations-page .stations-wall-tile .station-camera.is-big { inset: 0; height: 100%; width: 100%; }
-.stations-page .stations-wall-tile .station-camera-frame { height: 100%; border-radius: 0; }
-.stations-page .stations-wall-tile .station-camera-frame img { object-fit: contain; }
+.stations-page .stations-wall-tile .station-camera-frame,
+.stations-page .stations-wall-tile .station-camera.is-big .station-camera-frame,
+.stations-page .stations-wall-tile .station-camera.is-missing .station-camera-frame,
+.stations-page .stations-wall-tile .station-camera.is-empty .station-camera-frame {
+  position: absolute;
+  inset: 0;
+  width: auto;
+  height: auto;
+  aspect-ratio: auto;
+  border-radius: 0;
+  background: #101418;
+}
+.stations-page .stations-wall-tile .station-camera-frame img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  object-position: center;
+  background: transparent;
+}
 .stations-wall-tile footer {
   display: flex;
   align-items: center;
