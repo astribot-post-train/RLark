@@ -16,6 +16,8 @@ const restartHook = await readFile(new URL("../src/astribot/components/useNodeRe
 const restartLib = await readFile(new URL("../src/astribot/lib/nodeRestart.ts", import.meta.url), "utf8");
 const stationDisplay = await readFile(new URL("../src/astribot/lib/stationDisplay.ts", import.meta.url), "utf8");
 const stationsApi = await readFile(new URL("../src/astribot/api.ts", import.meta.url), "utf8");
+const rejoinHook = await readFile(new URL("../src/astribot/components/useStationRejoin.ts", import.meta.url), "utf8");
+const rejoinLib = await readFile(new URL("../src/astribot/lib/stationRejoin.ts", import.meta.url), "utf8");
 
 test("the site-node page keeps the toolbar and groups robot clusters apart in a bounded column", () => {
   assert.match(page, /className="page-content resource-page stations-page"/);
@@ -396,17 +398,17 @@ test("an offline robot offers a bounded re-check and says where the browser stop
   assert.match(cardsStyles, /\.station-detail-recovery/);
 });
 
-test("an offline station offers Rejoin beside Re-check and only opens the join page", () => {
-  // The second entry on the recovery line opens the join page for this node; it is not a second re-check.
+test("an offline station offers automatic Rejoin beside Re-check, with the manual page as a fallback", () => {
+  // The second entry retries the existing join in place; it is not a second re-check and it never navigates.
   assert.match(card, /station-tile-recovery-actions/);
   assert.match(card, /className="station-tile-recheck station-tile-rejoin"/);
   assert.match(card, /重新接入/);
   assert.match(card, /Rejoin/);
-  assert.match(card, /onClick=\{rejoin\}/);
-  assert.doesNotMatch(card, /rejoin\.pending/, "the card does not run a join or wait on one");
+  assert.match(card, /onClick=\{rejoin\.press\}/);
+  assert.match(card, /disabled=\{recheck\.pending \|\| rejoin\.pending\}/);
   assert.match(cardsStyles, /\.station-tile-recovery-actions/);
-  // The target carries the node's own name and the cluster only when one cluster claims its namespace.
-  assert.match(page, /const rejoin = async \(item: StationItem\) =>/);
+  // The manual fallback carries the node's own name and the cluster only when one cluster claims its namespace.
+  assert.match(page, /const manualRejoin = async \(item: StationItem\) =>/);
   assert.match(page, /clusterForStation\(clusters, item\.metadata\.namespace\)/);
   assert.match(page, /nodeName: item\.metadata\.name/);
   // An existing SSH join record wins over a blank form; otherwise the form starts from the mapped login/address.
@@ -415,12 +417,15 @@ test("an offline station offers Rejoin beside Re-check and only opens the join p
   assert.match(page, /admission\?\.join_phase \|\| admission\?\.ssh_login/);
   assert.match(page, /name: `\$\{cluster\.id\}\.\$\{item\.metadata\.name\}`/);
   assert.match(page, /status\?\.addresses\?\.find\(\(entry\) => entry\.type === "InternalIP"\)\?\.address/);
-  assert.match(page, /rejoin: \(\) => void cardHandlers\.current\.rejoin\(item\)/);
-  // Opening the page is the whole effect: the admission lookup is read-only and scoped to the station’s cluster.
-  const rejoinBody = page.slice(page.indexOf("const rejoin = async (item: StationItem) =>"), page.indexOf("// A whole-machine restart"));
-  assert.ok(rejoinBody);
-  assert.match(rejoinBody, /nodeAdmissionsApi\.list\(cluster\.id,/);
-  assert.doesNotMatch(rejoinBody, /nodeJoinsApi|nodeAdmissionsApi\.(revoke|reissue)|selfHealApi|stationsApi/);
+  assert.match(page, /manual: \(\) => manualRejoin\(item\)/);
+  // The automatic path only starts a retry of the existing record: no create, clear or admission call.
+  const retryBody = page.slice(page.indexOf("void rejoin.start({"), page.indexOf("manual: () => manualRejoin(item)"));
+  assert.ok(retryBody);
+  assert.doesNotMatch(retryBody, /nodeJoinsApi\.create|\.clear\(|nodeAdmissionsApi|selfHealApi/);
+  // Only the explicit manual page opens the join flow, and it still changes nothing by itself.
+  const manualBody = page.slice(page.indexOf("const manualRejoin = async (item: StationItem) =>"), page.indexOf("// A whole-machine restart"));
+  assert.ok(manualBody);
+  assert.doesNotMatch(manualBody, /nodeJoinsApi|nodeAdmissionsApi\.(revoke|reissue)|selfHealApi|stationsApi/);
 });
 
 test("an online S1U robot offers a confirmed whole-machine restart through the one-shot Node label", () => {
@@ -554,4 +559,28 @@ test("the batch drawer shows failed robots and forwards cancel, retry and dismis
   assert.match(batchPanel, /onClick=\{cancelBatch\}/);
   assert.match(batchPanel, /void retryFailed\(\)/);
   assert.match(batchPanel, /onClick=\{dismissBatch\}/);
+});
+
+test("the offline recovery line retries the existing join in place and keeps a manual fallback", () => {
+  // The page plans from the admission the plane already reports and starts the retry without navigating.
+  assert.match(page, /useStationRejoin\(zh, \(\) => load\(false\)\)/);
+  assert.match(page, /const rejoinPlan = planStationRejoin\(\{ clusterID: rejoinClusterID, nodeName: item\.metadata\.name, admission: admissionOf\(item\) \}\);/);
+  assert.match(page, /void rejoin\.start\(\{/);
+  assert.match(page, /rejoin\.explain\(key, rejoinPlanReason\(rejoinPlan, zh\)\)/);
+  assert.match(page, /manual: \(\) => manualRejoin\(item\)/);
+  // The card reports the three visible states and only offers the manual page after a failure or impossibility.
+  assert.match(card, /rejoin: StationRejoinControl/);
+  assert.match(card, /aria-live="polite"/);
+  assert.match(card, /接入中…|Rejoining…/);
+  assert.match(card, /手动重新接入|Manual rejoin/);
+  assert.match(cardsStyles, /station-tile-recovery\.is-retrying/);
+  assert.match(cardsStyles, /station-tile-recovery\.is-running/);
+  assert.match(cardsStyles, /station-tile-recovery\.is-succeeded/);
+  assert.match(cardsStyles, /station-tile-recovery\.is-failed/);
+  // The boundary lives in the pure lib: only a Failed record at a no-login stage is retried.
+  assert.match(rejoinLib, /joinStageNeedsPassword\(stage\)/);
+  assert.match(rejoinLib, /does not say which stage/);
+  // The retry carries no password, and following reads the cluster-scoped list rather than an unscoped by-name read.
+  assert.match(rejoinHook, /nodeJoinsApi\.retryStored\(target\.name\)/);
+  assert.match(rejoinHook, /nodeJoinsApi\.list\(target\.clusterID\)/);
 });

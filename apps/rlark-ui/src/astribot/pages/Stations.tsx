@@ -11,11 +11,13 @@ import type { ClusterSummary, CRDNode } from "../../types";
 import { RobotControls } from "../components/RobotControls";
 import { NodeName } from "../components/NodeName";
 import { useNodeRestart } from "../components/useNodeRestart";
+import { useStationRejoin } from "../components/useStationRejoin";
 import { useRobotPower } from "../components/useRobotPower";
 import { outstandingRestart, readNodeRestart, restartPhaseLabel } from "../lib/nodeRestart";
 import { nodeLabel } from "../lib/displayName";
 import { clusterForStation, stationPhase } from "../lib/stationDisplay";
 import { parseSSHLogin, type NodeJoinTarget } from "../lib/nodeJoin";
+import { planStationRejoin, rejoinPlanReason } from "../lib/stationRejoin";
 import { isControlPlaneLabels } from "../../utils/nodeVisibility";
 import { admissionStateLabel, isRobotNode, machineModel, robotPowerAfter, robotPowerDesired, type IssuedNodeAdmission, type NodeAdmission, type RobotPowerAction, type SiteNode } from "../lib/siteNodeDisplay";
 import { cameraCells, publishedCameras, type CameraCell, type CameraFps, type CameraView } from "../lib/cameras";
@@ -442,6 +444,9 @@ export function StationsPage({ copy: c, onJoin, onModels }: { copy: Copy; onJoin
   };
   const power = useRobotPower(zh, load, { observe: observeRobotPower }, { onCoalescedRefresh: refreshRobotPowerNodes });
   const restart = useNodeRestart(zh, () => load());
+  // Automatic rejoin retries an existing NodeJoin only; the page's own load follows the record after a terminal
+  // result, so the admission's join_phase/join_stage and the card both reflect what the Gateway wrote.
+  const rejoin = useStationRejoin(zh, () => load());
 
   const count = (value: string) => stationsOfPhase(items, value).length;
   const phaseTabs = [
@@ -472,11 +477,12 @@ export function StationsPage({ copy: c, onJoin, onModels }: { copy: Copy; onJoin
     }
   };
 
-  // Opens the join page at this station. The cluster is prefilled only when one cluster claims its namespace; an
-  // existing SSH join is opened when the admission says the node has one, otherwise the SSH form starts with the
-  // node's name and what was reliably mapped to it (its last SSH login, or the address its Node reports). The card
-  // itself never joins, submits or clears anything.
-  const rejoin = async (item: StationItem) => {
+  // The manual fallback: opens the join page at this station. The automatic path never navigates; it retries the
+  // existing record in place. This page is offered only when automation is impossible or has failed. The cluster is
+  // prefilled only when one cluster claims its namespace; an existing SSH join is opened when the admission says the
+  // node has one, otherwise the SSH form starts with the node's name and what was reliably mapped to it (its last SSH
+  // login, or the address its Node reports).
+  const manualRejoin = async (item: StationItem) => {
     const cluster = clusterForStation(clusters, item.metadata.namespace);
     let admission = admissionOf(item);
     if (cluster && !admission) {
@@ -548,8 +554,8 @@ export function StationsPage({ copy: c, onJoin, onModels }: { copy: Copy; onJoin
     </div>;
   };
 
-  const cardHandlers = useRef({ powerPress, restartPress, recheck, rejoin, toggleOpen, openZoom });
-  cardHandlers.current = { powerPress, restartPress, recheck, rejoin, toggleOpen, openZoom };
+  const cardHandlers = useRef({ powerPress, restartPress, recheck, rejoin: manualRejoin, toggleOpen, openZoom });
+  cardHandlers.current = { powerPress, restartPress, recheck, rejoin: manualRejoin, toggleOpen, openZoom };
   const cardActions = useMemo(() => {
     type Actions = Pick<ComponentProps<typeof StationCard>, "onToggle" | "onChoose" | "onZoom" | "rejoin"> & {
       press: ComponentProps<typeof StationCard>["power"]["press"];
@@ -570,6 +576,12 @@ export function StationsPage({ copy: c, onJoin, onModels }: { copy: Copy; onJoin
     const key = keyOf(item);
     const labels = labelsOf(item);
     const actions = cardActions.get(key)!;
+    const rejoinClusterID = clusterForStation(clusters, item.metadata.namespace)?.id;
+    // The plan is derived only from what the plane already reports; a click on a plan that cannot retry explains
+    // itself on the card and leaves the manual page as the explicit fallback.
+    const rejoinPlan = planStationRejoin({ clusterID: rejoinClusterID, nodeName: item.metadata.name, admission: admissionOf(item) });
+    const rejoinState = rejoin.entries[key];
+    const rejoinPending = Boolean(rejoinState && (rejoinState.phase === "retrying" || rejoinState.phase === "running"));
     const observation = restartObservationOf(item);
     const outstanding = outstandingRestart(observation);
     const local = restart.requests[key];
@@ -608,8 +620,30 @@ export function StationsPage({ copy: c, onJoin, onModels }: { copy: Copy; onJoin
         observation,
         start: actions.start,
       } : undefined}
-      recheck={{ pending: recheckKey === key, run: actions.run }}
-      rejoin={actions.rejoin}
+      recheck={{ pending: recheckKey === key, run: () => void recheck(item) }}
+      rejoin={{
+        state: rejoinState,
+        reason: rejoinPlan.kind === "retry"
+          ? (zh
+            ? "复用这条节点已保存的 SSH 接入记录（地址、账号、主机密钥），从停下的步骤继续重试；不新建记录，也不需要重新输入。只有需要登录机器的步骤不能自动继续。"
+            : "Retries this node's saved SSH join record (address, account and pinned host key) from the stage it stopped at; no new record and no re-entry. Only a stage that logs in to the machine cannot continue automatically.")
+          : rejoinPlanReason(rejoinPlan, zh),
+        pending: rejoinPending,
+        press: () => {
+          if (rejoinPlan.kind === "retry" && rejoinClusterID) {
+            void rejoin.start({
+              key,
+              clusterID: rejoinClusterID,
+              nodeName: item.metadata.name,
+              name: rejoinPlan.name,
+              stage: rejoinPlan.stage,
+            });
+          } else {
+            rejoin.explain(key, rejoinPlanReason(rejoinPlan, zh));
+          }
+        },
+        manual: () => manualRejoin(item),
+      }}
       variant={variant}
       onToggle={actions.onToggle}
       onChoose={actions.onChoose}

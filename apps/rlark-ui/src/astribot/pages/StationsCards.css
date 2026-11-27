@@ -1387,6 +1387,26 @@
 .stations-page .station-tile-recheck:hover:not(:disabled) { border-color: color-mix(in srgb, var(--blue) 48%, var(--line)); }
 .stations-page .station-tile-recheck:disabled { opacity: .6; cursor: default; }
 
+/* Automatic rejoin: the recovery line becomes the operation's own status line. A running retry is blue, a success
+   green, a failure or an impossible request red, and an unfinished read orange; the manual page is a separate,
+   explicit fallback rather than the button's default action. */
+.stations-page .station-tile-recovery.is-retrying,
+.stations-page .station-tile-recovery.is-running { border-color: color-mix(in srgb, var(--blue) 48%, var(--line)); }
+.stations-page .station-tile-recovery.is-succeeded {
+  border-color: color-mix(in srgb, var(--green) 55%, var(--line));
+  background: color-mix(in srgb, var(--green) 7%, var(--panel));
+}
+.stations-page .station-tile-recovery.is-failed {
+  border-color: color-mix(in srgb, var(--red) 55%, var(--line));
+  background: color-mix(in srgb, var(--red) 6%, var(--panel));
+}
+.stations-page .station-tile-recovery.is-unavailable,
+.stations-page .station-tile-recovery.is-timed-out {
+  border-color: color-mix(in srgb, var(--orange) 55%, var(--line));
+  background: color-mix(in srgb, var(--orange) 7%, var(--panel));
+}
+.stations-page .station-tile-rejoin-manual { border-style: dashed; }
+
 /* Inventory rows: the quiet list. */
 .stations-page .stations-inv-list { display: grid; min-width: 0; }
 

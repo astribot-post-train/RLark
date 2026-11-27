@@ -347,6 +347,16 @@ export const nodeJoinsApi = {
     const response = await requestJson<{ data: NodeJoin }>("/api/v1/station/node-joins", { method: "POST", body: input });
     return response.data;
   },
+  // Retries an existing stopped join from its stage with no credentials at all. The Gateway rejects a stage that
+  // needs the machine's password, a join that is not Failed, and a second run of the same record, so this cannot
+  // create a join or queue an untracked one. Callers must not add a password here: the automatic path never has one.
+  async retryStored(name: string) {
+    const response = await requestJson<{ data: NodeJoin }>(`/api/v1/station/node-joins/${encodeURIComponent(name)}/retry`, {
+      method: "POST",
+      body: {},
+    });
+    return response.data;
+  },
   async retry(name: string, password: string, user: string, sudoPassword = "") {
     const response = await requestJson<{ data: NodeJoin }>(`/api/v1/station/node-joins/${encodeURIComponent(name)}/retry`, {
       method: "POST",
