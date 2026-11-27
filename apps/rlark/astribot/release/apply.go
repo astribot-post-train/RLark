@@ -63,6 +63,7 @@ type Run struct {
 	// version as the run made it (going back, addons is the first stage, and the agents' stages come after it).
 	addonVersions map[string]string
 	memberGuards  map[string]*clusterupgrade.Guard
+	stockDeferred map[string]string
 }
 
 type installed struct{ file, sum string }
@@ -294,6 +295,8 @@ func (r *Run) Apply(ctx context.Context) error {
 }
 
 func (r *Run) applyLocked(ctx context.Context) error {
+	r.stockDeferred = map[string]string{}
+	defer func() { r.stockDeferred = nil }()
 	current, err := r.Site.Read(ctx)
 	if err != nil {
 		return err
@@ -372,6 +375,13 @@ func (r *Run) stage(ctx context.Context, stage Stage, baseline Snapshot) error {
 	if err != nil {
 		return err
 	}
+	changes = slices.DeleteFunc(changes, func(change Change) bool {
+		if change.DeferredReason == "" {
+			return false
+		}
+		r.log.printf("%s", change)
+		return true
+	})
 	if stage.Name != "prewarm" && len(changes) == 0 {
 		// As stated is not yet done: a run that stopped here left what it wrote, which may not have come up.
 		reading, err := r.settled(ctx, stage, baseline)
@@ -480,7 +490,15 @@ func (r *Run) act(ctx context.Context, stage string, current State) error {
 		return nil
 	case stockUpgradeStage:
 		for _, cluster := range slices.Sorted(maps.Keys(site.MemberDefinitions)) {
+			if r.stockDeferred[cluster] != "" {
+				continue
+			}
 			if err := r.initializeStockMember(ctx, cluster); err != nil {
+				var busy *activeStockUpgrade
+				if errors.As(err, &busy) {
+					r.log.printf("%s", r.deferStockMember(cluster, busy.Error()))
+					continue
+				}
 				return fmt.Errorf("cluster %s: initialize stock upgrade: %w", cluster, err)
 			}
 		}
@@ -757,7 +775,9 @@ func (r *Run) settled(ctx context.Context, stage Stage, baseline Snapshot) (stri
 			return "", err
 		}
 		for _, change := range changes {
-			left = append(left, "still "+change.String())
+			if change.DeferredReason == "" {
+				left = append(left, "still "+change.String())
+			}
 		}
 	}
 	switch stage.Name {

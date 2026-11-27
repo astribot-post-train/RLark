@@ -62,13 +62,17 @@ type ClusterState struct {
 
 // Change is one thing a stage changes: what, from what, to what.
 type Change struct {
-	Stage string
-	What  string
-	From  string
-	To    string
+	Stage          string
+	What           string
+	From           string
+	To             string
+	DeferredReason string
 }
 
 func (c Change) String() string {
+	if c.DeferredReason != "" {
+		return fmt.Sprintf("%-16s %s: deferred (%s)", c.Stage, c.What, c.DeferredReason)
+	}
 	return fmt.Sprintf("%-16s %s: %s -> %s", c.Stage, c.What, short(c.From), short(c.To))
 }
 

@@ -3,6 +3,7 @@ package release
 import (
 	"context"
 	_ "embed"
+	"errors"
 	"fmt"
 	"slices"
 
@@ -24,6 +25,19 @@ const stockUpgradeStage = "stock-upgrades"
 const stockMemberRBACPath = "apps/rlark/astribot/release/stock_member_rbac.yaml"
 
 const stockPolicyOwner = "rlark.io/stock-policy-cluster-uid"
+
+type activeStockUpgrade struct{ job string }
+
+func (e *activeStockUpgrade) Error() string {
+	return fmt.Sprintf("upgrade Job %s is still active", e.job)
+}
+
+func (r *Run) deferStockMember(name, reason string) Change {
+	if r.stockDeferred != nil {
+		r.stockDeferred[name] = reason
+	}
+	return Change{Stage: stockUpgradeStage, What: name + " stock upgrade initialization", DeferredReason: reason}
+}
 
 func (r *Run) stockMember(ctx context.Context, name string) (*rlark.Cluster, error) {
 	if r.Desired.StockExecutor == "" || r.Tree == nil || !r.Tree.stockUpgradeBootstrap || r.Desired.Clusters[name].Agent == "" {
@@ -53,6 +67,9 @@ func (r *Run) stockMember(ctx context.Context, name string) (*rlark.Cluster, err
 }
 
 func (r *Run) stockChanges(ctx context.Context, name string) ([]Change, error) {
+	if reason := r.stockDeferred[name]; reason != "" {
+		return []Change{r.deferStockMember(name, reason)}, nil
+	}
 	cluster, err := r.stockMember(ctx, name)
 	if err != nil || cluster == nil {
 		return nil, err
@@ -87,11 +104,22 @@ func (r *Run) stockChanges(ctx context.Context, name string) ([]Change, error) {
 	if err != nil {
 		return nil, err
 	}
-	roles, err := definitionChanges(ctx, r.Site.MemberDefinitions[name], defs, name, r.Tree.Commit)
-	for index := range roles {
-		roles[index].Stage = stockUpgradeStage
+	roles, err := stockRBACChanges(ctx, r.Site.MemberDefinitions[name], defs, cluster.UID)
+	if err != nil {
+		return nil, err
 	}
-	return append(changes, roles...), err
+	for _, role := range roles {
+		changes = append(changes, Change{Stage: stockUpgradeStage, What: name + " " + definitionName(role.object), To: "as in " + short(r.Tree.Commit)})
+	}
+	if len(changes) > 0 {
+		var busy *activeStockUpgrade
+		if err := checkNoActiveStockJob(ctx, member); errors.As(err, &busy) {
+			return []Change{r.deferStockMember(name, busy.Error())}, nil
+		} else if err != nil {
+			return nil, err
+		}
+	}
+	return changes, nil
 }
 
 func checkStockPolicy(policy *core.ConfigMap, cluster *rlark.Cluster) error {
@@ -118,16 +146,7 @@ func (r *Run) initializeStockMember(ctx context.Context, name string) error {
 		return r.checkMemberLease(ctx, name)
 	}
 	member := r.Site.Members[name]
-	deployment, _, err := clusterAgent(ctx, member)
-	if err != nil {
-		return err
-	}
-	if reading, err := deploymentSettled(ctx, member, agentNamespace, deployment.Name, r.Desired.Clusters[name].Agent); err != nil || reading != "" {
-		if err != nil {
-			return err
-		}
-		return fmt.Errorf("cluster Agent must settle before installing stock upgrade policy: %s", reading)
-	}
+
 	configs := member.CoreV1().ConfigMaps(agentNamespace)
 	policy, err := configs.Get(ctx, clusterupgrade.PolicyConfigMap, metav1.GetOptions{})
 	missing := apierrors.IsNotFound(err)
@@ -139,43 +158,59 @@ func (r *Run) initializeStockMember(ctx context.Context, name string) error {
 			return err
 		}
 	}
-	if missing || (policy.Annotations[stockPolicyOwner] != "" && policy.Data["executorImage"] != r.Desired.StockExecutor) {
-		if err := checkNoUnlockedStockJob(ctx, member); err != nil {
-			return err
-		}
-	}
 	defs, err := ParseDefinitions("stock_member_rbac.yaml", stockMemberRBAC)
 	if err != nil {
 		return err
 	}
-	for _, definition := range defs {
-		client := definitionClient(r.Site.MemberDefinitions[name], definition)
-		existing, err := client.Get(ctx, definition.GetName(), metav1.GetOptions{})
-		if err == nil {
-			if differs := differences(jsonValue(existing.Object), jsonValue(stated(definition)), false); len(differs) > 0 {
-				return fmt.Errorf("existing stock executor %s differs from the release definition", definitionName(definition))
-			}
-			continue
-		}
-		if !apierrors.IsNotFound(err) {
+	plane := r.Site.MemberDefinitions[name]
+	roles, err := stockRBACChanges(ctx, plane, defs, cluster.UID)
+	if err != nil {
+		return err
+	}
+	_, err = configs.Get(ctx, clusterupgrade.StockStateName, metav1.GetOptions{})
+	stateMissing := apierrors.IsNotFound(err)
+	if err != nil && !stateMissing {
+		return err
+	}
+	policyChanged := missing || (policy.Annotations[stockPolicyOwner] != "" && policy.Data["executorImage"] != r.Desired.StockExecutor)
+	if len(roles) == 0 && !stateMissing && !policyChanged {
+		return nil
+	}
+	deployment, _, err := clusterAgent(ctx, member)
+	if err != nil {
+		return err
+	}
+	if reading, err := deploymentSettled(ctx, member, agentNamespace, deployment.Name, r.Desired.Clusters[name].Agent); err != nil || reading != "" {
+		if err != nil {
 			return err
 		}
+		return fmt.Errorf("cluster Agent must settle before installing stock upgrade policy: %s", reading)
+	}
+	if err := checkNoActiveStockJob(ctx, member); err != nil {
+		return err
+	}
+	for _, change := range roles {
+		definition := change.object
 		if err := check(ctx); err != nil {
 			return err
 		}
-		if _, err := client.Create(ctx, definition, metav1.CreateOptions{}); err != nil {
+		client := definitionClient(plane, definition)
+		if change.create {
+			_, err = client.Create(ctx, definition, metav1.CreateOptions{})
+		} else {
+			_, err = client.Update(ctx, definition, metav1.UpdateOptions{})
+		}
+		if err != nil {
 			return err
 		}
 	}
-	if _, err := configs.Get(ctx, clusterupgrade.StockStateName, metav1.GetOptions{}); apierrors.IsNotFound(err) {
+	if stateMissing {
 		if err := check(ctx); err != nil {
 			return err
 		}
 		if _, err := configs.Create(ctx, &core.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: clusterupgrade.StockStateName, Namespace: agentNamespace}}, metav1.CreateOptions{}); err != nil && !apierrors.IsAlreadyExists(err) {
 			return err
 		}
-	} else if err != nil {
-		return err
 	}
 	if missing {
 		if err := check(ctx); err != nil {
@@ -195,7 +230,7 @@ func (r *Run) initializeStockMember(ctx context.Context, name string) error {
 	return err
 }
 
-func checkNoUnlockedStockJob(ctx context.Context, member kubernetes.Interface) error {
+func checkNoActiveStockJob(ctx context.Context, member kubernetes.Interface) error {
 	jobs, err := member.BatchV1().Jobs(agentNamespace).List(ctx, metav1.ListOptions{LabelSelector: "rlark.io/cluster-upgrade-job"})
 	if err != nil {
 		return err
@@ -204,7 +239,7 @@ func checkNoUnlockedStockJob(ctx context.Context, member kubernetes.Interface) e
 		if !slices.ContainsFunc(job.Status.Conditions, func(c batch.JobCondition) bool {
 			return c.Status == core.ConditionTrue && (c.Type == batch.JobComplete || c.Type == batch.JobFailed)
 		}) {
-			return fmt.Errorf("finish existing upgrade Job %s before initializing the shared stock policy", job.Name)
+			return &activeStockUpgrade{job: job.Name}
 		}
 	}
 	return nil
