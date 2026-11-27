@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"strings"
 	"time"
 
 	stationv1alpha1 "github.com/rlinf/rlark/astribot/station/api/v1alpha1"
@@ -41,6 +42,14 @@ var nodeOperationStages = map[string][]string{
 	"Remove": {"Preflight", "PowerOff", "Drain", "RemovePeer", "Reset", "DeleteNode", "VerifyRemoval"},
 }
 
+func operationStages(op *stationv1alpha1.NodeOperation) ([]string, bool) {
+	if op.Spec.Action == "Join" && strings.HasPrefix(op.Spec.RequestID, "rejoin-") {
+		return []string{"Preflight", "VerifyNode", "VerifyRLark"}, true
+	}
+	stages, ok := nodeOperationStages[op.Spec.Action]
+	return stages, ok
+}
+
 func (r *NodeOperationReconciler) Reconcile(ctx context.Context, req reconcile.Request) (reconcile.Result, error) {
 	op := &stationv1alpha1.NodeOperation{}
 	if err := r.reader.Get(ctx, req.NamespacedName, op); apierrors.IsNotFound(err) {
@@ -65,7 +74,7 @@ func (r *NodeOperationReconciler) Reconcile(ctx context.Context, req reconcile.R
 	if registration.ClusterID != op.Spec.ClusterID {
 		return reconcile.Result{}, ErrInvalidRegistration
 	}
-	stages, ok := nodeOperationStages[op.Spec.Action]
+	stages, ok := operationStages(op)
 	if !ok {
 		return reconcile.Result{}, errors.New("unsupported node operation action")
 	}
@@ -175,6 +184,8 @@ func nodeOperationFailureCondition(stage string, err error) (string, string) {
 		return "MemberClusterUnreachable", "Node operation stage " + stage + " could not reach the member cluster API before the timeout. The cluster, its API endpoint, or its credentials may be offline; retry once the cluster is reachable."
 	}
 	switch {
+	case errors.Is(err, ErrRejoinStateUnavailable):
+		return "RejoinStateUnavailable", err.Error()
 	case errors.Is(err, ErrInstallerFailed):
 		return "InstallerFailed", err.Error()
 	case errors.Is(err, ErrNodeIdentityChanged):

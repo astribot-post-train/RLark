@@ -9,6 +9,7 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"fmt"
@@ -45,9 +46,10 @@ const (
 const addonNameLabel = "rlark.io/addon-name"
 
 var (
-	ErrInstallerFailed       = errors.New("the installer failed on the machine")
-	ErrJoinOutcomeUnknown    = errors.New("join attempt exists but node identity cannot be verified")
-	ErrNodeAlreadyConfigured = errors.New("node already has Kubernetes configuration")
+	ErrInstallerFailed        = errors.New("the installer failed on the machine")
+	ErrJoinOutcomeUnknown     = errors.New("join attempt exists but node identity cannot be verified")
+	ErrNodeAlreadyConfigured  = errors.New("node already has Kubernetes configuration")
+	ErrRejoinStateUnavailable = errors.New("existing node rejoin state is unavailable")
 )
 
 // InstallerJoinDriver joins a machine of a NodeClass without anybody at the
@@ -76,6 +78,139 @@ type InstallerJoinDriver struct {
 	stamp  time.Time
 }
 
+func (d *InstallerJoinDriver) refreshExistingTunnel(ctx context.Context, op *stationv1alpha1.NodeOperation, class *stationv1alpha1.NodeClass, accounts classAccounts, at MachineAddress) error {
+	if class.Spec.Access == nil {
+		return fmt.Errorf("%w: NodeClass access is unavailable", ErrRejoinStateUnavailable)
+	}
+	member, err := d.Members.Client(ctx, op.Spec.ClusterID)
+	if err != nil {
+		return fmt.Errorf("connect member cluster: %w", err)
+	}
+	joined, err := member.CoreV1().Nodes().Get(ctx, op.Spec.NodeName, metav1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("%w: read existing member Node %s: %v", ErrRejoinStateUnavailable, op.Spec.NodeName, err)
+	}
+	if string(joined.UID) != op.Spec.NodeUID || joined.DeletionTimestamp != nil {
+		return fmt.Errorf("%w: member Node UID does not match the requested UID", ErrRejoinStateUnavailable)
+	}
+	admission := &stationv1alpha1.NodeAdmission{}
+	if err := d.Reader.Get(ctx, types.NamespacedName{Namespace: op.Namespace, Name: op.Spec.Admission}, admission); err != nil {
+		return fmt.Errorf("%w: read existing NodeAdmission: %v", ErrRejoinStateUnavailable, err)
+	}
+	if admission.Spec.ClusterID != op.Spec.ClusterID || admission.Spec.Serial == "" || admission.Spec.NodeClass != class.Name || admission.Spec.Machine == nil || admission.Spec.Machine.Category != stationv1alpha1.MachineCategoryRobot || admission.Spec.PublicKey == "" || admission.Status.Phase != stationv1alpha1.NodeAdmissionJoined {
+		return fmt.Errorf("%w: existing NodeAdmission is not a joined Robot identity", ErrRejoinStateUnavailable)
+	}
+	entry, _, err := dialEntry(ctx, class, accounts, at)
+	if err != nil {
+		return err
+	}
+	if err := entry.Close(); err != nil {
+		return err
+	}
+	node, sudo, _, err := dialNode(ctx, class, accounts, at)
+	if err != nil {
+		return err
+	}
+	localKeyOutput, err := RunNodeSudoScript(ctx, node, "test -s /var/lib/station/wg/private.key && /opt/rlark/bin/station-gateway --key /var/lib/station/wg/private.key --public-key", sudo)
+	if err != nil {
+		_ = node.Close()
+		return fmt.Errorf("%w: existing WireGuard key is unavailable: %v", ErrRejoinStateUnavailable, err)
+	}
+	localKey := strings.TrimSpace(string(localKeyOutput))
+	decodedKey, err := base64.StdEncoding.DecodeString(localKey)
+	if err != nil || len(decodedKey) != 32 {
+		_ = node.Close()
+		return fmt.Errorf("%w: existing WireGuard identity is invalid", ErrRejoinStateUnavailable)
+	}
+	if admission.Spec.PublicKey == "" || admission.Spec.PublicKey != localKey {
+		_ = node.Close()
+		return fmt.Errorf("%w: local WireGuard identity does not match NodeAdmission", ErrRejoinStateUnavailable)
+	}
+	enrollment := &stationv1alpha1.NetworkEnrollment{}
+	if err := d.Reader.Get(ctx, types.NamespacedName{Namespace: op.Namespace, Name: op.Spec.NodeName}, enrollment); err != nil {
+		_ = node.Close()
+		return fmt.Errorf("%w: read original NetworkEnrollment: %v", ErrRejoinStateUnavailable, err)
+	}
+	if enrollment.Spec.ClusterID != op.Spec.ClusterID || enrollment.Spec.NodeUID != op.Spec.NodeUID || enrollment.Spec.PublicKey != admission.Spec.PublicKey || enrollment.Status.Phase != stationv1alpha1.NetworkEnrollmentEnrolled || enrollment.Status.Config == "" {
+		_ = node.Close()
+		return fmt.Errorf("%w: original NetworkEnrollment identity or configuration does not match", ErrRejoinStateUnavailable)
+	}
+	digest := sha256.Sum256([]byte(enrollment.Status.Config))
+	if enrollment.Status.ConfigHash != hex.EncodeToString(digest[:]) {
+		_ = node.Close()
+		return fmt.Errorf("%w: original NetworkEnrollment configuration hash is invalid", ErrRejoinStateUnavailable)
+	}
+	var config struct {
+		Interface  string `json:"interface"`
+		Address    string `json:"address"`
+		ListenPort int    `json:"listenPort"`
+		MTU        int    `json:"mtu"`
+		Peers      []struct {
+			PublicKey        string   `json:"publicKey"`
+			Endpoint         string   `json:"endpoint"`
+			AllowedIPs       []string `json:"allowedIPs"`
+			KeepaliveSeconds int      `json:"keepaliveSeconds"`
+		} `json:"peers"`
+		Routes       []string `json:"routes"`
+		UplinkRoutes []struct {
+			Destination string `json:"destination"`
+			Gateway     string `json:"gateway"`
+		} `json:"uplinkRoutes"`
+		Names []struct {
+			Name    string `json:"name"`
+			Address string `json:"address"`
+		} `json:"names"`
+		DNS []string `json:"dns"`
+	}
+	if err := json.Unmarshal([]byte(enrollment.Status.Config), &config); err != nil || config.Interface == "" || config.Address == "" || config.MTU < 576 || config.MTU > 9000 {
+		_ = node.Close()
+		return fmt.Errorf("%w: original NetworkEnrollment configuration is invalid", ErrRejoinStateUnavailable)
+	}
+	for _, peer := range config.Peers {
+		key, err := base64.StdEncoding.DecodeString(peer.PublicKey)
+		if err != nil || len(key) != 32 {
+			_ = node.Close()
+			return fmt.Errorf("%w: original tunnel configuration contains an invalid peer", ErrRejoinStateUnavailable)
+		}
+	}
+	encoded := base64.StdEncoding.EncodeToString([]byte(enrollment.Status.Config))
+	script := fmt.Sprintf("set -eu\ninstall -d -m 0755 /run/station-network\nprintf '%%s' %q | base64 -d > /run/station-network/config.json.new\nif ! cmp -s /run/station-network/config.json.new /run/station-network/config.json; then mv /run/station-network/config.json.new /run/station-network/config.json; systemctl restart rlark-station-gateway; else rm -f /run/station-network/config.json.new; fi\n", encoded)
+	if _, err := RunNodeSudoScript(ctx, node, script, sudo); err != nil {
+		_ = node.Close()
+		return fmt.Errorf("restore original station tunnel document: %w", err)
+	}
+	if err := node.Close(); err != nil {
+		return err
+	}
+	return d.waitForExistingIdentity(ctx, op, class, accounts, at)
+}
+
+func (d *InstallerJoinDriver) waitForExistingIdentity(ctx context.Context, op *stationv1alpha1.NodeOperation, class *stationv1alpha1.NodeClass, accounts classAccounts, at MachineAddress) error {
+	deadline := time.NewTimer(45 * time.Second)
+	defer deadline.Stop()
+	for {
+		node, sudo, _, err := dialNode(ctx, class, accounts, at)
+		if err == nil {
+			output, readErr := RunNodeSudoScript(ctx, node, installObservationScript, sudo)
+			_ = node.Close()
+			if readErr == nil {
+				seen := parseInstallObservation(output)
+				if seen.Node != op.Spec.NodeName {
+					return fmt.Errorf("%w: machine identity reports node %q, expected %q", ErrRejoinStateUnavailable, seen.Node, op.Spec.NodeName)
+				}
+				return nil
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-deadline.C:
+			return fmt.Errorf("%w: restored tunnel did not make the existing node reachable within 45 seconds", ErrRejoinStateUnavailable)
+		case <-time.After(time.Second):
+		}
+	}
+}
+
 func (d *InstallerJoinDriver) now() time.Time {
 	if d.Now != nil {
 		return d.Now()
@@ -84,6 +219,9 @@ func (d *InstallerJoinDriver) now() time.Time {
 }
 
 func (d *InstallerJoinDriver) Execute(ctx context.Context, op *stationv1alpha1.NodeOperation, stage string) (bool, string, error) {
+	if strings.HasPrefix(op.Spec.RequestID, "rejoin-") {
+		return d.executeRejoin(ctx, op, stage)
+	}
 	class, accounts, err := d.Access.class(ctx, op.Spec.NodeClass)
 	if err != nil {
 		return false, "", err
@@ -163,6 +301,49 @@ func (d *InstallerJoinDriver) Execute(ctx context.Context, op *stationv1alpha1.N
 		return d.rotateEntryHostKey(ctx, op, class, accounts, at)
 	}
 	return false, "", fmt.Errorf("%w: %s", ErrNodeStageUnavailable, stage)
+}
+
+func (d *InstallerJoinDriver) executeRejoin(ctx context.Context, op *stationv1alpha1.NodeOperation, stage string) (bool, string, error) {
+	if stage == "Push" || stage == "Install" || stage == "Uplink" || stage == "RotateEntryHostKey" {
+		return false, "", fmt.Errorf("%w: rejoin cannot run Join stage %s", ErrRejoinStateUnavailable, stage)
+	}
+	if stage != "Preflight" {
+		return false, "", fmt.Errorf("%w: unsupported rejoin stage %s", ErrRejoinStateUnavailable, stage)
+	}
+	class, accounts, err := d.Access.class(ctx, op.Spec.NodeClass)
+	if err != nil {
+		return false, "", err
+	}
+	defer accounts.clear()
+	at := MachineAddress{Entry: op.Spec.SSH.Jump.Address, EntryHostKey: op.Spec.SSH.Jump.HostKeyFingerprint, Via: op.Spec.SSH.Jump.Via, NodeHostKey: op.Spec.SSH.HostKeyFingerprint}
+	if err := d.refreshExistingTunnel(ctx, op, class, accounts, at); err != nil {
+		return false, "", err
+	}
+	node, _, _, err := dialNode(ctx, class, accounts, at)
+	if err != nil {
+		return false, "", err
+	}
+	defer node.Close()
+	output, err := RunNodeSudoScript(ctx, node, installObservationScript, accounts.sudo)
+	if err != nil {
+		return false, "", fmt.Errorf("observe existing machine identity: %w", err)
+	}
+	seen := parseInstallObservation(output)
+	if seen.Node != op.Spec.NodeName {
+		return false, "", fmt.Errorf("%w: machine identity reports node %q, expected %q", ErrRejoinStateUnavailable, seen.Node, op.Spec.NodeName)
+	}
+	member, err := d.Members.Client(ctx, op.Spec.ClusterID)
+	if err != nil {
+		return false, "", fmt.Errorf("connect member cluster: %w", err)
+	}
+	joined, err := member.CoreV1().Nodes().Get(ctx, op.Spec.NodeName, metav1.GetOptions{})
+	if err != nil {
+		return false, "", fmt.Errorf("read existing member Node %s: %w", op.Spec.NodeName, err)
+	}
+	if string(joined.UID) != op.Spec.NodeUID || joined.DeletionTimestamp != nil {
+		return false, "", fmt.Errorf("%w: member Node UID does not match the requested UID", ErrRejoinStateUnavailable)
+	}
+	return true, string(joined.UID), nil
 }
 
 // addonsReady says whether every Addon the class names has a ready pod of

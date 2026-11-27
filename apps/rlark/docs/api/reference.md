@@ -29,6 +29,16 @@ The Job `logs` route is implemented and accepts `from`, `to`, `task`, `pod`, `qu
 
 `logs/label-values` accepts `label` (default `pod`), `from`, `to`, `task`, and `pod`, and returns `{ "values": [...] }`; without a configured backend the array is empty. Job `metrics` is registered but currently only returns HTTP `501 Not Implemented`.
 
+## Station machine rejoin
+
+`POST /api/v1/station/machines/{name}/rejoin` is admin-only. Send `{ "cluster_id": "cluster-a", "request_id": "retry-001", "robot_model": "s1u" }`; `robot_model` is optional when the existing admission and NodeClass identify the model. The endpoint returns `202 Accepted` with `{ "data": <NodeOperation> }`. Poll `GET /api/v1/station/node-operations/{name}?cluster_id=cluster-a` or list operations with `GET /api/v1/station/node-operations?cluster_id=cluster-a` until `status.phase` is `Succeeded`, `Failed`, or `Blocked`; failure details are in the bounded `status.conditions` reason/message and contain no SSH passwords.
+
+The machine must already be joined to the requested cluster with a matching Robot NodeAdmission and registered RobotModel/NodeClass. Replaying the same request ID returns the same operation. An active Join returns `409`; invalid or unknown model inputs return `400`, missing Machines return `404`, and lookup failures return `502`. Rejoin uses the NodeClass credentials and existing admission and network configuration. The controller recovers only the existing WireGuard document when the local key, original NodeAdmission, NetworkEnrollment and member Node UID still agree. It does not run Join's `Uplink`, `Push`, `Install`, or `RotateEntryHostKey` stages. Missing or mismatched local identity ends as `Blocked` with `RejoinStateUnavailable` and leaves the admission and Node in place. The API does not accept SSH passwords, delete or replace Nodes or NodeAdmissions, or issue/revoke enrollment codes.
+
+| Method | Path |
+|--------|------|
+| `POST` | `/api/v1/station/machines/{name}/rejoin` |
+
 ## Clusters and certificates
 
 | Method | Path |

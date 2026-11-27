@@ -29,6 +29,16 @@ Job 日志接口已实现：`logs` 支持 `from`、`to`、`task`、`pod`、`quer
 
 `logs/label-values` 支持 `label`（默认 `pod`）、`from`、`to`、`task`、`pod`，返回 `{ "values": [...] }`；未配置日志后端时数组为空。Job `metrics` 已注册，但当前仅返回 HTTP `501 Not Implemented`。
 
+## 站点机器重接
+
+`POST /api/v1/station/machines/{name}/rejoin` 仅管理员可调用。请求体为 `{ "cluster_id": "cluster-a", "request_id": "retry-001", "robot_model": "s1u" }`；当已有 admission 和 NodeClass 可确定机型时，`robot_model` 可省略。接口返回 `202 Accepted` 和 `{ "data": <NodeOperation> }`。使用 `GET /api/v1/station/node-operations/{name}?cluster_id=cluster-a` 轮询，或使用 `GET /api/v1/station/node-operations?cluster_id=cluster-a` 列表查询，直到 `status.phase` 为 `Succeeded`、`Failed` 或 `Blocked`；失败详情位于有界的 `status.conditions` reason/message，不包含 SSH 密码。
+
+目标机器必须已加入请求中的集群，且具有匹配的 Robot NodeAdmission 和已注册的 RobotModel/NodeClass。使用相同 request ID 重放会返回同一操作。存在活动 Join 时返回 `409`；机型无效或未知时返回 `400`，Machine 不存在时返回 `404`，查询失败时返回 `502`。controller 仅在本地 WireGuard key、原 NodeAdmission、NetworkEnrollment 和成员 Node UID 一致时恢复已有 WireGuard 文档，不会运行普通 Join 的 `Uplink`、`Push`、`Install` 或 `RotateEntryHostKey` 阶段。缺少或不匹配的本地身份会以 `RejoinStateUnavailable` 进入可轮询 `Blocked`，原 admission 和 Node 保持不变。重接使用 NodeClass 已存凭据和现有网络配置，不接受 SSH 密码，不删除或替换 Node/NodeAdmission，也不签发或撤销入网码。
+
+| 方法 | 路径 |
+|------|------|
+| `POST` | `/api/v1/station/machines/{name}/rejoin` |
+
 ## 集群与证书
 
 | 方法 | 路径 |

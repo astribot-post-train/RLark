@@ -536,12 +536,22 @@ func (r *MachineReconciler) admit(ctx context.Context, machine *stationv1alpha1.
 }
 
 func (r *MachineReconciler) startJoin(ctx context.Context, machine *stationv1alpha1.Machine, class *stationv1alpha1.NodeClass, namespace, requestedBy string) error {
-	status, access := &machine.Status, class.Spec.Access
 	generation := strconv.FormatInt(machine.Generation, 10)
+	return r.startJoinRequest(ctx, machine, class, namespace, requestedBy, machine.Name+"-"+generation, generation)
+}
+
+func (r *MachineReconciler) startJoinRequest(ctx context.Context, machine *stationv1alpha1.Machine, class *stationv1alpha1.NodeClass, namespace, requestedBy, requestID, operationID string) error {
+	status, access := &machine.Status, class.Spec.Access
+	operationName := "join-" + status.NodeName + "-" + operationID
+	operationGeneration := operationID
+	if strings.HasPrefix(operationID, "rejoin-") {
+		operationName = "join-" + operationID
+		operationGeneration = strconv.FormatInt(machine.Generation, 10)
+	}
 	operation := &stationv1alpha1.NodeOperation{
-		ObjectMeta: metav1.ObjectMeta{Namespace: namespace, Name: "join-" + status.NodeName + "-" + generation,
-			Labels: map[string]string{MachineLabel: machine.Name}, Annotations: map[string]string{machineRequestAnnotation: generation}},
-		Spec: stationv1alpha1.NodeOperationSpec{RequestID: machine.Name + "-" + generation, Action: "Join", ClusterID: status.ClusterID, NodeName: status.NodeName,
+		ObjectMeta: metav1.ObjectMeta{Namespace: namespace, Name: operationName,
+			Labels: map[string]string{MachineLabel: machine.Name}, Annotations: map[string]string{machineRequestAnnotation: operationGeneration}},
+		Spec: stationv1alpha1.NodeOperationSpec{RequestID: requestID, Action: "Join", ClusterID: status.ClusterID, NodeName: status.NodeName,
 			Admission: status.NodeName, NodeClass: class.Name, RequestedBy: requestedBy,
 			SSH: &stationv1alpha1.NodeSSHConnection{Address: access.Node.Address, Port: access.Node.Port, User: access.Node.User, HostKeyFingerprint: status.NodeHostKeyFingerprint,
 				Jump: &stationv1alpha1.NodeSSHHop{Address: status.Entry.Address, Port: access.Entry.Port, User: access.Entry.User, HostKeyFingerprint: status.Entry.HostKeyFingerprint, Via: status.Entry.Via}}},
