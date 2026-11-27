@@ -11,8 +11,8 @@ const [shell, iam, shared, edition] = await Promise.all([
 ]);
 
 function zIndex(css, selector) {
-  const rule = css.match(new RegExp(`^\\.${selector}\\s*\\{([^}]+)\\}`, "m"));
-  const value = rule?.[1].match(/z-index:\s*(\d+);/);
+  const values = [...css.matchAll(new RegExp(`^\\.${selector}\\s*\\{([^}]+)\\}`, "gm"))];
+  const value = values.map((rule) => rule[1].match(/z-index:\s*(\d+);/)).find(Boolean);
   assert.ok(value, `Missing z-index for .${selector}`);
   return Number(value[1]);
 }
@@ -26,7 +26,9 @@ test("IAM details cover the shell header and account dialogs cover the details",
 });
 
 test("IAM controls preserve the shared dropdown indicator", () => {
-  const controls = iam.match(/^\.iam-page input, \.iam-page select\s*\{([^}]+)\}/m)?.[1];
+  const controls = [...iam.matchAll(/^\.iam-page input,\s*\.iam-page select\s*\{([^}]+)\}/gm)]
+    .map((rule) => rule[1])
+    .find((declarations) => /background-color:/.test(declarations));
   assert.ok(controls);
   assert.match(controls, /background-color:\s*var\(--iam-panel\)/);
   assert.doesNotMatch(controls, /\bbackground\s*:/);

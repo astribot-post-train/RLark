@@ -72,7 +72,7 @@ test("任务列表显示提交人并兼容无个人身份的历史任务", () =>
   assert.equal(job({ "rlark.io/created-by": "service-account:astribot-iam-operator" }).submittedBy, undefined);
   assert.equal(job(undefined).submittedBy, undefined);
   assert.match(jobsSource, /<th>\{zh \? "用户" : "Submitted by"\}<\/th>/);
-  assert.match(jobsSource, /<td className="job-table-submitter">\{job\.submittedBy \|\| "—"\}<\/td>\s*<td>\{formatTaskTime\(job\.submittedAt\)\}<\/td>/);
+  assert.match(jobsSource, /<td className="job-table-submitter">\s*\{job\.submittedBy \|\| "—"\}\s*<\/td>\s*<td>\{formatTaskTime\(job\.submittedAt\)\}<\/td>/);
   assert.match(jobsSource, /<td colSpan=\{10\}>\s*<div className="table-empty-state">/);
 });
 

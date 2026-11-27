@@ -26,8 +26,8 @@ test("the join page is a compact toolbar and one full-width workspace", () => {
   assert.match(page, /className="join-machine-identity"/);
   assert.match(page, /className="join-machine-location"/);
   assert.match(page, /className="join-machine-reach"/);
-  assert.match(page, /hasRegisteredRobotClass\(machine, list\?\.classes \?\? \{\}\)/);
-  assert.match(page, /reach \? <>[\s\S]*Orin \{zh \? "上联" : "entry"\}[\s\S]*SSH ·/);
+  assert.match(page, /hasRegisteredRobotClass\(\s*machine,\s*list\?\.classes \?\? \{\},?\s*\)/);
+  assert.match(page, /reach \?\s*\(?\s*<>[\s\S]*Orin \{zh \? "上联" : "entry"\}[\s\S]*SSH ·/);
   assert.match(page, /className="join-machine-action"/);
   assert.match(page, /className={`join-selection-bar/);
   assert.doesNotMatch(page, /className="join-hero"/);
@@ -73,7 +73,7 @@ test("the password dialog writes class credentials before admitting", () => {
 });
 
 test("SSH advanced settings use labeled controls with visible help and a stacked narrow layout", () => {
-  const advanced = page.slice(page.indexOf("function SSHJoin(")).match(/<details className="join-node-advanced join-form-advanced">([\s\S]*?)<\/details>/)?.[1];
+  const advanced = page.slice(page.indexOf("function SSHJoin(")).match(/<details\s+className="join-node-advanced join-form-advanced">([\s\S]*?)<\/details>/)?.[1];
   assert.ok(advanced);
   assert.match(advanced, /<JoinAdvancedSummary/);
   for (const field of ["name", "port", "endpoint"]) {
@@ -83,19 +83,19 @@ test("SSH advanced settings use labeled controls with visible help and a stacked
     assert.ok(advanced.includes(label) && advanced.includes(input) && advanced.includes(help));
   }
   assert.match(advanced, /aria-invalid=\{!!endpointProblem\}/);
-  assert.match(advanced, /role="alert">\{endpointProblem\}/);
+  assert.match(advanced, /role="alert"\s*>\s*\{endpointProblem\}/);
   assert.match(styles, /\.join-form-advanced \.join-ssh-advanced-fields\s*\{[^}]*2fr[^}]*1fr/);
-  assert.match(styles, /@media \(max-width: 760px\)\s*\{[\s\S]*\.join-form-advanced \.join-ssh-advanced-fields[^\n]*\{ grid-template-columns: minmax\(0, 1fr\)/);
+  assert.match(styles, /@media \(max-width: 760px\)\s*\{[\s\S]*\.join-form-advanced \.join-ssh-advanced-fields[^{}]*\{\s*grid-template-columns: minmax\(0, 1fr\)/);
 });
 
 test("join code advanced settings group robot and scheduling fields and show validation in place", () => {
   const code = page.slice(page.indexOf("function JoinCode("));
-  const advanced = code.match(/<details className="join-node-advanced join-form-advanced" ref=\{advanced\}>([\s\S]*?)<\/details>/)?.[1];
+  const advanced = code.match(/<details\s+className="join-node-advanced join-form-advanced"\s+ref=\{advanced\}\s*>([\s\S]*?)<\/details>/)?.[1];
   assert.ok(advanced);
-  assert.match(advanced, /<JoinAdvancedSummary zh=\{zh\} hint=\{advancedHint\}/);
-  assert.match(advanced, /robot && <fieldset[\s\S]*<legend>[\s\S]*机器人配置/);
+  assert.match(advanced, /<JoinAdvancedSummary\s+zh=\{zh\}\s+hint=\{advancedHint\}/);
+  assert.match(advanced, /robot &&\s*\(?\s*<fieldset[\s\S]*<legend>[\s\S]*机器人配置/);
   assert.match(advanced, /<legend>[\s\S]*网络[\s\S]*<legend>[\s\S]*节点调度/);
-  assert.match(code, /schedulingInvalid && advanced.current\) advanced.current.open = true/);
+  assert.match(code, /schedulingInvalid && advanced.current\)\s*advanced.current.open = true/);
   assert.match(code, /发码前请选择机器人型号和配置/);
   for (const field of ["labels", "taints"]) {
     assert.ok(advanced.includes("aria-invalid={!!" + field + ".error}"));
@@ -103,5 +103,5 @@ test("join code advanced settings group robot and scheduling fields and show val
     assert.ok(advanced.includes(field + "-error"));
   }
   assert.match(styles, /\.join-code-advanced-fields textarea\s*\{[^}]*resize: vertical/);
-  assert.match(styles, /@media \(max-width: 760px\)\s*\{[\s\S]*\.join-form-advanced \.join-code-advanced-fields\s*\{ grid-template-columns: minmax\(0, 1fr\)/);
+  assert.match(styles, /@media \(max-width: 760px\)\s*\{[\s\S]*\.join-form-advanced \.join-code-advanced-fields\s*\{\s*grid-template-columns: minmax\(0, 1fr\)/);
 });

@@ -1,9 +1,23 @@
 // The console's requests to the Gateway routes this fork adds. backend.ts keeps RLark's own.
 import { ApiError, request, requestJson, withQuery } from "../api.js";
-import type { AdmittedMachine, IssuedNodeAdmission, MachineList, NodeAdmission, NodeClassAccess, RobotPowerDesired, SiteNode } from "./lib/siteNodeDisplay.js";
+import type {
+  AdmittedMachine,
+  IssuedNodeAdmission,
+  MachineList,
+  NodeAdmission,
+  NodeClassAccess,
+  RobotPowerDesired,
+  SiteNode,
+} from "./lib/siteNodeDisplay.js";
 import type { NodeJoin } from "./lib/nodeJoin.js";
-import type { ClusterProvision, NewClusterForm } from "./lib/clusterProvision.js";
-import type { BodyCapabilities, StationBodyState } from "./lib/bodyCapabilities.js";
+import type {
+  ClusterProvision,
+  NewClusterForm,
+} from "./lib/clusterProvision.js";
+import type {
+  BodyCapabilities,
+  StationBodyState,
+} from "./lib/bodyCapabilities.js";
 import type { CRDNode } from "../types.js";
 
 interface Condition {
@@ -48,8 +62,20 @@ export interface StationRunningImage {
 
 export interface NodeOperation {
   // annotations: what a removal's PowerOff stage found (station.rlark.io/power-off).
-  metadata: { name: string; namespace: string; annotations?: Record<string, string>; creationTimestamp?: string; uid?: string };
-  spec: { action: "Join" | "Remove"; nodeName: string; clusterID?: string; requestID?: string; nodeUID?: string };
+  metadata: {
+    name: string;
+    namespace: string;
+    annotations?: Record<string, string>;
+    creationTimestamp?: string;
+    uid?: string;
+  };
+  spec: {
+    action: "Join" | "Remove";
+    nodeName: string;
+    clusterID?: string;
+    requestID?: string;
+    nodeUID?: string;
+  };
   status?: {
     phase?: "Pending" | "Running" | "Blocked" | "Succeeded" | "Failed";
     stage?: string;
@@ -70,34 +96,44 @@ export type WithClusterType = { clusterType?: ClusterType };
 export const clusterTypeApi = {
   // An existing cluster's type (administrator); the answer is the cluster as GET /api/v1/clusters/{id} gives it.
   async set<T = unknown>(id: string, clusterType: ClusterType) {
-    const response = await requestJson<{ data?: T }>(`/api/v1/clusters/${encodeURIComponent(id)}/cluster-type`, {
-      method: "PUT",
-      body: { clusterType },
-    });
+    const response = await requestJson<{ data?: T }>(
+      `/api/v1/clusters/${encodeURIComponent(id)}/cluster-type`,
+      {
+        method: "PUT",
+        body: { clusterType },
+      },
+    );
     return response.data;
   },
 };
 
 export const clusterProvisionsApi = {
   async list() {
-    const response = await requestJson<{ data?: ClusterProvision[] }>("/api/v1/cluster-provisions");
+    const response = await requestJson<{ data?: ClusterProvision[] }>(
+      "/api/v1/cluster-provisions",
+    );
     return response.data ?? [];
   },
   // The new cluster's name, left empty, is rlark-<site>-<clusterType>.
   async create(form: NewClusterForm & { clusterType: ClusterType }) {
-    const response = await requestJson<{ data: ClusterProvision }>("/api/v1/cluster-provisions", {
-      method: "POST",
-      body: {
-        type: form.clusterType,
-        site: form.site.trim(),
-        cluster: form.cluster.trim(),
-        address: form.address.trim(),
-        port: Number(form.port),
-        user: form.user.trim(),
-        password: form.password,
-        ...(form.tunnelEndpoint.trim() ? { tunnel_endpoint: form.tunnelEndpoint.trim() } : {}),
+    const response = await requestJson<{ data: ClusterProvision }>(
+      "/api/v1/cluster-provisions",
+      {
+        method: "POST",
+        body: {
+          type: form.clusterType,
+          site: form.site.trim(),
+          cluster: form.cluster.trim(),
+          address: form.address.trim(),
+          port: Number(form.port),
+          user: form.user.trim(),
+          password: form.password,
+          ...(form.tunnelEndpoint.trim()
+            ? { tunnel_endpoint: form.tunnelEndpoint.trim() }
+            : {}),
+        },
       },
-    });
+    );
     return response.data;
   },
   async retry(name: string, password: string, user: string, sudoPassword = "") {
@@ -111,35 +147,83 @@ export const clusterProvisionsApi = {
 
 export const stationsApi = {
   list(query: Record<string, string | undefined> = {}, signal?: AbortSignal) {
-    return requestJson<Page<StationItem>>(withQuery("/api/v1/station/stations", query), { signal });
+    return requestJson<Page<StationItem>>(
+      withQuery("/api/v1/station/stations", query),
+      { signal },
+    );
   },
-  bodyState(name: string, clusterID: string, nodeUID: string, signal: AbortSignal) {
+  bodyState(
+    name: string,
+    clusterID: string,
+    nodeUID: string,
+    signal: AbortSignal,
+  ) {
     const path = `/api/v1/station/stations/${encodeURIComponent(name)}/body-state`;
-    return requestJson<StationBodyState>(withQuery(path, { cluster_id: clusterID, node_uid: nodeUID }), { signal });
+    return requestJson<StationBodyState>(
+      withQuery(path, { cluster_id: clusterID, node_uid: nodeUID }),
+      { signal },
+    );
   },
-  runningImages(name: string, clusterID: string, nodeUID: string, signal?: AbortSignal) {
+  runningImages(
+    name: string,
+    clusterID: string,
+    nodeUID: string,
+    signal?: AbortSignal,
+  ) {
     const path = `/api/v1/station/stations/${encodeURIComponent(name)}/running-images`;
-    return requestJson<{ items: StationRunningImage[] }>(withQuery(path, { cluster_id: clusterID, node_uid: nodeUID }), { signal });
+    return requestJson<{ items: StationRunningImage[] }>(
+      withQuery(path, { cluster_id: clusterID, node_uid: nodeUID }),
+      { signal },
+    );
   },
   listNodeOperations(clusterID: string, signal?: AbortSignal) {
-    return requestJson<Page<NodeOperation>>(withQuery("/api/v1/station/node-operations", { cluster_id: clusterID, limit: 100 }), { signal });
+    return requestJson<Page<NodeOperation>>(
+      withQuery("/api/v1/station/node-operations", {
+        cluster_id: clusterID,
+        limit: 100,
+      }),
+      { signal },
+    );
   },
   getNodeOperation(name: string, clusterID: string, signal?: AbortSignal) {
-    return requestJson<NodeOperation>(withQuery(`/api/v1/station/node-operations/${encodeURIComponent(name)}`, { cluster_id: clusterID }), { signal });
+    return requestJson<NodeOperation>(
+      withQuery(`/api/v1/station/node-operations/${encodeURIComponent(name)}`, {
+        cluster_id: clusterID,
+      }),
+      { signal },
+    );
   },
   // The desired power of a robot's Node, which its Addon converges on; the Gateway records who set it.
   setRobotPower(node: string, namespace: string, desired: RobotPowerDesired) {
-    return request(withQuery(`/api/v1/rlinf.io/v1alpha1/nodes/${encodeURIComponent(node)}/robot-power`, { namespace }), { method: "PUT", body: { desired } });
+    return request(
+      withQuery(
+        `/api/v1/rlinf.io/v1alpha1/nodes/${encodeURIComponent(node)}/robot-power`,
+        { namespace },
+      ),
+      { method: "PUT", body: { desired } },
+    );
   },
   // Hold-to-move to a pose (初始姿势 is home; administrator or operator): hold about every 200 ms while the button is
   // held, stop when it is let go; the robot stops by itself 0.5 s after the last hold. A refusal is an ApiError of
   // status 409 whose body is RobotPoseRefusal; 502 when the vendor's web server failed or the robot is not reached.
-  robotPose(node: string, namespace: string, action: "hold" | "stop", pose: RobotPose = "home", signal?: AbortSignal) {
-    return requestJson<RobotPoseAnswer>(withQuery(`/api/v1/rlinf.io/v1alpha1/nodes/${encodeURIComponent(node)}/robot-pose`, { namespace }), {
-      method: "POST",
-      body: { pose, action },
-      signal,
-    });
+  robotPose(
+    node: string,
+    namespace: string,
+    action: "hold" | "stop",
+    pose: RobotPose = "home",
+    signal?: AbortSignal,
+  ) {
+    return requestJson<RobotPoseAnswer>(
+      withQuery(
+        `/api/v1/rlinf.io/v1alpha1/nodes/${encodeURIComponent(node)}/robot-pose`,
+        { namespace },
+      ),
+      {
+        method: "POST",
+        body: { pose, action },
+        signal,
+      },
+    );
   },
 };
 
@@ -212,17 +296,25 @@ export interface SiteDiscoveryScan {
   failed: number;
 }
 
-const discoveryScanPath = (site: string) => `/api/v1/station/site-network/sites/${encodeURIComponent(site)}/scan`;
+const discoveryScanPath = (site: string) =>
+  `/api/v1/station/site-network/sites/${encodeURIComponent(site)}/scan`;
 
 export const siteNetworkApi = {
   getScan(site: string, signal?: AbortSignal) {
-    return requestJson<SiteDiscoveryScan | null>(discoveryScanPath(site), { signal });
+    return requestJson<SiteDiscoveryScan | null>(discoveryScanPath(site), {
+      signal,
+    });
   },
   startScan(site: string, id: string) {
-    return requestJson<SiteDiscoveryScan>(discoveryScanPath(site), { method: "POST", body: { id } });
+    return requestJson<SiteDiscoveryScan>(discoveryScanPath(site), {
+      method: "POST",
+      body: { id },
+    });
   },
   get(signal?: AbortSignal) {
-    return requestJson<SiteNetworkView>("/api/v1/station/site-network", { signal });
+    return requestJson<SiteNetworkView>("/api/v1/station/site-network", {
+      signal,
+    });
   },
   updateDiscovery(site: string, input: SiteNetworkDiscoveryInput) {
     return requestJson<SiteNetworkView>(
@@ -238,19 +330,38 @@ export interface RobotModelItem {
   vendor?: string;
   description?: string;
   capabilities?: BodyCapabilities;
-  references: { nodeClasses: number; nodes: number; machines: number; nodeAdmissions: number; nodeJoins: number };
+  references: {
+    nodeClasses: number;
+    nodes: number;
+    machines: number;
+    nodeAdmissions: number;
+    nodeJoins: number;
+  };
 }
 
 export const robotModelsApi = {
   list(signal?: AbortSignal) {
-    return requestJson<{ items: RobotModelItem[] }>("/api/v1/station/robot-models", { signal });
+    return requestJson<{ items: RobotModelItem[] }>(
+      "/api/v1/station/robot-models",
+      { signal },
+    );
   },
   delete(name: string) {
-    return request(`/api/v1/station/robot-models/${encodeURIComponent(name)}`, { method: "DELETE" });
+    return request(`/api/v1/station/robot-models/${encodeURIComponent(name)}`, {
+      method: "DELETE",
+    });
   },
 };
 export interface RobotPoseRefusal {
-  reason: "estop" | "fault" | "not_powered" | "driver_not_running" | "claimed" | "in_use" | "vendor_monitor_down" | `maintenance: ${string}`;
+  reason:
+    | "estop"
+    | "fault"
+    | "not_powered"
+    | "driver_not_running"
+    | "claimed"
+    | "in_use"
+    | "vendor_monitor_down"
+    | `maintenance: ${string}`;
   state: Record<string, unknown>;
 }
 
@@ -267,7 +378,10 @@ export const siteNodesApi = {
 // records; the password is sent with the request that starts or retries a join only.
 export const nodeJoinsApi = {
   async list(clusterID: string, signal?: AbortSignal) {
-    const response = await requestJson<{ items?: NodeJoin[] }>(withQuery("/api/v1/station/node-joins", { cluster_id: clusterID }), { signal });
+    const response = await requestJson<{ items?: NodeJoin[] }>(
+      withQuery("/api/v1/station/node-joins", { cluster_id: clusterID }),
+      { signal },
+    );
     return response.items ?? [];
   },
   async create(input: {
@@ -286,21 +400,45 @@ export const nodeJoinsApi = {
     node_name?: string;
     tunnel_endpoint?: string;
   }) {
-    const response = await requestJson<{ data: NodeJoin }>("/api/v1/station/node-joins", { method: "POST", body: input });
+    const response = await requestJson<{ data: NodeJoin }>(
+      "/api/v1/station/node-joins",
+      { method: "POST", body: input },
+    );
     return response.data;
   },
   async retry(name: string, password: string, user: string, sudoPassword = "") {
-    const response = await requestJson<{ data: NodeJoin }>(`/api/v1/station/node-joins/${encodeURIComponent(name)}/retry`, {
-      method: "POST",
-      body: { password, user: user.trim(), ...(sudoPassword ? { sudo_password: sudoPassword } : {}) },
-    });
+    const response = await requestJson<{ data: NodeJoin }>(
+      `/api/v1/station/node-joins/${encodeURIComponent(name)}/retry`,
+      {
+        method: "POST",
+        body: {
+          password,
+          user: user.trim(),
+          ...(sudoPassword ? { sudo_password: sudoPassword } : {}),
+        },
+      },
+    );
     return response.data;
   },
-  async clear(name: string, password: string, user: string, machineGone: boolean, sudoPassword = "") {
-    const response = await requestJson<{ steps?: string[] }>(`/api/v1/station/node-joins/${encodeURIComponent(name)}/clear`, {
-      method: "POST",
-      body: { password, user: user.trim(), machine_gone: machineGone, ...(sudoPassword ? { sudo_password: sudoPassword } : {}) },
-    });
+  async clear(
+    name: string,
+    password: string,
+    user: string,
+    machineGone: boolean,
+    sudoPassword = "",
+  ) {
+    const response = await requestJson<{ steps?: string[] }>(
+      `/api/v1/station/node-joins/${encodeURIComponent(name)}/clear`,
+      {
+        method: "POST",
+        body: {
+          password,
+          user: user.trim(),
+          machine_gone: machineGone,
+          ...(sudoPassword ? { sudo_password: sudoPassword } : {}),
+        },
+      },
+    );
     return response.steps ?? [];
   },
 };
@@ -333,13 +471,19 @@ export const nodeAdmissionsApi = {
   },
   reissue(name: string, clusterID: string) {
     return requestJson<IssuedNodeAdmission>(
-      withQuery(`/api/v1/station/node-admissions/${encodeURIComponent(name)}/reissue`, { cluster_id: clusterID }),
+      withQuery(
+        `/api/v1/station/node-admissions/${encodeURIComponent(name)}/reissue`,
+        { cluster_id: clusterID },
+      ),
       { method: "POST", body: {} },
     );
   },
   revoke(name: string, clusterID: string) {
     return requestJson<{ admission: NodeAdmission }>(
-      withQuery(`/api/v1/station/node-admissions/${encodeURIComponent(name)}/revoke`, { cluster_id: clusterID }),
+      withQuery(
+        `/api/v1/station/node-admissions/${encodeURIComponent(name)}/revoke`,
+        { cluster_id: clusterID },
+      ),
       { method: "POST" },
     );
   },
@@ -348,20 +492,40 @@ export const nodeAdmissionsApi = {
 export const machinesApi = {
   // site scopes the list to the machines that site's hubs found; empty lists every site's.
   list(site = "", signal?: AbortSignal) {
-    return requestJson<MachineList>(withQuery("/api/v1/station/machines", { site }), { signal });
+    return requestJson<MachineList>(
+      withQuery("/api/v1/station/machines", { site }),
+      { signal },
+    );
   },
-  admit(input: { cluster_id: string; machines: string[]; node_class?: string; machine_type?: "Robot" | "Server"; machine_model?: string; model?: string; labels?: Record<string, string> }) {
-    return requestJson<{ machines: AdmittedMachine[] }>("/api/v1/station/machines/admit", {
-      method: "POST",
-      body: input,
-    });
+  admit(input: {
+    cluster_id: string;
+    machines: string[];
+    node_class?: string;
+    machine_type?: "Robot" | "Server";
+    machine_model?: string;
+    model?: string;
+    labels?: Record<string, string>;
+  }) {
+    return requestJson<{ machines: AdmittedMachine[] }>(
+      "/api/v1/station/machines/admit",
+      {
+        method: "POST",
+        body: input,
+      },
+    );
   },
   // The node's passwords of a NodeClass: written, never read back.
-  setClassAccess(nodeClass: string, input: { node_password: string; sudo_password?: string }) {
-    return requestJson<NodeClassAccess>(`/api/v1/station/node-classes/${encodeURIComponent(nodeClass)}/access`, {
-      method: "PUT",
-      body: input,
-    });
+  setClassAccess(
+    nodeClass: string,
+    input: { node_password: string; sudo_password?: string },
+  ) {
+    return requestJson<NodeClassAccess>(
+      `/api/v1/station/node-classes/${encodeURIComponent(nodeClass)}/access`,
+      {
+        method: "PUT",
+        body: input,
+      },
+    );
   },
 };
 
@@ -370,24 +534,48 @@ export const machinesApi = {
 export const selfHealApi = {
   // Removes whatever is under the name: the Node its cluster has (nodeUID names the instance RLark verified, when
   // it has one), or, when its cluster has none, what RLark keeps of the name.
-  removeNode(clusterID: string, nodeName: string, requestID: string, nodeUID?: string) {
+  removeNode(
+    clusterID: string,
+    nodeName: string,
+    requestID: string,
+    nodeUID?: string,
+  ) {
     return requestJson<NodeOperation>("/api/v1/station/node-operations", {
       method: "POST",
-      body: { cluster_id: clusterID, request_id: requestID, action: "Remove", node_name: nodeName, ...(nodeUID ? { node_uid: nodeUID } : {}) },
+      body: {
+        cluster_id: clusterID,
+        request_id: requestID,
+        action: "Remove",
+        node_name: nodeName,
+        ...(nodeUID ? { node_uid: nodeUID } : {}),
+      },
     });
   },
   // Takes away a making that stopped, or what the making of a deleted cluster left; answers what it did.
-  async clearClusterProvision(name: string, password: string, user: string, machineGone: boolean) {
+  async clearClusterProvision(
+    name: string,
+    password: string,
+    user: string,
+    machineGone: boolean,
+  ) {
     const response = await requestJson<{ steps?: string[] }>(
       `/api/v1/cluster-provisions/${encodeURIComponent(name)}/clear`,
-      { method: "POST", body: { password, user: user.trim(), machine_gone: machineGone } },
+      {
+        method: "POST",
+        body: { password, user: user.trim(), machine_gone: machineGone },
+      },
     );
     return response.steps ?? [];
   },
   // Deletes the record of a removed node, of a node in Conflict, or of a name no node reports under and RLark has
   // no Node of.
   deleteStation(name: string, clusterID: string) {
-    return request(withQuery(`/api/v1/station/stations/${encodeURIComponent(name)}`, { cluster_id: clusterID }), { method: "DELETE" });
+    return request(
+      withQuery(`/api/v1/station/stations/${encodeURIComponent(name)}`, {
+        cluster_id: clusterID,
+      }),
+      { method: "DELETE" },
+    );
   },
 };
 
@@ -409,7 +597,9 @@ export interface RegistryTagDetailPage {
 // What a failed read of a registry says to the person browsing it.
 export function registryError(error: unknown, zh: boolean): string {
   if (error instanceof ApiError && error.status === 403) {
-    return zh ? "浏览镜像仓库需要管理员权限。" : "Registry browsing requires administrator access.";
+    return zh
+      ? "浏览镜像仓库需要管理员权限。"
+      : "Registry browsing requires administrator access.";
   }
   return zh
     ? "读取仓库失败，请检查 Gateway 白名单、网络、证书和仓库认证后重试。"
@@ -419,32 +609,62 @@ export function registryError(error: unknown, zh: boolean): string {
 // Display names: an empty one clears it; a cluster's ID and a Node's metadata.name never change.
 export const displayNameApi = {
   async cluster<T = unknown>(id: string, displayName: string) {
-    const response = await requestJson<{ data?: T }>(`/api/v1/clusters/${encodeURIComponent(id)}/display-name`, {
-      method: "PUT",
-      body: { displayName },
-    });
+    const response = await requestJson<{ data?: T }>(
+      `/api/v1/clusters/${encodeURIComponent(id)}/display-name`,
+      {
+        method: "PUT",
+        body: { displayName },
+      },
+    );
     return response.data;
   },
   node(name: string, namespace: string, displayName: string) {
-    return requestJson<CRDNode>(withQuery(`/api/v1/rlinf.io/v1alpha1/nodes/${encodeURIComponent(name)}/display-name`, { namespace }), {
-      method: "PUT",
-      body: { displayName },
-    });
+    return requestJson<CRDNode>(
+      withQuery(
+        `/api/v1/rlinf.io/v1alpha1/nodes/${encodeURIComponent(name)}/display-name`,
+        { namespace },
+      ),
+      {
+        method: "PUT",
+        body: { displayName },
+      },
+    );
   },
 };
 
 // Read-only browsing of a configured image registry through the Gateway: its password, repositories and tags; pages continue from `next` as `last`.
 export const registryBrowseApi = {
   password(id: string, signal?: AbortSignal) {
-    return requestJson<{ password: string }>(`/api/v1/image-registries/${encodeURIComponent(id)}/password`, { signal });
+    return requestJson<{ password: string }>(
+      `/api/v1/image-registries/${encodeURIComponent(id)}/password`,
+      { signal },
+    );
   },
   repositories(id: string, last = "", signal?: AbortSignal) {
-    return requestJson<{ items: string[]; next: string }>(withQuery(`/api/v1/image-registries/${encodeURIComponent(id)}/repositories`, { last }), { signal });
+    return requestJson<{ items: string[]; next: string }>(
+      withQuery(
+        `/api/v1/image-registries/${encodeURIComponent(id)}/repositories`,
+        { last },
+      ),
+      { signal },
+    );
   },
   tags(id: string, repository: string, last = "", signal?: AbortSignal) {
-    return requestJson<{ items: string[]; next: string }>(withQuery(`/api/v1/image-registries/${encodeURIComponent(id)}/tags`, { repository, last }), { signal });
+    return requestJson<{ items: string[]; next: string }>(
+      withQuery(`/api/v1/image-registries/${encodeURIComponent(id)}/tags`, {
+        repository,
+        last,
+      }),
+      { signal },
+    );
   },
   tagDetails(id: string, repository: string, last = "", signal?: AbortSignal) {
-    return requestJson<RegistryTagDetailPage>(withQuery(`/api/v1/image-registries/${encodeURIComponent(id)}/tag-details`, { repository, last }), { signal });
+    return requestJson<RegistryTagDetailPage>(
+      withQuery(
+        `/api/v1/image-registries/${encodeURIComponent(id)}/tag-details`,
+        { repository, last },
+      ),
+      { signal },
+    );
   },
 };

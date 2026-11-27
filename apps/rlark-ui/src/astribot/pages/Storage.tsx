@@ -300,11 +300,7 @@ export function StorageClassesPage({
             {filtered.length === 0 && (
               <tr>
                 <td colSpan={5} className="storage-empty-cell">
-                  {loading
-                    ? zh
-                      ? "加载中..."
-                      : "Loading..."
-                    : s.noData}
+                  {loading ? (zh ? "加载中..." : "Loading...") : s.noData}
                 </td>
               </tr>
             )}
@@ -452,14 +448,14 @@ export function StorageClassDetailPage({
               {storageClass.type === "hostpath"
                 ? s.typeHostPath
                 : storageClass.type === "smb"
-                ? "SMB / NAS"
-                : storageClass.pathStyle
-                  ? zh
-                    ? "Path Style 已启用"
-                    : "Path Style enabled"
-                  : zh
-                    ? "标准访问模式"
-                    : "Standard access"}
+                  ? "SMB / NAS"
+                  : storageClass.pathStyle
+                    ? zh
+                      ? "Path Style 已启用"
+                      : "Path Style enabled"
+                    : zh
+                      ? "标准访问模式"
+                      : "Standard access"}
             </span>
           </div>
         </div>
@@ -562,11 +558,11 @@ export function StorageClassDetailPage({
                 {Object.entries(storageClass.cluster_mount_endpoints ?? {})
                   .length > 0 && (
                   <div>
-                    <span className="muted">
-                      {s.clusterEndpoints}
-                    </span>
+                    <span className="muted">{s.clusterEndpoints}</span>
                     <pre>
-                      {Object.entries(storageClass.cluster_mount_endpoints ?? {})
+                      {Object.entries(
+                        storageClass.cluster_mount_endpoints ?? {},
+                      )
                         .map(([cluster, endpoint]) => `${cluster}: ${endpoint}`)
                         .join("\n")}
                     </pre>
@@ -626,9 +622,7 @@ export function StorageClassDetailPage({
             <HardDrive size={15} />
             {s.usage}
           </span>
-          <p className="storage-detail-section-copy">
-            {s.usageHint}
-          </p>
+          <p className="storage-detail-section-copy">{s.usageHint}</p>
           <div className="node-detail-grid storage-detail-info-grid">
             <div>
               <span className="muted">{s.profiles}</span>
@@ -782,9 +776,7 @@ export function StorageClassCreatePage({
       onCreated?.();
       onBack();
     } catch (err) {
-      setError(
-        storageClassSubmissionError(err, zh, s.createFailed),
-      );
+      setError(storageClassSubmissionError(err, zh, s.createFailed));
     } finally {
       setSubmitting(false);
     }
@@ -840,9 +832,7 @@ export function StorageClassCreatePage({
                   onChange={(e) => setForm({ ...form, name: e.target.value })}
                   placeholder="ks3"
                 />
-                {isEdit && (
-                  <span className="muted">{s.renameHint}</span>
-                )}
+                {isEdit && <span className="muted">{s.renameHint}</span>}
               </label>
               <label>
                 {s.type} *
@@ -856,9 +846,7 @@ export function StorageClassCreatePage({
                 >
                   <option value="s3">{s.typeS3}</option>
                   <option value="smb">{s.typeSMB}</option>
-                  <option value="hostpath">
-                    {s.typeHostPath}
-                  </option>
+                  <option value="hostpath">{s.typeHostPath}</option>
                 </select>
               </label>
               {form.type === "s3" && (
@@ -1024,9 +1012,7 @@ export function StorageClassCreatePage({
                     }
                     placeholder={form.endpoint || "https://s3.amazonaws.com"}
                   />
-                  <span className="muted">
-                    {s.mountEndpointHint}
-                  </span>
+                  <span className="muted">{s.mountEndpointHint}</span>
                 </label>
                 {form.clusters.length > 0 && (
                   <fieldset className="field">
@@ -1054,9 +1040,7 @@ export function StorageClassCreatePage({
                         />
                       </label>
                     ))}
-                    <span className="muted">
-                      {s.clusterEndpointsHint}
-                    </span>
+                    <span className="muted">{s.clusterEndpointsHint}</span>
                   </fieldset>
                 )}
                 <label>
@@ -1148,12 +1132,8 @@ export function StorageClassCreatePage({
                       })
                     }
                   >
-                    <option value="off">
-                      {s.vfsCacheModeOff}
-                    </option>
-                    <option value="writes">
-                      {s.vfsCacheModeWrites}
-                    </option>
+                    <option value="off">{s.vfsCacheModeOff}</option>
+                    <option value="writes">{s.vfsCacheModeWrites}</option>
                   </select>
                 </label>
                 <label>
@@ -1712,5 +1692,9 @@ export function StorageClassFilesPage({
     </div>
   );
 }
-import { clustersApi, storageClassesApi, storageObjectsApi } from "../../backend";
+import {
+  clustersApi,
+  storageClassesApi,
+  storageObjectsApi,
+} from "../../backend";
 import { ApiError, errorMessage } from "../../api";

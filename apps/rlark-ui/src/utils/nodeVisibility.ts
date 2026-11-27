@@ -73,6 +73,10 @@ export function hasNodeCategory(node: CRDNode, category: NodeCategory) {
 export function isBusinessWorkerNode(node: CRDNode): boolean {
   const labels = getNodeAllLabels(node);
   return node.status?.observedNodeLabels !== undefined
-    ? (labels[NODE_ENABLED_LABEL] ?? node.metadata.labels?.[NODE_ENABLED_LABEL]) === "true"
-    : isLegacyBusinessWorkerNode(node, getNodeCategories(node).some((category) => category !== "unknown"));
+    ? (labels[NODE_ENABLED_LABEL] ??
+        node.metadata.labels?.[NODE_ENABLED_LABEL]) === "true"
+    : isLegacyBusinessWorkerNode(
+        node,
+        getNodeCategories(node).some((category) => category !== "unknown"),
+      );
 }

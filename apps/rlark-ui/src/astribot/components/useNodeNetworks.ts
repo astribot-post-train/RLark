@@ -7,7 +7,9 @@ import { forEachLimited } from "../lib/forEachLimited";
 import type { NodeNetworkDisplay, SiteNodeLinks } from "../lib/nodeNetwork";
 import { clusterForStation } from "../lib/stationDisplay";
 
-type Summary = Omit<NonNullable<NodeNetworkDisplay["wireguard"]>, "state"> & { state: "current" | "stale" | "unreported" };
+type Summary = Omit<NonNullable<NodeNetworkDisplay["wireguard"]>, "state"> & {
+  state: "current" | "stale" | "unreported";
+};
 
 const unavailable: NodeNetworkDisplay = { wireguard: { state: "unavailable" } };
 
@@ -15,9 +17,16 @@ const unavailable: NodeNetworkDisplay = { wireguard: { state: "unavailable" } };
 // nothing reported" from "not read yet"; a node whose cluster or report cannot be read is unavailable, and a
 // cluster whose Station API does not answer shows no link state.
 export function useNodeNetworks(nodes: CRDNode[]) {
-  const [networks, setNetworks] = useState<Record<string, NodeNetworkDisplay>>({});
+  const [networks, setNetworks] = useState<Record<string, NodeNetworkDisplay>>(
+    {},
+  );
   const keys = useMemo(
-    () => JSON.stringify(nodes.map((node) => [node.metadata.namespace ?? "", node.metadata.name]).sort()),
+    () =>
+      JSON.stringify(
+        nodes
+          .map((node) => [node.metadata.namespace ?? "", node.metadata.name])
+          .sort(),
+      ),
     [nodes],
   );
   useEffect(() => {
@@ -27,14 +36,23 @@ export function useNodeNetworks(nodes: CRDNode[]) {
     let timer = 0;
     async function refresh() {
       const clusters = await clustersApi.list<ClusterSummary>().catch(() => []);
-      const clusterOf = (namespace: string) => clusterForStation(clusters, namespace)?.id;
+      const clusterOf = (namespace: string) =>
+        clusterForStation(clusters, namespace)?.id;
       const next: Record<string, NodeNetworkDisplay> = {};
       const sites: Record<string, SiteNodeLinks> = {};
       const read = async ([namespace, name]: [string, string]) => {
         const clusterID = clusterOf(namespace);
         next[`${namespace}/${name}`] = clusterID
-          ? await requestJson<Summary>(withQuery(`/api/v1/node-networks/${encodeURIComponent(name)}`, { cluster_id: clusterID }), { signal }).then(
-              (summary) => (summary.state === "unreported" ? {} : { wireguard: summary as NodeNetworkDisplay["wireguard"] }),
+          ? await requestJson<Summary>(
+              withQuery(`/api/v1/node-networks/${encodeURIComponent(name)}`, {
+                cluster_id: clusterID,
+              }),
+              { signal },
+            ).then(
+              (summary) =>
+                summary.state === "unreported"
+                  ? {}
+                  : { wireguard: summary as NodeNetworkDisplay["wireguard"] },
               () => unavailable,
             )
           : unavailable;
@@ -42,12 +60,22 @@ export function useNodeNetworks(nodes: CRDNode[]) {
       const readSites = async (namespace: string) => {
         const clusterID = clusterOf(namespace);
         if (!clusterID) return;
-        const { items } = await siteNodesApi.list(clusterID, signal).catch(() => ({ items: [] }));
+        const { items } = await siteNodesApi
+          .list(clusterID, signal)
+          .catch(() => ({ items: [] }));
         for (const item of items)
-          sites[`${namespace}/${item.node_name}`] = { online: item.online, links: item.network?.links ?? [], summary: item.network?.link_summary ?? "" };
+          sites[`${namespace}/${item.node_name}`] = {
+            online: item.online,
+            links: item.network?.links ?? [],
+            summary: item.network?.link_summary ?? "",
+          };
       };
-      await Promise.all([forEachLimited(targets, 6, signal, read), ...[...new Set(targets.map(([namespace]) => namespace))].map(readSites)]);
-      for (const [key, site] of Object.entries(sites)) next[key] = { ...next[key], site };
+      await Promise.all([
+        forEachLimited(targets, 6, signal, read),
+        ...[...new Set(targets.map(([namespace]) => namespace))].map(readSites),
+      ]);
+      for (const [key, site] of Object.entries(sites))
+        next[key] = { ...next[key], site };
       if (!signal.aborted) {
         setNetworks(next);
         timer = window.setTimeout(refresh, 30000);

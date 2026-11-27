@@ -34,7 +34,12 @@ import type { ClusterSummary, CRDNode } from "../../types";
 import type { CRDTask } from "../../crdModels";
 import { useAutoRefresh } from "../../hooks";
 import { hasAuthSession } from "../../api";
-import { displayNameError, displayNameMessage, displayNameRefusal, nodeLabel } from "../lib/displayName";
+import {
+  displayNameError,
+  displayNameMessage,
+  displayNameRefusal,
+  nodeLabel,
+} from "../lib/displayName";
 import { NodeName } from "../components/NodeName";
 import { ClusterName } from "../components/ClusterName";
 import { copyText } from "../../utils/clipboard";
@@ -405,7 +410,9 @@ export function ClustersPage({
                     <span>
                       <CloudCog size={15} />
                     </span>
-                    <strong><ClusterName clusters={clusters} namespace={ns} /></strong>
+                    <strong>
+                      <ClusterName clusters={clusters} namespace={ns} />
+                    </strong>
                     <small>
                       {nsNodes.length} {zh ? "节点" : "nodes"}
                     </small>
@@ -414,7 +421,12 @@ export function ClustersPage({
               </div>
             </div>
             <ClusterDetailReal
-              name={<ClusterName clusters={clusters} namespace={selectedCluster?.[0] ?? ""} />}
+              name={
+                <ClusterName
+                  clusters={clusters}
+                  namespace={selectedCluster?.[0] ?? ""}
+                />
+              }
               nodes={selectedClusterNodes}
               copy={c}
             />
@@ -623,7 +635,12 @@ export function NodeDetailReal({
 }) {
   const zh = c.nav.overview === "总览";
   const clusters = useClusters();
-  const clusterName = <ClusterName clusters={clusters} namespace={node.metadata.namespace ?? "default"} />;
+  const clusterName = (
+    <ClusterName
+      clusters={clusters}
+      namespace={node.metadata.namespace ?? "default"}
+    />
+  );
   // null while the name is not being edited.
   const [nameDraft, setNameDraft] = useState<string | null>(null);
   const [nameSaving, setNameSaving] = useState(false);
@@ -653,7 +670,13 @@ export function NodeDetailReal({
       setNameError("");
     } catch (e) {
       const refusal = displayNameRefusal(e);
-      setNameError(refusal ? displayNameMessage(refusal, "node", zh) : e instanceof Error ? e.message : String(e));
+      setNameError(
+        refusal
+          ? displayNameMessage(refusal, "node", zh)
+          : e instanceof Error
+            ? e.message
+            : String(e),
+      );
     } finally {
       setNameSaving(false);
     }
@@ -949,14 +972,21 @@ export function NodeDetailReal({
           </div>
         </header>
         <RobotNodeControls node={node} zh={zh} />
-        <NodeCameras node={node.metadata.name} namespace={node.metadata.namespace ?? ""} labels={node.metadata.labels} published={node.metadata.annotations?.["rlark.io/cameras"]} zh={zh} />
+        <NodeCameras
+          node={node.metadata.name}
+          namespace={node.metadata.namespace ?? ""}
+          labels={node.metadata.labels}
+          published={node.metadata.annotations?.["rlark.io/cameras"]}
+          zh={zh}
+        />
 
-        {showConditions && (node.status?.conditions ?? []).map((condition) => (
-          <div className="node-health-message" key={condition.type}>
-            <Activity size={15} />
-            <span>{`${condition.type}: ${condition.status} · ${condition.reason}`}</span>
-          </div>
-        ))}
+        {showConditions &&
+          (node.status?.conditions ?? []).map((condition) => (
+            <div className="node-health-message" key={condition.type}>
+              <Activity size={15} />
+              <span>{`${condition.type}: ${condition.status} · ${condition.reason}`}</span>
+            </div>
+          ))}
 
         <div className="node-insight-facts">
           <div>
@@ -1556,7 +1586,12 @@ function NodeWorkerTable({
                         <div className="worker-detail-grid">
                           <div>
                             <span>{zh ? "集群" : "Cluster"}</span>
-                            <strong><ClusterName clusters={clusters} namespace={worker.cluster} /></strong>
+                            <strong>
+                              <ClusterName
+                                clusters={clusters}
+                                namespace={worker.cluster}
+                              />
+                            </strong>
                           </div>
                           <div>
                             <span>{zh ? "角色" : "Role"}</span>

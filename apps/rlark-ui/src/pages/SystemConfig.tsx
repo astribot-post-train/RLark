@@ -10,10 +10,7 @@ import {
 } from "lucide-react";
 import type { Copy } from "../i18n";
 import { RefreshOverlay } from "../components/shared";
-import {
-  systemConfigApi,
-  type SystemConfigResponse,
-} from "../backend";
+import { systemConfigApi, type SystemConfigResponse } from "../backend";
 import { copyText } from "../utils/clipboard";
 
 interface LogBackendConfig {
@@ -38,9 +35,7 @@ interface SystemConfig {
 
 export function SystemConfigPage({ copy: c }: { copy: Copy }) {
   const zh = c.nav.overview === "总览";
-  const [activeCategory, setActiveCategory] = useState<
-    "ssh" | "log"
-  >("ssh");
+  const [activeCategory, setActiveCategory] = useState<"ssh" | "log">("ssh");
   const [config, setConfig] = useState<SystemConfig>({
     sshJumpHost: "",
     sshJumpPort: "",

@@ -27,13 +27,25 @@ export function PlatformFooter({ lang }: { lang: Lang }) {
   const locale = lang === "zh" ? "zh" : "en";
   const edition = consoleBrand();
   return (
-    <footer className={edition ? `platform-footer ${edition.footerClass}` : "platform-footer"}>
+    <footer
+      className={
+        edition ? `platform-footer ${edition.footerClass}` : "platform-footer"
+      }
+    >
       <div className="platform-footer-links">
         <strong className={edition ? "platform-footer-brand" : undefined}>
           {edition && (
             <>
-              <img src={`/rlark-logo-${locale}-light.png`} alt="" className="platform-footer-logo brand-logo-light" />
-              <img src={`/rlark-logo-${locale}-dark.svg`} alt="" className="platform-footer-logo brand-logo-dark" />
+              <img
+                src={`/rlark-logo-${locale}-light.png`}
+                alt=""
+                className="platform-footer-logo brand-logo-light"
+              />
+              <img
+                src={`/rlark-logo-${locale}-dark.svg`}
+                alt=""
+                className="platform-footer-logo brand-logo-dark"
+              />
             </>
           )}
           RLark Open Source
@@ -251,9 +263,14 @@ export function Header({
   accountRole?: "admin" | "user";
 }) {
   const zh = lang === "zh";
-  const accountRoleLabel = accountRole === "admin"
-    ? zh ? "管理员" : "Administrator"
-    : zh ? "平台用户" : "Platform user";
+  const accountRoleLabel =
+    accountRole === "admin"
+      ? zh
+        ? "管理员"
+        : "Administrator"
+      : zh
+        ? "平台用户"
+        : "Platform user";
   const displayUserName = userName?.trim() || (zh ? "用户" : "User");
   const avatarText = Array.from(displayUserName.replace(/\s+/g, ""))
     .slice(0, 2)

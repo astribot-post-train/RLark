@@ -8,7 +8,13 @@ import { RobotModelsPage } from "./pages/RobotModels";
 import { IAMPage } from "./iam/IAMPage";
 
 // The admin pages this fork adds. AdminApp always renders it, so its state lives as long as AdminApp's.
-export function AstribotAdminPages({ page, sub, copy, zh, navigate }: {
+export function AstribotAdminPages({
+  page,
+  sub,
+  copy,
+  zh,
+  navigate,
+}: {
   page: string;
   sub: string;
   copy: Copy;
@@ -21,7 +27,8 @@ export function AstribotAdminPages({ page, sub, copy, zh, navigate }: {
   const [sshJoin, setSSHJoin] = useState<{ clusterID: string; name: string }>();
   if (page === "iam") return <IAMPage zh={zh} />;
   if (page !== "stations") return null;
-  if (sub === "network") return <SiteNetworkSettingsPage zh={zh} navigate={navigate} />;
+  if (sub === "network")
+    return <SiteNetworkSettingsPage zh={zh} navigate={navigate} />;
   if (sub === "models") return <RobotModelsPage zh={zh} navigate={navigate} />;
   if (sub !== "join") {
     return (

@@ -3,7 +3,11 @@ import { requestJson } from "../../api";
 import { camerasPath, type CamerasReport } from "../lib/cameras";
 import { cameraClockSample, type CameraClock } from "../lib/cameraLatency";
 
-export function useCameraClock(node: string, namespace: string, enabled: boolean) {
+export function useCameraClock(
+  node: string,
+  namespace: string,
+  enabled: boolean,
+) {
   const sample = useRef<CameraClock | undefined>(undefined);
   useEffect(() => {
     if (!enabled) return;
@@ -17,11 +21,25 @@ export function useCameraClock(node: string, namespace: string, enabled: boolean
       try {
         for (let i = 0; i < 3 && !controller.signal.aborted; i++) {
           const sent = performance.now();
-          const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(2500)]);
-          const report = await requestJson<CamerasReport>(camerasPath(node, namespace), { signal });
+          const signal = AbortSignal.any([
+            controller.signal,
+            AbortSignal.timeout(2500),
+          ]);
+          const report = await requestJson<CamerasReport>(
+            camerasPath(node, namespace),
+            { signal },
+          );
           if (!report.clock) break;
-          const candidate = cameraClockSample(sent, performance.now(), report.clock);
-          if (candidate && (!best || candidate.uncertaintyMs < best.uncertaintyMs)) best = candidate;
+          const candidate = cameraClockSample(
+            sent,
+            performance.now(),
+            report.clock,
+          );
+          if (
+            candidate &&
+            (!best || candidate.uncertaintyMs < best.uncertaintyMs)
+          )
+            best = candidate;
         }
       } catch {
         // A completed sample from this batch can still be used.
@@ -29,7 +47,8 @@ export function useCameraClock(node: string, namespace: string, enabled: boolean
         if (active === controller) {
           sample.current = best;
           active = undefined;
-          if (!document.hidden) retry = window.setTimeout(() => void calibrate(), 15000);
+          if (!document.hidden)
+            retry = window.setTimeout(() => void calibrate(), 15000);
         }
       }
     };
@@ -39,7 +58,10 @@ export function useCameraClock(node: string, namespace: string, enabled: boolean
       sample.current = undefined;
       window.clearTimeout(retry);
     };
-    const visibility = () => { if (document.hidden) stop(); else void calibrate(); };
+    const visibility = () => {
+      if (document.hidden) stop();
+      else void calibrate();
+    };
     document.addEventListener("visibilitychange", visibility);
     void calibrate();
     return () => {

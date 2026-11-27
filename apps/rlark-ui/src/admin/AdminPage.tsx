@@ -278,7 +278,9 @@ export function ClustersOverviewAdminPage({ copy: c }: { copy: Copy }) {
                 <span>
                   <CloudCog size={15} />
                 </span>
-                <strong><ClusterName clusters={clusters} namespace={ns} /></strong>
+                <strong>
+                  <ClusterName clusters={clusters} namespace={ns} />
+                </strong>
                 <small>
                   {nsNodes.length} {zh ? "节点" : "nodes"}
                 </small>
@@ -287,7 +289,12 @@ export function ClustersOverviewAdminPage({ copy: c }: { copy: Copy }) {
           </div>
         </div>
         <ClusterDetailReal
-          name={<ClusterName clusters={clusters} namespace={selectedCluster?.[0] ?? ""} />}
+          name={
+            <ClusterName
+              clusters={clusters}
+              namespace={selectedCluster?.[0] ?? ""}
+            />
+          }
           nodes={selectedClusterNodes}
           copy={c}
         />
@@ -321,7 +328,9 @@ export function ClustersOverviewAdminPage({ copy: c }: { copy: Copy }) {
                   </span>
                   <StatusBadge phase={phase} copy={c} />
                 </div>
-                <strong><ClusterName clusters={clusters} namespace={ns} /></strong>
+                <strong>
+                  <ClusterName clusters={clusters} namespace={ns} />
+                </strong>
                 <small>
                   {nsNodes.length} {zh ? "节点" : "nodes"}
                 </small>
@@ -418,7 +427,9 @@ export function NodeCategoryColumn({
                 onClick={() => onSelectNode(node.metadata.name)}
               >
                 <span className={"node-status-ring " + phase.toLowerCase()} />
-                <span className="node-row-name"><NodeName node={node} /></span>
+                <span className="node-row-name">
+                  <NodeName node={node} />
+                </span>
                 <StatusBadge phase={phase} copy={c} />
               </div>
             );
@@ -1573,7 +1584,15 @@ export function AdminPage({
     onUpdateAnnotation: updateAnnotation,
     onNewLabelKey: setNewLabelKey,
     onNewLabelValue: setNewLabelValue,
-    onDisplayNameSaved: (saved: CRDNode) => setNodes((current) => current.map((n) => (n.metadata.namespace === saved.metadata.namespace && n.metadata.name === saved.metadata.name ? saved : n))),
+    onDisplayNameSaved: (saved: CRDNode) =>
+      setNodes((current) =>
+        current.map((n) =>
+          n.metadata.namespace === saved.metadata.namespace &&
+          n.metadata.name === saved.metadata.name
+            ? saved
+            : n,
+        ),
+      ),
   };
 
   const selectedNodeObj =

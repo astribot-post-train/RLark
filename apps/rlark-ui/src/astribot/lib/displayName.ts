@@ -7,7 +7,10 @@ import { ApiError } from "../../api.js";
 // metadata.name (the cluster ID, the Kubernetes Node name) is what routes,
 // Jobs, Stations and SiteNetwork key on, and never changes.
 
-export function nodeLabel(node: { metadata: { name: string }; spec?: { displayName?: string } }) {
+export function nodeLabel(node: {
+  metadata: { name: string };
+  spec?: { displayName?: string };
+}) {
   return node.spec?.displayName || node.metadata.name;
 }
 
@@ -26,15 +29,28 @@ export function clusterIDsLabel(clusters: ClusterSummary[], ids: string) {
 }
 
 // What a Job's worker's node is shown as: its Node's display name once read.
-export function workerNodeLabel(nodes: Array<{ metadata: { name: string; namespace?: string }; spec?: { displayName?: string } }>, worker: { node: string; cluster?: string }) {
-  const node = nodes.find((item) => item.metadata.name === worker.node && item.metadata.namespace === worker.cluster);
+export function workerNodeLabel(
+  nodes: Array<{
+    metadata: { name: string; namespace?: string };
+    spec?: { displayName?: string };
+  }>,
+  worker: { node: string; cluster?: string },
+) {
+  const node = nodes.find(
+    (item) =>
+      item.metadata.name === worker.node &&
+      item.metadata.namespace === worker.cluster,
+  );
   return node ? nodeLabel(node) : worker.node;
 }
 
 // The names a node is found by in a search: its Kubernetes name, its display
 // name, its cluster's namespace and the name that cluster is shown as.
 export function nodeSearchNames(
-  node: { metadata: { name: string; namespace?: string }; spec?: { displayName?: string } },
+  node: {
+    metadata: { name: string; namespace?: string };
+    spec?: { displayName?: string };
+  },
   clusterName: string,
 ) {
   return `${node.metadata.name} ${node.spec?.displayName ?? ""} ${node.metadata.namespace ?? ""} ${clusterName}`;
@@ -51,24 +67,41 @@ export interface NamedObject {
 // save: a trimmed empty name clears it; otherwise 1-64 letters, digits,
 // Chinese characters, '.', '_' or '-' that no other object shows, as its
 // display name or as its name.
-export function displayNameError(name: string, self: string, objects: NamedObject[]) {
+export function displayNameError(
+  name: string,
+  self: string,
+  objects: NamedObject[],
+) {
   const trimmed = name.trim();
   if (!trimmed) return undefined;
   if (!isValidJobDisplayName(trimmed))
     return {
       status: 400 as const,
-      message: "displayName must be at most 64 letters, digits, Chinese characters, '.', '_' or '-'",
+      message:
+        "displayName must be at most 64 letters, digits, Chinese characters, '.', '_' or '-'",
     };
-  const other = objects.find((object) => object.id !== self && (object.name === trimmed || object.displayName === trimmed));
+  const other = objects.find(
+    (object) =>
+      object.id !== self &&
+      (object.name === trimmed || object.displayName === trimmed),
+  );
   return other
-    ? { status: 409 as const, message: `display name already used by ${other.id}`, usedBy: other.id }
+    ? {
+        status: 409 as const,
+        message: `display name already used by ${other.id}`,
+        usedBy: other.id,
+      }
     : undefined;
 }
 
 // A rename the Gateway refused, in displayNameError's shape: its 400 for the
 // format, its 409 whose message ends "used by <id>". Other errors are not one.
 export function displayNameRefusal(error: unknown) {
-  if (!(error instanceof ApiError) || (error.status !== 400 && error.status !== 409)) return undefined;
+  if (
+    !(error instanceof ApiError) ||
+    (error.status !== 400 && error.status !== 409)
+  )
+    return undefined;
   return { status: error.status, usedBy: error.message.split(" used by ")[1] };
 }
 

@@ -22,7 +22,12 @@ export function CopyButton({
   return (
     <button
       type="button"
-      className={className ?? (iconOnly ? `icon-button${copied ? " copy-confirmed" : ""}` : "secondary-button")}
+      className={
+        className ??
+        (iconOnly
+          ? `icon-button${copied ? " copy-confirmed" : ""}`
+          : "secondary-button")
+      }
       aria-label={iconOnly ? label : undefined}
       title={iconOnly ? shown : undefined}
       onClick={(event) => {

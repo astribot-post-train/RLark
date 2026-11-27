@@ -1,6 +1,10 @@
 import { storageMountLabel } from "../astribot/lib/storageVolume";
 import { RealName } from "../astribot/components/NodeName";
-import { clusterIDsLabel, clusterLabel, workerNodeLabel } from "../astribot/lib/displayName";
+import {
+  clusterIDsLabel,
+  clusterLabel,
+  workerNodeLabel,
+} from "../astribot/lib/displayName";
 import { useClusters } from "../astribot/components/useClusters";
 import type {
   CSSProperties,
@@ -796,7 +800,9 @@ export function JobsPage({
                     </span>
                   </td>
                   <td>{job.roleCount}</td>
-                  <td className="job-table-submitter">{job.submittedBy || "—"}</td>
+                  <td className="job-table-submitter">
+                    {job.submittedBy || "—"}
+                  </td>
                   <td>{formatTaskTime(job.submittedAt)}</td>
                   <td>{formatTaskTime(job.stoppedAt)}</td>
                   <td>
@@ -1853,7 +1859,9 @@ export function JobDetailPage({
           }
         }),
       );
-      setNetworkNodes(nodeResponses.filter((node): node is CRDNode => node !== null));
+      setNetworkNodes(
+        nodeResponses.filter((node): node is CRDNode => node !== null),
+      );
       const diskWarningMap: Record<string, boolean> = {};
       const nodeProgressMap: Record<string, PullProgressEntry[]> = {};
       const nodeWarningEventsMap: Record<string, NodeEventEntry[]> = {};
@@ -2352,7 +2360,9 @@ export function JobDetailPage({
   const workerClusterOptions = useMemo(() => {
     const set = new Set<string>();
     jobWorkers.forEach((w) => w.cluster && set.add(w.cluster));
-    return [...set].sort().map((v) => ({ value: v, label: clusterLabel(clusters, v) }));
+    return [...set]
+      .sort()
+      .map((v) => ({ value: v, label: clusterLabel(clusters, v) }));
   }, [clusters, jobWorkers]);
   const workerKindOptions = useMemo(() => {
     const set = new Set<string>();
@@ -2965,7 +2975,10 @@ export function JobDetailPage({
                           )}
                           onSelectNode={onSelectNode}
                           onSelectCluster={onSelectCluster}
-                          clusterName={clusterLabel(clusters, worker.cluster ?? "")}
+                          clusterName={clusterLabel(
+                            clusters,
+                            worker.cluster ?? "",
+                          )}
                           nodeName={workerNodeLabel(networkNodes, worker)}
                           diskWarning={
                             detailNodeDiskWarningMap[worker.node] ?? false
@@ -5388,7 +5401,9 @@ function WorkerClusterLink({
   if (!onSelectCluster || !cluster || cluster === "—") {
     return (
       <span className="worker-chip" title={cluster || "—"}>
-        <span className="worker-link-label">{label ? <RealName label={label} name={cluster} /> : "—"}</span>
+        <span className="worker-link-label">
+          {label ? <RealName label={label} name={cluster} /> : "—"}
+        </span>
       </span>
     );
   }
@@ -5399,7 +5414,9 @@ function WorkerClusterLink({
       onClick={() => onSelectCluster(cluster)}
       title={cluster}
     >
-      <span className="worker-link-label"><RealName label={label} name={cluster} /></span>
+      <span className="worker-link-label">
+        <RealName label={label} name={cluster} />
+      </span>
     </button>
   );
 }
@@ -5416,7 +5433,9 @@ function WorkerNodeLink({
   if (!onSelectNode || !node || node === "—" || node.includes(",")) {
     return (
       <span className="worker-chip" title={node || "—"}>
-        <span className="worker-link-label">{label ? <RealName label={label} name={node} /> : "—"}</span>
+        <span className="worker-link-label">
+          {label ? <RealName label={label} name={node} /> : "—"}
+        </span>
       </span>
     );
   }
@@ -5427,7 +5446,9 @@ function WorkerNodeLink({
       onClick={() => onSelectNode(node)}
       title={node}
     >
-      <span className="worker-link-label"><RealName label={label} name={node} /></span>
+      <span className="worker-link-label">
+        <RealName label={label} name={node} />
+      </span>
     </button>
   );
 }

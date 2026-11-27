@@ -4,7 +4,12 @@
 import { withQuery } from "../../api.js";
 
 // The views a robot may have, in the order of its camera wall: head, torso / wrist_left, wrist_right.
-export const CAMERA_VIEWS = ["head", "torso", "wrist_left", "wrist_right"] as const;
+export const CAMERA_VIEWS = [
+  "head",
+  "torso",
+  "wrist_left",
+  "wrist_right",
+] as const;
 export type CameraView = (typeof CAMERA_VIEWS)[number];
 
 export interface CameraReport {
@@ -46,8 +51,10 @@ export interface CamerasReport {
 }
 
 // The robot's last published report, from its Node's annotation; undefined when there is none.
-export function publishedCameras(annotation: string | undefined): CamerasReport | undefined {
-  return annotation ? JSON.parse(annotation) as CamerasReport : undefined;
+export function publishedCameras(
+  annotation: string | undefined,
+): CamerasReport | undefined {
+  return annotation ? (JSON.parse(annotation) as CamerasReport) : undefined;
 }
 
 // The console's status class it shows as (status-<tone>).
@@ -76,19 +83,35 @@ const viewNames: Record<CameraView, [string, string]> = {
 };
 
 // A stuck camera that sends again is as its frames say: it leaves stuck once they have held for 5 minutes.
-export function cameraBadge(camera: CameraReport, zh: boolean): { badge: string; tone: CameraTone } {
+export function cameraBadge(
+  camera: CameraReport,
+  zh: boolean,
+): { badge: string; tone: CameraTone } {
   if (camera.state === "stale" || camera.state === "absent") {
-    if (camera.step === 3) return { badge: zh ? "需要断电或 USB 复位" : "Needs a power cycle or USB reset", tone: "failed" };
+    if (camera.step === 3)
+      return {
+        badge: zh ? "需要断电或 USB 复位" : "Needs a power cycle or USB reset",
+        tone: "failed",
+      };
     if (camera.step === 1 || camera.step === 2) {
-      return { badge: zh ? `恢复中 第 ${camera.step} 步` : `Recovering, step ${camera.step}`, tone: "pending" };
+      return {
+        badge: zh
+          ? `恢复中 第 ${camera.step} 步`
+          : `Recovering, step ${camera.step}`,
+        tone: "pending",
+      };
     }
     return { badge: zh ? "无画面" : "No frames", tone: "failed" };
   }
-  if (camera.state === "slow") return { badge: zh ? "帧率低" : "Low frame rate", tone: "pending" };
+  if (camera.state === "slow")
+    return { badge: zh ? "帧率低" : "Low frame rate", tone: "pending" };
   return { badge: zh ? "正常" : "OK", tone: "online" };
 }
 
-export function cameraAge(seconds: number | null | undefined, zh: boolean): string {
+export function cameraAge(
+  seconds: number | null | undefined,
+  zh: boolean,
+): string {
   if (seconds == null) return "—";
   const shown = seconds < 10 ? seconds.toFixed(1) : String(Math.round(seconds));
   return zh ? `${shown} 秒前` : `${shown} s ago`;
@@ -96,34 +119,89 @@ export function cameraAge(seconds: number | null | undefined, zh: boolean): stri
 
 // The wall's four cells, in its order, as the live report says them. While the report cannot be read (live false),
 // each view of the last published one says so, with no state of its own.
-export function cameraCells(report: CamerasReport | undefined, zh: boolean, live = true): CameraCell[] {
+export function cameraCells(
+  report: CamerasReport | undefined,
+  zh: boolean,
+  live = true,
+): CameraCell[] {
   return CAMERA_VIEWS.map((view) => {
     const name = viewNames[view][zh ? 0 : 1];
-    const unread = { badge: zh ? "读不到实时状态" : "Live state unavailable", tone: "stopped" as const, age: "—", frames: false };
-    if (!report) return live ? { view, name, badge: zh ? "等待相机状态" : "Waiting for the cameras", tone: "stopped", age: "—", frames: false } : { view, name, ...unread };
+    const unread = {
+      badge: zh ? "读不到实时状态" : "Live state unavailable",
+      tone: "stopped" as const,
+      age: "—",
+      frames: false,
+    };
+    if (!report)
+      return live
+        ? {
+            view,
+            name,
+            badge: zh ? "等待相机状态" : "Waiting for the cameras",
+            tone: "stopped",
+            age: "—",
+            frames: false,
+          }
+        : { view, name, ...unread };
     const camera = report.cameras[view];
-    if (!camera) return { view, name, present: false, badge: zh ? "该本体没有这路相机" : "This body has no such camera", tone: "stopped", age: "—", frames: false };
+    if (!camera)
+      return {
+        view,
+        name,
+        present: false,
+        badge: zh ? "该本体没有这路相机" : "This body has no such camera",
+        tone: "stopped",
+        age: "—",
+        frames: false,
+      };
     if (!live) return { view, name, present: true, ...unread };
-    const stuck = camera.step === 3 && (camera.state === "stale" || camera.state === "absent");
+    const stuck =
+      camera.step === 3 &&
+      (camera.state === "stale" || camera.state === "absent");
     return {
-      view, name, present: true, ...cameraBadge(camera, zh), age: cameraAge(camera.age_seconds, zh), frames: camera.state !== "absent",
-      note: stuck ? [camera.last_result, camera.diagnosis].filter(Boolean).join("；") : undefined,
+      view,
+      name,
+      present: true,
+      ...cameraBadge(camera, zh),
+      age: cameraAge(camera.age_seconds, zh),
+      frames: camera.state !== "absent",
+      note: stuck
+        ? [camera.last_result, camera.diagnosis].filter(Boolean).join("；")
+        : undefined,
       advice: camera.usb_advice ?? undefined,
     };
   });
 }
 
 export function camerasPath(node: string, namespace: string): string {
-  return withQuery(`/api/v1/rlinf.io/v1alpha1/nodes/${encodeURIComponent(node)}/cameras`, { namespace });
+  return withQuery(
+    `/api/v1/rlinf.io/v1alpha1/nodes/${encodeURIComponent(node)}/cameras`,
+    { namespace },
+  );
 }
 
 // A view's newest JPEG (its age in the header X-Age-Seconds; 404 the body has no such view, 503 no frame yet).
-export function cameraFramePath(node: string, namespace: string, view: CameraView): string {
-  return withQuery(`/api/v1/rlinf.io/v1alpha1/nodes/${encodeURIComponent(node)}/cameras/${view}.jpg`, { namespace });
+export function cameraFramePath(
+  node: string,
+  namespace: string,
+  view: CameraView,
+): string {
+  return withQuery(
+    `/api/v1/rlinf.io/v1alpha1/nodes/${encodeURIComponent(node)}/cameras/${view}.jpg`,
+    { namespace },
+  );
 }
 
-export function cameraStreamPath(node: string, namespace: string, view: CameraView, fps: number): string {
-  return withQuery(`/api/v1/rlinf.io/v1alpha1/nodes/${encodeURIComponent(node)}/cameras/${view}/stream`, { namespace, fps });
+export function cameraStreamPath(
+  node: string,
+  namespace: string,
+  view: CameraView,
+  fps: number,
+): string {
+  return withQuery(
+    `/api/v1/rlinf.io/v1alpha1/nodes/${encodeURIComponent(node)}/cameras/${view}/stream`,
+    { namespace, fps },
+  );
 }
 
 export function readCameraAge(header: string | null): number | undefined {

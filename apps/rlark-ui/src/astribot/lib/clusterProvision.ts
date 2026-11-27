@@ -36,14 +36,27 @@ const label = /^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$/;
 // address, that address and the UDP port the cloud forwards to the machine.
 export function tunnelEndpointProblem(endpoint: string, lang: Lang): string {
   const value = endpoint.trim();
-  const match = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3}):(\d{1,5})$/.exec(value);
-  if (value === "" || match && match.slice(1, 5).every((octet) => Number(octet) <= 255) && Number(match[5]) >= 1 && Number(match[5]) <= 65535) {
+  const match = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3}):(\d{1,5})$/.exec(
+    value,
+  );
+  if (
+    value === "" ||
+    (match &&
+      match.slice(1, 5).every((octet) => Number(octet) <= 255) &&
+      Number(match[5]) >= 1 &&
+      Number(match[5]) <= 65535)
+  ) {
     return "";
   }
-  return lang === "zh" ? "隧道公网端点写成 公网IP:UDP端口，例如 180.76.174.250:8100" : "The tunnel endpoint is public-ip:udp-port, e.g. 180.76.174.250:8100";
+  return lang === "zh"
+    ? "隧道公网端点写成 公网IP:UDP端口，例如 180.76.174.250:8100"
+    : "The tunnel endpoint is public-ip:udp-port, e.g. 180.76.174.250:8100";
 }
 
-export function defaultClusterName(site: string, clusterType: ClusterType): string {
+export function defaultClusterName(
+  site: string,
+  clusterType: ClusterType,
+): string {
   return `rlark-${site.trim()}-${clusterType}`;
 }
 
@@ -51,19 +64,31 @@ export function defaultClusterName(site: string, clusterType: ClusterType): stri
 export function newClusterProblem(form: NewClusterForm, lang: Lang): string {
   const zh = lang === "zh";
   if (!form.clusterType) {
-    return zh ? "选择集群类型：GPU 集群或机器人集群" : "Choose the cluster type: GPU or robot";
+    return zh
+      ? "选择集群类型：GPU 集群或机器人集群"
+      : "Choose the cluster type: GPU or robot";
   }
   const site = form.site.trim();
-  const cluster = form.cluster.trim() || defaultClusterName(site, form.clusterType);
+  const cluster =
+    form.cluster.trim() || defaultClusterName(site, form.clusterType);
   const address = form.address.trim();
   if (!label.test(site)) {
-    return zh ? "场地名只能用小写字母、数字和 -" : "The site is lower-case letters, digits and -";
+    return zh
+      ? "场地名只能用小写字母、数字和 -"
+      : "The site is lower-case letters, digits and -";
   }
   if (!cluster.startsWith("rlark-") || !label.test(cluster)) {
-    return zh ? "集群名以 rlark- 开头，只用小写字母、数字和 -" : "The cluster starts with rlark- and is lower-case letters, digits and -";
+    return zh
+      ? "集群名以 rlark- 开头，只用小写字母、数字和 -"
+      : "The cluster starts with rlark- and is lower-case letters, digits and -";
   }
-  if (!address || /[\s/@:]/.test(address) && !/^[0-9a-fA-F:]+$/.test(address)) {
-    return zh ? "填机器的 IP 或主机名" : "Give the machine's IP address or host name";
+  if (
+    !address ||
+    (/[\s/@:]/.test(address) && !/^[0-9a-fA-F:]+$/.test(address))
+  ) {
+    return zh
+      ? "填机器的 IP 或主机名"
+      : "Give the machine's IP address or host name";
   }
   const port = Number(form.port);
   if (!Number.isInteger(port) || port < 1 || port > 65535) {
@@ -78,7 +103,10 @@ export function newClusterProblem(form: NewClusterForm, lang: Lang): string {
 // A retry from this stage logs in to the machine again: every stage up to Station's.
 export function stageNeedsPassword(stage: string): boolean {
   const index = provisionStages.findIndex((s) => s.name === stage);
-  return index >= 0 && index <= provisionStages.findIndex((s) => s.name === "station");
+  return (
+    index >= 0 &&
+    index <= provisionStages.findIndex((s) => s.name === "station")
+  );
 }
 
 export type StageState = "Pending" | "Running" | "Done" | "Skipped" | "Failed";
@@ -99,11 +127,21 @@ interface RecordedStage {
 }
 
 // The stages of defs in their order, each as the status records it (Pending when it does not yet).
-export function stagesView(defs: { name: string; zh: string; en: string }[], recorded: RecordedStage[] | undefined, lang: Lang): StageView[] {
+export function stagesView(
+  defs: { name: string; zh: string; en: string }[],
+  recorded: RecordedStage[] | undefined,
+  lang: Lang,
+): StageView[] {
   const byName = new Map((recorded ?? []).map((s) => [s.name, s]));
   return defs.map((stage) => {
     const s = byName.get(stage.name);
-    return { name: stage.name, label: stage[lang], state: s?.state ?? "Pending", readback: s?.readback ?? "", message: s?.message ?? "" };
+    return {
+      name: stage.name,
+      label: stage[lang],
+      state: s?.state ?? "Pending",
+      readback: s?.readback ?? "",
+      message: s?.message ?? "",
+    };
   });
 }
 
@@ -114,10 +152,12 @@ export function provisionView(p: ClusterProvision, lang: Lang) {
     phase,
     stages,
     canRetry: phase === "Failed",
-    retryNeedsPassword: phase === "Failed" && stageNeedsPassword(p.status?.stage ?? ""),
+    retryNeedsPassword:
+      phase === "Failed" && stageNeedsPassword(p.status?.stage ?? ""),
     // A making that does not run can be taken away: one that stopped, or what the making of a deleted cluster left.
     canClear: phase !== "Running",
     // It reached the machine (the installer was sent): clearing puts the machine back too, with its password.
-    clearReachesMachine: stages.find((s) => s.name === "bundle")?.state !== "Pending",
+    clearReachesMachine:
+      stages.find((s) => s.name === "bundle")?.state !== "Pending",
   };
 }

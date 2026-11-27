@@ -34,8 +34,15 @@ export interface SiteNodeLinks {
 
 // down: a Hub hears the node badly or not at all, or the node's heartbeat
 // stopped; unknown: no Hub has a recent report; connected otherwise.
-export function nodeLinkHealth(site: SiteNodeLinks): "connected" | "down" | "unknown" {
-  if (!site.online || site.links.some((link) => link.state === "Unanswered" || link.state === "Silent"))
+export function nodeLinkHealth(
+  site: SiteNodeLinks,
+): "connected" | "down" | "unknown" {
+  if (
+    !site.online ||
+    site.links.some(
+      (link) => link.state === "Unanswered" || link.state === "Silent",
+    )
+  )
     return "down";
   if (site.links.some((link) => link.state === "Unknown")) return "unknown";
   return "connected";
@@ -47,15 +54,20 @@ export function nodeNetworkKey(node: CRDNode): string {
 
 export function nodeNetworkModel(node: CRDNode, network?: NodeNetworkDisplay) {
   const primary =
-    node.status?.addresses?.find((item) => item.type === "InternalIP")?.address ?? node.status?.addresses?.[0]?.address;
-  const addresses: Array<{ kind: "node" | "wg"; address: string; interface?: string; cidr?: string }> = primary
-    ? [{ kind: "node", address: primary }]
-    : [];
+    node.status?.addresses?.find((item) => item.type === "InternalIP")
+      ?.address ?? node.status?.addresses?.[0]?.address;
+  const addresses: Array<{
+    kind: "node" | "wg";
+    address: string;
+    interface?: string;
+    cidr?: string;
+  }> = primary ? [{ kind: "node", address: primary }] : [];
   const wg = network?.wireguard;
   if (wg && wg.state !== "unavailable") {
     for (const cidr of new Set((wg.addresses ?? []).map((raw) => raw.trim()))) {
       const address = cidr.split("/")[0];
-      if (address) addresses.push({ kind: "wg", address, interface: wg.interface, cidr });
+      if (address)
+        addresses.push({ kind: "wg", address, interface: wg.interface, cidr });
     }
   }
   const message: "unreported" | "stale" | "unavailable" | null =
@@ -67,7 +79,10 @@ export function nodeNetworkModel(node: CRDNode, network?: NodeNetworkDisplay) {
   return { addresses, message, reportedAt: wg?.reportedAt };
 }
 
-export function nodeNetworkSearchText(node: CRDNode, network?: NodeNetworkDisplay): string {
+export function nodeNetworkSearchText(
+  node: CRDNode,
+  network?: NodeNetworkDisplay,
+): string {
   return nodeNetworkModel(node, network)
     .addresses.map((entry) => `${entry.address} ${entry.cidr ?? ""}`)
     .join(" ");
@@ -76,14 +91,24 @@ export function nodeNetworkSearchText(node: CRDNode, network?: NodeNetworkDispla
 // One short line for a list row: the worst state first, the Hubs it names.
 export function nodeLinkLine(site: SiteNodeLinks, zh: boolean): string {
   const hubs = (state: SiteNodeLink["state"]) =>
-    site.links.filter((link) => link.state === state).map((link) => link.hub.split("/")[1] ?? link.hub).join(zh ? "、" : ", ");
+    site.links
+      .filter((link) => link.state === state)
+      .map((link) => link.hub.split("/")[1] ?? link.hub)
+      .join(zh ? "、" : ", ");
   if (!site.online) return zh ? "心跳中断" : "Heartbeat lost";
   const silent = hubs("Silent");
-  if (silent) return zh ? `${silent} 收不到它的包` : `Nothing arrives at ${silent}`;
+  if (silent)
+    return zh ? `${silent} 收不到它的包` : `Nothing arrives at ${silent}`;
   const unanswered = hubs("Unanswered");
-  if (unanswered) return zh ? `请求到了 ${unanswered}，回包回不来` : `Requests reach ${unanswered}, answers do not get back`;
+  if (unanswered)
+    return zh
+      ? `请求到了 ${unanswered}，回包回不来`
+      : `Requests reach ${unanswered}, answers do not get back`;
   const unknown = hubs("Unknown");
-  if (unknown) return zh ? `${unknown} 没有近况` : `No current report from ${unknown}`;
+  if (unknown)
+    return zh ? `${unknown} 没有近况` : `No current report from ${unknown}`;
   if (!site.links.length) return zh ? "在线" : "Online";
-  return zh ? `${site.links.length} 个 Hub 都已连通` : `Connected to all ${site.links.length} hubs`;
+  return zh
+    ? `${site.links.length} 个 Hub 都已连通`
+    : `Connected to all ${site.links.length} hubs`;
 }

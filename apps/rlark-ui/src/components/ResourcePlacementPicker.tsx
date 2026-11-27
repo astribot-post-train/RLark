@@ -889,7 +889,9 @@ export function ResourcePlacementPicker({
                       title={reasonText ? `${name} · ${reasonText}` : name}
                     >
                       <div className="placement-node-head">
-                        <strong><NodeName node={resource.node} /></strong>
+                        <strong>
+                          <NodeName node={resource.node} />
+                        </strong>
                       </div>
                       <div className="placement-node-meta">
                         <span className="placement-node-location">

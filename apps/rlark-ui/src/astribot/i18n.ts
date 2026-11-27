@@ -27,7 +27,8 @@ const storageClass = {
     clusterEndpoints: "按集群的挂载端点",
     clusterEndpointsHint:
       "留空的集群用上面的挂载端点。云上集群填内网地址，机器人和办公室集群留空走公网。",
-    renameHint: "改名后 Job 和 Addon 按新名字引用；StorageClass 和在跑的挂载都不变。",
+    renameHint:
+      "改名后 Job 和 Addon 按新名字引用；StorageClass 和在跑的挂载都不变。",
     profiles: "挂载档位",
     usage: "在 Job / Addon 中引用",
     usageHint:
@@ -65,7 +66,8 @@ const storageClass = {
     clusterEndpoints: "Mount endpoint per cluster",
     clusterEndpointsHint:
       "A cluster left empty uses the mount endpoint above. Give cloud clusters the internal address; robot and office clusters keep the public one.",
-    renameHint: "After a rename, Jobs and Addons name the storage by its new name; its StorageClasses and running mounts do not change.",
+    renameHint:
+      "After a rename, Jobs and Addons name the storage by its new name; its StorageClasses and running mounts do not change.",
     profiles: "Mount profiles",
     usage: "Use in a Job or Addon",
     usageHint:

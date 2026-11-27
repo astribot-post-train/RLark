@@ -50,9 +50,13 @@ export function RegistryImagePicker({
     setLoading(true);
     setError("");
     const read: Promise<() => void> = !registryId
-      ? imageRegistriesApi.list(signal).then((items) => () => setRegistries(items))
-      : (repository ? registryBrowseApi.tags(registryId, repository, cursor, signal) : registryBrowseApi.repositories(registryId, cursor, signal))
-          .then((result) => () => setPage(result));
+      ? imageRegistriesApi
+          .list(signal)
+          .then((items) => () => setRegistries(items))
+      : (repository
+          ? registryBrowseApi.tags(registryId, repository, cursor, signal)
+          : registryBrowseApi.repositories(registryId, cursor, signal)
+        ).then((result) => () => setPage(result));
     read
       .then((show) => {
         if (!controller.signal.aborted) show();
@@ -219,7 +223,9 @@ export function RegistryImagePicker({
                     className="image-picker-option"
                     onClick={() => {
                       if (repository) {
-                        onChange(`${selectedRegistry.registry}/${repository}:${item}`);
+                        onChange(
+                          `${selectedRegistry.registry}/${repository}:${item}`,
+                        );
                         setBrowserOpen(false);
                         resetBrowser();
                       } else chooseRepository(item);
@@ -242,7 +248,9 @@ export function RegistryImagePicker({
                   type="button"
                   className="secondary-button"
                   disabled={!page.next || cursors.includes(page.next)}
-                  onClick={() => setCursors((current) => [...current, page.next])}
+                  onClick={() =>
+                    setCursors((current) => [...current, page.next])
+                  }
                 >
                   {zh ? "下一页" : "Next"}
                 </button>

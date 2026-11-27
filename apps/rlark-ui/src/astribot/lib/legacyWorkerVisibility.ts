@@ -5,7 +5,9 @@ const CONTROL_PLANE_ROLE_LABELS = [
   "node-role.kubernetes.io/master",
 ];
 
-export function isControlPlaneLabels(labels: Record<string, string> | undefined): boolean {
+export function isControlPlaneLabels(
+  labels: Record<string, string> | undefined,
+): boolean {
   if (!labels) return false;
   const kubernetesRole = labels["kubernetes.io/role"];
   return (
@@ -15,7 +17,10 @@ export function isControlPlaneLabels(labels: Record<string, string> | undefined)
   );
 }
 
-export function isLegacyBusinessWorkerNode(node: CRDNode, hasKnownCategory: boolean): boolean {
+export function isLegacyBusinessWorkerNode(
+  node: CRDNode,
+  hasKnownCategory: boolean,
+): boolean {
   const labels = node.metadata.labels ?? {};
   const isControlPlane = isControlPlaneLabels(labels);
   const resources = {
@@ -31,7 +36,6 @@ export function isLegacyBusinessWorkerNode(node: CRDNode, hasKnownCategory: bool
   );
   return (
     (!isControlPlane || labels["rlark.io/enabled"] === "true") &&
-    (hasKnownCategory ||
-      hasWorkloadDevice)
+    (hasKnownCategory || hasWorkloadDevice)
   );
 }

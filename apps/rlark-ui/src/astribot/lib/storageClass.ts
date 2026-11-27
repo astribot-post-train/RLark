@@ -1,4 +1,7 @@
-import type { StorageClass as OfficialStorageClass, StorageProvider } from "../../data";
+import type {
+  StorageClass as OfficialStorageClass,
+  StorageProvider,
+} from "../../data";
 
 /** "s3" 为 S3 兼容对象存储；"smb" 为 SMB/CIFS 共享（NAS）。 */
 export type StorageType = "s3" | "smb" | "hostpath";
@@ -106,12 +109,16 @@ export function storageClassPayload(form: StorageClassFormState) {
     ...s3,
     ...base,
     type: "s3" as const,
-    mount_options: form.mount_options.map((line) => line.trim()).filter(Boolean),
+    mount_options: form.mount_options
+      .map((line) => line.trim())
+      .filter(Boolean),
     // Only clusters the storage has, and only those given an address.
     cluster_mount_endpoints: Object.fromEntries(
       Object.entries(form.cluster_mount_endpoints)
         .map(([cluster, endpoint]) => [cluster, endpoint.trim()])
-        .filter(([cluster, endpoint]) => endpoint && form.clusters.includes(cluster)),
+        .filter(
+          ([cluster, endpoint]) => endpoint && form.clusters.includes(cluster),
+        ),
     ),
   };
 }
@@ -172,7 +179,9 @@ export function storageClassToForm(
     provider: storageClass?.provider ?? "",
     endpoint: storageClass?.endpoint ?? "",
     mount_endpoint: storageClass?.mount_endpoint ?? "",
-    cluster_mount_endpoints: { ...(storageClass?.cluster_mount_endpoints ?? {}) },
+    cluster_mount_endpoints: {
+      ...(storageClass?.cluster_mount_endpoints ?? {}),
+    },
     prefix: storageClass?.prefix ?? "",
     vfs_cache_mode: storageClass?.vfs_cache_mode === "off" ? "off" : "writes",
     mount_profile: storageClass?.mount_profile ?? "default",

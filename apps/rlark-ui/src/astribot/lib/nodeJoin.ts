@@ -19,7 +19,9 @@ export const joinStages: { name: string; zh: string; en: string }[] = [
 // it at once).
 export function joinStageNeedsPassword(stage: string): boolean {
   const index = joinStages.findIndex((s) => s.name === stage);
-  return index >= 0 && index <= joinStages.findIndex((s) => s.name === "install");
+  return (
+    index >= 0 && index <= joinStages.findIndex((s) => s.name === "install")
+  );
 }
 
 export function joinStageLabel(stage: string, lang: Lang): string {
@@ -29,18 +31,22 @@ export function joinStageLabel(stage: string, lang: Lang): string {
 export function nodeJoinView(j: NodeJoin, lang: Lang) {
   const stages = stagesView(joinStages, j.status?.stages, lang);
   const phase = j.status?.phase ?? "Running";
-  const state = (name: string) => stages.find((s) => s.name === name)?.state ?? "Pending";
+  const state = (name: string) =>
+    stages.find((s) => s.name === name)?.state ?? "Pending";
   return {
     phase,
     stages,
     canRetry: phase === "Failed",
-    retryNeedsPassword: phase === "Failed" && joinStageNeedsPassword(j.status?.stage ?? ""),
+    retryNeedsPassword:
+      phase === "Failed" && joinStageNeedsPassword(j.status?.stage ?? ""),
     // A join that does not run can be cleared.
     canClear: phase !== "Running",
     // It started the machine's own tunnel and its code's line has not run: clearing logs in to take the tunnel away.
-    clearReachesMachine: phase !== "Succeeded" && (
-      (state("install") === "Pending" && !["Pending", "Skipped"].includes(state("tunnel"))) ||
-      (state("install") !== "Pending" && !j.metadata?.annotations?.["rlark.io/ssh-join-node-uid"])
-    ),
+    clearReachesMachine:
+      phase !== "Succeeded" &&
+      ((state("install") === "Pending" &&
+        !["Pending", "Skipped"].includes(state("tunnel"))) ||
+        (state("install") !== "Pending" &&
+          !j.metadata?.annotations?.["rlark.io/ssh-join-node-uid"])),
   };
 }

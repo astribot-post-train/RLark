@@ -285,7 +285,9 @@ export function generateJobCRD(opts: {
         hostPath: { path: m.hostPath || m.objectStorage },
       }));
 
-      const storageVolumes = storageMounts.map((m) => storageVolume(toVolumeName(m.mountPath), m));
+      const storageVolumes = storageMounts.map((m) =>
+        storageVolume(toVolumeName(m.mountPath), m),
+      );
 
       // 丢失了原始定义的 opaque 挂载无法写出对应的 volume，跳过以免产生悬空引用。
       const allVolumeMounts = roleMounts

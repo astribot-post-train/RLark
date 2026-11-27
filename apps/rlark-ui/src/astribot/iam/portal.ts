@@ -1,4 +1,9 @@
-import { clearAuthSession, hasAuthSession, storeAuthSession, UNAUTHORIZED_EVENT } from "../../api.js";
+import {
+  clearAuthSession,
+  hasAuthSession,
+  storeAuthSession,
+  UNAUTHORIZED_EVENT,
+} from "../../api.js";
 
 const tokenKey = "rlark-auth-token";
 const sessionPath = "/api/iam/session";
@@ -44,7 +49,9 @@ function consolePath(host: PortalHost): string {
 
 function isSignOutButton(target: unknown): boolean {
   const button = (
-    target as { closest?: (selector: string) => { textContent?: string } | null } | null
+    target as {
+      closest?: (selector: string) => { textContent?: string } | null;
+    } | null
   )?.closest?.(".account-popover button");
   return Boolean(button && signOutLabel.test(button.textContent ?? ""));
 }
@@ -55,7 +62,10 @@ function storeSession(session: PortalSession): void {
   clearAuthSession();
   storeAuthSession(session.token as string, role);
   sessionStorage.setItem(admin ? "rlark-admin-auth" : "rlark-user-auth", "1");
-  sessionStorage.setItem(admin ? "rlark-admin-user-name" : "rlark-user-name", session.user?.username as string);
+  sessionStorage.setItem(
+    admin ? "rlark-admin-user-name" : "rlark-user-name",
+    session.user?.username as string,
+  );
 }
 
 function requestSignal(): { signal: AbortSignal; dispose(): void } {
@@ -71,7 +81,8 @@ function leaveMessage(destination: "portal" | "console" | "sign-out"): string {
   const language = typeof navigator === "undefined" ? "en" : navigator.language;
   const zh = language.toLowerCase().startsWith("zh");
   if (destination === "sign-out") return zh ? "正在退出登录…" : "Signing out…";
-  if (destination === "console") return zh ? "正在前往控制台…" : "Opening the console…";
+  if (destination === "console")
+    return zh ? "正在前往控制台…" : "Opening the console…";
   return zh ? "正在前往登录页…" : "Redirecting to sign in…";
 }
 
@@ -129,7 +140,11 @@ export function createIamPortal(host: PortalHost) {
       if (!existingToken) await leave(consolePath(host));
       return;
     }
-    if (typeof session.token === "string" && session.token && typeof session.user?.username === "string") {
+    if (
+      typeof session.token === "string" &&
+      session.token &&
+      typeof session.user?.username === "string"
+    ) {
       storeSession(session);
       return;
     }
@@ -199,14 +214,16 @@ export function createIamPortal(host: PortalHost) {
 function browserHost(): PortalHost {
   let channel: BroadcastChannel | undefined;
   try {
-    if (typeof BroadcastChannel !== "undefined") channel = new BroadcastChannel(broadcastName);
+    if (typeof BroadcastChannel !== "undefined")
+      channel = new BroadcastChannel(broadcastName);
   } catch {
     channel = undefined;
   }
   return {
     location: window.location,
     fetch: (input, init) => fetch(input, init),
-    intercept: (type, listener) => window.addEventListener(type, listener as EventListener, true),
+    intercept: (type, listener) =>
+      window.addEventListener(type, listener as EventListener, true),
     cover: (message) => {
       let cover = document.getElementById("iam-portal-leaving");
       if (!cover) {
@@ -235,18 +252,26 @@ function browserHost(): PortalHost {
         for (const record of records) {
           for (const node of record.addedNodes) {
             if (!(node instanceof Element)) continue;
-            if (!node.matches(".admin-login-page") && !node.querySelector(".admin-login-page")) continue;
+            if (
+              !node.matches(".admin-login-page") &&
+              !node.querySelector(".admin-login-page")
+            )
+              continue;
             callback();
             return;
           }
         }
       }).observe(root, { childList: true, subtree: true });
     },
-    onPageShow: (callback) => window.addEventListener("pageshow", (event) => callback((event as PageTransitionEvent).persisted)),
+    onPageShow: (callback) =>
+      window.addEventListener("pageshow", (event) =>
+        callback((event as PageTransitionEvent).persisted),
+      ),
     onLogoutBroadcast: (callback) => {
-      if (channel) channel.onmessage = (event) => {
-        if (event.data === "logout") callback();
-      };
+      if (channel)
+        channel.onmessage = (event) => {
+          if (event.data === "logout") callback();
+        };
     },
     broadcastLogout: () => channel?.postMessage("logout"),
   };
@@ -273,5 +298,7 @@ export function signOutOfConsole(): Promise<void> {
 }
 
 export function returnToPortal(path: string): Promise<void> {
-  return iamPortalEnabled() ? iamPortal().returnToPortal(path) : Promise.resolve();
+  return iamPortalEnabled()
+    ? iamPortal().returnToPortal(path)
+    : Promise.resolve();
 }

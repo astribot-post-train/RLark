@@ -24,11 +24,7 @@ function useClusterOptions() {
   useEffect(() => {
     clustersApi
       .list<{ id: string; name?: string }>()
-      .then((items) =>
-        setClusters(
-          items.map(registryClusterOption),
-        ),
-      )
+      .then((items) => setClusters(items.map(registryClusterOption)))
       .catch(() => setClusters([]));
   }, []);
   return clusters;

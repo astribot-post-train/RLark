@@ -1,7 +1,11 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { ChevronRight, X } from "lucide-react";
 import type { ImageRegistryItem } from "../../backend";
-import { registryBrowseApi, registryError, type RegistryTagDetailPage } from "../api";
+import {
+  registryBrowseApi,
+  registryError,
+  type RegistryTagDetailPage,
+} from "../api";
 import { CopyButton } from "../components/CopyButton";
 import { PageToolbar, RefreshOverlay } from "../../components/shared";
 import type { Copy } from "../../i18n";
@@ -59,7 +63,9 @@ function RegistryDrawer({
   onClose: () => void;
 }) {
   const [cursor, setCursor] = useState("");
-  const [page, setPage] = useState<RegistryTagDetailPage | null>(initial ?? null);
+  const [page, setPage] = useState<RegistryTagDetailPage | null>(
+    initial ?? null,
+  );
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(!initial);
   const [retry, setRetry] = useState(0);
@@ -116,10 +122,21 @@ function RegistryDrawer({
             <h3 id="registry-drawer-title">{repository}</h3>
             <div className="registry-drawer-ref">
               <code>{base}</code>
-              <CopyButton value={base} label={zh ? "复制仓库地址" : "Copy repository"} zh={zh} iconOnly />
+              <CopyButton
+                value={base}
+                label={zh ? "复制仓库地址" : "Copy repository"}
+                zh={zh}
+                iconOnly
+              />
             </div>
           </div>
-          <button type="button" className="icon-button" onClick={onClose} aria-label={zh ? "关闭" : "Close"} title={zh ? "关闭" : "Close"}>
+          <button
+            type="button"
+            className="icon-button"
+            onClick={onClose}
+            aria-label={zh ? "关闭" : "Close"}
+            title={zh ? "关闭" : "Close"}
+          >
             <X size={16} />
           </button>
         </div>
@@ -129,67 +146,146 @@ function RegistryDrawer({
               <span>{zh ? "版本数" : "Versions"}</span>
               <strong>{page ? versions.length : "—"}</strong>
               <small className="muted">
-                {page ? (zh ? `${page.items.length} 个标签${page.next ? "（当前页）" : ""}` : `${page.items.length} tags${page.next ? " (this page)" : ""}`) : ""}
+                {page
+                  ? zh
+                    ? `${page.items.length} 个标签${page.next ? "（当前页）" : ""}`
+                    : `${page.items.length} tags${page.next ? " (this page)" : ""}`
+                  : ""}
               </small>
             </div>
             <div>
               <span>{zh ? "最近构建" : "Latest build"}</span>
               <strong>{formatChinaDateTime(latest?.created)}</strong>
-              <small className="muted">{formatRelativeTime(latest?.created, now, zh)}</small>
+              <small className="muted">
+                {formatRelativeTime(latest?.created, now, zh)}
+              </small>
             </div>
             <div>
               <span>{zh ? "最新大小" : "Latest size"}</span>
               <strong>{formatBytes(latest?.size)}</strong>
-              <small className="muted">{zh ? "config + 压缩层" : "config + compressed layers"}</small>
+              <small className="muted">
+                {zh ? "config + 压缩层" : "config + compressed layers"}
+              </small>
             </div>
           </div>
 
           <div className="registry-section-title">
-            <span>{zh ? "版本（按构建时间倒序）" : "Versions (newest build first)"}</span>
-            <small className="muted">{zh ? "同一 digest 的标签合并显示" : "Tags with the same digest are merged"}</small>
+            <span>
+              {zh ? "版本（按构建时间倒序）" : "Versions (newest build first)"}
+            </span>
+            <small className="muted">
+              {zh
+                ? "同一 digest 的标签合并显示"
+                : "Tags with the same digest are merged"}
+            </small>
           </div>
-          {loading && <p className="muted" role="status">{zh ? "加载中…" : "Loading…"}</p>}
+          {loading && (
+            <p className="muted" role="status">
+              {zh ? "加载中…" : "Loading…"}
+            </p>
+          )}
           {error && (
             <div className="cert-error" role="alert">
               <p>{error}</p>
-              <button type="button" className="secondary-button" onClick={() => setRetry((value) => value + 1)}>
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={() => setRetry((value) => value + 1)}
+              >
                 {zh ? "重试" : "Retry"}
               </button>
             </div>
           )}
-          {!loading && !error && versions.length === 0 && <p className="muted">{zh ? "没有标签" : "No tags"}</p>}
+          {!loading && !error && versions.length === 0 && (
+            <p className="muted">{zh ? "没有标签" : "No tags"}</p>
+          )}
           {!error &&
             versions.map((version) => (
-              <article className={`registry-version${version === latest && !cursor ? " is-latest" : ""}`} key={version.key}>
+              <article
+                className={`registry-version${version === latest && !cursor ? " is-latest" : ""}`}
+                key={version.key}
+              >
                 <div className="registry-version-top">
                   <TagChips tags={version.tags} max={4} />
-                  {version === latest && !cursor && <span className="status status-online"><i />{zh ? "最新" : "Latest"}</span>}
+                  {version === latest && !cursor && (
+                    <span className="status status-online">
+                      <i />
+                      {zh ? "最新" : "Latest"}
+                    </span>
+                  )}
                 </div>
                 {version.unavailable ? (
-                  <small className="muted">{zh ? "无法读取镜像信息（可能是不支持的格式或仓库重定向）" : "Image metadata unavailable (unsupported format or registry redirect)"}</small>
-                ) : !version.created && version.size === undefined && version.platforms.length === 0 ? null : (
+                  <small className="muted">
+                    {zh
+                      ? "无法读取镜像信息（可能是不支持的格式或仓库重定向）"
+                      : "Image metadata unavailable (unsupported format or registry redirect)"}
+                  </small>
+                ) : !version.created &&
+                  version.size === undefined &&
+                  version.platforms.length === 0 ? null : (
                   <div className="registry-version-meta">
-                    <span>{zh ? "构建" : "Built"} <strong>{formatChinaDateTime(version.created)}</strong></span>
+                    <span>
+                      {zh ? "构建" : "Built"}{" "}
+                      <strong>{formatChinaDateTime(version.created)}</strong>
+                    </span>
                     <span>{formatRelativeTime(version.created, now, zh)}</span>
-                    <span>{zh ? "大小" : "Size"} <strong>{formatBytes(version.size)}</strong></span>
+                    <span>
+                      {zh ? "大小" : "Size"}{" "}
+                      <strong>{formatBytes(version.size)}</strong>
+                    </span>
                     <span>{version.platforms.join(" · ") || "—"}</span>
                   </div>
                 )}
                 <div className="registry-version-actions">
-                  {version.digest && <code className="registry-digest" title={version.digest}>{version.digest.slice(0, 19)}…</code>}
-                  <CopyButton value={reference(version)} label={zh ? "复制地址" : "Copy reference"} zh={zh} className="table-action-button" />
-                  <CopyButton value={pullCommand(reference(version))} label={zh ? "复制 Pull" : "Copy pull"} zh={zh} className="table-action-button" />
                   {version.digest && (
-                    <CopyButton value={pullCommand(`${base}@${version.digest}`)} label={zh ? "按 digest Pull" : "Pull by digest"} zh={zh} className="table-action-button" />
+                    <code className="registry-digest" title={version.digest}>
+                      {version.digest.slice(0, 19)}…
+                    </code>
+                  )}
+                  <CopyButton
+                    value={reference(version)}
+                    label={zh ? "复制地址" : "Copy reference"}
+                    zh={zh}
+                    className="table-action-button"
+                  />
+                  <CopyButton
+                    value={pullCommand(reference(version))}
+                    label={zh ? "复制 Pull" : "Copy pull"}
+                    zh={zh}
+                    className="table-action-button"
+                  />
+                  {version.digest && (
+                    <CopyButton
+                      value={pullCommand(`${base}@${version.digest}`)}
+                      label={zh ? "按 digest Pull" : "Pull by digest"}
+                      zh={zh}
+                      className="table-action-button"
+                    />
                   )}
                 </div>
               </article>
             ))}
           {(cursor || page?.next) && (
             <div className="registry-pager">
-              {cursor && <button className="secondary-button" type="button" onClick={() => { setCursor(""); setRetry((value) => value + 1); }}>{zh ? "第一页" : "First page"}</button>}
+              {cursor && (
+                <button
+                  className="secondary-button"
+                  type="button"
+                  onClick={() => {
+                    setCursor("");
+                    setRetry((value) => value + 1);
+                  }}
+                >
+                  {zh ? "第一页" : "First page"}
+                </button>
+              )}
               {!error && page?.next && (
-                <button className="secondary-button" type="button" disabled={loading} onClick={() => setCursor(page.next)}>
+                <button
+                  className="secondary-button"
+                  type="button"
+                  disabled={loading}
+                  onClick={() => setCursor(page.next)}
+                >
                   {zh ? "下一页标签" : "Next tags"}
                 </button>
               )}
@@ -244,10 +340,20 @@ export function RegistryBrowser({
         if (!controller.signal.aborted) {
           setPage(result);
           // The first page of each repository's tags, four at a time.
-          void forEachLimited(result.items, 4, controller.signal, async (name) => {
-            const preview = await registryBrowseApi.tagDetails(item.id, name, "", controller.signal).then((page) => ({ page }), (error: unknown) => ({ error }));
-            if (!controller.signal.aborted) setPreview(name, preview);
-          });
+          void forEachLimited(
+            result.items,
+            4,
+            controller.signal,
+            async (name) => {
+              const preview = await registryBrowseApi
+                .tagDetails(item.id, name, "", controller.signal)
+                .then(
+                  (page) => ({ page }),
+                  (error: unknown) => ({ error }),
+                );
+              if (!controller.signal.aborted) setPreview(name, preview);
+            },
+          );
         }
       })
       .catch((err: unknown) => {
@@ -261,20 +367,37 @@ export function RegistryBrowser({
 
   const rows = useMemo(() => {
     const term = query.trim().toLowerCase();
-    return (page?.items ?? []).map((name) => {
-      const preview = previews[name];
-      const versions = preview && "page" in preview ? groupRegistryVersions(preview.page.items) : undefined;
-      return { name, ...splitRepository(name), preview, versions, latest: versions?.find((version) => !version.unavailable) };
-    }).filter((row) =>
-      (namespace === null || row.namespace === namespace) &&
-      (!term || row.name.toLowerCase().includes(term) ||
-        (row.versions?.some((version) => version.tags.some((tag) => tag.toLowerCase().includes(term))) ?? false)),
-    ).sort((a, b) => {
-      if (sort === "name") return a.name.localeCompare(b.name);
-      const at = a.latest?.created ? Date.parse(a.latest.created) : -Infinity;
-      const bt = b.latest?.created ? Date.parse(b.latest.created) : -Infinity;
-      return bt - at || a.name.localeCompare(b.name);
-    });
+    return (page?.items ?? [])
+      .map((name) => {
+        const preview = previews[name];
+        const versions =
+          preview && "page" in preview
+            ? groupRegistryVersions(preview.page.items)
+            : undefined;
+        return {
+          name,
+          ...splitRepository(name),
+          preview,
+          versions,
+          latest: versions?.find((version) => !version.unavailable),
+        };
+      })
+      .filter(
+        (row) =>
+          (namespace === null || row.namespace === namespace) &&
+          (!term ||
+            row.name.toLowerCase().includes(term) ||
+            (row.versions?.some((version) =>
+              version.tags.some((tag) => tag.toLowerCase().includes(term)),
+            ) ??
+              false)),
+      )
+      .sort((a, b) => {
+        if (sort === "name") return a.name.localeCompare(b.name);
+        const at = a.latest?.created ? Date.parse(a.latest.created) : -Infinity;
+        const bt = b.latest?.created ? Date.parse(b.latest.created) : -Infinity;
+        return bt - at || a.name.localeCompare(b.name);
+      });
   }, [page, previews, query, namespace, sort]);
 
   const namespaces = useMemo(() => {
@@ -320,13 +443,22 @@ export function RegistryBrowser({
           ]}
         />
         {namespaces.length > 1 && (
-          <div className="registry-namespaces" role="group" aria-label={zh ? "命名空间" : "Namespaces"}>
-            {[["", page?.items.length ?? 0] as [string, number], ...namespaces].map(([value, count], index) => (
+          <div
+            className="registry-namespaces"
+            role="group"
+            aria-label={zh ? "命名空间" : "Namespaces"}
+          >
+            {[
+              ["", page?.items.length ?? 0] as [string, number],
+              ...namespaces,
+            ].map(([value, count], index) => (
               <button
                 key={index === 0 ? "*all" : value || "*root"}
                 type="button"
                 className="registry-namespace-chip"
-                aria-pressed={index === 0 ? namespace === null : namespace === value}
+                aria-pressed={
+                  index === 0 ? namespace === null : namespace === value
+                }
                 onClick={() => setNamespace(index === 0 ? null : value)}
               >
                 {index === 0 ? (zh ? "全部" : "All") : namespaceLabel(value)}
@@ -358,14 +490,23 @@ export function RegistryBrowser({
                   <th>{zh ? "更新时间" : "Updated"}</th>
                   <th className="registry-num">{zh ? "大小" : "Size"}</th>
                   <th>{zh ? "平台" : "Platform"}</th>
-                  <th className="table-actions-col">{zh ? "操作" : "Actions"}</th>
+                  <th className="table-actions-col">
+                    {zh ? "操作" : "Actions"}
+                  </th>
                 </tr>
               </thead>
               <tbody>
                 {rows.map((row, index) => {
-                  const groupStart = sort === "name" && (index === 0 || rows[index - 1].namespace !== row.namespace);
-                  const otherVersions = row.versions ? row.versions.length - (row.latest ? 1 : 0) : 0;
-                  const reference = row.latest ? `${item.registry}/${row.name}:${row.latest.tags[0]}` : "";
+                  const groupStart =
+                    sort === "name" &&
+                    (index === 0 ||
+                      rows[index - 1].namespace !== row.namespace);
+                  const otherVersions = row.versions
+                    ? row.versions.length - (row.latest ? 1 : 0)
+                    : 0;
+                  const reference = row.latest
+                    ? `${item.registry}/${row.name}:${row.latest.tags[0]}`
+                    : "";
                   return (
                     <Fragment key={row.name}>
                       {groupStart && namespaces.length > 1 && (
@@ -389,23 +530,38 @@ export function RegistryBrowser({
                         </td>
                         <td>
                           {!row.preview ? (
-                            <span className="muted" role="status">{zh ? "正在加载标签…" : "Loading tags…"}</span>
+                            <span className="muted" role="status">
+                              {zh ? "正在加载标签…" : "Loading tags…"}
+                            </span>
                           ) : "error" in row.preview ? (
-                            <span className="registry-tag-preview-error" role="status">
-                              {zh ? "标签加载失败，请刷新重试" : "Failed to load tags; refresh to retry"}
+                            <span
+                              className="registry-tag-preview-error"
+                              role="status"
+                            >
+                              {zh
+                                ? "标签加载失败，请刷新重试"
+                                : "Failed to load tags; refresh to retry"}
                             </span>
                           ) : !row.versions?.length ? (
-                            <span className="muted">{zh ? "没有标签" : "No tags"}</span>
+                            <span className="muted">
+                              {zh ? "没有标签" : "No tags"}
+                            </span>
                           ) : !row.latest ? (
-                            <span className="muted">{zh ? "无法读取镜像信息" : "Metadata unavailable"}</span>
+                            <span className="muted">
+                              {zh ? "无法读取镜像信息" : "Metadata unavailable"}
+                            </span>
                           ) : (
                             <span className="registry-latest">
                               <TagChips tags={row.latest.tags} max={1} />
                               {(otherVersions > 0 || row.preview.page.next) && (
                                 <span className="muted registry-more">
                                   {row.preview.page.next
-                                    ? zh ? "还有更多版本" : "More versions"
-                                    : zh ? `另 ${otherVersions} 个版本` : `+${otherVersions} versions`}
+                                    ? zh
+                                      ? "还有更多版本"
+                                      : "More versions"
+                                    : zh
+                                      ? `另 ${otherVersions} 个版本`
+                                      : `+${otherVersions} versions`}
                                 </span>
                               )}
                             </span>
@@ -415,20 +571,42 @@ export function RegistryBrowser({
                           {row.latest?.created ? (
                             <span className="registry-when">
                               <span>
-                                {isRecent(row.latest.created, now) && <i className="registry-fresh" aria-hidden="true" />}
+                                {isRecent(row.latest.created, now) && (
+                                  <i
+                                    className="registry-fresh"
+                                    aria-hidden="true"
+                                  />
+                                )}
                                 {formatChinaDateTime(row.latest.created)}
                               </span>
-                              <small>{formatRelativeTime(row.latest.created, now, zh)}</small>
+                              <small>
+                                {formatRelativeTime(
+                                  row.latest.created,
+                                  now,
+                                  zh,
+                                )}
+                              </small>
                             </span>
                           ) : (
                             <span className="muted">—</span>
                           )}
                         </td>
-                        <td className="registry-num">{formatBytes(row.latest?.size)}</td>
-                        <td className="registry-platform">{row.latest?.platforms.join(" · ") || "—"}</td>
+                        <td className="registry-num">
+                          {formatBytes(row.latest?.size)}
+                        </td>
+                        <td className="registry-platform">
+                          {row.latest?.platforms.join(" · ") || "—"}
+                        </td>
                         <td className="table-actions-col">
                           <div className="row-actions">
-                            {reference && <CopyButton value={pullCommand(reference)} label={zh ? "复制 Pull" : "Copy pull"} zh={zh} className="table-action-button" />}
+                            {reference && (
+                              <CopyButton
+                                value={pullCommand(reference)}
+                                label={zh ? "复制 Pull" : "Copy pull"}
+                                zh={zh}
+                                className="table-action-button"
+                              />
+                            )}
                             <button
                               className="table-action-button"
                               type="button"
@@ -450,17 +628,35 @@ export function RegistryBrowser({
               </tbody>
             </table>
           )}
-          <RefreshOverlay visible={loading} label={zh ? "正在读取仓库镜像" : "Loading registry images"} />
+          <RefreshOverlay
+            visible={loading}
+            label={zh ? "正在读取仓库镜像" : "Loading registry images"}
+          />
         </div>
         {(cursor || (!error && page?.next)) && (
           <div className="registry-pager">
             {cursor && (
-              <button className="secondary-button" type="button" onClick={() => { setCursor(""); setRepository(""); }}>
+              <button
+                className="secondary-button"
+                type="button"
+                onClick={() => {
+                  setCursor("");
+                  setRepository("");
+                }}
+              >
                 {zh ? "第一页" : "First page"}
               </button>
             )}
             {!error && page?.next && (
-              <button disabled={loading} className="secondary-button" type="button" onClick={() => { setCursor(page.next); setRepository(""); }}>
+              <button
+                disabled={loading}
+                className="secondary-button"
+                type="button"
+                onClick={() => {
+                  setCursor(page.next);
+                  setRepository("");
+                }}
+              >
                 {zh ? "下一页" : "Next page"}
               </button>
             )}
@@ -491,7 +687,11 @@ export function RegistryBrowser({
           key={repository}
           item={item}
           repository={repository}
-          initial={selectedPreview && "page" in selectedPreview ? selectedPreview.page : undefined}
+          initial={
+            selectedPreview && "page" in selectedPreview
+              ? selectedPreview.page
+              : undefined
+          }
           zh={zh}
           now={now}
           onFirstPage={setPreview}

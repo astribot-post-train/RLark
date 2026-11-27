@@ -338,13 +338,13 @@ test("the console renders only after the portal lets it", async () => {
   const page = await readFile(new URL("../../src/astribot/iam/IAMPage.tsx", import.meta.url), "utf8");
   assert.match(page, /if \(iamPortalEnabled\(\)\) \{\s+await signOutOfConsole\(\);/);
   assert.match(page, /void returnToPortal\(window\.location\.pathname \+ window\.location\.search\)/);
-  assert.match(page, /!isMockMode && !sessionChecked \? <div className="iam-state" role="status"/);
+  assert.match(page, /!isMockMode && !sessionChecked \?\s*\(?\s*<div\s+className="iam-state"\s+role="status"/);
 });
 
 test("the admin console identifies its role in the shared account menu", async () => {
   const adminApp = await readFile(new URL("../../src/admin/AdminApp.tsx", import.meta.url), "utf8");
   const header = await readFile(new URL("../../src/components/shared.tsx", import.meta.url), "utf8");
   assert.match(adminApp, /<Header[\s\S]*?accountRole="admin"/);
-  assert.match(header, /accountRole === "admin"[\s\S]*?"管理员" : "Administrator"/);
+  assert.match(header, /accountRole === "admin"[\s\S]*?"管理员"\s*:\s*"Administrator"/);
   assert.match(header, /<span>\{accountRoleLabel\}<\/span>/);
 });

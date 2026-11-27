@@ -22,8 +22,15 @@ export interface RemovalProgressValue {
   entries: RemovalEntry[];
   entryFor: (clusterID: string, nodeName: string) => RemovalEntry | undefined;
   registerClusters: (ids: string[]) => void;
-  registerNodes: (clusterID: string, nodes: Array<{ name: string; uid?: string; creationTimestamp?: string }>) => void;
-  start: (input: { clusterID: string; nodeName: string; nodeUID: string }) => Promise<void>;
+  registerNodes: (
+    clusterID: string,
+    nodes: Array<{ name: string; uid?: string; creationTimestamp?: string }>,
+  ) => void;
+  start: (input: {
+    clusterID: string;
+    nodeName: string;
+    nodeUID: string;
+  }) => Promise<void>;
   retry: (clusterID: string, nodeName: string) => Promise<void>;
   openDrawer: (clusterID: string, nodeName: string) => void;
   closeDrawer: () => void;
@@ -51,7 +58,9 @@ export const removalProgressDefault: RemovalProgressValue = {
   zh: true,
 };
 
-export const RemovalProgressContext = createContext<RemovalProgressValue>(removalProgressDefault);
+export const RemovalProgressContext = createContext<RemovalProgressValue>(
+  removalProgressDefault,
+);
 
 export function useRemovalProgress(): RemovalProgressValue {
   return useContext(RemovalProgressContext);

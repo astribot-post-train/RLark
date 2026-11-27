@@ -35,7 +35,8 @@ export function toJobMount(
   vol: CRDVolume | undefined,
   mountPath: string,
 ): JobMount {
-  if (vol?.csi?.driver === STORAGE_DRIVER) return storageMount(vol.csi, mountPath);
+  if (vol?.csi?.driver === STORAGE_DRIVER)
+    return storageMount(vol.csi, mountPath);
   if (vol?.hostPath) {
     return {
       type: "host",
@@ -180,7 +181,8 @@ export function crdToJob(crd: CRDJob): Job {
   const mounts = taskMounts(tasks[0]);
   const annotations = crd.metadata?.annotations;
   const creator = annotations?.["rlark.io/created-by"]?.trim();
-  const submittedBy = annotations?.["rlark.io/submitted-by"]?.trim() ||
+  const submittedBy =
+    annotations?.["rlark.io/submitted-by"]?.trim() ||
     (creator && !creator.startsWith("service-account:") ? creator : undefined);
   return {
     id: crd.metadata?.name ?? "",

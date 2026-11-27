@@ -281,196 +281,220 @@ export function AdminApp() {
       }
     >
       <RemovalProgressProvider zh={zh} compact={adminPage !== "clusters-nodes"}>
-      <aside className="sidebar">
-        <Logo lang={lang} />
-        <nav>
-          <span className="nav-label">{zh ? "管理后台" : "Admin"}</span>
-          {adminNavItems.map((item) => {
-            const Icon = item.icon;
-            const itemLabel = zh ? item.zh : item.en;
-            const isParent = item.children && item.children.length > 0;
-            const isActive =
-              adminPage === item.id ||
-              (item.id === "storageClass" && adminPage === "files");
-            const isChildActive = isParent
-              ? item.id === "stations"
-                ? adminPage === "stations" && item.children!.some((ch) => ch.id === adminSub)
-                : item.children!.some((ch) => ch.id === adminPage)
-              : false;
-            const expanded = isParent && (isChildActive || isActive);
-            return (
-              <div key={item.id} className={isParent ? "nav-parent" : ""}>
-                <button
-                  aria-label={itemLabel}
-                  title={itemLabel}
-                  className={
-                    (isParent
-                      ? isChildActive
-                        ? "nav-parent-expanded"
+        <aside className="sidebar">
+          <Logo lang={lang} />
+          <nav>
+            <span className="nav-label">{zh ? "管理后台" : "Admin"}</span>
+            {adminNavItems.map((item) => {
+              const Icon = item.icon;
+              const itemLabel = zh ? item.zh : item.en;
+              const isParent = item.children && item.children.length > 0;
+              const isActive =
+                adminPage === item.id ||
+                (item.id === "storageClass" && adminPage === "files");
+              const isChildActive = isParent
+                ? item.id === "stations"
+                  ? adminPage === "stations" &&
+                    item.children!.some((ch) => ch.id === adminSub)
+                  : item.children!.some((ch) => ch.id === adminPage)
+                : false;
+              const expanded = isParent && (isChildActive || isActive);
+              return (
+                <div key={item.id} className={isParent ? "nav-parent" : ""}>
+                  <button
+                    aria-label={itemLabel}
+                    title={itemLabel}
+                    className={
+                      (isParent
+                        ? isChildActive
+                          ? "nav-parent-expanded"
+                          : isActive
+                            ? "active"
+                            : ""
                         : isActive
                           ? "active"
-                          : ""
-                      : isActive
-                        ? "active"
-                        : "") + (isParent ? " nav-parent-btn" : "")
-                  }
-                  onClick={() =>
-                    isParent
-                      ? item.id === "stations"
-                        ? navigate("stations")
-                        : navigate(item.id === "clusters" ? "clusters-list" : item.children![0].id)
-                      : navigate(item.id)
-                  }
-                >
-                  <Icon size={18} />
-                  <span>{itemLabel}</span>
-                </button>
-                {isParent && expanded && (
-                  <div className="nav-children">
-                    {item.children!.map((ch) => {
-                      const ChIcon = ch.icon;
-                      const childLabel = zh ? ch.zh : ch.en;
-                      return (
-                        <button
-                          key={ch.id}
-                          aria-label={childLabel}
-                          title={childLabel}
-                          className={(item.id === "stations" ? adminPage === "stations" && adminSub === ch.id : adminPage === ch.id) ? "active" : ""}
-                          onClick={() => item.id === "stations" ? navigate("stations", ch.id) : navigate(ch.id)}
-                        >
-                          <ChIcon size={16} />
-                          <span>{childLabel}</span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                )}
+                          : "") + (isParent ? " nav-parent-btn" : "")
+                    }
+                    onClick={() =>
+                      isParent
+                        ? item.id === "stations"
+                          ? navigate("stations")
+                          : navigate(
+                              item.id === "clusters"
+                                ? "clusters-list"
+                                : item.children![0].id,
+                            )
+                        : navigate(item.id)
+                    }
+                  >
+                    <Icon size={18} />
+                    <span>{itemLabel}</span>
+                  </button>
+                  {isParent && expanded && (
+                    <div className="nav-children">
+                      {item.children!.map((ch) => {
+                        const ChIcon = ch.icon;
+                        const childLabel = zh ? ch.zh : ch.en;
+                        return (
+                          <button
+                            key={ch.id}
+                            aria-label={childLabel}
+                            title={childLabel}
+                            className={
+                              (
+                                item.id === "stations"
+                                  ? adminPage === "stations" &&
+                                    adminSub === ch.id
+                                  : adminPage === ch.id
+                              )
+                                ? "active"
+                                : ""
+                            }
+                            onClick={() =>
+                              item.id === "stations"
+                                ? navigate("stations", ch.id)
+                                : navigate(ch.id)
+                            }
+                          >
+                            <ChIcon size={16} />
+                            <span>{childLabel}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </nav>
+          <div className="sidebar-bottom">
+            {isMockMode && (
+              <div className="environment-card">
+                <span>
+                  <CloudCog size={16} />
+                </span>
+                <div>
+                  <small>{c.common.env}</small>
+                  <strong>{zh ? "Mock 环境" : "Mock environment"}</strong>
+                  <b className="env-meta">ADMIN · Mock</b>
+                </div>
+                <i />
               </div>
-            );
-          })}
-        </nav>
-        <div className="sidebar-bottom">
-          {isMockMode && (
-            <div className="environment-card">
-              <span>
-                <CloudCog size={16} />
-              </span>
-              <div>
-                <small>{c.common.env}</small>
-                <strong>{zh ? "Mock 环境" : "Mock environment"}</strong>
-                <b className="env-meta">ADMIN · Mock</b>
-              </div>
-              <i />
-            </div>
-          )}
-          <button onClick={() => setCollapsed(!collapsed)}>
-            <CircleDot size={17} />
-            <span>{c.common.collapse}</span>
-          </button>
-        </div>
-      </aside>
-      <main className="main-area">
-        <Header
-          title={adminPageTitle}
-          lang={lang}
-          theme={theme}
-          copy={c}
-          onLangChange={setLang}
-          onThemeChange={setTheme}
-          showMockEnvironment={isMockMode}
-          userName={userName}
-          accountRole="admin"
-          onCreate={() => navigate("create-cluster")}
-          onLogout={() => {
-            clearAuthSession();
-            setLoggedIn(false);
-          }}
-          createLabel={zh ? "新建集群" : "New Cluster"}
-        />
-        {adminPage === "dashboard" && (
-          <AdminDashboard copy={c} onNavigate={navigate} />
-        )}
-        {adminPage === "clusters-nodes" && (
-          <AdminPage
-            copy={c}
-            selectedNode={adminSub}
-            onNavigate={(sub?: string) => navigate("clusters-nodes", sub)}
-          />
-        )}
-        {adminPage === "clusters-list" && (
-          <ClusterManagementPage
-            copy={c}
-            selectedClusterID={adminSub}
-            onSelectCluster={(id?: string) => navigate("clusters-list", id)}
-            onSelectNode={(name: string) => navigate("clusters-nodes", name)}
-            adminMode
-          />
-        )}
-        {adminPage === "jobs" && (
-          <JobsPage
-            copy={c}
-            isMockMode={isMockMode}
-            selectedName={adminSub}
-            onSelect={(name?: string) => navigate("jobs", name)}
-            adminMode
-          />
-        )}
-        {adminPage === "domains" && (
-          <DomainsPage
-            copy={c}
-            selectedName={adminSub}
-            onSelect={(name?: string) => navigate("domains", name)}
-          />
-        )}
-        {adminPage === "api" && <ApiPage copy={c} />}
-        {adminPage === "create-cluster" && <NewClusterPage lang={lang} />}
-        {adminPage === "addons" && <AddonsPage lang={lang} />}
-        {adminPage === "upgrades" && (
-          <UpgradeJobsPage
+            )}
+            <button onClick={() => setCollapsed(!collapsed)}>
+              <CircleDot size={17} />
+              <span>{c.common.collapse}</span>
+            </button>
+          </div>
+        </aside>
+        <main className="main-area">
+          <Header
+            title={adminPageTitle}
             lang={lang}
+            theme={theme}
             copy={c}
-            selectedJob={adminSub || undefined}
-            onSelectJob={(name?: string) => navigate("upgrades", name)}
+            onLangChange={setLang}
+            onThemeChange={setTheme}
+            showMockEnvironment={isMockMode}
+            userName={userName}
+            accountRole="admin"
+            onCreate={() => navigate("create-cluster")}
+            onLogout={() => {
+              clearAuthSession();
+              setLoggedIn(false);
+            }}
+            createLabel={zh ? "新建集群" : "New Cluster"}
           />
-        )}
-        {adminPage === "config" && <SystemConfigPage copy={c} />}
-        {adminPage === "storageClass" && adminSub === "create" && (
-          <StorageClassCreatePage
-            copy={c}
-            onCreated={() => setStorageRefreshKey((key) => key + 1)}
-            onBack={() => navigate("storageClass")}
-          />
-        )}
-        {adminPage === "storageClass" && adminSub !== "create" && (
-          <StorageClassesPage
-            copy={c}
-            selectedName={adminSub}
-            onSelect={(name?: string) => navigate("storageClass", name)}
-            onCreate={() => navigate("storageClass", "create")}
-            onBrowseFiles={(storageClass) => navigate("files", storageClass)}
-            refreshKey={storageRefreshKey}
-          />
-        )}
-        {adminPage === "files" && (
-          <StorageClassFilesPage
-            copy={c}
+          {adminPage === "dashboard" && (
+            <AdminDashboard copy={c} onNavigate={navigate} />
+          )}
+          {adminPage === "clusters-nodes" && (
+            <AdminPage
+              copy={c}
+              selectedNode={adminSub}
+              onNavigate={(sub?: string) => navigate("clusters-nodes", sub)}
+            />
+          )}
+          {adminPage === "clusters-list" && (
+            <ClusterManagementPage
+              copy={c}
+              selectedClusterID={adminSub}
+              onSelectCluster={(id?: string) => navigate("clusters-list", id)}
+              onSelectNode={(name: string) => navigate("clusters-nodes", name)}
+              adminMode
+            />
+          )}
+          {adminPage === "jobs" && (
+            <JobsPage
+              copy={c}
+              isMockMode={isMockMode}
+              selectedName={adminSub}
+              onSelect={(name?: string) => navigate("jobs", name)}
+              adminMode
+            />
+          )}
+          {adminPage === "domains" && (
+            <DomainsPage
+              copy={c}
+              selectedName={adminSub}
+              onSelect={(name?: string) => navigate("domains", name)}
+            />
+          )}
+          {adminPage === "api" && <ApiPage copy={c} />}
+          {adminPage === "create-cluster" && <NewClusterPage lang={lang} />}
+          {adminPage === "addons" && <AddonsPage lang={lang} />}
+          {adminPage === "upgrades" && (
+            <UpgradeJobsPage
+              lang={lang}
+              copy={c}
+              selectedJob={adminSub || undefined}
+              onSelectJob={(name?: string) => navigate("upgrades", name)}
+            />
+          )}
+          {adminPage === "config" && <SystemConfigPage copy={c} />}
+          {adminPage === "storageClass" && adminSub === "create" && (
+            <StorageClassCreatePage
+              copy={c}
+              onCreated={() => setStorageRefreshKey((key) => key + 1)}
+              onBack={() => navigate("storageClass")}
+            />
+          )}
+          {adminPage === "storageClass" && adminSub !== "create" && (
+            <StorageClassesPage
+              copy={c}
+              selectedName={adminSub}
+              onSelect={(name?: string) => navigate("storageClass", name)}
+              onCreate={() => navigate("storageClass", "create")}
+              onBrowseFiles={(storageClass) => navigate("files", storageClass)}
+              refreshKey={storageRefreshKey}
+            />
+          )}
+          {adminPage === "files" && (
+            <StorageClassFilesPage
+              copy={c}
+              sub={adminSub}
+              onBack={() => navigate("storageClass")}
+            />
+          )}
+          {adminPage === "image-registries" && (
+            <ImageRegistriesPage
+              copy={c}
+              selectedID={adminSub || undefined}
+              onSelect={(id?: string) => navigate("image-registries", id ?? "")}
+            />
+          )}
+          <AstribotAdminPages
+            page={adminPage}
             sub={adminSub}
-            onBack={() => navigate("storageClass")}
-          />
-        )}
-        {adminPage === "image-registries" && (
-          <ImageRegistriesPage
             copy={c}
-            selectedID={adminSub || undefined}
-            onSelect={(id?: string) => navigate("image-registries", id ?? "")}
+            zh={zh}
+            navigate={navigate}
           />
-        )}
-        <AstribotAdminPages page={adminPage} sub={adminSub} copy={c} zh={zh} navigate={navigate} />
-        {adminPage === "ssh-keys" && (
-          <SSHKeysPage copy={c} userName={userName} />
-        )}
-        <PlatformFooter lang={lang} />
-      </main>
+          {adminPage === "ssh-keys" && (
+            <SSHKeysPage copy={c} userName={userName} />
+          )}
+          <PlatformFooter lang={lang} />
+        </main>
       </RemovalProgressProvider>
     </div>
   );

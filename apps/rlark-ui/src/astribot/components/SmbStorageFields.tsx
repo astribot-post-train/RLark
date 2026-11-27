@@ -2,7 +2,10 @@ import type { Copy } from "../../i18n";
 import { storageCopy } from "../i18n";
 import type { StorageClassFormState } from "../lib/storageClass";
 
-type SmbStorageFormFields = Pick<StorageClassFormState, "host" | "share" | "sub_path" | "domain" | "username" | "password">;
+type SmbStorageFormFields = Pick<
+  StorageClassFormState,
+  "host" | "share" | "sub_path" | "domain" | "username" | "password"
+>;
 
 /** Connection fields of an SMB/NAS storage class. */
 export function SmbStorageFields({
@@ -46,7 +49,9 @@ export function SmbStorageFields({
           <input
             value={value.sub_path}
             onChange={(e) => onChange({ sub_path: e.target.value })}
-            placeholder={zh ? "可选，例如 team/data" : "Optional, e.g. team/data"}
+            placeholder={
+              zh ? "可选，例如 team/data" : "Optional, e.g. team/data"
+            }
           />
         </label>
         <label>
@@ -55,7 +60,9 @@ export function SmbStorageFields({
             value={value.domain}
             onChange={(e) => onChange({ domain: e.target.value })}
             placeholder={
-              zh ? "可选，例如 corp.example.com" : "Optional, e.g. corp.example.com"
+              zh
+                ? "可选，例如 corp.example.com"
+                : "Optional, e.g. corp.example.com"
             }
           />
         </label>

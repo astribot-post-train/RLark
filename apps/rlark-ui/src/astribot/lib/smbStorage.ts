@@ -10,7 +10,10 @@ export function storageProviderLabel(
 
 /** 列表和详情中“位置”一栏：S3 显示存储桶，SMB 显示共享路径。 */
 export function storageLocation(
-  storageClass: Pick<StorageClass, "type" | "bucket" | "host" | "share" | "subPath" | "path" | "prefix">,
+  storageClass: Pick<
+    StorageClass,
+    "type" | "bucket" | "host" | "share" | "subPath" | "path" | "prefix"
+  >,
 ): string {
   if (storageClass.type === "hostpath") return storageClass.path ?? "";
   if (storageClass.type === "smb") return smbLocation(storageClass);
@@ -21,6 +24,8 @@ export function storageLocation(
 export function smbLocation(
   storageClass: Pick<StorageClass, "host" | "share" | "subPath">,
 ): string {
-  const path = [storageClass.share, storageClass.subPath].filter(Boolean).join("/");
+  const path = [storageClass.share, storageClass.subPath]
+    .filter(Boolean)
+    .join("/");
   return `//${storageClass.host}${path ? `/${path}` : ""}`;
 }

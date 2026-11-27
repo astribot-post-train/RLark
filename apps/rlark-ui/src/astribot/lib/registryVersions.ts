@@ -20,7 +20,10 @@ function mainTagFirst(tags: string[]): string[] {
   const main =
     index >= 0
       ? index
-      : sorted.reduce((best, tag, i) => (tag.length > sorted[best].length ? i : best), 0);
+      : sorted.reduce(
+          (best, tag, i) => (tag.length > sorted[best].length ? i : best),
+          0,
+        );
   const [picked] = sorted.splice(main, 1);
   return [picked, ...sorted];
 }
@@ -31,13 +34,21 @@ function createdTime(version: RegistryVersion): number {
 }
 
 /** Groups tag details by digest and sorts versions newest first; unknown times go last. */
-export function groupRegistryVersions(details: RegistryTagDetail[]): RegistryVersion[] {
+export function groupRegistryVersions(
+  details: RegistryTagDetail[],
+): RegistryVersion[] {
   const byDigest = new Map<string, RegistryVersion>();
   const versions: RegistryVersion[] = [];
   for (const detail of details) {
     const digest = detail.digest!;
     if (detail.error) {
-      versions.push({ key: `tag:${detail.tag}`, digest: detail.digest, tags: [detail.tag], platforms: [], unavailable: true });
+      versions.push({
+        key: `tag:${detail.tag}`,
+        digest: detail.digest,
+        tags: [detail.tag],
+        platforms: [],
+        unavailable: true,
+      });
       continue;
     }
     const existing = byDigest.get(digest);
@@ -58,7 +69,8 @@ export function groupRegistryVersions(details: RegistryTagDetail[]): RegistryVer
     versions.push(version);
   }
   for (const version of versions) version.tags = mainTagFirst(version.tags);
-  const timestamped = (version: RegistryVersion) => (timestampedTag.test(version.tags[0]) ? 1 : 0);
+  const timestamped = (version: RegistryVersion) =>
+    timestampedTag.test(version.tags[0]) ? 1 : 0;
   return versions.sort(
     (a, b) =>
       createdTime(b) - createdTime(a) ||
@@ -67,9 +79,14 @@ export function groupRegistryVersions(details: RegistryTagDetail[]): RegistryVer
   );
 }
 
-export function splitRepository(name: string): { namespace: string; short: string } {
+export function splitRepository(name: string): {
+  namespace: string;
+  short: string;
+} {
   const index = name.indexOf("/");
-  return index < 0 ? { namespace: "", short: name } : { namespace: name.slice(0, index), short: name.slice(index + 1) };
+  return index < 0
+    ? { namespace: "", short: name }
+    : { namespace: name.slice(0, index), short: name.slice(index + 1) };
 }
 
 export function formatBytes(bytes: number | undefined): string {

@@ -70,16 +70,51 @@ export const robotModelMocks: RobotModelMock[] = [
     description: "双臂移动操作平台，含头部与腕部视觉传感器。",
     body: {
       joints: [
-        { name: "left_shoulder_yaw", type: "revolute", units: "rad", limits: { lower: -2.6, upper: 2.6 } },
-        { name: "left_shoulder_pitch", type: "revolute", units: "rad", limits: { lower: -1.8, upper: 1.8 } },
-        { name: "left_elbow", type: "revolute", units: "rad", limits: { lower: -2.2, upper: 0.2 } },
-        { name: "right_shoulder_yaw", type: "revolute", units: "rad", limits: { lower: -2.6, upper: 2.6 } },
-        { name: "right_shoulder_pitch", type: "revolute", units: "rad", limits: { lower: -1.8, upper: 1.8 } },
-        { name: "right_elbow", type: "revolute", units: "rad", limits: { lower: -2.2, upper: 0.2 } },
+        {
+          name: "left_shoulder_yaw",
+          type: "revolute",
+          units: "rad",
+          limits: { lower: -2.6, upper: 2.6 },
+        },
+        {
+          name: "left_shoulder_pitch",
+          type: "revolute",
+          units: "rad",
+          limits: { lower: -1.8, upper: 1.8 },
+        },
+        {
+          name: "left_elbow",
+          type: "revolute",
+          units: "rad",
+          limits: { lower: -2.2, upper: 0.2 },
+        },
+        {
+          name: "right_shoulder_yaw",
+          type: "revolute",
+          units: "rad",
+          limits: { lower: -2.6, upper: 2.6 },
+        },
+        {
+          name: "right_shoulder_pitch",
+          type: "revolute",
+          units: "rad",
+          limits: { lower: -1.8, upper: 1.8 },
+        },
+        {
+          name: "right_elbow",
+          type: "revolute",
+          units: "rad",
+          limits: { lower: -2.2, upper: 0.2 },
+        },
       ],
       endEffectors: [
         { name: "left_tool", kind: "gripper", dof: 1, placement: "left_wrist" },
-        { name: "right_tool", kind: "gripper", dof: 1, placement: "right_wrist" },
+        {
+          name: "right_tool",
+          kind: "gripper",
+          dof: 1,
+          placement: "right_wrist",
+        },
       ],
       sensors: [
         { name: "head_rgb", kind: "camera", count: 1, placement: "head" },
@@ -106,14 +141,22 @@ const matchedInventory: RobotBodyInventory = {
   state: "complete",
   source: "driverInventory",
   sampleAgeSeconds: 18,
-  joints: robotModelMocks[0].body!.joints.map(({ name, type }) => ({ name, type })),
-  endEffectors: robotModelMocks[0].body!.endEffectors.map(({ name, kind, dof }) => ({ name, kind, dof })),
+  joints: robotModelMocks[0].body!.joints.map(({ name, type }) => ({
+    name,
+    type,
+  })),
+  endEffectors: robotModelMocks[0].body!.endEffectors.map(
+    ({ name, kind, dof }) => ({ name, kind, dof }),
+  ),
 };
 
 const mismatchInventory: RobotBodyInventory = {
   ...matchedInventory,
   endEffectors: matchedInventory.endEffectors.map((item) =>
-    item.name === "right_tool" ? { ...item, kind: "dexterousHand", dof: 6 } : item),
+    item.name === "right_tool"
+      ? { ...item, kind: "dexterousHand", dof: 6 }
+      : item,
+  ),
 };
 
 const partialInventory: RobotBodyInventory = {
@@ -125,24 +168,53 @@ const partialInventory: RobotBodyInventory = {
 };
 
 export const robotBodyMocks: Record<string, RobotBodyComparison> = {
-  "s1u-01-x86": { status: "matched", reason: "Matched", differences: [], observed: matchedInventory },
+  "s1u-01-x86": {
+    status: "matched",
+    reason: "Matched",
+    differences: [],
+    observed: matchedInventory,
+  },
   "s1u-02-x86": {
     status: "mismatch",
     reason: "Mismatch",
     observed: mismatchInventory,
-    differences: [{ section: "endEffectors", name: "right_tool", kind: "conflict", expected: "gripper · 1 DOF", observed: "dexterousHand · 6 DOF" }],
+    differences: [
+      {
+        section: "endEffectors",
+        name: "right_tool",
+        kind: "conflict",
+        expected: "gripper · 1 DOF",
+        observed: "dexterousHand · 6 DOF",
+      },
+    ],
   },
   "s1u-03-x86": {
     status: "unknown",
     reason: "InsufficientEvidence",
     observed: partialInventory,
-    differences: [{ section: "endEffectors", name: "right_tool", kind: "evidence", expected: "gripper · 1 DOF" }],
+    differences: [
+      {
+        section: "endEffectors",
+        name: "right_tool",
+        kind: "evidence",
+        expected: "gripper · 1 DOF",
+      },
+    ],
   },
 };
 
-export function compareRobotBody(model: RobotModelMock | undefined, nodeName: string): RobotBodyComparison {
+export function compareRobotBody(
+  model: RobotModelMock | undefined,
+  nodeName: string,
+): RobotBodyComparison {
   const comparison = robotBodyMocks[nodeName];
-  if (!model?.body) return { status: "unknown", reason: "ModelBodyUndefined", differences: [], observed: comparison?.observed };
+  if (!model?.body)
+    return {
+      status: "unknown",
+      reason: "ModelBodyUndefined",
+      differences: [],
+      observed: comparison?.observed,
+    };
   if (!comparison || comparison.reason === "InsufficientEvidence") {
     return {
       status: "unknown",
@@ -161,24 +233,67 @@ export function compareRobotBody(model: RobotModelMock | undefined, nodeName: st
     const expectedNames = new Set(expected.map((item) => item.name));
     for (const item of expected) {
       const found = actualByName.get(item.name);
-      if (!found) differences.push({ section, name: item.name, kind: "missing", expected: item.value });
-      else if (found.key && found.key !== item.key) differences.push({ section, name: item.name, kind: "conflict", expected: item.value, observed: found.value });
+      if (!found)
+        differences.push({
+          section,
+          name: item.name,
+          kind: "missing",
+          expected: item.value,
+        });
+      else if (found.key && found.key !== item.key)
+        differences.push({
+          section,
+          name: item.name,
+          kind: "conflict",
+          expected: item.value,
+          observed: found.value,
+        });
     }
     for (const item of actual) {
-      if (!expectedNames.has(item.name)) differences.push({ section, name: item.name, kind: "extra", observed: item.value });
+      if (!expectedNames.has(item.name))
+        differences.push({
+          section,
+          name: item.name,
+          kind: "extra",
+          observed: item.value,
+        });
     }
   };
-  const joints = model.body.joints.map((item) => ({ name: item.name, key: item.type, value: item.type + " · " + item.units }));
-  const observedJoints = comparison.observed!.joints.map((item) => ({ name: item.name, key: item.type, value: item.type }));
-  const endEffectors = model.body.endEffectors.map((item) => ({ name: item.name, key: item.kind + ":" + item.dof, value: item.kind + " · " + item.dof + " DOF" }));
-  const observedEndEffectors = comparison.observed!.endEffectors.map((item) => ({
+  const joints = model.body.joints.map((item) => ({
     name: item.name,
-    key: item.kind && item.dof !== undefined ? item.kind + ":" + item.dof : undefined,
-    value: item.kind && item.dof !== undefined ? item.kind + " · " + item.dof + " DOF" : item.kind,
+    key: item.type,
+    value: item.type + " · " + item.units,
   }));
+  const observedJoints = comparison.observed!.joints.map((item) => ({
+    name: item.name,
+    key: item.type,
+    value: item.type,
+  }));
+  const endEffectors = model.body.endEffectors.map((item) => ({
+    name: item.name,
+    key: item.kind + ":" + item.dof,
+    value: item.kind + " · " + item.dof + " DOF",
+  }));
+  const observedEndEffectors = comparison.observed!.endEffectors.map(
+    (item) => ({
+      name: item.name,
+      key:
+        item.kind && item.dof !== undefined
+          ? item.kind + ":" + item.dof
+          : undefined,
+      value:
+        item.kind && item.dof !== undefined
+          ? item.kind + " · " + item.dof + " DOF"
+          : item.kind,
+    }),
+  );
   compare("joints", joints, observedJoints);
   compare("endEffectors", endEffectors, observedEndEffectors);
-  return { ...comparison, status: differences.length ? "mismatch" : "matched", differences };
+  return {
+    ...comparison,
+    status: differences.length ? "mismatch" : "matched",
+    differences,
+  };
 }
 
 export function robotModelMock(name: string | undefined) {

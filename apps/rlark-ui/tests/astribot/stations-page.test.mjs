@@ -28,7 +28,7 @@ test("the site-node page keeps the toolbar and groups robot clusters apart in a 
   assert.doesNotMatch(page, /stations-hero|stations-overview-grid|StationDrawer|stations-view-detail/);
   assert.doesNotMatch(page, /selectedID|drawerTrigger|drawerDeleteRequest/);
   // The wall is full-bleed: the shell's page gutters collapse and the column has no cap.
-  assert.match(cardsStyles, /\.stations-page\.page-content { padding: 18px 12px 26px; }/);
+  assert.match(cardsStyles, /\.stations-page\.page-content\s*\{\s*padding: 18px 12px 26px;\s*\}/);
   assert.match(cardsStyles, /\.stations-page \.stations-frame/);
   assert.match(cardsStyles, /max-width: none/);
   // Column counts follow the frame's real width, not the window's.
@@ -48,7 +48,7 @@ test("one station opens at a time and its detail opens as a dialog", () => {
   assert.doesNotMatch(page, /defaultsApplied|toggledKeys|openKeys/);
   // The detail renders once, in a native dialog from the page, not inside the grid rows.
   assert.match(page, /<StationDetailDialog/);
-  assert.match(page, /const detailItem = openKey \? items\.find/);
+  assert.match(page, /const detailItem = openKey\s*\?\s*items\.find/);
   assert.doesNotMatch(page, /useGridColumns|opened && renderPanel/);
   assert.match(card, /aria-haspopup="dialog"/);
   assert.match(page, /aria-haspopup="dialog"/);
@@ -143,11 +143,11 @@ test("the detail panel uses the full row for identity, network and conditions", 
   assert.doesNotMatch(panel, /titleRef|useEffect\(\(\) => \{\s*\/\/ Keep the keyboard focus/);
   assert.match(dialogShell, /showModal\(\)/);
   assert.match(page, /detail\.closedBy = zoom \? "none" : "closerequest"/);
-  assert.match(dialogShell, /querySelector<HTMLElement>\("\[data-detail-title\]"\)\?\.focus\(\{ preventScroll: true \}\)/);
+  assert.match(dialogShell, /querySelector<HTMLElement>\("\[data-detail-title\]"\)\s*\?\.focus\(\{\s*preventScroll: true\s*\}\)/);
   // The identity-verification note is a muted line unless it is a mismatch, which stays an alert like it is on
   // the tile and the inventory row.
-  assert.match(panel, /<small className=\{siteNode\.identity_verified === "False" \? "is-alert" : undefined\}>/);
-  assert.match(cardsStyles, /station-detail-field dd strong small\.is-alert/);
+  assert.match(panel, /<small\s+className=\{\s*siteNode\.identity_verified === "False"\s*\?\s*"is-alert"\s*:\s*undefined\s*\}\s*>/);
+  assert.match(cardsStyles, /station-detail-field\s+dd\s+strong\s+small\.is-alert/);
   // Opening a detail must not scroll the page away from the tile the user clicked.
   assert.doesNotMatch(panel, /scrollIntoView/);
   assert.doesNotMatch(dialogShell, /scrollIntoView/);
@@ -160,12 +160,12 @@ test("the detail panel uses the full row for identity, network and conditions", 
 
 test("station details use equal-width columns and stack on narrow dialogs", () => {
   assert.match(cardsStyles, /\.station-detail-columns\s*\{\s*grid-template-columns: repeat\(3, minmax\(0, 1fr\)\)/);
-  assert.match(cardsStyles, /@container \(width < 960px\)\s*\{\s*\.stations-page \.station-detail-columns\s*\{ grid-template-columns: repeat\(2, minmax\(0, 1fr\)\)/);
-  assert.match(cardsStyles, /@container \(width < 640px\)\s*\{\s*\.stations-page \.station-detail-columns\s*\{ grid-template-columns: minmax\(0, 1fr\)/);
+  assert.match(cardsStyles, /@container \(width < 960px\)\s*\{\s*\.stations-page \.station-detail-columns\s*\{\s*grid-template-columns: repeat\(2, minmax\(0, 1fr\)\)/);
+  assert.match(cardsStyles, /@container \(width < 640px\)\s*\{\s*\.stations-page \.station-detail-columns\s*\{\s*grid-template-columns: minmax\(0, 1fr\)/);
 });
 
 test("Hub links show a collapsed summary below the station detail columns", () => {
-  assert.match(panel, /<\/div>\s*\{siteNode && <NodeLinks[^>]+collapsible \/>\}/);
+  assert.match(panel, /<\/div>\s*\{siteNode &&\s*\(?\s*<NodeLinks[^>]+collapsible\s*\/>\s*\)?\s*\}/);
   assert.match(nodeLinks, /<details className="station-network-links">\s*<summary>[\s\S]+nodeLinkLine\(site, zh\)/);
 });
 
@@ -215,10 +215,10 @@ test("robot telemetry starts visible and metadata shares one closed disclosure",
   const body = await readFile(new URL("../../src/astribot/pages/StationBodyStatePanel.tsx", import.meta.url), "utf8");
   const models = await readFile(new URL("../../src/astribot/pages/RobotModels.tsx", import.meta.url), "utf8");
   assert.match(panel, /className="station-detail-robot"[\s\S]*?<NodeCameras[\s\S]*?<StationBodyStatePanel/);
-  assert.match(panel, /<StationBodyStatePanel[^>]*\/>\}[\s\S]*?<details className="station-detail-metadata">[\s\S]*?<div className="station-detail-columns">[\s\S]*?<NodeLinks[\s\S]*?<\/details>/);
+  assert.match(panel, /<StationBodyStatePanel[^>]*\/>\s*\)?\s*\}[\s\S]*?<details className="station-detail-metadata">[\s\S]*?<div className="station-detail-columns">[\s\S]*?<NodeLinks[\s\S]*?<\/details>/);
   assert.match(body, /<section className="station-body"/);
   assert.doesNotMatch(body, /<details|onToggle/);
-  assert.match(body, /<table className="station-body-table station-body-poses"[\s\S]*?<table className="station-body-table station-body-joints"/);
-  assert.match(body, /<PoseValues axes=\{positionAxes\}[\s\S]*?<PoseValues axes=\{orientationAxes\}/);
+  assert.match(body, /<table\s+className="station-body-table station-body-poses"[\s\S]*?<table\s+className="station-body-table station-body-joints"/);
+  assert.match(body, /<PoseValues\s+axes=\{positionAxes\}[\s\S]*?<PoseValues\s+axes=\{orientationAxes\}/);
   assert.match(models, /<article className="robot-model-card"[\s\S]*?<header className="robot-model-header">[\s\S]*?<div className="robot-model-capabilities">[\s\S]*?<\/article>/);
 });

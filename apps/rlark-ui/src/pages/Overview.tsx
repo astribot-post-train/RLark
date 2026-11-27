@@ -281,9 +281,7 @@ export function Overview({
                       <strong>
                         <NodeName node={n} />
                       </strong>
-                      <small>
-                        {model}
-                      </small>
+                      <small>{model}</small>
                     </div>
                     <StatusBadge phase={phase} copy={c} />
                   </div>

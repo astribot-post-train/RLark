@@ -7,11 +7,11 @@
   border-radius: 14px;
   background: var(--panel);
   color: var(--ink);
-  box-shadow: 0 24px 70px rgb(0 0 0 / .32);
+  box-shadow: 0 24px 70px rgb(0 0 0 / 0.32);
 }
 
 .station-camera-dialog::backdrop {
-  background: rgb(12 16 27 / .68);
+  background: rgb(12 16 27 / 0.68);
 }
 
 .station-camera-dialog-head {
@@ -33,7 +33,7 @@
   color: var(--muted);
   font-size: 11px;
   font-weight: 600;
-  letter-spacing: .02em;
+  letter-spacing: 0.02em;
   overflow-wrap: anywhere;
 }
 
@@ -101,10 +101,20 @@
   font-size: 12px;
 }
 
-.station-camera-dialog-foot :is(.station-preview-actual-fps, .station-preview-latency) { font-variant-numeric: tabular-nums; }
+.station-camera-dialog-foot
+  :is(.station-preview-actual-fps, .station-preview-latency) {
+  font-variant-numeric: tabular-nums;
+}
 
 @media (max-width: 640px) {
-  .station-camera-dialog { width: calc(100vw - 16px); max-height: calc(100vh - 16px); }
-  .station-camera-dialog-head { padding: 12px 12px 10px; }
-  .station-camera-dialog-foot { padding: 10px 12px 12px; }
+  .station-camera-dialog {
+    width: calc(100vw - 16px);
+    max-height: calc(100vh - 16px);
+  }
+  .station-camera-dialog-head {
+    padding: 12px 12px 10px;
+  }
+  .station-camera-dialog-foot {
+    padding: 10px 12px 12px;
+  }
 }

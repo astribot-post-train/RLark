@@ -1,8 +1,16 @@
 import { useEffect, useRef, useState } from "react";
 import { Camera } from "lucide-react";
 import { request } from "../../api";
-import { cameraStreamPath, type CameraCell, type CameraView } from "../lib/cameras";
-import { readCameraFrames, sameCameraFrame, type CameraFrame } from "../lib/cameraStream";
+import {
+  cameraStreamPath,
+  type CameraCell,
+  type CameraView,
+} from "../lib/cameras";
+import {
+  readCameraFrames,
+  sameCameraFrame,
+  type CameraFrame,
+} from "../lib/cameraStream";
 import { cameraDisplayLatency } from "../lib/cameraLatency";
 import { useCameraClock } from "../components/useCameraClock";
 import "./CameraPreviewDialog.css";
@@ -10,7 +18,14 @@ import "./CameraPreviewDialog.css";
 const FPS_OPTIONS = [5, 10, 15, 30];
 
 // Open a single stream for the selected camera at the requested preview rate.
-export function CameraPreviewDialog({ node, namespace, view, cell, zh, onDismiss }: {
+export function CameraPreviewDialog({
+  node,
+  namespace,
+  view,
+  cell,
+  zh,
+  onDismiss,
+}: {
   node: string;
   namespace: string;
   view: CameraView;
@@ -22,7 +37,8 @@ export function CameraPreviewDialog({ node, namespace, view, cell, zh, onDismiss
   const [frame, setFrame] = useState<{ url: string; capturedAtMs?: number }>();
   const [fps, setFps] = useState(10);
   const [actualFps, setActualFps] = useState<number | null>(null);
-  const [latency, setLatency] = useState<ReturnType<typeof cameraDisplayLatency>>();
+  const [latency, setLatency] =
+    useState<ReturnType<typeof cameraDisplayLatency>>();
   const paint = useRef(0);
   const cameraClock = useCameraClock(node, namespace, cell?.present !== false);
   const [reconnecting, setReconnecting] = useState(false);
@@ -66,13 +82,18 @@ export function CameraPreviewDialog({ node, namespace, view, cell, zh, onDismiss
       };
       resetWatchdog();
       try {
-        const response = await request(cameraStreamPath(node, namespace, view, fps), { signal: controller.signal });
+        const response = await request(
+          cameraStreamPath(node, namespace, view, fps),
+          { signal: controller.signal },
+        );
         if (connection !== controller) return;
         measuredAt = performance.now();
         sample = window.setInterval(() => {
           const now = performance.now();
-          setActualFps(distinct * 1000 / (now - measuredAt));
-          setLatency((value) => value && now - value.displayAt < 2000 ? value : undefined);
+          setActualFps((distinct * 1000) / (now - measuredAt));
+          setLatency((value) =>
+            value && now - value.displayAt < 2000 ? value : undefined,
+          );
           distinct = 0;
           measuredAt = now;
         }, 1000);
@@ -100,7 +121,8 @@ export function CameraPreviewDialog({ node, namespace, view, cell, zh, onDismiss
           setActualFps(null);
           setLatency(undefined);
           setReconnecting(true);
-          if (!document.hidden) retry = window.setTimeout(() => void connect(), 1500);
+          if (!document.hidden)
+            retry = window.setTimeout(() => void connect(), 1500);
         }
       }
     };
@@ -132,39 +154,124 @@ export function CameraPreviewDialog({ node, namespace, view, cell, zh, onDismiss
     };
   }, [node, namespace, view, cell?.present, fps]);
 
-  const measurePaint = (image: HTMLImageElement, shown: NonNullable<typeof frame>) => {
+  const measurePaint = (
+    image: HTMLImageElement,
+    shown: NonNullable<typeof frame>,
+  ) => {
     window.cancelAnimationFrame(paint.current);
     paint.current = window.requestAnimationFrame(() => {
-      if (document.hidden || !image.isConnected || image.currentSrc !== shown.url) return;
-      setLatency(cameraDisplayLatency(shown.capturedAtMs, performance.now(), cameraClock.current));
+      if (
+        document.hidden ||
+        !image.isConnected ||
+        image.currentSrc !== shown.url
+      )
+        return;
+      setLatency(
+        cameraDisplayLatency(
+          shown.capturedAtMs,
+          performance.now(),
+          cameraClock.current,
+        ),
+      );
     });
   };
 
   const title = `${cell?.name ?? view} · ${zh ? "相机" : "Camera"}`;
-  return <dialog ref={dialog} className="station-camera-dialog" aria-labelledby="station-camera-dialog-title">
-    <header className="station-camera-dialog-head">
-      <div><span className="station-camera-dialog-eyebrow">{node}</span><h3 id="station-camera-dialog-title">{title}</h3></div>
-      <button type="button" className="secondary-button station-camera-dialog-close" onClick={() => dialog.current?.close()} aria-label={zh ? "关闭" : "Close"} autoFocus>×</button>
-    </header>
-    <div className="station-camera-dialog-frame">
-      {frame ? <img src={frame.url} alt={cell?.name ?? view} onLoad={(event) => measurePaint(event.currentTarget, frame)} /> : <div className="station-camera-dialog-blank"><Camera size={28} aria-hidden="true" /><span>{cell?.present === false ? (zh ? "这台机器人没有安装此相机" : "This camera is not fitted") : (zh ? "等待画面" : "Waiting for a frame")}</span></div>}
-    </div>
-    <footer className="station-camera-dialog-foot">
-      {cell && cell.present !== false && <span className={`status status-${cell.tone}`}><i />{cell.badge}</span>}
-      {cell?.present !== false && <label className="station-preview-fps">
-        <span>{zh ? "目标帧率" : "Target FPS"}</span>
-        <select value={fps} onChange={(event) => setFps(Number(event.target.value))}>
-          {FPS_OPTIONS.map((rate) => <option key={rate} value={rate}>{rate} FPS</option>)}
-        </select>
-      </label>}
-      {cell?.present !== false && <small className="station-preview-actual-fps">{zh ? "实测" : "Measured"} {actualFps === null ? "—" : `${actualFps.toFixed(1)} FPS`}</small>}
-      {cell?.present !== false && <small className="station-preview-latency" title={zh ? "从 ROS 采集时间戳到浏览器绘制机会的估算。± 为浏览器对时误差。" : "Estimate from ROS capture time to the browser paint opportunity. ± is the browser clock uncertainty."}>
-        {zh ? "端到端延迟" : "End-to-end latency"} {latency ? `≈ ${Math.round(latency.elapsedMs)} ms (±${Math.ceil(latency.uncertaintyMs)} ms)` : "—"}
-      </small>}
-      {reconnecting && <small role="status">{zh ? "视频流中断，正在重连" : "Stream interrupted, reconnecting"}</small>}
-      {cell?.note && <small>{cell.note}</small>}
-      {cell?.advice && <small>{cell.advice}</small>}
-    </footer>
-    <div className="station-toast-host" aria-live="polite" />
-  </dialog>;
+  return (
+    <dialog
+      ref={dialog}
+      className="station-camera-dialog"
+      aria-labelledby="station-camera-dialog-title"
+    >
+      <header className="station-camera-dialog-head">
+        <div>
+          <span className="station-camera-dialog-eyebrow">{node}</span>
+          <h3 id="station-camera-dialog-title">{title}</h3>
+        </div>
+        <button
+          type="button"
+          className="secondary-button station-camera-dialog-close"
+          onClick={() => dialog.current?.close()}
+          aria-label={zh ? "关闭" : "Close"}
+          autoFocus
+        >
+          ×
+        </button>
+      </header>
+      <div className="station-camera-dialog-frame">
+        {frame ? (
+          <img
+            src={frame.url}
+            alt={cell?.name ?? view}
+            onLoad={(event) => measurePaint(event.currentTarget, frame)}
+          />
+        ) : (
+          <div className="station-camera-dialog-blank">
+            <Camera size={28} aria-hidden="true" />
+            <span>
+              {cell?.present === false
+                ? zh
+                  ? "这台机器人没有安装此相机"
+                  : "This camera is not fitted"
+                : zh
+                  ? "等待画面"
+                  : "Waiting for a frame"}
+            </span>
+          </div>
+        )}
+      </div>
+      <footer className="station-camera-dialog-foot">
+        {cell && cell.present !== false && (
+          <span className={`status status-${cell.tone}`}>
+            <i />
+            {cell.badge}
+          </span>
+        )}
+        {cell?.present !== false && (
+          <label className="station-preview-fps">
+            <span>{zh ? "目标帧率" : "Target FPS"}</span>
+            <select
+              value={fps}
+              onChange={(event) => setFps(Number(event.target.value))}
+            >
+              {FPS_OPTIONS.map((rate) => (
+                <option key={rate} value={rate}>
+                  {rate} FPS
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+        {cell?.present !== false && (
+          <small className="station-preview-actual-fps">
+            {zh ? "实测" : "Measured"}{" "}
+            {actualFps === null ? "—" : `${actualFps.toFixed(1)} FPS`}
+          </small>
+        )}
+        {cell?.present !== false && (
+          <small
+            className="station-preview-latency"
+            title={
+              zh
+                ? "从 ROS 采集时间戳到浏览器绘制机会的估算。± 为浏览器对时误差。"
+                : "Estimate from ROS capture time to the browser paint opportunity. ± is the browser clock uncertainty."
+            }
+          >
+            {zh ? "端到端延迟" : "End-to-end latency"}{" "}
+            {latency
+              ? `≈ ${Math.round(latency.elapsedMs)} ms (±${Math.ceil(latency.uncertaintyMs)} ms)`
+              : "—"}
+          </small>
+        )}
+        {reconnecting && (
+          <small role="status">
+            {zh ? "视频流中断，正在重连" : "Stream interrupted, reconnecting"}
+          </small>
+        )}
+        {cell?.note && <small>{cell.note}</small>}
+        {cell?.advice && <small>{cell.advice}</small>}
+      </footer>
+      <div className="station-toast-host" aria-live="polite" />
+    </dialog>
+  );
 }

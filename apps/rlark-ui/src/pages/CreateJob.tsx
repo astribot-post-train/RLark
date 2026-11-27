@@ -65,12 +65,7 @@ function formatImageUsage(usedAt: string, useCount: number, zh: boolean) {
     : `${relative} · used ${useCount} times`;
 }
 import { Check, ChevronDown, Plus, Trash2, X } from "lucide-react";
-import {
-  type Cluster,
-  clusters,
-  type Job,
-  type JobType,
-} from "../data";
+import { type Cluster, clusters, type Job, type JobType } from "../data";
 import { mockStorageClasses } from "../astribot/mockBackend";
 import type { Copy } from "../i18n";
 import type { RoleResource } from "../types";
@@ -128,9 +123,7 @@ function ClusterSelect({
 }) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
-  const selected = clusters.find(
-    (cluster) => cluster.id === value,
-  );
+  const selected = clusters.find((cluster) => cluster.id === value);
 
   useEffect(() => {
     const closeOnOutsideClick = (event: MouseEvent) => {
@@ -166,7 +159,9 @@ function ClusterSelect({
 
   const optionContent = (cluster: Cluster) => (
     <>
-      <strong><RealName label={cluster.name} name={cluster.id} /></strong>
+      <strong>
+        <RealName label={cluster.name} name={cluster.id} />
+      </strong>
       <span className="worker-cluster-type">{typeLabel(cluster)}</span>
       <span className={`worker-cluster-state ${cluster.phase.toLowerCase()}`}>
         <i aria-hidden="true" />
@@ -877,7 +872,13 @@ export function CreateJobModal({
   const updateRRMount = (
     role: string,
     i: number,
-    field: "objectStorage" | "mountPath" | "type" | "hostPath" | "profile" | "readOnly",
+    field:
+      | "objectStorage"
+      | "mountPath"
+      | "type"
+      | "hostPath"
+      | "profile"
+      | "readOnly",
     v: string | boolean,
   ) => {
     setRoleResources((prev) => {
@@ -1832,10 +1833,20 @@ export function CreateJobModal({
                                     profile={mount.profile}
                                     readOnly={mount.readOnly}
                                     onProfile={(value) =>
-                                      updateRRMount(role, index, "profile", value)
+                                      updateRRMount(
+                                        role,
+                                        index,
+                                        "profile",
+                                        value,
+                                      )
                                     }
                                     onReadOnly={(value) =>
-                                      updateRRMount(role, index, "readOnly", value)
+                                      updateRRMount(
+                                        role,
+                                        index,
+                                        "readOnly",
+                                        value,
+                                      )
                                     }
                                   />
                                 )}

@@ -19,7 +19,9 @@ export function StorageMountOptions({
         <select value={profile} onChange={(e) => onProfile(e.target.value)}>
           <option value="">{zh ? "存储的默认档位" : "Storage default"}</option>
           <option value="default">default</option>
-          <option value="read">{zh ? "read（只读）" : "read (read-only)"}</option>
+          <option value="read">
+            {zh ? "read（只读）" : "read (read-only)"}
+          </option>
           <option value="archive">
             {zh ? "archive（关写缓存）" : "archive (write cache off)"}
           </option>

@@ -1,8 +1,10 @@
+import { clusters, type StorageClass } from "./data";
 import {
-  clusters,
-  type StorageClass,
-} from "./data";
-import { astribotMockRoute, mockStorageClasses, mockStorageFields, withMockDisplayName } from "./astribot/mockBackend";
+  astribotMockRoute,
+  mockStorageClasses,
+  mockStorageFields,
+  withMockDisplayName,
+} from "./astribot/mockBackend";
 import type { CRDDomain, NodeEventEntry } from "./types";
 import type { CRDJob, CRDWorkflow } from "./crdModels";
 import { buildMockCRDNodes } from "./utils/nodes";
@@ -332,12 +334,14 @@ const json = (body: unknown, status = 200) =>
   });
 
 function clusterPayload() {
-  return clusters.map((cluster) => ({
-    ...cluster,
-    agentNamespace: cluster.id,
-    id: cluster.name,
-    name: cluster.name,
-  })).map(withMockDisplayName);
+  return clusters
+    .map((cluster) => ({
+      ...cluster,
+      agentNamespace: cluster.id,
+      id: cluster.name,
+      name: cluster.name,
+    }))
+    .map(withMockDisplayName);
 }
 
 const NODES_PREFIX = "/api/v1/rlinf.io/v1alpha1/nodes/";
@@ -365,7 +369,11 @@ export function installMockBackend() {
     if (!url.pathname.startsWith("/api/")) return nativeFetch(input, init);
     const method = request.method.toUpperCase();
     const path = url.pathname;
-    const astribot = await astribotMockRoute(method, path, request, { clusterPayload, nodes, imageRegistries });
+    const astribot = await astribotMockRoute(method, path, request, {
+      clusterPayload,
+      nodes,
+      imageRegistries,
+    });
     if (astribot) return astribot;
 
     if (method === "GET" && path === "/api/v1/clusters")

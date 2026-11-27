@@ -330,7 +330,8 @@ export const clusters: Cluster[] = [
     gpuUsage: 0,
     robotUsage: 61,
     runningJobs: 2,
-    description: "深圳办公室的 S1U 机器人调试集群，控制面与三台整机在同一网络域。",
+    description:
+      "深圳办公室的 S1U 机器人调试集群，控制面与三台整机在同一网络域。",
   },
   {
     id: "rlark-ksyun-gpu",

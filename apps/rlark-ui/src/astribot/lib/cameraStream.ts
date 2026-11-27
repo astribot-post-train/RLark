@@ -9,11 +9,19 @@ export interface CameraFrame {
 
 // The camera service sends a Content-Length for every JPEG. Reading exactly
 // that many bytes also allows boundary-like bytes inside the JPEG.
-export async function* readCameraFrames(response: Response): AsyncGenerator<CameraFrame> {
+export async function* readCameraFrames(
+  response: Response,
+): AsyncGenerator<CameraFrame> {
   const contentType = response.headers.get("Content-Type") ?? "";
-  const boundary = /;\s*boundary\s*=\s*(?:"([^"]+)"|([^;\s]+))/i.exec(contentType);
+  const boundary = /;\s*boundary\s*=\s*(?:"([^"]+)"|([^;\s]+))/i.exec(
+    contentType,
+  );
   const marker = boundary?.[1] ?? boundary?.[2];
-  if (!/^multipart\/x-mixed-replace\s*;/i.test(contentType) || !marker || !response.body) {
+  if (
+    !/^multipart\/x-mixed-replace\s*;/i.test(contentType) ||
+    !marker ||
+    !response.body
+  ) {
     throw new Error("Invalid camera stream");
   }
 
@@ -34,7 +42,10 @@ export async function* readCameraFrames(response: Response): AsyncGenerator<Came
       }
       for (let offset = 0; offset < chunk.length;) {
         if (frame) {
-          const size = Math.min(chunk.length - offset, frame.length - frameSize);
+          const size = Math.min(
+            chunk.length - offset,
+            frame.length - frameSize,
+          );
           frame.set(chunk.subarray(offset, offset + size), frameSize);
           offset += size;
           frameSize += size;
@@ -45,10 +56,13 @@ export async function* readCameraFrames(response: Response): AsyncGenerator<Came
           }
         } else {
           const byte = chunk[offset++];
-          if (headerSize === header.length) throw new Error("Camera frame headers are too large");
+          if (headerSize === header.length)
+            throw new Error("Camera frame headers are too large");
           header[headerSize++] = byte;
           if (byte !== LF) continue;
-          const line = decoder.decode(header.subarray(lineStart, headerSize)).trim();
+          const line = decoder
+            .decode(header.subarray(lineStart, headerSize))
+            .trim();
           if (line === `--${marker}--`) return;
           if (line) {
             lineStart = headerSize;
@@ -58,15 +72,24 @@ export async function* readCameraFrames(response: Response): AsyncGenerator<Came
           headerSize = 0;
           lineStart = 0;
           if (!headers) continue; // CRLF between frames
-          const length = Number(/^content-length:\s*(\d+)\s*$/im.exec(headers)?.[1]);
-          if (headers.split(/\r?\n/, 1)[0] !== `--${marker}`
-            || !/^content-type:\s*image\/jpeg\s*$/im.test(headers)
-            || !Number.isSafeInteger(length) || length <= 0 || length > MAX_JPEG_BYTES) {
+          const length = Number(
+            /^content-length:\s*(\d+)\s*$/im.exec(headers)?.[1],
+          );
+          if (
+            headers.split(/\r?\n/, 1)[0] !== `--${marker}` ||
+            !/^content-type:\s*image\/jpeg\s*$/im.test(headers) ||
+            !Number.isSafeInteger(length) ||
+            length <= 0 ||
+            length > MAX_JPEG_BYTES
+          ) {
             throw new Error("Invalid camera frame headers");
           }
           frame = new Uint8Array(length);
-          const stamp = Number(/^x-camera-capture-ms:\s*(\d+(?:\.\d+)?)\s*$/im.exec(headers)?.[1]);
-          capturedAtMs = Number.isFinite(stamp) && stamp > 0 ? stamp : undefined;
+          const stamp = Number(
+            /^x-camera-capture-ms:\s*(\d+(?:\.\d+)?)\s*$/im.exec(headers)?.[1],
+          );
+          capturedAtMs =
+            Number.isFinite(stamp) && stamp > 0 ? stamp : undefined;
         }
       }
     }
@@ -76,10 +99,16 @@ export async function* readCameraFrames(response: Response): AsyncGenerator<Came
   }
 }
 
-export function sameCameraFrame(previous: CameraFrame | undefined, next: CameraFrame): boolean {
+export function sameCameraFrame(
+  previous: CameraFrame | undefined,
+  next: CameraFrame,
+): boolean {
   if (!previous) return false;
   if (previous.capturedAtMs !== undefined || next.capturedAtMs !== undefined) {
     return previous.capturedAtMs === next.capturedAtMs;
   }
-  return previous.jpeg.length === next.jpeg.length && next.jpeg.every((byte, index) => previous.jpeg[index] === byte);
+  return (
+    previous.jpeg.length === next.jpeg.length &&
+    next.jpeg.every((byte, index) => previous.jpeg[index] === byte)
+  );
 }

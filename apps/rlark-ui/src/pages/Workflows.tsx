@@ -16,11 +16,7 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import {
-  clusters,
-  type Cluster,
-  type JobType,
-} from "../data";
+import { clusters, type Cluster, type JobType } from "../data";
 import { mockStorageClasses } from "../astribot/mockBackend";
 import type { Copy } from "../i18n";
 import type { DAGEdge, DAGNode, RoleResource, WorkflowJobDef } from "../types";
@@ -1302,7 +1298,13 @@ export function CreateWorkflowModal({
   const updateRRMount = (
     role: string,
     index: number,
-    field: "objectStorage" | "mountPath" | "type" | "hostPath" | "profile" | "readOnly",
+    field:
+      | "objectStorage"
+      | "mountPath"
+      | "type"
+      | "hostPath"
+      | "profile"
+      | "readOnly",
     value: string | boolean,
   ) => {
     if (!activeJob) return;
@@ -1792,7 +1794,9 @@ export function CreateWorkflowModal({
                             >
                               {availableClusters.map((cl) => (
                                 <option key={cl.id} value={cl.id}>
-                                  {cl.name === cl.id ? cl.name : `${cl.name} · ${cl.id}`}
+                                  {cl.name === cl.id
+                                    ? cl.name
+                                    : `${cl.name} · ${cl.id}`}
                                 </option>
                               ))}
                             </select>
@@ -2130,7 +2134,12 @@ export function CreateWorkflowModal({
                                     updateRRMount(role, index, "profile", value)
                                   }
                                   onReadOnly={(value) =>
-                                    updateRRMount(role, index, "readOnly", value)
+                                    updateRRMount(
+                                      role,
+                                      index,
+                                      "readOnly",
+                                      value,
+                                    )
                                   }
                                 />
                               )}

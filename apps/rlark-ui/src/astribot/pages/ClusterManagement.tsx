@@ -11,7 +11,11 @@ import {
   Server,
 } from "lucide-react";
 import type { Copy } from "../../i18n";
-import type { ClusterSummary as RLarkClusterSummary, CRDNode, NodeCategory } from "../../types";
+import type {
+  ClusterSummary as RLarkClusterSummary,
+  CRDNode,
+  NodeCategory,
+} from "../../types";
 import { useAutoRefresh } from "../../hooks";
 import {
   getNodeCategories,
@@ -21,7 +25,11 @@ import {
   isBusinessWorkerNode,
 } from "../../utils/nodes";
 import { controlPlanesOf, type ControlPlaneNode } from "../lib/controlPlanes";
-import { kubernetesVersionsOf, kubernetesVersionText, type KubernetesVersions } from "../lib/kubernetesVersion";
+import {
+  kubernetesVersionsOf,
+  kubernetesVersionText,
+  type KubernetesVersions,
+} from "../lib/kubernetesVersion";
 import {
   ColumnFilterButton,
   MetricCard,
@@ -37,19 +45,30 @@ import { RobotControls } from "../components/RobotControls";
 import { useRobotPower } from "../components/useRobotPower";
 import { controlledRobot } from "../lib/siteNodeDisplay";
 import { clustersApi, nodesApi } from "../../backend";
-import { clusterTypeApi, clusterTypes, displayNameApi, type ClusterType, type WithClusterType } from "../api";
-import { displayNameError, displayNameMessage, displayNameRefusal } from "../lib/displayName";
+import {
+  clusterTypeApi,
+  clusterTypes,
+  displayNameApi,
+  type ClusterType,
+  type WithClusterType,
+} from "../api";
+import {
+  displayNameError,
+  displayNameMessage,
+  displayNameRefusal,
+} from "../lib/displayName";
 import "./ClusterManagement.css";
 
 // A cluster as this page lists it: the Gateway's summary and what its nodes tell.
-type ClusterSummary = RLarkClusterSummary & WithClusterType & {
-  // The name it was given; name is this when set, else the ID.
-  displayName?: string;
-  // The cluster's control-plane nodes; empty for a managed control plane.
-  controlPlanes?: ControlPlaneNode[];
-  // The Kubernetes versions the cluster's nodes carry, as station-controller last read them.
-  kubernetes?: KubernetesVersions;
-};
+type ClusterSummary = RLarkClusterSummary &
+  WithClusterType & {
+    // The name it was given; name is this when set, else the ID.
+    displayName?: string;
+    // The cluster's control-plane nodes; empty for a managed control plane.
+    controlPlanes?: ControlPlaneNode[];
+    // The Kubernetes versions the cluster's nodes carry, as station-controller last read them.
+    kubernetes?: KubernetesVersions;
+  };
 
 type ClusterAction =
   "cordon" | "uncordon" | "drain" | "undrain" | "delist" | "restore" | "delete";
@@ -97,7 +116,10 @@ function clusterTypeLabel(type: string, zh: boolean): string {
 }
 
 // Our cluster type (GPU / robot), set when the cluster is made or by an administrator; "" when never set.
-function ourClusterTypeLabel(clusterType: ClusterType | undefined, zh: boolean): string {
+function ourClusterTypeLabel(
+  clusterType: ClusterType | undefined,
+  zh: boolean,
+): string {
   const entry = clusterTypes.find((type) => type.value === clusterType);
   return entry ? (zh ? entry.zh : entry.en) : zh ? "未分类" : "No type";
 }
@@ -218,16 +240,31 @@ function normalizeClusterSummary(
 
 // Where a cluster's control plane runs: its node and address, or "managed"
 // when no node of it is one (a Kingsoft KCE cluster's).
-function ClusterControlPlane({ cluster, zh }: { cluster: ClusterSummary; zh: boolean }) {
+function ClusterControlPlane({
+  cluster,
+  zh,
+}: {
+  cluster: ClusterSummary;
+  zh: boolean;
+}) {
   if (!cluster.controlPlanes) return <span className="muted">—</span>;
   if (cluster.controlPlanes.length === 0)
-    return <span className="cluster-control-plane muted">{zh ? "托管" : "Managed"}</span>;
+    return (
+      <span className="cluster-control-plane muted">
+        {zh ? "托管" : "Managed"}
+      </span>
+    );
   return (
     <span className="cluster-control-plane">
       {cluster.controlPlanes.map((node) => (
         <span key={node.name}>
           <strong>
-            <NodeName node={{ metadata: { name: node.name }, spec: { displayName: node.displayName } }} />
+            <NodeName
+              node={{
+                metadata: { name: node.name },
+                spec: { displayName: node.displayName },
+              }}
+            />
           </strong>
           {node.address && <small>{node.address}</small>}
         </span>
@@ -279,7 +316,9 @@ export function ClusterManagementPage({
   // 类型列多选筛选（gpu / robot / none）；空数组 = 全部
   const [typeFilterValues, setTypeFilterValues] = useState<string[]>([]);
   // The robots chosen in a robot cluster's node list, by namespace/name.
-  const [chosenRobotKeys, setChosenRobotKeys] = useState<Set<string>>(new Set());
+  const [chosenRobotKeys, setChosenRobotKeys] = useState<Set<string>>(
+    new Set(),
+  );
   const [typePending, setTypePending] = useState(false);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
@@ -437,7 +476,9 @@ export function ClusterManagementPage({
       const typeHit =
         typeFilterValues.length === 0 ||
         typeFilterValues.includes(cluster.clusterType ?? "none");
-      return (!normalized || searchable.includes(normalized)) && phaseHit && typeHit;
+      return (
+        (!normalized || searchable.includes(normalized)) && phaseHit && typeHit
+      );
     });
   }, [clusters, phaseFilterValues, typeFilterValues, query, zh]);
 
@@ -447,7 +488,10 @@ export function ClusterManagementPage({
     (currentPage - 1) * pageSize,
     currentPage * pageSize,
   );
-  useEffect(() => setPage(1), [pageSize, phaseFilterValues, typeFilterValues, query]);
+  useEffect(
+    () => setPage(1),
+    [pageSize, phaseFilterValues, typeFilterValues, query],
+  );
   useEffect(() => setChosenRobotKeys(new Set()), [selectedClusterID]);
 
   const selectedCluster = selectedClusterID
@@ -478,7 +522,13 @@ export function ClusterManagementPage({
         setRenameDraft(undefined);
       } catch (e) {
         const refusal = displayNameRefusal(e);
-        setRenameError(refusal ? displayNameMessage(refusal, "cluster", zh) : e instanceof Error ? e.message : String(e));
+        setRenameError(
+          refusal
+            ? displayNameMessage(refusal, "cluster", zh)
+            : e instanceof Error
+              ? e.message
+              : String(e),
+        );
       } finally {
         setRenamePending(false);
       }
@@ -502,7 +552,9 @@ export function ClusterManagementPage({
             .filter((node) => hasNodeCategory(node, "robot"))
             .map(controlledRobot)
         : [];
-    const chosenRobots = robots.filter((robot) => chosenRobotKeys.has(robot.key));
+    const chosenRobots = robots.filter((robot) =>
+      chosenRobotKeys.has(robot.key),
+    );
     const onlineRate = selectedCluster.totalNodes
       ? Math.round(
           (selectedCluster.onlineNodes / selectedCluster.totalNodes) * 100,
@@ -532,7 +584,8 @@ export function ClusterManagementPage({
             <div>
               <small>
                 {ourClusterTypeLabel(selectedCluster.clusterType, zh)}
-                {selectedCluster.type && ` · ${clusterTypeLabel(selectedCluster.type, zh)}`}
+                {selectedCluster.type &&
+                  ` · ${clusterTypeLabel(selectedCluster.type, zh)}`}
               </small>
               <h2>{selectedCluster.name}</h2>
               {selectedCluster.name !== selectedCluster.id && (
@@ -553,7 +606,9 @@ export function ClusterManagementPage({
                 aria-label={zh ? "集群类型" : "Cluster type"}
                 value={selectedCluster.clusterType ?? ""}
                 disabled={typePending}
-                onChange={(e) => void saveClusterType(e.target.value as ClusterType)}
+                onChange={(e) =>
+                  void saveClusterType(e.target.value as ClusterType)
+                }
               >
                 <option value="" disabled>
                   {zh ? "设置集群类型" : "Set the cluster type"}
@@ -617,7 +672,9 @@ export function ClusterManagementPage({
               <div className="modal-body">
                 <div className="form-section">
                   <div className="form-section-head">
-                    <small>{zh ? "集群 ID（不变）" : "Cluster ID (never changes)"}</small>
+                    <small>
+                      {zh ? "集群 ID（不变）" : "Cluster ID (never changes)"}
+                    </small>
                   </div>
                   <code className="real-name">{selectedCluster.id}</code>
                 </div>
@@ -636,14 +693,21 @@ export function ClusterManagementPage({
                       if (e.key === "Enter") void saveClusterName(renameDraft);
                     }}
                   />
-                  <small className="muted" style={{ display: "block", marginTop: 4 }}>
+                  <small
+                    className="muted"
+                    style={{ display: "block", marginTop: 4 }}
+                  >
                     {zh
                       ? "留空则显示 ID。最多 64 个字符，支持中英文、数字以及-_."
                       : "Leave empty to show the ID. At most 64 Chinese/English letters, digits, -, _ and ."}
                   </small>
                 </div>
                 {renameError && (
-                  <div className="cert-error" role="alert" style={{ marginBottom: 12 }}>
+                  <div
+                    className="cert-error"
+                    role="alert"
+                    style={{ marginBottom: 12 }}
+                  >
                     {renameError}
                   </div>
                 )}
@@ -723,7 +787,12 @@ export function ClusterManagementPage({
             </div>
           </div>
           {robots.length > 0 && (
-            <RobotControls robots={robots} chosen={chosenRobots} power={robotPower} zh={zh} />
+            <RobotControls
+              robots={robots}
+              chosen={chosenRobots}
+              power={robotPower}
+              zh={zh}
+            />
           )}
           <NodeResourceBrowser
             nodes={visibleDetailNodes}
@@ -735,7 +804,8 @@ export function ClusterManagementPage({
             {...(robots.length > 0 && {
               selectedNodeKeys: chosenRobotKeys,
               onSelectionChange: setChosenRobotKeys,
-              onSelectFiltered: (keys: string[]) => setChosenRobotKeys(new Set(keys)),
+              onSelectFiltered: (keys: string[]) =>
+                setChosenRobotKeys(new Set(keys)),
               onClearSelection: () => setChosenRobotKeys(new Set()),
             })}
           />
@@ -815,8 +885,10 @@ export function ClusterManagementPage({
               const rate = cluster.totalNodes
                 ? Math.round((cluster.onlineNodes / cluster.totalNodes) * 100)
                 : 0;
-              const drainDisabled = actionPending || cluster.phase !== "Cordoned";
-              const delistOrDeleteDisabled = drainDisabled || cluster.runningJobs !== 0;
+              const drainDisabled =
+                actionPending || cluster.phase !== "Cordoned";
+              const delistOrDeleteDisabled =
+                drainDisabled || cluster.runningJobs !== 0;
               const noRunningJobs = cluster.runningJobs === 0;
               return (
                 <div
@@ -959,11 +1031,14 @@ export function ClusterManagementPage({
                                   type="button"
                                   disabled={drainDisabled || noRunningJobs}
                                   title={
-                                    cluster.phase === "Cordoned" && noRunningJobs
-                                      ? (zh ? "无运行中任务" : "No running jobs")
+                                    cluster.phase === "Cordoned" &&
+                                    noRunningJobs
+                                      ? zh
+                                        ? "无运行中任务"
+                                        : "No running jobs"
                                       : zh
-                                      ? "驱逐任务：停止集群内所有运行中的 RLark 任务"
-                                      : "Drain: stop all running RLark tasks in the cluster"
+                                        ? "驱逐任务：停止集群内所有运行中的 RLark 任务"
+                                        : "Drain: stop all running RLark tasks in the cluster"
                                   }
                                   onClick={() =>
                                     handleClusterAction(cluster, "drain")

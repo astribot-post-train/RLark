@@ -18,16 +18,16 @@ test("scanned onboarding selects Robot or Server and uses the scanned identity f
 
 test("join-code robot model choices are loaded from the RobotModel API", async () => {
   const page = await read("../../src/astribot/pages/JoinNode.tsx");
-  assert.match(page, /robotModelsApi\.list\(\)/);
+  assert.match(page, /robotModelsApi\s*\.list\(\)/);
   assert.match(page, /robotModels\.map/);
-  assert.match(page, /node_class: form\.nodeClass, machine: \{ category: "Robot" as const, model \}/);
+  assert.match(page, /node_class: form\.nodeClass,\s*machine: \{\s*category: "Robot" as const,\s*model,?\s*\}/);
   assert.doesNotMatch(page, /node_class: "s1u"/);
 });
 
 test("RobotModel page exposes list and guarded deletion only", async () => {
   const page = await read("../../src/astribot/pages/RobotModels.tsx");
-  assert.match(page, /robotModelsApi\.list/);
-  assert.match(page, /robotModelsApi\.delete/);
+  assert.match(page, /robotModelsApi\s*\.list/);
+  assert.match(page, /robotModelsApi\s*\.delete/);
   assert.match(page, /references/);
   assert.doesNotMatch(page, /robotModelsApi\.(create|update)/);
 });

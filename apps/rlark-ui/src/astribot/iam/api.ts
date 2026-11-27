@@ -22,7 +22,13 @@ export interface IAMSessionDto {
   revokedAt: string | null;
 }
 
-export type IAMSessionView = IAMSession & Partial<Pick<IAMSessionDto, "lastSeenAt" | "expiresAt" | "userAgent" | "ip" | "current">>;
+export type IAMSessionView = IAMSession &
+  Partial<
+    Pick<
+      IAMSessionDto,
+      "lastSeenAt" | "expiresAt" | "userAgent" | "ip" | "current"
+    >
+  >;
 
 export interface IAMAuditEventDto {
   id: number;
@@ -61,7 +67,10 @@ export interface IAMAuditResponse {
 }
 
 export class IAMApiError extends Error {
-  constructor(public status: number, message: string) {
+  constructor(
+    public status: number,
+    message: string,
+  ) {
     super(message);
     this.name = "IAMApiError";
   }
@@ -69,7 +78,10 @@ export class IAMApiError extends Error {
 
 const tokenKey = "rlark-auth-token";
 
-async function request<T>(path: string, init: Omit<RequestInit, "body"> & { body?: unknown } = {}): Promise<T> {
+async function request<T>(
+  path: string,
+  init: Omit<RequestInit, "body"> & { body?: unknown } = {},
+): Promise<T> {
   const method = (init.method ?? "GET").toUpperCase();
   const headers = new Headers(init.headers);
   // Admin read endpoints also require a bearer token in the IAM server.
@@ -77,16 +89,30 @@ async function request<T>(path: string, init: Omit<RequestInit, "body"> & { body
   if (token) headers.set("Authorization", `Bearer ${token}`);
 
   let body = init.body;
-  if (body !== undefined && body !== null && typeof body !== "string" && !(body instanceof FormData)) {
+  if (
+    body !== undefined &&
+    body !== null &&
+    typeof body !== "string" &&
+    !(body instanceof FormData)
+  ) {
     headers.set("Content-Type", "application/json");
     body = JSON.stringify(body);
   }
 
-  const response = await fetch(path, { ...init, method, headers, body: body as BodyInit | null | undefined, credentials: "include" });
+  const response = await fetch(path, {
+    ...init,
+    method,
+    headers,
+    body: body as BodyInit | null | undefined,
+    credentials: "include",
+  });
   if (!response.ok) {
     let message = `HTTP ${response.status}`;
     try {
-      const errorBody = await response.json() as { message?: unknown; error?: unknown };
+      const errorBody = (await response.json()) as {
+        message?: unknown;
+        error?: unknown;
+      };
       if (typeof errorBody.message === "string") message = errorBody.message;
       else if (typeof errorBody.error === "string") message = errorBody.error;
     } catch {
@@ -112,7 +138,10 @@ function userFromDto(dto: IAMUserDto): IAMUser {
   };
 }
 
-function sessionsFromResponse(response: IAMSessionsResponse, userId: string): IAMSessionView[] {
+function sessionsFromResponse(
+  response: IAMSessionsResponse,
+  userId: string,
+): IAMSessionView[] {
   return response.sessions.map((dto) => ({
     id: dto.id,
     userId,
@@ -152,7 +181,10 @@ function eventFromDto(dto: IAMAuditEventDto): AuditEvent {
 
 export const iamApi = {
   login(username: string, password: string) {
-    return request<IAMLoginResponse>("/api/iam/login", { method: "POST", body: { username, password } });
+    return request<IAMLoginResponse>("/api/iam/login", {
+      method: "POST",
+      body: { username, password },
+    });
   },
   me() {
     return request<IAMMeResponse>("/api/iam/me");
@@ -161,7 +193,10 @@ export const iamApi = {
     return request<void>("/api/iam/logout", { method: "POST" });
   },
   async sessions(userId: string) {
-    return sessionsFromResponse(await request<IAMSessionsResponse>("/api/iam/sessions"), userId);
+    return sessionsFromResponse(
+      await request<IAMSessionsResponse>("/api/iam/sessions"),
+      userId,
+    );
   },
   revokeOtherSessions() {
     return request<void>("/api/iam/sessions/revoke-others", { method: "POST" });
@@ -170,19 +205,38 @@ export const iamApi = {
     const response = await request<IAMUsersResponse>("/api/iam/users");
     return response.users.map(userFromDto);
   },
-  async createUser(input: { username: string; displayName: string; role: IAMRole; password: string }) {
-    const response = await request<{ user: IAMUserDto }>("/api/iam/users", { method: "POST", body: input });
+  async createUser(input: {
+    username: string;
+    displayName: string;
+    role: IAMRole;
+    password: string;
+  }) {
+    const response = await request<{ user: IAMUserDto }>("/api/iam/users", {
+      method: "POST",
+      body: input,
+    });
     return userFromDto(response.user);
   },
-  async updateUser(id: string, input: { displayName: string; role: IAMRole; disabled?: boolean }) {
-    const response = await request<{ user: IAMUserDto }>(`/api/iam/users/${encodeURIComponent(id)}`, { method: "PUT", body: input });
+  async updateUser(
+    id: string,
+    input: { displayName: string; role: IAMRole; disabled?: boolean },
+  ) {
+    const response = await request<{ user: IAMUserDto }>(
+      `/api/iam/users/${encodeURIComponent(id)}`,
+      { method: "PUT", body: input },
+    );
     return userFromDto(response.user);
   },
   removeUser(id: string) {
-    return request<void>(`/api/iam/users/${encodeURIComponent(id)}`, { method: "DELETE" });
+    return request<void>(`/api/iam/users/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    });
   },
   resetPassword(id: string, newPassword: string) {
-    return request<void>(`/api/iam/users/${encodeURIComponent(id)}/reset-password`, { method: "POST", body: { newPassword } });
+    return request<void>(
+      `/api/iam/users/${encodeURIComponent(id)}/reset-password`,
+      { method: "POST", body: { newPassword } },
+    );
   },
   async audit() {
     const response = await request<IAMAuditResponse>("/api/iam/audit");
