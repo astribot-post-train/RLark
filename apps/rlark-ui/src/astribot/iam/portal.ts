@@ -311,11 +311,19 @@ function browserHost(): PortalHost {
   };
 }
 
-const buildEnv: Record<string, string | undefined> = import.meta.env ?? {};
+// A built console that talks to a backend is only ever served behind Astribot IAM
+// (astribot/release/rlark-ui.nginx.conf gates every page and refuses native login), so
+// it never offers RLark's own sign-in; only the dev server and the mock backend keep it.
+// A build flag could be forgotten and was: the native pages came back at / and /admin.
+// Node (the tests) has no import.meta.env; Vite inlines PROD.
+const portalBuild =
+  import.meta.env !== undefined &&
+  import.meta.env.PROD &&
+  import.meta.env.VITE_DATA_MODE !== "mock";
 let portal: IamPortal | undefined;
 
 export function iamPortalEnabled(): boolean {
-  return buildEnv.VITE_IAM_PORTAL === "1";
+  return portalBuild;
 }
 
 function iamPortal(): IamPortal {

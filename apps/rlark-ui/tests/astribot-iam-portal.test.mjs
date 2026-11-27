@@ -423,8 +423,13 @@ test("the console renders only after the portal lets it", async () => {
   assert.match(main, /<App iamState=\{iamState\} \/>/);
   assert.equal(main.match(/ReactDOM\.createRoot/g).length, 1);
 
+  // Every production build against a backend is a portal build: no build flag to forget,
+  // so neither / nor /admin can bring back RLark's native sign-in pages.
+  const portal = await readFile(new URL("../src/astribot/iam/portal.ts", import.meta.url), "utf8");
+  assert.match(portal, /const portalBuild =\s+import\.meta\.env !== undefined &&\s+import\.meta\.env\.PROD &&\s+import\.meta\.env\.VITE_DATA_MODE !== "mock";/);
+  assert.match(portal, /export function iamPortalEnabled\(\): boolean \{\s+return portalBuild;\s+\}/);
   const dockerfile = await readFile(new URL("../../../astribot/release/rlark-ui.Dockerfile", import.meta.url), "utf8");
-  assert.match(dockerfile, /^ENV VITE_IAM_PORTAL=1$/m);
+  assert.doesNotMatch(dockerfile, /VITE_IAM_PORTAL/);
 
   const page = await readFile(new URL("../src/astribot/iam/IAMPage.tsx", import.meta.url), "utf8");
   assert.match(page, /if \(iamPortalEnabled\(\)\) \{\s+await signOutOfConsole\(addressPath\(window\.location\)\);/);
