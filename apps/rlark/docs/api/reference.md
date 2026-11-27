@@ -28,6 +28,35 @@ Gateway subject and 20 readers per Gateway. One Gateway owns a dedicated
 MediaMTX instance. After a Gateway restart, the private Control API disconnects
 previous WebRTC sessions and verifies the session list is empty before playback
 reopens. JPEG service remains available while reconciliation runs.
+For each reader, the Gateway sends `PUT` to the robot's
+`/cameras/{camera}/h264-lease/{UUID}` endpoint to create or renew its source
+lease, and sends `DELETE` with the same UUID to release it. Both requests carry
+`X-RLark-Camera-Source-Key` and `X-RLark-Camera-Source-Path`, whose path is
+`/{agent}/{node}/{camera}`. The robot accepts only its configured agent and
+local `NODE_NAME` path.
+
+For a trial cluster, set both `cameraRTSPPrefix` and `cameraSourceSecret` in
+the `s1u-robot` Addon values (available from v1.7.4). For example, set the prefix to
+`rtsp://media.internal:8554/robot-agent/$(NODE_NAME)` and the Secret name to
+`s1u-camera-source`. Use the cluster's actual Agent name and its private RTSP
+or RTSPS endpoint. Kubernetes expands `$(NODE_NAME)` in
+`S1U_CAMERA_RTSP_PREFIX`, and the video container appends the camera view.
+In the robot cluster's `rlark-system` namespace, supply `source-key` in that
+Secret for `S1U_CAMERA_SOURCE_KEY`. The Gateway sends the matching
+`RLARK_CAMERA_SOURCE_KEY` (at least 32 bytes) to the Addon in
+`X-RLark-Camera-Source-Key`.
+
+To enable the Gateway for the trial, also configure the private
+`RLARK_CAMERA_WHEP_ORIGIN` and its reader credentials in
+`RLARK_CAMERA_WHEP_USER` and `RLARK_CAMERA_WHEP_PASSWORD`. Configure the
+private Control API with `RLARK_CAMERA_WHEP_CONTROL_ORIGIN`,
+`RLARK_CAMERA_WHEP_CONTROL_USER`, and `RLARK_CAMERA_WHEP_CONTROL_PASSWORD`.
+Use a different username for Control API access. The playback entry point
+returns HTTP 503 until startup reconciliation succeeds.
+
+Both Addon values default to empty. If either is omitted or the Secret key is
+missing or too short, the Addon continues to serve JPEG snapshots and streams
+and its H.264 lease endpoint returns HTTP 404.
 
 ## CRD resources
 

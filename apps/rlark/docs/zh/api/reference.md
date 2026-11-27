@@ -23,6 +23,30 @@
 最多 4 路观看会话，每个 Gateway 最多 20 路。试点由单个 Gateway
 独占 MediaMTX 实例。Gateway 重启后通过私有管理接口断开旧的 WebRTC 会话，确认
 列表为空后恢复播放入口。清理期间 JPEG 服务仍可用。
+Gateway 为每个读者向机器人端点
+`/cameras/{camera}/h264-lease/{UUID}` 发送 `PUT` 创建或续约源租约，并使用相同 UUID
+发送 `DELETE` 释放租约。两种请求均携带 `X-RLark-Camera-Source-Key` 和
+`X-RLark-Camera-Source-Path`，后者为 `/{agent}/{node}/{camera}`。机器人只接受与
+配置的 Agent 及本地 `NODE_NAME` 相符的路径。
+
+在试点集群的 `s1u-robot` Addon values（v1.7.4 起支持）中同时配置 `cameraRTSPPrefix`
+和 `cameraSourceSecret`。例如将前缀设为
+`rtsp://media.internal:8554/robot-agent/$(NODE_NAME)`，Secret 名称设为
+`s1u-camera-source`。使用集群实际的 Agent 名称及其私有 RTSP 或 RTSPS
+地址。Kubernetes 在 `S1U_CAMERA_RTSP_PREFIX` 中展开 `$(NODE_NAME)`，
+video 容器会在末尾附加相机视角。机器人集群的 `rlark-system` 命名空间下，
+该 Secret 的 `source-key` 提供 `S1U_CAMERA_SOURCE_KEY`。Gateway 通过
+`X-RLark-Camera-Source-Key` 向 Addon 发送相同的 `RLARK_CAMERA_SOURCE_KEY`，
+密钥至少 32 字节。
+
+在 Gateway 端启用试点还需配置私有 `RLARK_CAMERA_WHEP_ORIGIN` 及其读取凭据
+`RLARK_CAMERA_WHEP_USER` 和 `RLARK_CAMERA_WHEP_PASSWORD`。使用
+`RLARK_CAMERA_WHEP_CONTROL_ORIGIN`、`RLARK_CAMERA_WHEP_CONTROL_USER` 和
+`RLARK_CAMERA_WHEP_CONTROL_PASSWORD` 配置私有管理接口，并使用不同的用户名。
+启动清理成功前，播放入口返回 HTTP 503。
+
+Addon 的两个参数默认均为空。任一参数未设置，或 Secret 中的密钥缺失或过短时，
+Addon 继续提供 JPEG 快照和流，H.264 租约接口返回 HTTP 404。
 
 ## CRD 资源
 

@@ -1,14 +1,18 @@
 """The robot's camera service (astribot/s1u/device/cameras.py): a body's views, what each camera is, the ladder that
 brings cameras back, what the Node is told, the HTTP it serves."""
-from contextlib import closing
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import closing, contextmanager
 import http.client
 import json
+import queue
 import struct
+import subprocess
 import sys
 import threading
 from http.server import ThreadingHTTPServer
 from xmlrpc.server import SimpleXMLRPCServer
 from pathlib import Path
+from types import SimpleNamespace
 
 import cv2
 import numpy
@@ -16,6 +20,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "device"))
 import cameras  # noqa: E402
+import camera_rtsp  # noqa: E402
 
 BODIES = json.loads((Path(__file__).resolve().parents[1] / "tuner/bodies.json").read_text())
 
@@ -481,22 +486,138 @@ def test_the_node_is_written_when_the_state_changes_and_not_for_rates_and_ages(t
     assert cameras.publish(robot.said(), published, patches.append) != published and patches[2]["labels"] == {"rlark.io/camera-state": "ok"}
 
 
-@pytest.fixture
-def served(tmp_path):
+@contextmanager
+def camera_http(tmp_path, **options):
     cameras_ = cameras.Cameras(BODIES["s1u_observer"], wall=lambda: 1795000000.05)
     recovery = cameras.Recovery(cameras_, lambda: None, tmp_path, lambda *event: None)
-    server = ThreadingHTTPServer(("127.0.0.1", 0), cameras.handler(cameras_, recovery))
-    server.daemon_threads = True
-    threading.Thread(target=server.serve_forever, daemon=True).start()
+    with ThreadingHTTPServer(("127.0.0.1", 0), cameras.handler(cameras_, recovery, **options)) as server:
+        server.daemon_threads = True
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            yield cameras_, server.server_address[1]
+        finally:
+            server.shutdown()
+            thread.join()
 
-    def get(path):
-        connection = http.client.HTTPConnection("127.0.0.1", server.server_address[1], timeout=5)
-        connection.request("GET", path)
-        return connection.getresponse()
 
-    yield cameras_, get
-    server.shutdown()
-    server.server_close()
+@pytest.fixture
+def served(tmp_path):
+    with camera_http(tmp_path) as (cameras_, port):
+        def get(path):
+            connection = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+            connection.request("GET", path)
+            return connection.getresponse()
+
+        yield cameras_, get
+
+
+def test_unconfigured_camera_source_leaves_jpeg_available(tmp_path):
+    with camera_http(tmp_path) as (cameras_, port):
+        raw, jpeg = message()
+        cameras_.receive("head", raw)
+        with closing(http.client.HTTPConnection("127.0.0.1", port, timeout=5)) as connection:
+            connection.request("PUT", "/cameras/head/h264-lease", headers={"X-RLark-Camera-Source-Key": "k" * 32})
+            with connection.getresponse() as response:
+                assert response.status == 404
+            connection.request("GET", "/cameras/head.jpg")
+            with connection.getresponse() as response:
+                assert response.status == 200
+                assert response.getheader("Content-Type") == "image/jpeg"
+                assert response.read() == jpeg
+            connection.request("GET", "/cameras/head/stream")
+            with connection.getresponse() as response:
+                assert response.status == 200
+                assert part(response)[1] == jpeg
+
+
+def test_camera_source_lease_authentication_concurrency_and_expiry(tmp_path, monkeypatch):
+    key = "k" * 32
+    clock = SimpleNamespace(now=0)
+    monkeypatch.setattr(camera_rtsp, "time", SimpleNamespace(monotonic=lambda: clock.now))
+    workers = queue.Queue()
+    stopped = threading.Event()
+
+    def publish(frame, destination, fps, active):
+        workers.put((threading.current_thread(), frame(), destination, fps, active))
+        while active():
+            threading.Event().wait(0.01)
+        stopped.set()
+        return "lease_expired"
+
+    monkeypatch.setattr(camera_rtsp, "publish", publish)
+    cameras_ = cameras.Cameras(BODIES["s1u_observer"], clock=lambda: clock.now)
+    raw, jpeg = message()
+    cameras_.receive("head", raw)
+    source = camera_rtsp.SourceLease(cameras_.publisher_frame, "rtsps://media.internal/robot/s1u-01/", "s1u-01")
+    with camera_http(tmp_path, source_lease=source, source_key=key) as (_, port):
+        first, second = "00000000-0000-4000-8000-000000000001", "00000000-0000-4000-8000-000000000002"
+
+        def change(method, view="head", reader=first, supplied=key, body=None, headers=None, path=None):
+            headers = dict(headers or {})
+            if supplied is not None:
+                headers["X-RLark-Camera-Source-Key"] = supplied
+            if path is not None:
+                headers["X-RLark-Camera-Source-Path"] = path
+            else:
+                headers["X-RLark-Camera-Source-Path"] = source.path + "/" + view
+            with closing(http.client.HTTPConnection("127.0.0.1", port, timeout=5)) as connection:
+                connection.request(method, "/cameras/%s/h264-lease/%s" % (view, reader), body=body, headers=headers)
+                with connection.getresponse() as response:
+                    assert key.encode() not in response.read()
+                    return response.status
+
+        assert change("PUT", supplied=None) == 403
+        assert change("PUT", supplied="wrong") == 403
+        assert change("PUT", body=b"x") == 400
+        assert change("PUT", headers={"Transfer-Encoding": "chunked"}) == 400
+        assert change("PUT", view="wrist_left") == 404
+        assert change("PUT", view="wall") == 404
+        assert change("PUT", path="/robot/other-node/head") == 409
+        assert workers.empty()
+        try:
+            with ThreadPoolExecutor(max_workers=4) as pool:
+                assert list(pool.map(lambda _: change("PUT"), range(4))) == [204] * 4
+            assert change("PUT", reader=second) == 204
+            worker, frame, destination, fps, active = workers.get(timeout=2)
+            assert frame == (jpeg, 0, 1)
+            assert destination == "rtsps://media.internal/robot/s1u-01/head"
+            assert fps == 8 and active()
+            assert change("PUT", view="torso") == 409
+            assert change("DELETE", reader=first) == 204
+            assert active()
+            assert not stopped.is_set()
+            assert change("DELETE", reader=second) == 204
+            assert stopped.wait(timeout=2)
+            assert not active()
+            clock.now = 19
+            assert change("PUT", reader=first) == 204
+            clock.now = 20
+            assert active()
+            clock.now = 39
+            assert not active()
+        finally:
+            change("DELETE", reader=first)
+        worker.join(timeout=2)
+        assert not worker.is_alive()
+
+
+def test_addon_ffmpeg_encodes_camera_jpeg_as_h264(tmp_path):
+    _, jpeg = message()
+    destination = "rtsp://media.internal/robot/s1u-01/head"
+    command = camera_rtsp.encoder_command(destination, 8)
+    assert command[-5:] == ["-f", "rtsp", "-rtsp_transport", "tcp", destination]
+    # Exercise the packaged encoder and camera filters with a local output.
+    output = tmp_path / "preview.h264"
+    subprocess.run(command[:-5] + ["-f", "h264", str(output)], input=jpeg, check=True, timeout=10)
+    probe = subprocess.run(["ffprobe", "-v", "error", "-show_streams", "-of", "json", str(output)],
+                           stdout=subprocess.PIPE, check=True, timeout=5)
+    stream, = json.loads(probe.stdout)["streams"]
+    assert stream["codec_name"] == "h264"
+    assert stream["profile"] == "Constrained Baseline"
+    assert (stream["width"], stream["height"]) == (854, 480)
+    # FFprobe can label full-range 4:2:0 from the JPEG input as yuvj420p.
+    assert stream["pix_fmt"] in {"yuv420p", "yuvj420p"}
 
 
 def image(jpeg):
