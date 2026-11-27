@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -141,5 +142,86 @@ func TestExecutorKeepsNodeAgentImageIndependent(t *testing.T) {
 	}
 	if live.Spec.Template.Spec.Containers[0].Image != target.Agent || nodes.image != nodeTarget {
 		t.Fatalf("wrong rollback targets: cluster image %q, node image %q", live.Spec.Template.Spec.Containers[0].Image, nodes.image)
+	}
+}
+
+func TestCompletionReceiptSurvivesAnUnavailableOrLostUpdate(t *testing.T) {
+	for _, lostResponse := range []bool{false, true} {
+		name := "persistent unavailable"
+		if lostResponse {
+			name = "update committed with lost response"
+		}
+		t.Run(name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				ctx := t.Context()
+				old := Images{Agent: "old-agent", Tools: "old-tools"}
+				target := Images{Agent: "next-agent", Tools: "next-tools"}
+				deployment := &appsv1.Deployment{
+					ObjectMeta: metav1.ObjectMeta{Name: "cluster-agent", Namespace: Namespace, UID: "agent-uid"},
+					Spec: appsv1.DeploymentSpec{Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{
+						Containers: []corev1.Container{{Name: "agent", Image: old.Agent, Args: []string{"--mode=cluster", "--image=" + old.Tools}}},
+					}}},
+					Status: appsv1.DeploymentStatus{Replicas: 1, UpdatedReplicas: 1, ReadyReplicas: 1, AvailableReplicas: 1},
+				}
+				client := fake.NewClientset(deployment, &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: CheckpointConfigMap, Namespace: Namespace}})
+				cmGVR := corev1.SchemeGroupVersion.WithResource("configmaps")
+				outage, completionWrites := true, 0
+				client.PrependReactor("update", "configmaps", func(action ktesting.Action) (bool, runtime.Object, error) {
+					next := action.(ktesting.UpdateAction).GetObject().(*corev1.ConfigMap)
+					checkpoint, found, err := ReadCheckpoint(next, "attempt")
+					if err != nil {
+						return true, nil, err
+					}
+					if !found || !checkpoint.Completed {
+						return false, nil, nil
+					}
+					completionWrites++
+					if !outage {
+						return false, nil, nil
+					}
+					if lostResponse {
+						if err := client.Tracker().Update(cmGVR, next, Namespace); err != nil {
+							return true, nil, err
+						}
+					}
+					return true, nil, apierrors.NewServiceUnavailable("completion update response unavailable")
+				})
+				held := func(context.Context) error { return nil }
+				store := ConfigMapCheckpoint{ConfigMaps: client.CoreV1().ConfigMaps(Namespace), JobUID: "attempt", CheckLease: held}
+				nodes := &fakeNodeImages{image: "old-node"}
+				executor := Executor{
+					Deployments: client.AppsV1().Deployments(Namespace), NodeAgents: nodes,
+					CheckLease: held, Checkpoints: store, HealthTimeout: time.Second,
+				}
+				err := executor.Run(ctx, target, "next-node", true)
+				if lostResponse {
+					if err != nil || completionWrites != 1 {
+						t.Fatalf("already persisted completion was written again: %d writes, %v", completionWrites, err)
+					}
+				} else {
+					if !errors.Is(err, ErrExecutorInterrupted) || !apierrors.IsServiceUnavailable(err) || completionWrites < 2 {
+						t.Fatalf("completion outage was not retryable: %d writes, %v", completionWrites, err)
+					}
+					saved, exists, err := store.Load(ctx)
+					if err != nil || !exists || saved.Completed || saved.RollingBack || saved.Deployment.Before != old {
+						t.Fatalf("original checkpoint changed during the outage: %+v, %v", saved, err)
+					}
+					outage = false
+					client.ClearActions()
+					if err := executor.Run(ctx, target, "next-node", true); err != nil {
+						t.Fatalf("replacement executor did not finish the original attempt: %v", err)
+					}
+					for _, action := range client.Actions() {
+						if action.Matches("update", "deployments") {
+							t.Fatal("replacement rewrote the already applied Deployment")
+						}
+					}
+				}
+				saved, exists, err := store.Load(ctx)
+				if err != nil || !exists || !saved.Completed || saved.RollingBack || saved.Deployment.Before != old || nodes.image != "next-node" {
+					t.Fatalf("completion lost the original baseline: %+v, image=%s, %v", saved, nodes.image, err)
+				}
+			})
+		})
 	}
 }

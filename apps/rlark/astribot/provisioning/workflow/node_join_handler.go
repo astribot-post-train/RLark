@@ -414,6 +414,10 @@ func (g *Service) HandleRetryNodeJoin(c *gin.Context) {
 		g.http.RespondKubeError(c, "get node join: "+err.Error(), err)
 		return
 	}
+	if j.Annotations[nodeJoinCleanupAnnotation] != "" {
+		g.http.RespondError(c, http.StatusConflict, g.http.CodeResourceConflict, "the SSH join is being cleared; retry cleanup")
+		return
+	}
 	if j.Status.Phase != rlarkv1alpha1.ClusterProvisionFailed {
 		c.JSON(http.StatusConflict, gin.H{"error": "the join of " + j.Spec.NodeName + " is " + string(j.Status.Phase) + ": only a stopped one is retried"})
 		return
@@ -559,15 +563,16 @@ func (g *Service) HandleClearNodeJoin(c *gin.Context) {
 
 // Clear an unverified attempt without ever looking up a native Node by name.
 func (g *Service) clearJoinWithoutNodeUID(ctx context.Context, namespace string, j *rlarkv1alpha1.NodeJoin, password, sudoPassword []byte, machineGone bool) ([]string, bool, error) {
+	receipt, err := readJoinAdmissionCleanup(j, namespace)
+	if err != nil {
+		return nil, false, err
+	}
 	resource := g.stationClient.Resource(nodeAdmissionGVR).Namespace(namespace)
 	admission, err := resource.Get(ctx, j.Spec.NodeName, metav1.GetOptions{})
 	switch {
 	case apierrors.IsNotFound(err):
-		if machineGone && j.Status.Facts.AdmissionIssuedAt != nil {
-			if j.Status.Facts.DeclaredHub {
-				return nil, false, apierrors.NewConflict(nodeAdmissionGVR.GroupResource(), j.Spec.NodeName,
-					fmt.Errorf("issued admission is missing, so the SSH join and its Hub declaration require ownership verification"))
-			}
+		if receipt.AdmissionUID == "" && machineGone && j.Status.Facts.AdmissionIssuedAt != nil && j.Status.Facts.DeclaredHub {
+			return nil, false, admissionCleanupConflict(j, "issued admission is missing, so the SSH join and its Hub declaration require ownership verification")
 		}
 	case err != nil:
 		return nil, false, err
@@ -576,19 +581,21 @@ func (g *Service) clearJoinWithoutNodeUID(ctx context.Context, namespace string,
 		if err != nil {
 			return nil, false, err
 		}
-		if admission.GetAnnotations()[stationidentity.SSHJoinUIDAnnotation] != string(j.UID) || redeemed != "" {
+		key, _, err := unstructured.NestedString(admission.Object, "spec", "publicKey")
+		if err != nil {
+			return nil, false, err
+		}
+		if admission.GetAnnotations()[stationidentity.SSHJoinUIDAnnotation] != string(j.UID) || redeemed != "" || key != "" {
+			if receipt.AdmissionUID != "" {
+				return nil, false, admissionCleanupConflict(j, "an Admission that replaced or consumed the retired code is still present")
+			}
 			if !machineGone {
 				return nil, false, fmt.Errorf("the admission may already belong to a Node; use Site Nodes to inspect it or select machine_gone to clear only the SSH attempt")
 			}
 			return []string{"Preserved the admission and tunnel because native Node ownership could not be established"}, true, nil
 		}
-		uid, version := admission.GetUID(), admission.GetResourceVersion()
-		if uid == "" || version == "" {
-			return nil, false, fmt.Errorf("the admission has no resource identity for cleanup")
-		}
-		err = resource.Delete(ctx, admission.GetName(), metav1.DeleteOptions{Preconditions: &metav1.Preconditions{UID: &uid, ResourceVersion: &version}})
-		if err != nil && !apierrors.IsNotFound(err) {
-			return nil, false, fmt.Errorf("retire the unused SSH admission: %w", err)
+		if err := g.retireJoinAdmission(ctx, j, namespace, admission, receipt); err != nil {
+			return nil, false, err
 		}
 	}
 	if machineGone {

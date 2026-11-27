@@ -18,4 +18,4 @@ UID 和资源版本由控制台提交。资源变化时，重新加载候选并�
 
 恢复 SSH Node UID 时会重试临时网络和上游服务错误。若成员实际返回不同的 UID，仍立即拒绝。
 
-SiteNetwork 仍有声明但无法验证回执时，清理返回 HTTP 409 并保留开集群记录。如果已发放的 SSH 入网记录消失而 Hub 声明仍在，清理也会保留 SSH 记录供核对归属。仅凭命名空间匹配，不能批量删除历史 NetworkEnrollment 或 NodeAdmission。
+SiteNetwork 仍有声明但无法验证回执时，清理返回 HTTP 409 并保留开集群记录。清理已核实归属且未兑换的 SSH Admission 时，先将入网码作废，再把原 Admission 的 UID 和资源版本记入 SSH 入网记录，最后执行删除。SiteNetwork 暂时不可用时，可以在同一条 SSH 记录上重试清理。原 Admission 已删除时，用回执续做。如果 Admission 消失但缺少回执，或出现同名替换，清理返回 HTTP 409，保留 SSH 入网记录和 Hub 声明。已作废的入网码不能兑换或重发。仅凭命名空间匹配，不能批量删除历史 NetworkEnrollment 或 NodeAdmission。

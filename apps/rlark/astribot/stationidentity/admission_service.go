@@ -109,6 +109,9 @@ func (svc AdmissionService) Issue(ctx context.Context, actor, namespace string, 
 		admission.SetAnnotations(marks)
 		written, err = resource.Create(ctx, admission, metav1.CreateOptions{})
 	case err == nil:
+		if existing.GetAnnotations()[AdmissionCleanupAnnotation] != "" || existing.GetDeletionTimestamp() != nil {
+			return IssuedAdmission{}, 0, refuseAdmission(http.StatusConflict, "the admission is being retired")
+		}
 		existing.Object["spec"] = spec
 		dropJoinMarks(existing, marks)
 		written, err = resource.Update(ctx, existing, metav1.UpdateOptions{})
@@ -122,6 +125,9 @@ func (svc AdmissionService) Issue(ctx context.Context, actor, namespace string, 
 
 // Reissue replaces the code on a fetched admission, preserving its declared machine.
 func (svc AdmissionService) Reissue(ctx context.Context, actor string, admission *unstructured.Unstructured, resource dynamic.ResourceInterface, ttl time.Duration) (IssuedAdmission, *AdmissionError) {
+	if admission.GetAnnotations()[AdmissionCleanupAnnotation] != "" || admission.GetDeletionTimestamp() != nil {
+		return IssuedAdmission{}, refuseAdmission(http.StatusConflict, "the admission is being retired")
+	}
 	network, caDigest, code, codeHash, refused := svc.newJoinCodeFor(ctx)
 	if refused != nil {
 		return IssuedAdmission{}, refused
@@ -182,6 +188,9 @@ func (svc AdmissionService) newJoinCodeFor(ctx context.Context) (network *unstru
 
 // SSHJoinUIDAnnotation associates the code or removal with an SSH join attempt.
 const SSHJoinUIDAnnotation = "station.rlark.io/ssh-join-uid"
+
+// AdmissionCleanupAnnotation binds a retired, unused admission to its SSH join.
+const AdmissionCleanupAnnotation = "station.rlark.io/ssh-admission-cleanup"
 
 // dropJoinMarks drops the marks of how the admission's machine was joined (a new code drops them) and sets marks.
 func dropJoinMarks(admission *unstructured.Unstructured, marks map[string]string) {

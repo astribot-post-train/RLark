@@ -114,6 +114,11 @@ func (e Executor) Run(ctx context.Context, target Images, nodeImage string, auto
 	if err == nil {
 		checkpoint.Completed = true
 		if err := e.saveCheckpoint(ctx, checkpoint); err != nil {
+			if temporaryAPIError(err) {
+				// The rollout has already converged. Retain the original
+				// baseline and let the same Job verify and record it again.
+				err = errors.Join(ErrExecutorInterrupted, err)
+			}
 			return fmt.Errorf("record completed upgrade: %w", err)
 		}
 		return nil

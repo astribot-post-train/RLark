@@ -62,6 +62,10 @@ func (s ConfigMapCheckpoint) Save(ctx context.Context, state Checkpoint) error {
 			(before.RollingBack && !state.RollingBack) || (before.Completed && !state.Completed) {
 			return fmt.Errorf("upgrade checkpoint cannot be replaced")
 		}
+		if before == state {
+			// A previous update may have committed before its response was lost.
+			return s.CheckLease(ctx)
+		}
 	}
 	payload, err := json.Marshal(state)
 	if err != nil {

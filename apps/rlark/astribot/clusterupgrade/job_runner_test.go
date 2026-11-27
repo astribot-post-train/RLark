@@ -4,12 +4,14 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	coordinationv1 "k8s.io/api/coordination/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -85,9 +87,49 @@ func TestClusterOnlyRunnerChecksPodIdentityAndKeepsTemplate(t *testing.T) {
 		t.Fatalf("an interrupted executor yielded its Lease: %v, %v", held, err)
 	}
 	interrupt = false
-	if err := runImageJob(t.Context(), members, reader, req); err != nil {
-		t.Fatal(err)
-	}
+	synctest.Test(t, func(t *testing.T) {
+		ctx := t.Context()
+		outage := true
+		members.PrependReactor("update", "configmaps", func(action ktesting.Action) (bool, runtime.Object, error) {
+			next := action.(ktesting.UpdateAction).GetObject().(*corev1.ConfigMap)
+			saved, _, err := ReadCheckpoint(next, childUID)
+			if err != nil {
+				return true, nil, err
+			}
+			if outage && saved.Completed {
+				return true, nil, apierrors.NewServiceUnavailable("cannot write completion checkpoint")
+			}
+			return false, nil, nil
+		})
+		if err := runImageJob(ctx, members, reader, req); !errors.Is(err, ErrExecutorInterrupted) {
+			t.Fatalf("completion failure must preserve this Job's retry: %v", err)
+		}
+		leases := members.CoordinationV1().Leases(Namespace)
+		held, err := leases.Get(ctx, LeaseName, metav1.GetOptions{})
+		if err != nil || ptr.Deref(held.Spec.HolderIdentity, "") != "upgrade-job/"+childUID {
+			t.Fatalf("completion failure released the Lease: %v, %v", held, err)
+		}
+		held.Spec.RenewTime = ptr.To(metav1.NewMicroTime(time.Now().Add(-time.Hour)))
+		if _, err := leases.Update(ctx, held, metav1.UpdateOptions{}); err != nil {
+			t.Fatal(err)
+		}
+		pods := members.CoreV1().Pods(Namespace)
+		failed := pod.DeepCopy()
+		failed.Status.Phase = corev1.PodFailed
+		if _, err := pods.UpdateStatus(ctx, failed, metav1.UpdateOptions{}); err != nil {
+			t.Fatal(err)
+		}
+		replacement := pod.DeepCopy()
+		replacement.Name, replacement.UID = "executor-replacement", "replacement-pod"
+		if _, err := pods.Create(ctx, replacement, metav1.CreateOptions{}); err != nil {
+			t.Fatal(err)
+		}
+		req.PodName, req.PodUID = replacement.Name, string(replacement.UID)
+		outage = false
+		if err := runImageJob(ctx, members, reader, req); err != nil {
+			t.Fatalf("replacement Job Pod could not confirm completion: %v", err)
+		}
+	})
 	got, err := members.AppsV1().Deployments(Namespace).Get(t.Context(), object.Name, metav1.GetOptions{})
 	if err != nil {
 		t.Fatal(err)

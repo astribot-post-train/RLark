@@ -784,3 +784,98 @@ func TestHostFailureReasonIsIndependentOfDiagnosticText(t *testing.T) {
 		t.Fatal("host cleanup did not use an exact reason line")
 	}
 }
+
+func TestClearResumesAfterAdmissionDeletionAndSiteNetworkFailure(t *testing.T) {
+	for _, replacement := range []bool{false, true} {
+		t.Run(fmt.Sprintf("replacement=%t", replacement), func(t *testing.T) {
+			const address = "10.254.240.6"
+			status := newJoinStatus("SHA256:box")
+			status.Phase = rlarkv1alpha1.ClusterProvisionFailed
+			status.Facts.DeclaredHub, status.Facts.TunnelAddress, status.Facts.PublicKey = true, address, joinKey
+			now := metav1.Now()
+			status.Facts.AdmissionIssuedAt = &now
+			setStage(&status.Stages, &status.Stage, stageInstall, rlarkv1alpha1.ClusterProvisionStageFailed, "", "interrupted")
+			join := &rlarkv1alpha1.NodeJoin{
+				ObjectMeta: metav1.ObjectMeta{Name: "cluster-a.box", UID: "join-1", ResourceVersion: "7"},
+				Spec:       rlarkv1alpha1.NodeJoinSpec{ClusterID: "cluster-a", NodeName: "box"},
+				Status:     status,
+			}
+			hub := map[string]any{"clusterID": "cluster-a", "nodeName": "box", "address": address, "publicKey": joinKey}
+			s := newJoinScene(t, joinNetwork([]any{hub}, nil), join)
+			ctx := t.Context()
+			fakeStation := s.g.stationClient.(*dynamicfake.FakeDynamicClient)
+			admissions := fakeStation.Resource(nodeAdmissionGVR).Namespace("agent-a")
+			admission := &unstructured.Unstructured{Object: map[string]any{
+				"apiVersion": "station.rlark.io/v1alpha1", "kind": "NodeAdmission",
+				"spec": map[string]any{"expiresAt": now.Add(time.Hour).UTC().Format(time.RFC3339)},
+			}}
+			admission.SetName("box")
+			admission.SetNamespace("agent-a")
+			admission.SetUID("admission-uid")
+			admission.SetResourceVersion("4")
+			admission.SetAnnotations(map[string]string{stationidentity.SSHJoinUIDAnnotation: "join-1"})
+			if _, err := admissions.Create(ctx, admission, metav1.CreateOptions{}); err != nil {
+				t.Fatal(err)
+			}
+			fakeStation.PrependReactor("update", "nodeadmissions", func(action ktesting.Action) (bool, runtime.Object, error) {
+				obj := action.(ktesting.UpdateAction).GetObject().(*unstructured.Unstructured)
+				obj.SetResourceVersion("5")
+				return false, nil, nil
+			})
+			fakeStation.PrependReactor("delete", "nodeadmissions", func(action ktesting.Action) (bool, runtime.Object, error) {
+				opts := action.(ktesting.DeleteAction).GetDeleteOptions()
+				if opts.Preconditions == nil || opts.Preconditions.UID == nil || *opts.Preconditions.UID != "admission-uid" ||
+					opts.Preconditions.ResourceVersion == nil || *opts.Preconditions.ResourceVersion != "5" {
+					t.Fatalf("delete preconditions = %+v", opts.Preconditions)
+				}
+				record, err := s.g.kubeClient.RlinfV1alpha1().NodeJoins().Get(ctx, join.Name, metav1.GetOptions{})
+				if err != nil {
+					t.Fatal(err)
+				}
+				receipt, err := readJoinAdmissionCleanup(record, "agent-a")
+				if err != nil || receipt.AdmissionUID != "admission-uid" || receipt.AdmissionVersion != "5" {
+					t.Fatalf("delete preceded the receipt: %+v, %v", receipt, err)
+				}
+				return false, nil, nil
+			})
+			outage := true
+			fakeStation.PrependReactor("update", "sitenetworks", func(ktesting.Action) (bool, runtime.Object, error) {
+				if outage {
+					return true, nil, apierrors.NewServiceUnavailable("SiteNetwork temporarily unavailable")
+				}
+				return false, nil, nil
+			})
+			const clearURL = "/station/node-joins/cluster-a.box/clear"
+			if code, out := s.call(http.MethodPost, clearURL, `{"machine_gone":true}`); code != http.StatusBadGateway {
+				t.Fatalf("first clear = %d %v", code, out)
+			}
+			if _, err := admissions.Get(ctx, "box", metav1.GetOptions{}); !apierrors.IsNotFound(err) {
+				t.Fatalf("original Admission still present: %v", err)
+			}
+			if code, out := s.call(http.MethodPost, "/station/node-joins/cluster-a.box/retry", `{}`); code != http.StatusConflict {
+				t.Fatalf("join retried during cleanup = %d %v", code, out)
+			}
+			outage = false
+			if replacement {
+				admission.SetUID("replacement-uid")
+				if _, err := admissions.Create(ctx, admission, metav1.CreateOptions{}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			want := http.StatusOK
+			if replacement {
+				want = http.StatusConflict
+			}
+			if code, out := s.call(http.MethodPost, clearURL, `{"machine_gone":true}`); code != want {
+				t.Fatalf("retry clear = %d %v, want %d", code, out, want)
+			}
+			if _, err := s.g.kubeClient.RlinfV1alpha1().NodeJoins().Get(ctx, join.Name, metav1.GetOptions{}); (replacement && err != nil) || (!replacement && !apierrors.IsNotFound(err)) {
+				t.Fatalf("unexpected remaining join: %v", err)
+			}
+			network, err := s.g.provisionNetwork(ctx)
+			if err != nil || (len(network.Entries("spec", "nodes")) == 1) != replacement {
+				t.Fatalf("unexpected remaining Hub: %v, %v", network, err)
+			}
+		})
+	}
+}

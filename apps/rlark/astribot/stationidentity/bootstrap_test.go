@@ -399,3 +399,25 @@ func TestBootstrapServesTheInstallersSHA256AndReadsTheFileAgainOnlyWhenItChanges
 		t.Fatalf("a new installer: %q", body)
 	}
 }
+
+func TestRetiredAdmissionCannotBeRedeemedOrReissued(t *testing.T) {
+	const code = "retired-code"
+	digest := sha256.Sum256([]byte(code))
+	now := time.Unix(1_800_000_000, 0)
+	admission := &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "station.rlark.io/v1alpha1", "kind": "NodeAdmission",
+		"metadata": map[string]any{"name": "node", "namespace": "member"},
+		"spec":     map[string]any{"codeHash": hex.EncodeToString(digest[:]), "expiresAt": now.Add(time.Hour).Format(time.RFC3339)},
+	}}
+	admission.SetAnnotations(map[string]string{AdmissionCleanupAnnotation: "original-join"})
+	client := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), map[schema.GroupVersionResource]string{nodeAdmissionGVR: "NodeAdmissionList"}, admission)
+	b := &Bootstrap{Management: client, Now: func() time.Time { return now }}
+	answer, status, err := b.Redeem(t.Context(), code, strings.Repeat("A", 43)+"=")
+	if err != nil || status != http.StatusGone || answer.State != "rejected" {
+		t.Fatalf("retired redemption: %+v %d %v", answer, status, err)
+	}
+	resource := client.Resource(nodeAdmissionGVR).Namespace(admission.GetNamespace())
+	if _, err := (AdmissionService{}).Reissue(t.Context(), "admin", admission, resource, time.Hour); err == nil || err.Status != http.StatusConflict {
+		t.Fatalf("retired reissue: %v", err)
+	}
+}

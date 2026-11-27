@@ -399,6 +399,9 @@ func (b *Bootstrap) Redeem(ctx context.Context, code, publicKey string) (Bootstr
 	if admission == nil {
 		return BootstrapAnswer{State: "rejected", Reason: "unknown code"}, http.StatusNotFound, nil
 	}
+	if admission.GetAnnotations()[AdmissionCleanupAnnotation] != "" || admission.GetDeletionTimestamp() != nil {
+		return BootstrapAnswer{State: "rejected", Reason: "the code is being retired"}, http.StatusGone, nil
+	}
 	text := func(fields ...string) string {
 		value, _, _ := unstructured.NestedString(admission.Object, fields...)
 		return value
