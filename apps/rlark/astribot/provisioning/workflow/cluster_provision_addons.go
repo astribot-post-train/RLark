@@ -91,7 +91,7 @@ func (g *Service) installProvisionAddon(ctx context.Context, cluster string, rel
 			return fmt.Sprintf("%s %s Ready", addon.name, meta.Version), nil
 		}
 	}
-	return "", fmt.Errorf("Addon %s is %s after 10 min: %s", addon.name, phase, message)
+	return "", fmt.Errorf("addon %s is %s after 10 min: %s", addon.name, phase, message)
 }
 
 func (r *provisionRun) addons(ctx context.Context, p *rlarkv1alpha1.ClusterProvision) (string, error) {

@@ -414,6 +414,10 @@ func (g *Service) HandleRetryNodeJoin(c *gin.Context) {
 		g.http.RespondKubeError(c, "get node join: "+err.Error(), err)
 		return
 	}
+	if j.Annotations[nodeJoinCleanupAnnotation] != "" {
+		g.http.RespondError(c, http.StatusConflict, g.http.CodeResourceConflict, "the SSH join is being cleared; retry cleanup")
+		return
+	}
 	if j.Status.Phase != rlarkv1alpha1.ClusterProvisionFailed {
 		c.JSON(http.StatusConflict, gin.H{"error": "the join of " + j.Spec.NodeName + " is " + string(j.Status.Phase) + ": only a stopped one is retried"})
 		return
@@ -458,11 +462,22 @@ func (g *Service) HandleRetryNodeJoin(c *gin.Context) {
 const joinTunnelHostMarker = "/var/lib/rlark/node-join-tunnel.uid"
 
 const clearTunnelScript = `set -eu
-marker=` + joinTunnelHostMarker + "\n" + verifyHostMarker + `systemctl disable --now rlark-station-gateway >/dev/null 2>&1 || true
+marker=` + joinTunnelHostMarker + "\n" + lockHostMarker + allowUnclaimedHostStart + joinTunnelHostUnused + allowUnclaimedHostEnd + verifyLockedHostMarker + `
+state=$(systemctl show rlark-join -p ActiveState --value)
+case "$state" in
+  inactive|failed) ;;
+  *) echo 'SSH join is still active on the host' >&2; exit 1;;
+esac
+` + detachedJoinHost + `
+if [ -e /etc/kubernetes/kubelet.conf ] || [ -e /etc/kubernetes/bootstrap-kubelet.conf ]; then
+  [ "${reset_worker:-}" = yes ] ||
+    { printf '%s\n' 'reason=worker_credentials' 'host still has Kubernetes credentials; use a verified node removal' >&2; exit 1; }
+  ` + workerJoinIdentity + resetDetachedWorker + `
+fi
+systemctl disable --now rlark-station-gateway >/dev/null 2>&1 || true
 rm -f /etc/systemd/system/rlark-station-gateway.service /etc/rlark/station/bootstrap.json /var/lib/station/wg/last-applied.json
 ip link del st-wg0 2>/dev/null || true
 systemctl daemon-reload
-echo cleared=yes
 ` + finishHostCleanup
 
 // HandleClearNodeJoin clears owned tunnel state before installation, or
@@ -504,20 +519,27 @@ func (g *Service) HandleClearNodeJoin(c *gin.Context) {
 		j.Spec.Machine.User = user
 	}
 	installReached := reached(stageInstall) || slices.Index(joinStages, j.Status.Stage) >= slices.Index(joinStages, stageInstall)
-	if j.UID == "" || j.Status.Phase != rlarkv1alpha1.ClusterProvisionSucceeded && installReached && j.Annotations[nodeJoinNodeUID] == "" {
-		c.JSON(http.StatusConflict, gin.H{"error": "the SSH join has no verified original UID for cleanup"})
+	missingNativeUID := j.Status.Phase != rlarkv1alpha1.ClusterProvisionSucceeded && installReached && j.Annotations[nodeJoinNodeUID] == ""
+	if j.UID == "" || missingNativeUID && !request.MachineGone && len(password) == 0 {
+		c.JSON(http.StatusConflict, gin.H{"error": "the SSH join has no verified original Node UID; provide the SSH password or select machine_gone to abandon the attempt"})
 		return
 	}
 	// A join that succeeded leaves its node in the cluster: only its record goes (a node is removed on its own page).
 	var steps []string
+	var preserved bool
 	switch {
 	case j.Status.Phase == rlarkv1alpha1.ClusterProvisionSucceeded:
+	case missingNativeUID:
+		steps, preserved, err = g.clearJoinWithoutNodeUID(ctx, namespace, j, password, sudoPassword, request.MachineGone)
 	case installReached:
 		steps, err = g.removeJoinedNode(ctx, namespace, j, g.http.Actor(c))
 	default:
+		if request.MachineGone {
+			password = nil
+		}
 		steps, err = g.clearUnredeemedJoin(ctx, j, password, sudoPassword)
 	}
-	if err == nil {
+	if err == nil && !preserved {
 		if err = g.clearNodeJoinMachineAdmission(ctx, j); err == nil && j.Annotations[nodeJoinMachineClaim] != "" {
 			steps = append(steps, "cleared the scanned Machine admission")
 		}
@@ -529,10 +551,58 @@ func (g *Service) HandleClearNodeJoin(c *gin.Context) {
 		}
 	}
 	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error(), "steps": steps})
+		status := http.StatusBadGateway
+		if apierrors.IsConflict(err) {
+			status = http.StatusConflict
+		}
+		c.JSON(status, gin.H{"error": err.Error(), "steps": steps})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"steps": steps})
+}
+
+// Clear an unverified attempt without ever looking up a native Node by name.
+func (g *Service) clearJoinWithoutNodeUID(ctx context.Context, namespace string, j *rlarkv1alpha1.NodeJoin, password, sudoPassword []byte, machineGone bool) ([]string, bool, error) {
+	receipt, err := readJoinAdmissionCleanup(j, namespace)
+	if err != nil {
+		return nil, false, err
+	}
+	resource := g.stationClient.Resource(nodeAdmissionGVR).Namespace(namespace)
+	admission, err := resource.Get(ctx, j.Spec.NodeName, metav1.GetOptions{})
+	switch {
+	case apierrors.IsNotFound(err):
+		if receipt.AdmissionUID == "" && machineGone && j.Status.Facts.AdmissionIssuedAt != nil && j.Status.Facts.DeclaredHub {
+			return nil, false, admissionCleanupConflict(j, "issued admission is missing, so the SSH join and its Hub declaration require ownership verification")
+		}
+	case err != nil:
+		return nil, false, err
+	default:
+		redeemed, _, err := unstructured.NestedString(admission.Object, "spec", "redeemedAt")
+		if err != nil {
+			return nil, false, err
+		}
+		key, _, err := unstructured.NestedString(admission.Object, "spec", "publicKey")
+		if err != nil {
+			return nil, false, err
+		}
+		if admission.GetAnnotations()[stationidentity.SSHJoinUIDAnnotation] != string(j.UID) || redeemed != "" || key != "" {
+			if receipt.AdmissionUID != "" {
+				return nil, false, admissionCleanupConflict(j, "an Admission that replaced or consumed the retired code is still present")
+			}
+			if !machineGone {
+				return nil, false, fmt.Errorf("the admission may already belong to a Node; use Site Nodes to inspect it or select machine_gone to clear only the SSH attempt")
+			}
+			return []string{"Preserved the admission and tunnel because native Node ownership could not be established"}, true, nil
+		}
+		if err := g.retireJoinAdmission(ctx, j, namespace, admission, receipt); err != nil {
+			return nil, false, err
+		}
+	}
+	if machineGone {
+		password = nil
+	}
+	steps, err := g.clearUnredeemedJoin(ctx, j, password, sudoPassword)
+	return steps, false, err
 }
 
 // clearUnredeemedJoin takes away what a join left before its code's line ran: the tunnel on the machine, when the
@@ -548,8 +618,30 @@ func (g *Service) clearUnredeemedJoin(ctx context.Context, j *rlarkv1alpha1.Node
 		if err != nil {
 			return steps, fmt.Errorf("登录 %s@%s：%w", j.Spec.Machine.User, j.Spec.Machine.Address, err)
 		}
-		_, err = machine.Run(ctx, "owner="+nodessh.Quote(string(j.UID))+"\n"+clearTunnelScript, nil, nil)
-		_ = machine.Close()
+		defer func() { _ = machine.Close() }()
+		clearHost := "owner=" + nodessh.Quote(string(j.UID)) + "\n" + joinHostIdentity(j) + clearTunnelScript
+		// Keep the ordinary pre-install clear path independent of member API availability.
+		// Only a confirmed absent native Node can authorize a local worker reset.
+		out, err := machine.Run(ctx, clearHost, nil, nil)
+		if err != nil && hasHostReason(out, "worker_credentials") {
+			if j.Status.HostKey == "" {
+				return steps, fmt.Errorf("the SSH host fingerprint is required before resetting a worker")
+			}
+			if proofErr := g.confirmNativeNodeAbsent(ctx, j); proofErr != nil {
+				return steps, proofErr
+			}
+			out, err = machine.Run(ctx, "reset_worker=yes\n"+clearHost, nil, nil)
+		}
+		if err != nil && hasHostReason(out, "ownership_missing") {
+			digest, proofErr := g.authorizeLegacyTunnel(ctx, machine, j)
+			if proofErr == nil {
+				// The cleanup script already takes the lock. Release the
+				// claim lock before running it and let it recheck the UID.
+				_, err = machine.Run(ctx, claimDetachedTunnel(j, digest)+"\nflock -u 8\n"+clearHost, nil, nil)
+			} else {
+				err = proofErr
+			}
+		}
 		if err != nil {
 			return steps, fmt.Errorf("撤掉机器上的隧道：%w", err)
 		}

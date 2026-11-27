@@ -49,7 +49,7 @@ func issueKCPIdentities(ctx context.Context, kubeconfig string, clientset *kuber
 	if err != nil {
 		return err
 	}
-	kcpConfig.TLSClientConfig.ServerName = u.Hostname()
+	kcpConfig.ServerName = u.Hostname()
 	u.Host = "127.0.0.1:" + strconv.Itoa(local)
 	kcpConfig.Host = u.String()
 	kcp, err := kubernetes.NewForConfig(kcpConfig)

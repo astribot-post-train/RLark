@@ -87,7 +87,7 @@ func (g *Service) clearMachineAdmission(ctx context.Context, name, clusterID, ac
 		return err
 	}
 	if stringValue(admit["clusterID"]) != clusterID || stringValue(admit["type"]) != "Server" || stringValue(admit["requestedBy"]) != actor {
-		return fmt.Errorf("Machine %s admission changed; it was left in place", name)
+		return fmt.Errorf("machine %s admission changed; it was left in place", name)
 	}
 	patch, err := json.Marshal(map[string]interface{}{
 		"metadata": map[string]interface{}{"resourceVersion": object.GetResourceVersion(), "annotations": map[string]interface{}{nodeJoinMachineClaim: nil}},

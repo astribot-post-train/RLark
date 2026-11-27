@@ -7,6 +7,8 @@ import { StageList } from "../components/StageList";
 import { useAction } from "../components/useAction";
 import { defaultClusterName, newClusterProblem, provisionView, type ClusterProvision, type NewClusterForm } from "../lib/clusterProvision";
 import { firstNewClusterProblem, newClusterFieldProblems, newClusterSummary, provisionProgress, type NewClusterField } from "../lib/newClusterForm";
+import { ProvisionMigrationDialog } from "../components/ProvisionMigrationDialog";
+import { offersHistoricalOwnership } from "../lib/provisionMigration";
 import "../components/provision.css";
 
 const emptyForm: NewClusterForm = { clusterType: "", site: "", cluster: "", address: "", port: "22", user: "root", password: "", tunnelEndpoint: "" };
@@ -31,6 +33,9 @@ export function NewClusterPage({ lang }: { lang: Lang }) {
   const [submitted, setSubmitted] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [loadError, setLoadError] = useState("");
+  const [migration, setMigration] = useState<{ name: string; uid: string }>();
+  const [migrationNotice, setMigrationNotice] = useState("");
+  const [migrationCandidateUID, setMigrationCandidateUID] = useState("");
   const [cleared, setCleared] = useState<string[]>([]);
   const { pending: busy, error, setError, run } = useAction();
   const refs = useRef<Partial<Record<NewClusterField, HTMLElement | null>>>({});
@@ -40,6 +45,39 @@ export function NewClusterPage({ lang }: { lang: Lang }) {
   const current = provisions.find((p) => p.metadata?.name === selected) ?? provisions[0];
   const view = current ? provisionView(current, lang) : undefined;
   const progress = provisionProgress(current);
+
+  const historyName = current?.metadata?.name;
+  const historyUID = current?.metadata?.uid;
+  const historyVersion = current?.metadata?.resourceVersion;
+  const legacyRecord =
+    (view?.phase === "Failed" || view?.phase === "Succeeded") &&
+    offersHistoricalOwnership(current?.metadata?.annotations);
+  useEffect(() => {
+    setMigrationCandidateUID("");
+    if (!legacyRecord || !historyName || !historyUID) return;
+    const request = new AbortController();
+    void clusterProvisionsApi
+      .migrationCandidates(historyName, request.signal)
+      .then(
+        (preview) => {
+          if (
+            !request.signal.aborted &&
+            preview.provision_uid === historyUID &&
+            (preview.native_state === "review" ||
+              preview.candidates.some(
+                (item) => item.state === "review" || item.state === "blocked",
+              ))
+          ) {
+            setMigrationCandidateUID(historyUID);
+          }
+        },
+        () => {
+          // Let the dialog report the failure and offer a refresh.
+          if (!request.signal.aborted) setMigrationCandidateUID(historyUID);
+        },
+      );
+    return () => request.abort();
+  }, [historyName, historyUID, historyVersion, legacyRecord, migrationNotice]);
 
   const refresh = useCallback(async () => {
     try {
@@ -168,6 +206,31 @@ export function NewClusterPage({ lang }: { lang: Lang }) {
           <div className="new-cluster-progress-meta"><strong>{zh ? `阶段 ${progress.stageNumber}/${progress.total}` : `Stage ${progress.stageNumber}/${progress.total}`}</strong><span>{progress.completed}/{progress.total}</span></div><progress className="new-cluster-progress-track" value={progress.percent} max={100} aria-label={zh ? "创建进度" : "Provisioning progress"} />
           {view.phase === "Failed" && <p className="new-cluster-failure">{zh ? `失败阶段：${view.stages.find((stage) => stage.name === current.status?.stage)?.label ?? current.status?.stage ?? "—"}` : `Failed stage: ${view.stages.find((stage) => stage.name === current.status?.stage)?.label ?? current.status?.stage ?? "—"}`}{progress.failedStage && ` · ${progress.failedStage}`}</p>}
           <StageList stages={view.stages} zh={zh} />
+          {historyName &&
+            historyUID &&
+            legacyRecord &&
+            migrationCandidateUID === historyUID && (
+              <div className="provision-migration-entry">
+                <button
+                  type="button"
+                  className="secondary-button"
+                  disabled={busy}
+                  onClick={() => {
+                    setMigrationNotice("");
+                    setMigration({ name: historyName, uid: historyUID });
+                  }}
+                >
+                  {zh ? "核对历史归属" : "Review historical ownership"}
+                </button>
+              </div>
+            )}
+          {migrationNotice && migrationNotice === historyName && (
+            <p role="status">
+              {zh
+                ? "已记录归属，可按原流程清理。"
+                : "Ownership recorded. You can use the existing cleanup action."}
+            </p>
+          )}
           <RetryClear zh={zh} view={view} clearReach={zh ? "要登录机器把它恢复原样" : "to put the machine back"} goneWhy={zh ? "（重装或退还）" : " (reinstalled or returned)"} user={current.spec.machine.user} pending={busy} run={run}
             retry={async (user, password) => { await clusterProvisionsApi.retry(current.metadata!.name!, password, user); await refresh(); }}
             clear={async (user, password, machineGone) => { setCleared(await selfHealApi.clearClusterProvision(current.metadata!.name!, password, user, machineGone)); setSelected(""); await refresh(); }}
@@ -176,6 +239,19 @@ export function NewClusterPage({ lang }: { lang: Lang }) {
         </section>}
       </aside>
     </div>
+      {migration && (
+        <ProvisionMigrationDialog
+          key={migration.uid}
+          {...migration}
+          zh={zh}
+          onClose={() => setMigration(undefined)}
+          onRecorded={() => {
+            setMigrationNotice(migration.name);
+            setMigration(undefined);
+            void refresh();
+          }}
+        />
+      )}
     {provisions.length > 0 && <section className="signed-clusters-panel new-cluster-history">
       <div className="signed-clusters-heading"><div><h3>{zh ? "新建历史" : "Creation history"}</h3></div><span>{provisions.length}</span></div>
       <div className="new-cluster-history-list">{[...provisions].sort((a, b) => Date.parse(b.metadata?.creationTimestamp ?? "") - Date.parse(a.metadata?.creationTimestamp ?? "")).map((p) => {

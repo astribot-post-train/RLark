@@ -198,6 +198,11 @@ func LoadDeployConfig(path string) (*DeployConfig, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read deploy config: %w", err)
 	}
+	return ParseDeployConfig(data)
+}
+
+// ParseDeployConfig uses the same strict YAML contract as the installer.
+func ParseDeployConfig(data []byte) (*DeployConfig, error) {
 	var cfg DeployConfig
 	if err := yaml.UnmarshalStrict(data, &cfg); err != nil {
 		return nil, fmt.Errorf("unmarshal deploy config: %w", err)

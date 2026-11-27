@@ -39,7 +39,14 @@ func (r *nodeJoinRun) tunnel(ctx context.Context, j *rlarkv1alpha1.NodeJoin) (st
 	if err != nil {
 		return "", err
 	}
-	out, err := machine.Run(ctx, claimHostMarker(joinTunnelHostMarker, j.UID, `[ ! -e /etc/systemd/system/rlark-station-gateway.service ]`)+"\n"+tunnelScript, strings.NewReader(document), nil)
+	out, err := machine.Run(ctx, claimHostMarker(joinTunnelHostMarker, j.UID, joinTunnelHostUnused)+"\n"+joinHostIdentity(j)+rememberJoinHostIdentity+tunnelScript, strings.NewReader(document), nil)
+	if err != nil && hasHostReason(out, "installation_artifacts") {
+		digest, proofErr := r.g.authorizeLegacyTunnel(ctx, machine, j)
+		if proofErr != nil {
+			return "", fmt.Errorf("verify historical tunnel before reuse: %w", proofErr)
+		}
+		out, err = machine.Run(ctx, claimDetachedTunnel(j, digest)+"\n"+tunnelScript, strings.NewReader(document), nil)
+	}
 	if err != nil {
 		return "", err
 	}
@@ -117,7 +124,7 @@ curl --connect-timeout 5 -sk -o /dev/null -w 'code=%{http_code}\n' https://` + a
 		}
 		// The longest the evidence allows, whatever it says: the wait does not hold its stage Running.
 		if now.Sub(since) > stationidentity.PropagationLongest+tunnelAnswerWithin {
-			return describeTimings(facts.Timings), fmt.Errorf("Station API %s 经隧道 %s 内没有应答：%s", address, stationidentity.PropagationLongest+tunnelAnswerWithin, message)
+			return describeTimings(facts.Timings), fmt.Errorf("station API %s 经隧道 %s 内没有应答：%s", address, stationidentity.PropagationLongest+tunnelAnswerWithin, message)
 		}
 		say(message)
 		time.Sleep(joinWaitStep)
@@ -131,4 +138,14 @@ func describeTimings(timings []rlarkv1alpha1.NodeJoinTiming) string {
 		parts = append(parts, t.Event+" "+t.At.Local().Format("15:04:05"))
 	}
 	return strings.Join(parts, "，")
+}
+
+// hasHostReason reads the embedded host script protocol independently of its diagnostics.
+func hasHostReason(output, reason string) bool {
+	for _, line := range strings.Split(output, "\n") {
+		if strings.TrimSpace(line) == "reason="+reason {
+			return true
+		}
+	}
+	return false
 }

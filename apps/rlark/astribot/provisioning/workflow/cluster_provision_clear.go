@@ -3,6 +3,7 @@ package workflow
 import (
 	"context"
 	"fmt"
+	"maps"
 	"net/http"
 	"slices"
 	"strings"
@@ -12,9 +13,7 @@ import (
 	"github.com/rlinf/rlark/apps/rlark/astribot/nodessh"
 	"github.com/rlinf/rlark/apps/rlark/astribot/provisioning"
 	"github.com/rlinf/rlark/apps/rlark/astribot/provisioning/ownership"
-	"github.com/rlinf/rlark/apps/rlark/astribot/release"
 	"github.com/rlinf/rlark/apps/rlark/astribot/stationidentity"
-	"github.com/rlinf/rlark/apps/rlark/astribot/stationmember"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -37,7 +36,7 @@ type clearClusterProvisionRequest struct {
 // this script and the shells it runs under hold the installer's name in their own command lines and are left out.
 // The machine keeps its tunnel key and the installer: a making that starts over finds the same machine.
 const clearMachineScript = `set -eu
-marker=` + provisionHostMarker + "\n" + verifyHostMarker + verifyProvisionHostCluster + `B=` + provisioning.BootstrapDir + `
+marker=` + provisionHostMarker + "\n" + lockHostMarker + allowUnclaimedHostStart + provisionHostUnused + allowUnclaimedHostEnd + verifyLockedHostMarker + verifyProvisionHostCluster + `B=` + provisioning.BootstrapDir + `
 mine=" "; p=$$; while [ "$p" -gt 1 ]; do mine="$mine$p "; p=$(awk '{print $4}' /proc/$p/stat); done
 for p in $(pgrep -f 'control-plane\.sh|station-bootstrap control-plane' || true); do
   case "$mine" in *" $p "*) ;; *) kill "$p" 2>/dev/null || true ;; esac
@@ -129,12 +128,30 @@ func (g *Service) HandleClearClusterProvision(c *gin.Context) {
 func (g *Service) clearProvision(ctx context.Context, p *rlarkv1alpha1.ClusterProvision, password []byte, clusterUID types.UID) ([]string, error) {
 	var steps []string
 	facts := p.Status.Facts
+	if p.Annotations[provisionClusterReceipt] == "" {
+		if err := g.requireLegacyProvisionReceipts(ctx, p); err != nil {
+			return steps, err
+		}
+	}
+	network, err := stationidentity.ReadSiteNetwork(ctx, g.stationClient)
+	if err != nil && !apierrors.IsNotFound(err) {
+		return steps, err
+	}
+	if err == nil {
+		if _, err := verifyProvisionNetwork(p, network); err != nil {
+			return steps, err
+		}
+	}
 	if len(password) > 0 && p.UID != "" && p.Status.HostKey != "" {
 		machine, _, err := g.provisionDial(ctx, p.Spec.Machine, password, p.Status.HostKey)
 		if err != nil {
 			return steps, fmt.Errorf("log in to %s@%s: %w", p.Spec.Machine.User, p.Spec.Machine.Address, err)
 		}
-		out, err := machine.Run(ctx, "owner="+nodessh.Quote(string(p.UID))+"\n"+clearMachineScript, nil, nil)
+		script := "owner=" + nodessh.Quote(string(p.UID)) + "\n" + clearMachineScript
+		if native := p.Annotations[legacyNativeClusterUID]; native != "" {
+			script = claimLegacyProvisionHost(p.UID, types.UID(native)) + "\nflock -u 8\n" + script
+		}
+		out, err := machine.Run(ctx, script, nil, nil)
 		_ = machine.Close()
 		if err != nil {
 			return steps, fmt.Errorf("put the machine back: %w", err)
@@ -143,13 +160,9 @@ func (g *Service) clearProvision(ctx context.Context, p *rlarkv1alpha1.ClusterPr
 	} else {
 		steps = append(steps, "机器 "+p.Spec.Machine.Address+" 没动（没给密码或已不在）：它要再用，先在机器上撤掉旧控制面")
 	}
-	credentials := []struct{ namespace, name string }{
-		{stationMemberCredentialNamespace, stationmember.SecretName(p.Name)},
-		{stationOperationCredentialNamespace, stationmember.SecretName(p.Name)},
-		{release.CredentialNamespace, release.CredentialName(p.Name)},
-		{g.namespace, "rlark-agent-cert-" + provisionAgentID(p.Name)},
-	}
-	for _, credential := range credentials {
+	credentials := g.provisionCredentials(p.Name)
+	for _, kind := range slices.Sorted(maps.Keys(credentials)) {
+		credential := credentials[kind]
 		namespace, name := credential.namespace, credential.name
 		client := g.rawClient.CoreV1().Secrets(namespace)
 		secret, err := client.Get(ctx, name, metav1.GetOptions{})
@@ -173,17 +186,20 @@ func (g *Service) clearProvision(ctx context.Context, p *rlarkv1alpha1.ClusterPr
 	// Provisioning does not own that namespace's records.
 	controlPlaneName := "cp." + p.Name + ".rlark.internal"
 	clearedSite := false
-	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+	err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		object, err := stationidentity.ReadSiteNetwork(ctx, g.stationClient)
+		if apierrors.IsNotFound(err) {
+			return nil
+		}
 		if err != nil {
+			return err
+		}
+		owned, err := verifyProvisionNetwork(p, object)
+		if err != nil || !owned {
 			return err
 		}
 		receiptKey := siteProvisionAnnotation(p.Name)
 		annotations := object.GetAnnotations()
-		if p.UID == "" || object.GetUID() == "" || annotations[receiptKey] !=
-			siteProvisionReceipt(p.UID, object.GetUID(), controlPlaneName, facts.NodeName, facts.TunnelAddress, facts.PublicKey, p.Spec.Site) {
-			return nil
-		}
 		network := provisioning.Network{Object: object}
 		var names, sites, nodes []interface{}
 		for _, entry := range network.Entries("spec", "names") {
@@ -227,7 +243,7 @@ func (g *Service) clearProvision(ctx context.Context, p *rlarkv1alpha1.ClusterPr
 	if clearedSite {
 		steps = append(steps, "SiteNetwork：已清理本次创建的站点声明")
 	} else {
-		steps = append(steps, "SiteNetwork：没有匹配的 UID 归属记录，保留现有声明")
+		steps = append(steps, "SiteNetwork：没有需要清理的声明")
 	}
 	if clusterUID != "" {
 		opts := metav1.DeleteOptions{Preconditions: &metav1.Preconditions{UID: &clusterUID}}
@@ -241,4 +257,19 @@ func (g *Service) clearProvision(ctx context.Context, p *rlarkv1alpha1.ClusterPr
 		return steps, fmt.Errorf("delete the record of the making: %w", err)
 	}
 	return append(steps, "删掉这次新建的记录"), nil
+}
+
+// An incomplete ownership receipt must keep the provisioning record available
+// for recovery. An absent declaration, including one already cleared, is safe.
+func verifyProvisionNetwork(p *rlarkv1alpha1.ClusterProvision, object *unstructured.Unstructured) (bool, error) {
+	owner, receipt := provisionNetworkReceipt(p, object)
+	present, matches := legacyProvisionNetwork(p, object)
+	if owner == "" && !present {
+		return false, nil
+	}
+	if p.UID == "" || object.GetUID() == "" || owner != receipt || !matches {
+		return false, apierrors.NewConflict(siteNetworkGVR.GroupResource(), object.GetName(),
+			fmt.Errorf("cannot verify SiteNetwork declarations for provisioning record %s", p.Name))
+	}
+	return true, nil
 }

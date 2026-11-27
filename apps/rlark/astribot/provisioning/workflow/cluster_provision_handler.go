@@ -130,7 +130,7 @@ func (g *Service) HandleCreateClusterProvision(c *gin.Context) {
 	}
 	client := g.kubeClient.RlinfV1alpha1().ClusterProvisions()
 	p, err := client.Create(ctx, &rlarkv1alpha1.ClusterProvision{
-		ObjectMeta: metav1.ObjectMeta{Name: req.Cluster, Labels: map[string]string{provisioning.ClusterTypeLabel: req.Type}},
+		ObjectMeta: metav1.ObjectMeta{Name: req.Cluster, Labels: map[string]string{provisioning.ClusterTypeLabel: req.Type}, Annotations: map[string]string{provisionOwnershipOrigin: "current"}},
 		Spec: rlarkv1alpha1.ClusterProvisionSpec{
 			Site:        req.Site,
 			Machine:     rlarkv1alpha1.ClusterProvisionMachine{Address: req.Address, Port: req.Port, User: req.User, TunnelEndpoint: req.TunnelEndpoint},

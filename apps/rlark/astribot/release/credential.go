@@ -51,7 +51,7 @@ func IssueMemberCredential(ctx context.Context, member kubernetes.Interface, mem
 	if err != nil {
 		return err
 	}
-	if err := applyDefinitions(ctx, memberDefinitions, definitions, cluster); err != nil {
+	if err := applyDefinitions(ctx, memberDefinitions, definitions, cluster, nil); err != nil {
 		return err
 	}
 	var token *corev1.Secret
@@ -138,7 +138,7 @@ func ReachedAs(ctx context.Context, management dynamic.Interface, administrator 
 	if err != nil {
 		return "", "", err
 	}
-	name := administrator.TLSClientConfig.ServerName
+	name := administrator.ServerName
 	if name == "" {
 		name = api.Hostname()
 	}
@@ -157,7 +157,7 @@ func ReachedAs(ctx context.Context, management dynamic.Interface, administrator 
 			return "https://" + net.JoinHostPort(address, port), name, nil
 		}
 	}
-	return administrator.Host, administrator.TLSClientConfig.ServerName, nil
+	return administrator.Host, administrator.ServerName, nil
 }
 
 // MemberConfigs are the clusters of the management plane, each as its credential reaches it.

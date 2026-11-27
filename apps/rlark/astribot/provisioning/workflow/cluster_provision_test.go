@@ -285,6 +285,9 @@ func provisionCall(t *testing.T, g *Service, method, path, name, body string) (i
 	router.POST("/cluster-provisions", g.HandleCreateClusterProvision)
 	router.POST("/cluster-provisions/:name/retry", g.HandleRetryClusterProvision)
 	router.POST("/cluster-provisions/:name/clear", g.HandleClearClusterProvision)
+	router.POST("/cluster-provisions/:name/migrate-ownership", g.HandleMigrateClusterProvision)
+	router.GET("/cluster-provisions/:name/migration-candidates", g.HandleClusterProvisionMigrationCandidates)
+	router.POST("/cluster-provisions/:name/migration-candidates/host", g.HandleClusterProvisionMigrationHost)
 	recorder := httptest.NewRecorder()
 	router.ServeHTTP(recorder, httptest.NewRequest(method, path, bytes.NewBufferString(body)))
 	var out map[string]any
@@ -691,5 +694,52 @@ func TestHostRollbackRejectsReplacementOrMissingNativeClusterUID(t *testing.T) {
 				t.Fatalf("guard accepted %q: %s %v", uid, out, err)
 			}
 		})
+	}
+}
+
+func TestPartialProvisionRollbackRequiresOriginalInstallJournal(t *testing.T) {
+	dir := t.TempDir()
+	marker := filepath.Join(dir, "marker")
+	journal := filepath.Join(dir, "journal")
+	admin := filepath.Join(dir, "admin.conf")
+	if err := os.Mkdir(journal, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(admin, nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	script := strings.NewReplacer(
+		"/var/lib/rlark/control-plane", journal,
+		"/etc/kubernetes/admin.conf", admin,
+	).Replace(strings.TrimPrefix(verifyProvisionHostCluster, readHostClusterUID))
+	for _, owner := range []string{"", "replacement", "original"} {
+		t.Run(owner, func(t *testing.T) {
+			if err := os.WriteFile(filepath.Join(journal, "provision-uid"), []byte(owner), 0600); err != nil {
+				t.Fatal(err)
+			}
+			out, err := exec.Command("sh", "-c", "set -eu\nowner=original\nmarker="+nodessh.Quote(marker)+"\n"+script).CombinedOutput()
+			if (err == nil) != (owner == "original") {
+				t.Fatalf("unexpected guard result for %q: %s %v", owner, out, err)
+			}
+		})
+	}
+}
+
+func TestClearKeepsProvisionWhenSiteNetworkReceiptLacksPersistedFacts(t *testing.T) {
+	const name = "rlark-baidu-gpu"
+	network := provisionTestNetwork()
+	network.SetUID("site-network")
+	network.SetAnnotations(map[string]string{siteProvisionAnnotation(name): siteProvisionReceipt("attempt", "site-network", "cp."+name+".rlark.internal", "cp-1", "10.254.240.8", "key", "baidu")})
+	p := &rlarkv1alpha1.ClusterProvision{
+		ObjectMeta: metav1.ObjectMeta{Name: name, UID: "attempt", Annotations: map[string]string{provisionClusterReceipt: "original"}},
+		Spec:       rlarkv1alpha1.ClusterProvisionSpec{Site: "baidu"},
+	}
+	g := provisionGateway(t, network, p)
+	code, out := provisionCall(t, g, http.MethodPost, "/cluster-provisions/"+name+"/clear", name, `{"machine_gone":true}`)
+	if code != http.StatusConflict {
+		t.Fatalf("clear=%d %v", code, out)
+	}
+	if _, err := g.kubeClient.RlinfV1alpha1().ClusterProvisions().Get(t.Context(), name, metav1.GetOptions{}); err != nil {
+		t.Fatalf("lost provisioning record: %v", err)
 	}
 }

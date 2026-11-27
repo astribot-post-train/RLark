@@ -1,0 +1,39 @@
+# Install the scoped Lease permissions for an explicitly opted-in stock member.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: rlark-stock-upgrade-lock
+  namespace: rlark-system
+rules:
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    resourceNames: ["rlark-agent-upgrade"]
+    verbs: ["get", "update"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: ["rlark-state"]
+    verbs: ["get", "update"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: ["rlark-agent-upgrade-policy"]
+    verbs: ["get"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get"]
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: rlark-stock-upgrade-lock
+  namespace: rlark-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: rlark-stock-upgrade-lock
+subjects:
+  - kind: ServiceAccount
+    name: rlark-agent
+    namespace: rlark-system

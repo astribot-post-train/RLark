@@ -83,7 +83,7 @@ func LoadStages(data []byte) ([]Stage, error) {
 		for _, condition := range slices.Concat(stage.Gate, stage.Check) {
 			_, plain := Checks[condition.Check]
 			_, levelled := LevelChecks[condition.Check]
-			if !(plain && condition.Level == 0) && !(levelled && condition.Level > 0) {
+			if (!plain || condition.Level != 0) && (!levelled || condition.Level <= 0) {
 				return nil, fmt.Errorf("stage %s names %q, which is neither a check nor a check with its level", stage.Name, condition.Check)
 			}
 		}

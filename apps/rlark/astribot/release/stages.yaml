@@ -97,3 +97,8 @@ stages:
     timeoutFactor: 6
     check: [clusters-online, nodes-ready]
     recreates: ["*/*"]
+
+
+  - name: stock-upgrades
+    requires: [addons]
+    note: Initialize the shared upgrade policy after the release's cluster Agent is running. No workloads are changed in this stage.

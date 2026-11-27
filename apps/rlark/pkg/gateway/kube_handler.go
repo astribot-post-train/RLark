@@ -1154,7 +1154,7 @@ func (g *Gateway) handleKubeCreate(resource string) gin.HandlerFunc {
 			}
 		}
 		if resource == "upgradejobs" {
-			bodyBytes, err = prepareUpgradeJobForCreate(bodyBytes)
+			bodyBytes, err = g.prepareUpgradeJobForCreate(ctx, bodyBytes)
 			if err != nil {
 				respondError(c, http.StatusBadRequest, CodeInvalidRequestBody, err.Error())
 				return

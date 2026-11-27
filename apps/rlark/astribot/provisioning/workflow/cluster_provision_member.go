@@ -204,7 +204,7 @@ func (g *Service) waitCluster(ctx context.Context, name string, within time.Dura
 			return nil
 		}
 	}
-	return fmt.Errorf("Cluster %s is %s after %s", name, phase, within)
+	return fmt.Errorf("cluster %s is %s after %s", name, phase, within)
 }
 
 // station registers the cluster with the site's Station: what the cluster runs for it, and how the management

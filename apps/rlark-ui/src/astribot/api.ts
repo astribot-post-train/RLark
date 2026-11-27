@@ -1,3 +1,4 @@
+import type { MigrationConfirmation, MigrationPreview } from "./lib/provisionMigration.js";
 // The console's requests to the Gateway routes this fork adds. backend.ts keeps RLark's own.
 import { ApiError, request, requestJson, withQuery } from "../api.js";
 import type { AdmittedMachine, IssuedNodeAdmission, MachineList, NodeAdmission, NodeClassAccess, RobotPowerDesired, SiteNode } from "./lib/siteNodeDisplay.js";
@@ -83,6 +84,37 @@ export const clusterProvisionsApi = {
     return response.data ?? [];
   },
   // The new cluster's name, left empty, is rlark-<site>-<clusterType>.
+  async migrationCandidates(name: string, signal: AbortSignal) {
+    const response = await requestJson<{ data: MigrationPreview }>(
+      `/api/v1/cluster-provisions/${encodeURIComponent(name)}/migration-candidates`,
+      { signal },
+    );
+    return response.data;
+  },
+  async readMigrationHost(
+    name: string,
+    preview: MigrationPreview,
+    password: string,
+  ) {
+    const response = await requestJson<{ data: { uid: string } }>(
+      `/api/v1/cluster-provisions/${encodeURIComponent(name)}/migration-candidates/host`,
+      {
+        method: "POST",
+        body: {
+          provision_uid: preview.provision_uid,
+          provision_resource_version: preview.provision_resource_version,
+          password,
+        },
+      },
+    );
+    return response.data.uid;
+  },
+  migrateOwnership(name: string, confirmation: MigrationConfirmation) {
+    return requestJson<{ success: boolean }>(
+      `/api/v1/cluster-provisions/${encodeURIComponent(name)}/migrate-ownership`,
+      { method: "POST", body: confirmation },
+    );
+  },
   async create(form: NewClusterForm & { clusterType: ClusterType }) {
     const response = await requestJson<{ data: ClusterProvision }>("/api/v1/cluster-provisions", {
       method: "POST",

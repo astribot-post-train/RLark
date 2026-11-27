@@ -1,0 +1,6 @@
+# For isolated UpgradeJob setup without a prior release. The release CLI creates it when needed.
+apiVersion: coordination.k8s.io/v1
+kind: Lease
+metadata:
+  name: rlark-agent-upgrade
+  namespace: rlark-system

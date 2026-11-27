@@ -1,0 +1,340 @@
+package clusterupgrade
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"slices"
+	"time"
+
+	rlark "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
+	"github.com/rlinf/rlark/apps/rlark/astribot/nodeagent"
+	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/dynamic"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/util/retry"
+)
+
+// NodeImageGrantAnnotation is reserved for the management plane. It stores a
+// grant and its direction on the same object as the image it authorizes, so
+// the image and the spent grant share a single resourceVersion.
+const NodeImageGrantAnnotation = "rlark.io/node-image-upgrade-grant"
+
+type NodeImageGrant struct {
+	ClusterUID, DaemonSetUID, ChildUID types.UID
+	Before, Target, ExecutorImage      string
+	Deployment                         Images
+	Expires                            time.Time
+	Phase                              NodeImagePhase
+}
+
+type NodeImagePhase string
+
+const (
+	NodeImageApproved   NodeImagePhase = "Approved"
+	NodeImageApplied    NodeImagePhase = "Applied"
+	NodeImageRolledBack NodeImagePhase = "RolledBack"
+)
+
+type NodeImageAction string
+
+const (
+	ReadNodeImage      NodeImageAction = "read"
+	ApplyNodeImage     NodeImageAction = "apply"
+	RestoreNodeImage   NodeImageAction = "rollback"
+	ObserveNodeRollout NodeImageAction = "observe"
+)
+
+var ErrNodeImageGrant = errors.New("no matching active node Agent image grant")
+
+// NodeImageBroker is the management-side authority for node Agent image changes.
+// Member must return a verifier client for exactly the requested membership.
+// It is never returned to, or constructed from credentials provided by, the Job.
+type NodeImageBroker struct {
+	Clusters dynamic.ResourceInterface
+	Issuer   *BatchGrantIssuer
+	Member   func(context.Context, string, types.UID) (kubernetes.Interface, error)
+}
+
+type NodeImageResult struct {
+	ClusterUID types.UID      `json:"clusterUID"`
+	Before     string         `json:"before"`
+	Target     string         `json:"target"`
+	Phase      NodeImagePhase `json:"phase"`
+	Deployment Images         `json:"deployment"`
+	Ready      bool           `json:"ready"`
+}
+
+// Execute re-reads and authorizes every operation. The worker supplies identity
+// and direction only. The approved images never come from a worker request.
+func (b NodeImageBroker) Execute(ctx context.Context, cluster string, identity ExecutorIdentity, token string, action NodeImageAction) (NodeImageResult, error) {
+	if action == ObserveNodeRollout {
+		return b.execute(ctx, cluster, identity, token, action)
+	}
+	var result NodeImageResult
+	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		var err error
+		result, err = b.execute(ctx, cluster, identity, token, action)
+		return err
+	})
+	return result, err
+}
+
+func (b NodeImageBroker) execute(ctx context.Context, cluster string, identity ExecutorIdentity, token string, action NodeImageAction) (NodeImageResult, error) {
+	if b.Clusters == nil || b.Member == nil || cluster == "" || identity.ChildUID == "" {
+		return NodeImageResult{}, ErrNodeImageGrant
+	}
+	object, err := b.Clusters.Get(ctx, cluster, metav1.GetOptions{})
+	if err != nil {
+		return NodeImageResult{}, err
+	}
+	grant, grantErr := currentNodeImageGrant(object, identity)
+	issue := action == ReadNodeImage && b.Issuer != nil && errors.Is(grantErr, ErrNodeImageGrant) && mayIssueGrant(object, identity, time.Now())
+	if grantErr != nil && !issue {
+		return NodeImageResult{}, grantErr
+	}
+	member, err := b.Member(ctx, cluster, object.GetUID())
+	if err != nil {
+		return NodeImageResult{}, err
+	}
+	if issue {
+		grant, err = b.Issuer.approve(ctx, object, member, identity, token)
+		if err != nil {
+			return NodeImageResult{}, err
+		}
+		if err := b.storeGrant(ctx, object, grant, grant.Before); err != nil {
+			return NodeImageResult{}, err
+		}
+	} else if err := VerifyExecutor(ctx, member, token, grant.ExecutorImage, identity); err != nil {
+		return NodeImageResult{}, err
+	}
+	daemonSet, err := member.AppsV1().DaemonSets(Namespace).Get(ctx, nodeagent.Name, metav1.GetOptions{})
+	if err != nil {
+		return NodeImageResult{}, err
+	}
+	if !ownsNodeDaemonSet(daemonSet, grant) {
+		return NodeImageResult{}, nodeagent.ErrImageDeclarationChanged
+	}
+	result := NodeImageResult{ClusterUID: grant.ClusterUID, Before: grant.Before, Target: grant.Target, Phase: grant.Phase, Deployment: grant.Deployment}
+	switch action {
+	case ReadNodeImage:
+		return result, nil
+	case ObserveNodeRollout:
+		result.Ready, err = observeAvailableNodeAgents(ctx, member, daemonSet, grant)
+		return result, err
+	case ApplyNodeImage, RestoreNodeImage:
+		return result, b.change(ctx, object, grant, action)
+	default:
+		return NodeImageResult{}, ErrNodeImageGrant
+	}
+}
+
+func currentNodeImageGrant(cluster *unstructured.Unstructured, identity ExecutorIdentity) (NodeImageGrant, error) {
+	grant, err := readNodeImageGrant(cluster, types.UID(identity.ChildUID))
+	if err != nil {
+		return NodeImageGrant{}, err
+	}
+	if !time.Now().Before(grant.Expires) {
+		return NodeImageGrant{}, ErrNodeImageGrant
+	}
+	return grant, nil
+}
+
+func readNodeImageGrant(cluster *unstructured.Unstructured, childUID types.UID) (NodeImageGrant, error) {
+	var grant NodeImageGrant
+	if cluster.GetDeletionTimestamp() != nil || cluster.GetUID() == "" || cluster.GetResourceVersion() == "" ||
+		cluster.GetAnnotations()[DriverAnnotation] != DriverImageOnly ||
+		json.Unmarshal([]byte(cluster.GetAnnotations()[NodeImageGrantAnnotation]), &grant) != nil ||
+		grant.ClusterUID != cluster.GetUID() || childUID == "" || grant.ChildUID != childUID ||
+		grant.DaemonSetUID == "" || grant.Before == "" || grant.Expires.IsZero() {
+		return NodeImageGrant{}, ErrNodeImageGrant
+	}
+	for _, image := range []string{grant.Before, grant.Target, grant.Deployment.Agent, grant.Deployment.Tools} {
+		if _, err := pinnedImage(image); err != nil {
+			return NodeImageGrant{}, ErrNodeImageGrant
+		}
+	}
+	var expected string
+	switch grant.Phase {
+	case NodeImageApproved, NodeImageRolledBack:
+		expected = grant.Before
+	case NodeImageApplied:
+		expected = grant.Target
+	default:
+		return NodeImageGrant{}, ErrNodeImageGrant
+	}
+
+	enabled, _, boolErr := unstructured.NestedBool(cluster.Object, "spec", "nodeAgents", "enabled")
+	image, _, strErr := unstructured.NestedString(cluster.Object, "spec", "nodeAgents", "image")
+	if boolErr != nil || strErr != nil || !enabled || image != expected {
+		return NodeImageGrant{}, nodeagent.ErrImageDeclarationChanged
+	}
+	return grant, nil
+}
+
+func (b NodeImageBroker) change(ctx context.Context, object *unstructured.Unstructured, grant NodeImageGrant, action NodeImageAction) error {
+	if !time.Now().Before(grant.Expires) {
+		return ErrNodeImageGrant
+	}
+	var image string
+	if action == ApplyNodeImage {
+		if grant.Phase == NodeImageRolledBack {
+			return ErrNodeImageGrant
+		}
+		if grant.Phase == NodeImageApplied {
+			return nil
+		}
+		grant.Phase, image = NodeImageApplied, grant.Target
+	} else {
+		if grant.Phase == NodeImageRolledBack {
+			return nil
+		}
+		grant.Phase, image = NodeImageRolledBack, grant.Before
+	}
+	return b.storeGrant(ctx, object, grant, image)
+}
+
+func (b NodeImageBroker) storeGrant(ctx context.Context, object *unstructured.Unstructured, grant NodeImageGrant, image string) error {
+	updated := object.DeepCopy()
+	if err := unstructured.SetNestedField(updated.Object, image, "spec", "nodeAgents", "image"); err != nil {
+		return err
+	}
+	payload, err := json.Marshal(grant)
+	if err != nil {
+		return fmt.Errorf("encode node Agent upgrade grant: %w", err)
+	}
+	annotations := updated.GetAnnotations()
+	annotations[NodeImageGrantAnnotation] = string(payload)
+	receipt, err := json.Marshal(grantReceipt{ClusterUID: grant.ClusterUID, ChildUID: grant.ChildUID, Expires: grant.Expires})
+	if err != nil {
+		return fmt.Errorf("encode node Agent upgrade grant receipt: %w", err)
+	}
+	annotations[nodeImageGrantReceipt] = string(receipt)
+	updated.SetAnnotations(annotations)
+	// A late apply cannot race a rollback. Their grant and image updates use
+	// the same Cluster resourceVersion, even if the rollback is a no-op.
+	_, err = b.Clusters.Update(ctx, updated, metav1.UpdateOptions{})
+	return err
+}
+
+func ownsNodeDaemonSet(ds *appsv1.DaemonSet, grant NodeImageGrant) bool {
+	return ds.UID == grant.DaemonSetUID && ds.DeletionTimestamp == nil && ds.Labels[nodeagent.ManagedByLabel] == nodeagent.ManagedBy
+}
+
+func observeNodeImage(ds *appsv1.DaemonSet, grant NodeImageGrant) bool {
+	image := grant.Target
+	if grant.Phase == NodeImageRolledBack {
+		image = grant.Before
+	} else if grant.Phase != NodeImageApplied {
+		return false
+	}
+	status := ds.Status
+	return slices.ContainsFunc(ds.Spec.Template.Spec.Containers, func(c corev1.Container) bool {
+		return c.Name == nodeagent.Name && c.Image == image
+	}) && status.ObservedGeneration >= ds.Generation && status.DesiredNumberScheduled > 0 &&
+		status.UpdatedNumberScheduled == status.DesiredNumberScheduled &&
+		status.NumberAvailable == status.DesiredNumberScheduled && status.NumberMisscheduled == 0
+}
+
+// An unavailable node can only be deferred when a current owned Pod proves
+// this DaemonSet actually targets it. An online node must run the intended
+// image and be Ready; a missing Pod cannot be counted as offline.
+func observeAvailableNodeAgents(ctx context.Context, member kubernetes.Interface, ds *appsv1.DaemonSet, grant NodeImageGrant) (bool, error) {
+	if observeNodeImage(ds, grant) {
+		return true, nil
+	}
+	image := grant.Target
+	if grant.Phase == NodeImageRolledBack {
+		image = grant.Before
+	} else if grant.Phase != NodeImageApplied {
+		return false, nil
+	}
+	status := ds.Status
+	hasImage := func(containers []corev1.Container) bool {
+		return slices.ContainsFunc(containers, func(c corev1.Container) bool {
+			return c.Name == nodeagent.Name && c.Image == image
+		})
+	}
+	if ds.Spec.Selector == nil || status.ObservedGeneration < ds.Generation || status.DesiredNumberScheduled == 0 ||
+		status.NumberMisscheduled != 0 || !hasImage(ds.Spec.Template.Spec.Containers) {
+		return false, nil
+	}
+	selector, err := metav1.LabelSelectorAsSelector(ds.Spec.Selector)
+	if err != nil {
+		return false, err
+	}
+	pods, err := member.CoreV1().Pods(ds.Namespace).List(ctx, metav1.ListOptions{LabelSelector: selector.String()})
+	if err != nil {
+		return false, err
+	}
+	nodes, err := member.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return false, err
+	}
+	nodesByName := make(map[string]*corev1.Node, len(nodes.Items))
+	for i := range nodes.Items {
+		nodesByName[nodes.Items[i].Name] = &nodes.Items[i]
+	}
+	var available int32
+	covered := make(map[string]bool)
+	for _, pod := range pods.Items {
+		owner := metav1.GetControllerOf(&pod)
+		if pod.Spec.NodeName == "" || owner == nil || owner.UID != ds.UID || owner.Name != ds.Name ||
+			owner.Kind != "DaemonSet" || owner.APIVersion != appsv1.SchemeGroupVersion.String() ||
+			pod.DeletionTimestamp != nil || pod.Status.Phase == corev1.PodFailed || pod.Status.Phase == corev1.PodSucceeded {
+			continue
+		}
+		if covered[pod.Spec.NodeName] {
+			return false, nil
+		}
+		covered[pod.Spec.NodeName] = true
+		node := nodesByName[pod.Spec.NodeName]
+		if node == nil {
+			return false, nil
+		}
+		ready := slices.IndexFunc(node.Status.Conditions, func(c corev1.NodeCondition) bool { return c.Type == corev1.NodeReady })
+		if node.DeletionTimestamp != nil || ready == -1 {
+			return false, nil
+		}
+		switch node.Status.Conditions[ready].Status {
+		case corev1.ConditionFalse, corev1.ConditionUnknown:
+			continue
+		case corev1.ConditionTrue:
+		default:
+			return false, nil
+		}
+		if !hasImage(pod.Spec.Containers) || !slices.ContainsFunc(pod.Status.Conditions, func(c corev1.PodCondition) bool {
+			return c.Type == corev1.PodReady && c.Status == corev1.ConditionTrue
+		}) {
+			return false, nil
+		}
+		available++
+	}
+	return available > 0 && len(covered) == int(status.DesiredNumberScheduled), nil
+}
+
+// VerifyManagedNodeCompletion checks persisted management and member evidence
+// after the executor is gone. Grant expiry disables writes, but does not
+// invalidate evidence for the same applied attempt.
+func VerifyManagedNodeCompletion(cluster *rlark.Cluster, ds *appsv1.DaemonSet, job *rlark.ClusterUpgradeJob, checkpoint Checkpoint) bool {
+	images, node, err := parseImagePlan(job.Spec.ConfigPatch, true)
+	if err != nil || !checkpoint.Completed || checkpoint.RollingBack || images != checkpoint.Target || node != checkpoint.NodeImage {
+		return false
+	}
+	object, err := runtime.DefaultUnstructuredConverter.ToUnstructured(cluster)
+	if err != nil {
+		return false
+	}
+	grant, err := readNodeImageGrant(&unstructured.Unstructured{Object: object}, job.UID)
+	if err != nil || grant.Phase != NodeImageApplied || grant.ClusterUID != types.UID(checkpoint.NodeAgent.ClusterUID) ||
+		grant.Before != checkpoint.NodeAgent.Before || grant.Target != node || grant.Deployment != images || grant.ExecutorImage != job.Spec.Image {
+		return false
+	}
+	return ownsNodeDaemonSet(ds, grant) && observeNodeImage(ds, grant)
+}

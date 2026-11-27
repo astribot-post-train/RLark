@@ -2,8 +2,10 @@ package clusterupgradejob
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
+	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -13,16 +15,19 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	rlarkv1alpha1 "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
-	"github.com/rlinf/rlark/apps/rlark/pkg/log"
+	"github.com/rlinf/rlark/apps/rlark/astribot/clusterupgrade"
+	"github.com/rlinf/rlark/apps/rlark/astribot/nodeagent"
 )
 
 // K8sDriver implements UpgradeDriver for a Kubernetes data plane.
 // It runs upgrade/rollback as batchv1.Job and stores configs in ConfigMaps.
 type K8sDriver struct {
 	client            client.Client
+	management        client.Reader
 	namespace         string
 	managementCluster string
 	stateStore        StateStore
+	policy            *clusterupgrade.JobPolicy
 }
 
 // NewK8sDriver creates a K8sDriver.
@@ -40,10 +45,97 @@ func (d *K8sDriver) StateStore() StateStore {
 	return d.stateStore
 }
 
+func (d *K8sDriver) SnapshotsLiveState() bool {
+	return d.policy != nil && !d.OwnsStockState()
+}
+
+func (d *K8sDriver) OwnsStockState() bool {
+	return d.policy != nil && d.policy.Mode == clusterupgrade.DriverStock
+}
+
+func (d *K8sDriver) VerifyMissingJobSuccess(ctx context.Context, job *rlarkv1alpha1.ClusterUpgradeJob) (bool, error) {
+	var object corev1.ConfigMap
+	if err := d.client.Get(ctx, client.ObjectKey{Namespace: d.namespace, Name: clusterupgrade.CheckpointConfigMap}, &object); err != nil {
+		return false, client.IgnoreNotFound(err)
+	}
+	checkpoint, found, err := clusterupgrade.ReadCheckpoint(&object, string(job.UID))
+	if err != nil {
+		return false, fmt.Errorf("read upgrade checkpoint: %w", err)
+	}
+	if !found || !checkpoint.Completed || checkpoint.RollingBack || checkpoint.Deployment.UID == "" {
+		return false, nil
+	}
+	if checkpoint.NodeAgent.ClusterUID == "" {
+		images, err := clusterupgrade.ParseImages(job.Spec.ConfigPatch)
+		if err != nil || checkpoint.Target != images || checkpoint.NodeImage != "" {
+			return false, nil
+		}
+	} else if d.management == nil {
+		return false, nil
+	}
+	var deployment appsv1.Deployment
+	if err := d.client.Get(ctx, client.ObjectKey{Namespace: d.namespace, Name: checkpoint.Deployment.Name}, &deployment); err != nil {
+		return false, client.IgnoreNotFound(err)
+	}
+	ready, err := clusterupgrade.DeploymentAtTarget(&deployment, checkpoint.Deployment, checkpoint.Target)
+	if errors.Is(err, clusterupgrade.ErrTargetChanged) {
+		return false, nil
+	}
+	if !ready || err != nil || checkpoint.NodeAgent.ClusterUID == "" {
+		return ready, err
+	}
+	var cluster rlarkv1alpha1.Cluster
+	if err := d.management.Get(ctx, client.ObjectKey{Name: d.managementCluster}, &cluster); err != nil {
+		return false, client.IgnoreNotFound(err)
+	}
+	var daemonSet appsv1.DaemonSet
+	if err := d.client.Get(ctx, client.ObjectKey{Namespace: d.namespace, Name: nodeagent.Name}, &daemonSet); err != nil {
+		return false, client.IgnoreNotFound(err)
+	}
+	return clusterupgrade.VerifyManagedNodeCompletion(&cluster, &daemonSet, job, checkpoint), nil
+}
+
+func imageOnlyJobName(job *rlarkv1alpha1.ClusterUpgradeJob) string {
+	return clusterupgrade.JobName(string(job.UID))
+}
+
+func ownsImageOnlyJob(child *rlarkv1alpha1.ClusterUpgradeJob, job *batchv1.Job) bool {
+	return child.UID != "" && job.Name == imageOnlyJobName(child) &&
+		job.Labels[clusterupgrade.ChildUIDLabel] == string(child.UID) &&
+		job.Spec.Template.Spec.ServiceAccountName == clusterupgrade.JobServiceAccount
+}
+
+func (d *K8sDriver) ownsAttempt(child *rlarkv1alpha1.ClusterUpgradeJob, job *batchv1.Job) bool {
+	if d.policy.Mode == clusterupgrade.DriverStock {
+		return child.UID != "" && job.Name == d.attemptName(child) &&
+			job.Labels[clusterupgrade.ChildUIDLabel] == string(child.UID) &&
+			job.Spec.Template.Spec.ServiceAccountName == clusterupgrade.StockJobServiceAccount
+	}
+	return ownsImageOnlyJob(child, job)
+}
+
+func (d *K8sDriver) attemptName(job *rlarkv1alpha1.ClusterUpgradeJob) string {
+	if d.policy != nil && d.policy.Mode == clusterupgrade.DriverStock {
+		return clusterupgrade.LockedStockJobName(string(job.UID))
+	}
+	if d.policy != nil {
+		return imageOnlyJobName(job)
+	}
+	return "upgrade-" + job.Name
+}
+
 // PrepareConfig stores the merged deploy config as a ConfigMap.
 // The configRef returned is the ConfigMap name.
 func (d *K8sDriver) PrepareConfig(ctx context.Context, job *rlarkv1alpha1.ClusterUpgradeJob, config string) (string, error) {
-	cmName := upgradeConfigMapName(job.Name)
+	if d.policy != nil {
+		if job.UID == "" {
+			return "", fmt.Errorf("cluster upgrade job UID is required")
+		}
+		if err := d.policy.Validate(ctx, d.client, job.Spec.Image, config); err != nil {
+			return "", err
+		}
+	}
+	cmName := d.attemptName(job) + "-config"
 	cm := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      cmName,
@@ -53,11 +145,24 @@ func (d *K8sDriver) PrepareConfig(ctx context.Context, job *rlarkv1alpha1.Cluste
 			"deploy-config.yaml": config,
 		},
 	}
+	if d.policy != nil {
+		cm.Immutable = ptr.To(true)
+		cm.Labels = map[string]string{clusterupgrade.ChildUIDLabel: string(job.UID)}
+	}
 	if err := d.client.Create(ctx, cm); err != nil {
 		// Tolerate AlreadyExists in case the agent restarted after creating
 		// the ConfigMap but before recording the job status.
 		if !apierrors.IsAlreadyExists(err) {
 			return "", fmt.Errorf("create upgrade configmap: %w", err)
+		}
+		if d.policy != nil {
+			var existing corev1.ConfigMap
+			if err := d.client.Get(ctx, client.ObjectKeyFromObject(cm), &existing); err != nil {
+				return "", err
+			}
+			if existing.Labels[clusterupgrade.ChildUIDLabel] != string(job.UID) || existing.Data["deploy-config.yaml"] != config || !ptr.Deref(existing.Immutable, false) {
+				return "", fmt.Errorf("existing upgrade configuration does not belong to this immutable attempt")
+			}
 		}
 	}
 	return cmName, nil
@@ -67,7 +172,7 @@ func (d *K8sDriver) PrepareConfig(ctx context.Context, job *rlarkv1alpha1.Cluste
 func (d *K8sDriver) CleanupConfig(ctx context.Context, job *rlarkv1alpha1.ClusterUpgradeJob) error {
 	err := d.client.Delete(ctx, &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      upgradeConfigMapName(job.Name),
+			Name:      d.attemptName(job) + "-config",
 			Namespace: d.namespace,
 		},
 	})
@@ -122,7 +227,7 @@ func (d *K8sDriver) StartUpgrade(ctx context.Context, job *rlarkv1alpha1.Cluster
 
 	// Use a stable job name so that a restarted agent can find the existing job
 	// instead of creating a duplicate.
-	jobName := "upgrade-" + job.Name
+	jobName := d.attemptName(job)
 	k8sJob := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      jobName,
@@ -160,10 +265,36 @@ func (d *K8sDriver) StartUpgrade(ctx context.Context, job *rlarkv1alpha1.Cluster
 		},
 	}
 
+	if d.policy == nil {
+		// Astribot's native component catalog uses a managed node Agent by
+		// default. Explicit stock selection keeps this Job on the upstream
+		// installer profile without adding the Astribot Lease or retry policy.
+		executor := &k8sJob.Spec.Template.Spec.Containers[0]
+		executor.Env = append(executor.Env, corev1.EnvVar{Name: "RLARK_UPGRADE_MODE", Value: clusterupgrade.DriverStock})
+	} else {
+		pod := &k8sJob.Spec.Template.Spec
+		pod.Volumes = volumes[:1]
+		pod.Containers[0].VolumeMounts = volumeMounts[:1]
+		if d.policy.Mode == clusterupgrade.DriverStock {
+			clusterupgrade.ConfigureLockedStock(k8sJob, string(job.UID), job.Spec.ConfigPatch == "")
+		} else {
+			clusterupgrade.ConfigureExecutor(k8sJob, *d.policy, string(job.UID), job.Name, d.managementCluster)
+		}
+	}
+
 	if err := d.client.Create(ctx, k8sJob); err != nil {
 		// If the job already exists (e.g. agent restarted after creating it),
 		// return the existing job name so the caller can resume monitoring.
 		if apierrors.IsAlreadyExists(err) {
+			if d.policy != nil {
+				var existing batchv1.Job
+				if err := d.client.Get(ctx, client.ObjectKeyFromObject(k8sJob), &existing); err != nil {
+					return "", err
+				}
+				if !d.ownsAttempt(job, &existing) {
+					return "", fmt.Errorf("existing upgrade job does not belong to this attempt")
+				}
+			}
 			return jobName, nil
 		}
 		return "", fmt.Errorf("create upgrade job: %w", err)
@@ -171,19 +302,11 @@ func (d *K8sDriver) StartUpgrade(ctx context.Context, job *rlarkv1alpha1.Cluster
 	return jobName, nil
 }
 
-// CheckStatus reads a batchv1.Job and maps its state to JobStatus.
-func (d *K8sDriver) CheckStatus(ctx context.Context, jobName string) (JobStatus, error) {
-	result, err := d.CheckJobResult(ctx, jobName)
-	if err != nil {
-		return "", err
-	}
-	return result.Status, nil
-}
-
 // CheckJobResult reads a batchv1.Job and returns its status plus the container
 // exit code, so the caller can distinguish "upgrade failed, rollback succeeded"
 // (exit code 2) from "upgrade failed, rollback also failed" (other non-zero).
-func (d *K8sDriver) CheckJobResult(ctx context.Context, jobName string) (*JobResult, error) {
+func (d *K8sDriver) CheckJobResult(ctx context.Context, child *rlarkv1alpha1.ClusterUpgradeJob) (*JobResult, error) {
+	jobName := child.Status.JobName
 	var k8sJob batchv1.Job
 	err := d.client.Get(ctx, types.NamespacedName{
 		Namespace: d.namespace,
@@ -196,6 +319,25 @@ func (d *K8sDriver) CheckJobResult(ctx context.Context, jobName string) (*JobRes
 		return nil, err
 	}
 
+	if d.policy != nil && !d.ownsAttempt(child, &k8sJob) {
+		return &JobResult{Status: JobStatusFailed, ExitCode: -1, Message: "the local upgrade Job does not belong to this attempt"}, nil
+	}
+
+	if d.policy != nil && k8sJob.Spec.PodFailurePolicy != nil {
+		for _, condition := range k8sJob.Status.Conditions {
+			if condition.Status != corev1.ConditionTrue {
+				continue
+			}
+			switch condition.Type {
+			case batchv1.JobComplete:
+				return &JobResult{Status: JobStatusSucceeded, ExitCode: 0}, nil
+			case batchv1.JobFailed:
+				return d.failedJobResult(ctx, &k8sJob)
+			}
+		}
+		return &JobResult{Status: JobStatusRunning}, nil
+	}
+
 	if k8sJob.Status.Active > 0 {
 		return &JobResult{Status: JobStatusRunning}, nil
 	}
@@ -203,37 +345,43 @@ func (d *K8sDriver) CheckJobResult(ctx context.Context, jobName string) (*JobRes
 		return &JobResult{Status: JobStatusSucceeded, ExitCode: 0}, nil
 	}
 	if k8sJob.Status.Failed > 0 {
-		// Read the exit code from the failed Pod.
-		exitCode := d.readExitCodeFromPods(ctx, &k8sJob)
-		return &JobResult{Status: JobStatusFailed, ExitCode: exitCode}, nil
+		return d.failedJobResult(ctx, &k8sJob)
 	}
 	return &JobResult{Status: JobStatusRunning}, nil
 }
 
-// readExitCodeFromPods finds a terminated Pod for the Job and returns its exit code.
-func (d *K8sDriver) readExitCodeFromPods(ctx context.Context, k8sJob *batchv1.Job) int32 {
-	logger := log.FromContext(ctx)
-	selector, err := metav1.LabelSelectorAsSelector(k8sJob.Spec.Selector)
+// failedJobResult reads only the upgrade container of a Pod owned by this Job.
+func (d *K8sDriver) failedJobResult(ctx context.Context, job *batchv1.Job) (*JobResult, error) {
+	result := &JobResult{Status: JobStatusFailed, ExitCode: -1}
+	if job.Spec.Selector == nil {
+		return result, nil
+	}
+	selector, err := metav1.LabelSelectorAsSelector(job.Spec.Selector)
 	if err != nil {
-		logger.Info("failed to build selector from job", "job", k8sJob.Name, "error", err)
-		return -1
+		return nil, fmt.Errorf("build upgrade job selector: %w", err)
 	}
 	var pods corev1.PodList
-	if err := d.client.List(ctx, &pods, client.InNamespace(d.namespace), client.MatchingLabelsSelector{Selector: selector}); err != nil {
-		logger.Info("failed to list pods for job", "job", k8sJob.Name, "error", err)
-		return -1
+	if err := d.client.List(ctx, &pods, client.InNamespace(job.Namespace), client.MatchingLabelsSelector{Selector: selector}); err != nil {
+		return nil, fmt.Errorf("list upgrade job pods: %w", err)
 	}
-	logger.Info("found pods for job", "job", k8sJob.Name, "podCount", len(pods.Items))
+	var last *corev1.ContainerStateTerminated
 	for _, pod := range pods.Items {
-		for _, cs := range pod.Status.ContainerStatuses {
-			if cs.State.Terminated != nil {
-				logger.Info("found terminated container", "pod", pod.Name, "container", cs.Name, "exitCode", cs.State.Terminated.ExitCode)
-				return cs.State.Terminated.ExitCode
+		owner := metav1.GetControllerOf(&pod)
+		if owner == nil || owner.UID != job.UID || owner.Kind != "Job" || owner.APIVersion != batchv1.SchemeGroupVersion.String() {
+			continue
+		}
+		for _, status := range pod.Status.ContainerStatuses {
+			terminated := status.State.Terminated
+			if status.Name == "upgrade" && terminated != nil && (last == nil || terminated.FinishedAt.After(last.FinishedAt.Time)) {
+				last = terminated
 			}
 		}
 	}
-	logger.Info("no terminated container found", "job", k8sJob.Name, "podCount", len(pods.Items))
-	return -1
+	if last != nil {
+		result.ExitCode = last.ExitCode
+		result.Message = clusterupgrade.PublicMessage(last.Message)
+	}
+	return result, nil
 }
 
 // ─── ConfigMap-backed StateStore ──────────────────────────────────────────────
@@ -265,6 +413,7 @@ func (s *ConfigMapStateStore) Get(ctx context.Context) (*ClusterState, error) {
 		return nil, err // caller checks apierrors.IsNotFound
 	}
 	return &ClusterState{
+		AttemptUID:   cm.Data[clusterupgrade.StockAttemptKey],
 		Image:        cm.Data["image"],
 		DeployConfig: cm.Data["deploy-config"],
 	}, nil
@@ -304,6 +453,7 @@ func (s *ConfigMapStateStore) Save(ctx context.Context, state *ClusterState) err
 	if cm.Data == nil {
 		cm.Data = make(map[string]string)
 	}
+	delete(cm.Data, clusterupgrade.StockAttemptKey)
 	cm.Data["image"] = state.Image
 	if state.DeployConfig != "" {
 		cm.Data["deploy-config"] = state.DeployConfig

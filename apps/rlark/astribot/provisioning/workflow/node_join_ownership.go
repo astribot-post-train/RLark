@@ -2,13 +2,20 @@ package workflow
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
+	"net"
+	"net/http"
 	"strings"
+	"time"
 
 	rlarkv1alpha1 "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
 	"github.com/rlinf/rlark/apps/rlark/astribot/nodessh"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/validation"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/util/retry"
 )
 
@@ -22,7 +29,7 @@ const (
 // The log is cleared before launching the unit. The attempt header makes
 // recovery safe when an earlier unit's log survives a Gateway restart.
 func joinInstallCommand(j *rlarkv1alpha1.NodeJoin, command string) string {
-	return "exec >" + sshJoinLog + " 2>&1; printf '%s\\n' " +
+	return "export RLARK_SSH_JOIN_OWNER=" + nodessh.Quote(string(j.UID)) + "; exec >" + sshJoinLog + " 2>&1; printf '%s\\n' " +
 		nodessh.Quote(joinAttemptLogPrefix+string(j.UID)) + "; (" + command + "); " +
 		"echo \"" + sshJoinExit + "$?\""
 }
@@ -67,6 +74,9 @@ func (g *Service) recordJoinedNodeUID(ctx context.Context, j *rlarkv1alpha1.Node
 			}
 			return nil
 		}
+		if err := g.verifyNativeJoinUID(ctx, current, uid); err != nil {
+			return err
+		}
 		metav1.SetMetaDataAnnotation(&current.ObjectMeta, nodeJoinNodeUID, uid)
 		_, err = client.Update(ctx, current, metav1.UpdateOptions{})
 		return err
@@ -75,4 +85,39 @@ func (g *Service) recordJoinedNodeUID(ctx context.Context, j *rlarkv1alpha1.Node
 		metav1.SetMetaDataAnnotation(&j.ObjectMeta, nodeJoinNodeUID, uid)
 	}
 	return err
+}
+
+func (g *Service) verifyNativeJoinUID(ctx context.Context, j *rlarkv1alpha1.NodeJoin, uid string) error {
+	if g.hooks.ProxyKubeRequest == nil {
+		return fmt.Errorf("member API is unavailable to verify the SSH join's Node UID")
+	}
+
+	var transient error
+	err := wait.PollUntilContextTimeout(ctx, time.Second, 20*time.Second, true, func(call context.Context) (bool, error) {
+		response, err := g.hooks.ProxyKubeRequest(call, http.MethodGet, provisionAgentID(j.Spec.ClusterID), "api/v1/nodes/"+j.Spec.NodeName, nil)
+		if err != nil {
+			var network net.Error
+			if errors.As(err, &network) {
+				transient = err
+				return false, nil
+			}
+			return false, err
+		}
+		defer func() { _ = response.Body.Close() }()
+		switch response.StatusCode {
+		case http.StatusTooManyRequests, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout, http.StatusInternalServerError:
+			transient = fmt.Errorf("member API returned HTTP %d", response.StatusCode)
+			return false, nil
+		}
+		var node corev1.Node
+		if response.StatusCode != http.StatusOK || json.NewDecoder(response.Body).Decode(&node) != nil ||
+			node.Name != j.Spec.NodeName || string(node.UID) != uid || node.DeletionTimestamp != nil {
+			return false, fmt.Errorf("the member API did not confirm the SSH join's original Node UID")
+		}
+		return true, nil
+	})
+	if err != nil {
+		return fmt.Errorf("verify the SSH join's Node UID: %w", errors.Join(err, transient))
+	}
+	return nil
 }

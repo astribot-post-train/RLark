@@ -117,6 +117,9 @@ func (g *Service) writeJoinStatus(ctx context.Context, name string, change func(
 		if err != nil {
 			return err
 		}
+		if j.Annotations[nodeJoinCleanupAnnotation] != "" {
+			return admissionCleanupConflict(j, "the SSH join is being cleared; retry cleanup")
+		}
 		change(&j.Status)
 		_, err = client.UpdateStatus(ctx, j, metav1.UpdateOptions{})
 		return err

@@ -18,6 +18,14 @@ type UpgradeDriver interface {
 	// (current image + deploy config) across upgrades.
 	StateStore() StateStore
 
+	// SnapshotsLiveState reports whether the Job captures its own rollback baseline.
+	SnapshotsLiveState() bool
+	// OwnsStockState reports whether the stock executor writes rlark-state under the member lock.
+	OwnsStockState() bool
+
+	// VerifyMissingJobSuccess checks durable evidence for an attempt that captured live state.
+	VerifyMissingJobSuccess(context.Context, *rlarkv1alpha1.ClusterUpgradeJob) (bool, error)
+
 	// PrepareConfig persists the deploy config for an upgrade attempt.
 	// It returns an opaque configRef that is passed to StartUpgrade.
 	// The driver decides how to store it (e.g. ConfigMap in K8s mode).
@@ -28,14 +36,14 @@ type UpgradeDriver interface {
 	CleanupConfig(ctx context.Context, job *rlarkv1alpha1.ClusterUpgradeJob) error
 
 	// StartUpgrade launches the upgrade workload.
-	// It returns the driver-specific job name used later in CheckStatus.
+	// It returns the driver-specific job name used later in CheckJobResult.
 	// rollbackImage is the image to fall back to (empty = no rollback possible).
 	// configRef is the value returned by PrepareConfig.
 	StartUpgrade(ctx context.Context, job *rlarkv1alpha1.ClusterUpgradeJob, rollbackImage, configRef string) (jobName string, err error)
 
-	// CheckStatus returns the current state of a running or finished job.
-	// It must return JobStatusNotFound when the job no longer exists (e.g. TTL-cleared).
-	CheckStatus(ctx context.Context, jobName string) (JobStatus, error)
+	// CheckJobResult returns the outcome of the upgrade workload. Drivers must
+	// return JobStatusNotFound when the workload no longer exists.
+	CheckJobResult(ctx context.Context, child *rlarkv1alpha1.ClusterUpgradeJob) (*JobResult, error)
 }
 
 // JobResult extends JobStatus with the container exit code, so the caller
@@ -44,6 +52,7 @@ type UpgradeDriver interface {
 type JobResult struct {
 	Status   JobStatus
 	ExitCode int32
+	Message  string
 }
 
 // JobStatus represents the lifecycle state of a driver-managed upgrade/rollback job.
@@ -64,6 +73,7 @@ const (
 
 // ClusterState represents the current version and config of a data-plane cluster.
 type ClusterState struct {
+	AttemptUID string
 	// Image is the currently deployed rlark-upgrade image tag.
 	Image string
 	// DeployConfig is the full deploy-config YAML captured at last upgrade time.
@@ -84,7 +94,3 @@ const (
 	StateStoreName      = "rlark-state"
 	StateStoreNamespace = "rlark-system"
 )
-
-func upgradeConfigMapName(jobName string) string {
-	return "upgrade-" + jobName + "-config"
-}
