@@ -1,10 +1,14 @@
 import { useEffect, useRef, useState } from "react";
 import { Camera } from "lucide-react";
 import { request } from "../../api";
-import { CAMERA_FPS_OPTIONS, cameraStreamPath, isCameraFps, type CameraCell, type CameraFps, type CameraView } from "../lib/cameras";
+import { CAMERA_FPS_OPTIONS, cameraFramePath, cameraStreamPath, isCameraFps, type CameraCell, type CameraFps, type CameraView } from "../lib/cameras";
 import { readCameraFrames, sameCameraFrame } from "../lib/cameraStream";
 import { cameraDisplayLatency } from "../lib/cameraLatency";
 import { cameraMediaScheduler } from "../lib/cameraMediaScheduler";
+import {
+  cameraTransportPlan, phaseAfterWhepFailure, startStationWhepPreview, stationWhepEnabled, whepRetryBlocked,
+  type WhepUiPhase,
+} from "../lib/cameraWhep";
 import { useCameraClock } from "../components/useCameraClock";
 import "./CameraPreviewDialog.css";
 
@@ -28,12 +32,28 @@ export function CameraPreviewDialog({ node, namespace, view, cell, zh, initialFp
   const [latency, setLatency] = useState<ReturnType<typeof cameraDisplayLatency>>();
   const paint = useRef(0);
   const [liveGranted, setLiveGranted] = useState(false);
-  const cameraClock = useCameraClock(node, namespace, liveGranted && cell?.present !== false);
+  const whepOn = stationWhepEnabled();
+  const [whepPhase, setWhepPhase] = useState<WhepUiPhase>("off");
+  const whepVideo = useRef<HTMLVideoElement>(null);
+  const whepBlock = useRef<WhepUiPhase>("off");
+  const whepTransport = whepOn
+    ? cameraTransportPlan({ whepEnabled: true, phase: whepPhase, mjpegGranted: liveGranted })
+    : undefined;
+  const mjpegWanted = whepOn ? Boolean(whepTransport?.requestMjpeg) : true;
+  const cameraClock = useCameraClock(node, namespace, liveGranted && mjpegWanted && cell?.present !== false);
   useEffect(() => {
     if (cell?.present === false) return;
+    if (whepOn && !cameraTransportPlan({ whepEnabled: true, phase: whepPhase, mjpegGranted: false }).requestMjpeg) return;
     return cameraMediaScheduler.acquire(`dialog:${namespace}/${node}/${view}`, "dialog", setLiveGranted);
-  }, [node, namespace, view, cell?.present]);
+  }, [node, namespace, view, cell?.present, whepOn, whepPhase]);
   const [reconnecting, setReconnecting] = useState(false);
+  const [foreground, setForeground] = useState(!document.hidden);
+  useEffect(() => {
+    if (!whepOn) return;
+    const visibility = () => setForeground(!document.hidden);
+    document.addEventListener("visibilitychange", visibility);
+    return () => document.removeEventListener("visibilitychange", visibility);
+  }, [whepOn]);
   const dismiss = useRef(onDismiss);
   dismiss.current = onDismiss;
 
@@ -53,7 +73,7 @@ export function CameraPreviewDialog({ node, namespace, view, cell, zh, initialFp
     setActualFps(null);
     setLatency(undefined);
     setReconnecting(false);
-    if (!liveGranted || cell?.present === false) return;
+    if (!liveGranted || !mjpegWanted || cell?.present === false) return;
     let connection: AbortController | undefined;
     let retry = 0;
     let sample = 0;
@@ -138,7 +158,76 @@ export function CameraPreviewDialog({ node, namespace, view, cell, zh, initialFp
       if (url) URL.revokeObjectURL(url);
       if (previousUrl) URL.revokeObjectURL(previousUrl);
     };
-  }, [node, namespace, view, cell?.present, fps, liveGranted]);
+  }, [node, namespace, view, cell?.present, fps, liveGranted, mjpegWanted]);
+
+  useEffect(() => {
+    whepBlock.current = "off";
+  }, [node, namespace, view]);
+
+  useEffect(() => {
+    if (!whepOn || !foreground || cell?.present === false) return;
+    if (whepRetryBlocked(whepBlock.current)) {
+      setWhepPhase(whepBlock.current);
+      return;
+    }
+    const video = whepVideo.current;
+    if (!video) return;
+    setWhepPhase("connecting");
+    const preview = startStationWhepPreview({
+      enabled: true,
+      streamPath: cameraStreamPath(node, namespace, view, fps),
+      namespace,
+      origin: window.location.origin,
+      request,
+      video,
+      onPlaying: () => setWhepPhase("playing"),
+      onFailure: (failure) => {
+        const phase = phaseAfterWhepFailure(failure);
+        if (whepRetryBlocked(phase)) whepBlock.current = phase;
+        setWhepPhase(phase);
+      },
+    });
+    return () => {
+      void preview.stop();
+    };
+  }, [whepOn, foreground, node, namespace, view, fps, cell?.present]);
+
+  // Technical and 429 fallbacks use the still-frame endpoint. 401/403 never reach it.
+  useEffect(() => {
+    if (!whepOn || !whepTransport?.requestSnapshot || cell?.present === false) return;
+    let stopped = false;
+    let timer = 0;
+    let inFlight: AbortController | undefined;
+    let url = "";
+    const ask = async () => {
+      if (inFlight || document.hidden) return;
+      const controller = new AbortController();
+      inFlight = controller;
+      try {
+        const response = await request(cameraFramePath(node, namespace, view), {
+          signal: AbortSignal.any([controller.signal, AbortSignal.timeout(4000)]),
+        });
+        const blob = await response.blob();
+        if (controller.signal.aborted) return;
+        if (url) URL.revokeObjectURL(url);
+        url = URL.createObjectURL(blob);
+        setFrame({ url });
+        setReconnecting(false);
+      } catch {
+        // Keep the last snapshot; do not open a WHEP offer from here.
+      } finally {
+        if (inFlight === controller) inFlight = undefined;
+        if (!stopped && !document.hidden) timer = window.setTimeout(() => void ask(), cameraMediaScheduler.nextSnapshotDelayMs());
+      }
+    };
+    timer = window.setTimeout(() => void ask(), cameraMediaScheduler.nextSnapshotDelayMs(1800, 300));
+    return () => {
+      stopped = true;
+      inFlight?.abort();
+      window.clearTimeout(timer);
+      if (url) URL.revokeObjectURL(url);
+    };
+  }, [whepOn, whepTransport?.requestSnapshot, node, namespace, view, cell?.present]);
 
   const measurePaint = (image: HTMLImageElement, shown: NonNullable<typeof frame>) => {
     window.cancelAnimationFrame(paint.current);
@@ -155,7 +244,8 @@ export function CameraPreviewDialog({ node, namespace, view, cell, zh, initialFp
       <button type="button" className="secondary-button station-camera-dialog-close" onClick={() => dialog.current?.close()} aria-label={zh ? "关闭" : "Close"} autoFocus>×</button>
     </header>
     <div className="station-camera-dialog-frame">
-      {frame ? <img src={frame.url} alt={cell?.name ?? view} onLoad={(event) => measurePaint(event.currentTarget, frame)} /> : <div className="station-camera-dialog-blank"><Camera size={28} aria-hidden="true" /><span>{cell?.present === false ? (zh ? "这台机器人没有安装此相机" : "This camera is not fitted") : (zh ? "等待画面" : "Waiting for a frame")}</span></div>}
+      {whepOn && cell?.present !== false && <video ref={whepVideo} autoPlay playsInline muted hidden={whepPhase !== "playing"} style={whepPhase === "playing" ? { display: "block", width: "100%", height: "100%", objectFit: "contain" } : undefined} />}
+      {whepPhase === "playing" ? null : whepPhase === "unauthorized" ? <div className="station-camera-dialog-blank"><span className="status status-stopped"><i />{zh ? "无权查看" : "Not authorized"}</span></div> : frame ? <img src={frame.url} alt={cell?.name ?? view} onLoad={(event) => measurePaint(event.currentTarget, frame)} /> : <div className="station-camera-dialog-blank"><Camera size={28} aria-hidden="true" /><span>{cell?.present === false ? (zh ? "这台机器人没有安装此相机" : "This camera is not fitted") : (zh ? "等待画面" : "Waiting for a frame")}</span></div>}
     </div>
     <footer className="station-camera-dialog-foot">
       {cell && cell.present !== false && <span className={`status status-${cell.tone}`}><i />{cell.badge}</span>}
