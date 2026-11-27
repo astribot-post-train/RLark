@@ -42,7 +42,7 @@ CRD 字段与生成产物、共享角色、鉴权和错误转换、组件接线�
 - [任务](../../apps/rlark/docs/zh/user-guide/jobs.md)
 - [Agent](../../apps/rlark/docs/zh/admin-guide/agent.md)
 
-Gateway、管理面控制器和升级后的成员 Agent 都要求集群明确设置 `rlark.io/upgrade-driver: stock` 后才允许使用上游安装器。声明了托管节点 Agent 的集群无法使用该安装器。若成员已有 Astribot 发布租约但未配置执行策略，Agent 同样拒绝启动。隔离测试的仅镜像模式在目标就绪后由 Job 持成员租约写入完成检查点。若本地 Job 消失，Agent 会确认检查点属于本轮子任务 UID，并核验相同 Deployment 的两个目标镜像摘要及实际就绪状态。找不到匹配的检查点时会报告结果无法确认。 纯标准批次单独统计已成功回滚的子任务，不将其计入失败阈值，与上游 `d06745e` 一致。在混合批次中，托管子任务回滚仍计入 Astribot 的失败预算，标准子任务回滚则单独统计。未使用共享 Lease 的标准成员沿用上游的 Job 重试和截止时间。显式声明驱动、批次预检遇不支持目标即停止、已有 Astribot 发布 Lease 的成员须使用经过批准且按摘要固定的标准执行器，均为 Astribot 保留的兼容边界。
+Gateway、管理面控制器和升级后的成员 Agent 都要求集群明确设置 `rlark.io/upgrade-driver: stock` 后才允许使用上游安装器。声明了托管节点 Agent 的集群无法使用该安装器。若成员已有 Astribot 发布租约但未配置执行策略，Agent 同样拒绝启动。隔离测试的仅镜像模式在目标就绪后由 Job 持成员租约写入完成检查点。若本地 Job 消失，Agent 会确认检查点属于本轮子任务 UID，并核验相同 Deployment 的两个目标镜像摘要及实际就绪状态。找不到匹配的检查点时会报告结果无法确认。 纯标准批次单独统计已成功回滚的子任务，不将其计入失败阈值，与上游 `d06745e` 一致。在混合批次中，托管子任务回滚仍计入 Astribot 的失败预算，标准子任务回滚则单独统计。未使用共享 Lease 的标准成员沿用上游的 Job 重试和截止时间。显式声明驱动、批次预检拒绝不支持的目标、已有 Astribot 发布 Lease 的成员须使用经过批准且按摘要固定的标准执行器，均为 Astribot 保留的兼容边界。
 
 机器列表和入网资格共用 `stations/machine_view.go` 中的转换逻辑。集群创建和 SSH 节点入网共用 `provisioning/bundle.go` 中的安装包传输、摘要验证和进度上报。Astribot 的 S3 挂载选项和端点校验归入 `storageconfig/mount_request.go`，复用上游端点标准化逻辑。Gateway 沿用现有授权和响应契约，再调用 Astribot 工作流。 升级目标被拒绝时的诊断信息，以及节点加入状态的注解转换，也由 Astribot 扩展负责，沿用现有 API 字段。
 
@@ -108,7 +108,7 @@ SSH 安装器在 Kubernetes boot ID 与主机一致时即记录原生 Node UID�
 
 接管过期升级 Lease 仍需与原 Pod UID 绑定的证据。旧租约缺少 Job UID 时，可以核对仍保留的终止 Pod 的控制器引用，或核对 Job 控制器明确记录的同一 Pod UID。同一运行中 Job 的替代 Pod 可以接管。无关发布还需确认原 Job 已结束，或经核实的原 Job UID 已不存在。同名、过期时间和旧 Pod 缺失不足以证明归属。无法核实的 Lease 保留原状。
 
-隔离 API 回归用例在正向升级和回滚阶段分别以 SIGKILL 终止执行进程，验证真实 Kubernetes Lease 和 ConfigMap 写入，并确认第三个执行器恢复夹具基线。用例使用夹具模拟工作负载写入，由测试创建替代 Pod。独立 Kind 用例中，真实标准执行器以 137 退出后由 Kubernetes 自动创建替代 Pod。原生安装器恢复集群 Agent Deployment 和节点 Agent DaemonSet 的原镜像，替代执行器以 2 退出。Agent 工作负载使用健康检查夹具。
+隔离 API 回归用例在正向升级和回滚阶段分别以 SIGKILL 终止执行进程，验证真实 Kubernetes Lease 和 ConfigMap 写入，并确认第三个执行器恢复夹具基线。用例使用夹具模拟工作负载写入，由测试创建替代 Pod。独立 Kind 用例中，真实标准执行器以 137 退出后由 Kubernetes 自动创建替代 Pod。原生安装器恢复集群 Agent Deployment 和节点 Agent DaemonSet 的原镜像，替代执行器以 2 退出。Agent 工作负载使用健康检查夹具。另一次 Kind 验收以空回滚状态开始，终止首次安装器后提交相同已核实配置，新 Job 完成了两个工作负载的升级。
 
 执行器延期也包括集群 Agent 未就绪或手工 RBAC 与发布定义不符。发布结束时汇总成员和原因。
 

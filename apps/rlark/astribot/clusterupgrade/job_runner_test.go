@@ -1,6 +1,7 @@
 package clusterupgrade
 
 import (
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -13,6 +14,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes/fake"
+	ktesting "k8s.io/client-go/testing"
 	"k8s.io/utils/ptr"
 	runtimefake "sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
@@ -68,6 +70,21 @@ func TestClusterOnlyRunnerChecksPodIdentityAndKeepsTemplate(t *testing.T) {
 		t.Fatal(err)
 	}
 	req.PodUID = string(pod.UID)
+	interrupt := true
+	members.PrependReactor("update", "deployments", func(ktesting.Action) (bool, runtime.Object, error) {
+		if interrupt {
+			return true, nil, ErrExecutorInterrupted
+		}
+		return false, nil, nil
+	})
+	if err := runImageJob(t.Context(), members, reader, req); !errors.Is(err, ErrExecutorInterrupted) {
+		t.Fatalf("interrupted image-only attempt: %v", err)
+	}
+	held, err := members.CoordinationV1().Leases(Namespace).Get(t.Context(), LeaseName, metav1.GetOptions{})
+	if err != nil || ptr.Deref(held.Spec.HolderIdentity, "") != "upgrade-job/"+childUID {
+		t.Fatalf("an interrupted executor yielded its Lease: %v, %v", held, err)
+	}
+	interrupt = false
 	if err := runImageJob(t.Context(), members, reader, req); err != nil {
 		t.Fatal(err)
 	}
