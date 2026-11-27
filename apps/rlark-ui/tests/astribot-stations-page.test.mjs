@@ -404,17 +404,18 @@ test("an offline robot offers Rejoin beside Re-check, and Rejoin explains instea
   assert.match(card, /重新接入/);
   assert.match(card, /Rejoin/);
   assert.match(card, /onClick=\{rejoin\.press\}/);
-  assert.match(card, /disabled=\{recheck\.pending\}/);
+  assert.match(card, /disabled=\{recheck\.pending \|\| rejoin\.pending\}/);
   assert.match(cardsStyles, /\.station-tile-recovery-actions/);
   // A robot's manual entry is Add node's machine workspace with its cluster, never the Server SSH form.
   assert.match(page, /const manualRobotRejoin = \(item: StationItem\) =>/);
   assert.match(page, /clusterForStation\(clusters, item\.metadata\.namespace\)/);
   assert.match(page, /method: "machines"/);
   assert.match(page, /manual: \(\) => manualRobotRejoin\(item\)/);
-  // The card's path reads no SSH join and writes no record: it only assesses data the page already holds.
+  // Explaining a robot still does not open SSH or delete a record. Submitting a joined robot uses the rejoin API.
   const robotRejoinBody = page.slice(page.indexOf("const explainRobotRejoin"), page.indexOf("// A whole-machine restart"));
   assert.ok(robotRejoinBody);
-  assert.doesNotMatch(robotRejoinBody, /nodeJoinsApi|nodeAdmissionsApi|selfHealApi|stationsApi/);
+  assert.doesNotMatch(robotRejoinBody, /nodeJoinsApi|nodeAdmissionsApi|selfHealApi/);
+  assert.match(robotRejoinBody, /machinesApi\.rejoin/);
 });
 
 test("an online S1U robot offers a confirmed whole-machine restart through the one-shot Node label", () => {
@@ -559,10 +560,11 @@ test("the offline recovery line explains the robot boundary and keeps an explici
   // The card reports the assessment and only then offers the manual entry; the primary button never navigates.
   assert.match(card, /rejoin: StationRejoinControl/);
   assert.match(card, /aria-live="polite"/);
-  assert.match(card, /rejoin\.notice && <button[\s\S]*?station-tile-rejoin-manual/);
+  assert.match(card, /\(rejoin\.notice \|\| rejoin\.task\?\.alert\) && <button[\s\S]*?station-tile-rejoin-manual/);
   assert.match(cardsStyles, /station-tile-recovery\.is-unavailable/);
-  // The boundary lives in the pure lib: a joined offline robot self-heals; stopped joins name the Machine path.
-  assert.match(rejoinLib, /没有可幂等触发的重连接口/);
+  assert.match(cardsStyles, /station-tile-rejoin-status/);
+  // A joined offline robot may submit; stopped joins still name the Machine path, and SSH stays Server-only.
+  assert.match(rejoinLib, /POST \/api\/v1\/station\/machines/);
   assert.match(rejoinLib, /Machine 与 NodeClass 入网/);
   assert.match(rejoinLib, /SSH 入网只支持 Server/);
 });

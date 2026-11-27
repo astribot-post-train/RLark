@@ -3,10 +3,9 @@ import type { NodeAdmission } from "./siteNodeDisplay.js";
 
 // What the console can honestly do for an offline robot. A robot is admitted through a Machine and its NodeClass
 // (station-controller starts a NodeOperation with the class's stored credentials); it is never joined through the
-// Gateway's Server-only SSH NodeJoin path. Once it has joined, its recovery is its own station-agent reporting again:
-// there is no idempotent, station-scoped backend command that makes an offline robot reconnect. This module only
-// classifies what the page already sees so the card can say why it will not run anything and where the operator's
-// manual entry is.
+// Gateway's Server-only SSH NodeJoin path. Once it has joined, the card may submit
+// POST /api/v1/station/machines/{name}/rejoin for that Machine and then follow the returned NodeOperation.
+// This module only classifies what the page already sees: joined-offline may submit; every other kind must not.
 export type RobotRejoinKind =
   | "no-data"
   | "identity-conflict"
@@ -100,8 +99,8 @@ export function assessRobotRejoin(input: RobotRejoinInput): RobotRejoinAssessmen
       return {
         kind: "joined-offline",
         message: note(zh,
-          `这台机器人已经入网；当前离线不是接入流程失败。机器人上的 station-agent 恢复上报后会自动恢复（页面每 30 秒刷新，也可以重新检测），控制面没有可幂等触发的重连接口，控制台不会替你发起新的接入。若长时间不回来，请现场检查电源、网络和站点链路，或在“加入节点”用入网码重新入网。${selfHealed}`,
-          `This robot has already joined; being offline now is not a join failure. It recovers by itself when its station-agent reports again (the page refreshes every 30 seconds, and Re-check reads it at once), and the management plane has no idempotent reconnect command, so the console will not start a new join for you. If it stays away, check power, network and the site link on site, or join it with a join code from Add node.${selfHealed}`),
+          `这台机器人已经入网。重新接入会按已有 Machine 与 NodeClass 配置提交一次重接，不输入 SSH 口令，也不新建或替换入网记录；相同 request_id 对应同一次任务。卡片显示该 NodeOperation 的真实阶段，失败时显示原因。刷新或返回场站后按集群、节点和任务标识恢复。若长时间不回来，请现场检查电源、网络和站点链路。${selfHealed}`,
+          `This robot has already joined. Rejoin submits one retry with the Machine and NodeClass configuration it already has, asks for no SSH password, and does not create or replace an admission; the same request_id is the same task. The card shows that NodeOperation's real phase, and the reason when it fails. A refresh or a return to the station restores it by cluster, node and task id. If it stays away, check power, network and the site link on site.${selfHealed}`),
       };
     case "Redeemed":
       return {

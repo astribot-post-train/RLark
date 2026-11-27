@@ -1,4 +1,4 @@
-import { memo, useEffect, useRef, useState, type KeyboardEvent, type ReactNode, type RefObject } from "react";
+import { memo, useCallback, useEffect, useRef, useState, useSyncExternalStore, type KeyboardEvent, type ReactNode, type RefObject } from "react";
 import { Camera, ChevronDown } from "lucide-react";
 import { request } from "../../api";
 import type { StationItem } from "../api";
@@ -14,6 +14,7 @@ import {
   type CameraCell, type CameraFps, type CameraView,
 } from "../lib/cameras";
 import { readCameraFrames, sameCameraFrame } from "../lib/cameraStream";
+import { readRejoinObservation, subscribeRejoinObservation } from "../lib/robotRejoinTask";
 import { stationFacts } from "../lib/stationDrawer";
 import { shortUID, stationNetworkState, stationPhase, stationPhaseLabel, stationRecoveryHint, stationStatusClass } from "../lib/stationDisplay";
 import {
@@ -441,16 +442,32 @@ export interface StationRecheck {
   run: () => void;
 }
 
-// The recovery line's Rejoin for a robot: pressing it starts nothing by itself. It shows the assessed recovery path
-// — why the management plane has no safe automatic reconnect and what the operator can do — and only then offers the
-// explicit manual entry. The primary button never navigates.
+// The recovery line's Rejoin for a robot. A joined robot submits the station rejoin API; every other case only
+// explains why it will not, and then offers the manual entry. The primary button never navigates.
+export interface StationRejoinTask {
+  phase: string;
+  text: string;
+  title: string;
+  alert: boolean;
+}
+
 export interface StationRejoinControl {
-  // The assessment shown after a click; absent until the operator asks.
+  // Station key. Stage text for this key is subscribed here, so a poll does not re-render the page.
+  liveKey: string;
+  // The assessment shown when this robot must not be submitted automatically.
   notice?: string;
-  // The button's tooltip: why a robot's recovery cannot be started from here.
+  // The button's tooltip.
   reason: string;
+  // True while the submit is in flight or the NodeOperation is not terminal.
+  pending: boolean;
+  // The real task phase, when one is known for this cluster, node and operation.
+  task?: StationRejoinTask;
   press: () => void;
   manual: () => void;
+}
+
+function readEmptyRejoin(): StationRejoinTask | undefined {
+  return undefined;
 }
 
 // The administrator's whole-machine restart: a one-shot Node label the robot's tuner acts on once. The card shows the
@@ -493,6 +510,10 @@ export const StationCard = memo(function StationCard({
   station, cluster, node, siteNode, admission, labels, siteDataState, now, zh, expanded, chosen, power, restart, recheck, rejoin, variant, liveEnabled,
   onToggle, onChoose, onZoom, cameraReport,
 }: StationCardProps) {
+  const subscribeRejoin = useCallback((listener: () => void) => subscribeRejoinObservation(rejoin.liveKey, listener), [rejoin.liveKey]);
+  const readRejoin = useCallback(() => readRejoinObservation(rejoin.liveKey), [rejoin.liveKey]);
+  const observedRejoin = useSyncExternalStore(subscribeRejoin, readRejoin, readEmptyRejoin);
+  const rejoinView = observedRejoin ?? rejoin.task;
   const phase = stationPhase(station);
   const retired = phase === "Retired";
   const robot = variant === "robot";
@@ -621,6 +642,7 @@ export const StationCard = memo(function StationCard({
             ? <strong className={powerNow === "off" || powerNow === "unknown" ? "is-muted" : ""}>{cardPowerActual(powerNow, zh)}</strong>
             : <strong className="is-muted">{zh ? "未上报" : "No report"}</strong>}
         </span>
+        {rejoinView && <small className={`station-tile-rejoin-status is-${rejoinView.phase}`} role={rejoinView.alert ? "alert" : "status"} title={rejoinView.title}>{rejoinView.text}</small>}
         {restartView && <small className={`station-tile-restart is-${restartPhase}`} role={restartAlert ? "alert" : "status"} title={restartView.title}>{restartView.text}</small>}
         {requestView && <small className={`station-tile-request is-${power.request?.phase}`} role={power.request?.phase === "failed" ? "alert" : "status"} title={requestView.title}>{requestView.text}</small>}
       </div>
@@ -652,13 +674,13 @@ export const StationCard = memo(function StationCard({
       <CameraWall cells={cameraList} node={station.metadata.name} namespace={station.metadata.namespace} zh={zh} online={online} expanded={expanded} liveEnabled={liveEnabled} fps={previewFps} measuredFps={measuredFps} onZoom={onZoom} overlayTop={overlayTop} />
       {dock}
       <dl className="station-tile-facts">{facts.slice(0, 3).map((fact) => <div key={fact.key}><dt>{fact.label}</dt><dd>{fact.value}</dd></div>)}</dl>
-      {(recoveryHint || rejoin.notice) && <div className={`station-tile-recovery${rejoin.notice ? " is-unavailable" : ""}`} role="note">
-        <small className="station-tile-recovery-note" aria-live="polite">{rejoin.notice || recoveryHint}</small>
+      {(recoveryHint || rejoin.notice || rejoinView) && <div className={`station-tile-recovery${rejoin.notice && !rejoinView ? " is-unavailable" : ""}${rejoinView?.alert ? " is-failed" : ""}`} role="note">
+        <small className="station-tile-recovery-note" role={rejoinView?.alert ? "alert" : undefined} aria-live="polite" title={rejoinView?.title}>{rejoinView?.text || rejoin.notice || recoveryHint}</small>
         {recoveryHint && <div className="station-tile-recovery-actions">
           <button type="button" className="station-tile-recheck" disabled={recheck.pending} onClick={recheck.run}>{recheck.pending ? (zh ? "检测中…" : "Checking…") : (zh ? "重新检测" : "Re-check")}</button>
-          <button type="button" className="station-tile-recheck station-tile-rejoin" disabled={recheck.pending}
-            title={rejoin.reason} onClick={rejoin.press}>{zh ? "重新接入" : "Rejoin"}</button>
-          {rejoin.notice && <button type="button" className="station-tile-recheck station-tile-rejoin-manual" onClick={rejoin.manual}>{zh ? "手动重新接入" : "Manual rejoin"}</button>}
+          <button type="button" className="station-tile-recheck station-tile-rejoin" disabled={recheck.pending || rejoin.pending}
+            title={rejoin.reason} onClick={rejoin.press}>{rejoin.pending ? (zh ? "接入中…" : "Rejoining…") : (zh ? "重新接入" : "Rejoin")}</button>
+          {(rejoin.notice || rejoin.task?.alert) && <button type="button" className="station-tile-recheck station-tile-rejoin-manual" onClick={rejoin.manual}>{zh ? "手动重新接入" : "Manual rejoin"}</button>}
         </div>}
       </div>}
     </article>;

@@ -1394,6 +1394,22 @@
   background: color-mix(in srgb, var(--orange) 7%, var(--panel));
 }
 .stations-page .station-tile-rejoin-manual { border-style: dashed; }
+.stations-page .station-tile-recovery.is-failed {
+  border-color: color-mix(in srgb, var(--red) 55%, var(--line));
+  background: color-mix(in srgb, var(--red) 8%, var(--panel));
+}
+.stations-page .station-tile-rejoin-status {
+  max-width: 100%;
+  overflow: hidden;
+  color: color-mix(in srgb, var(--blue) 76%, var(--ink));
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.stations-page .station-tile-rejoin-status.is-Running { color: color-mix(in srgb, var(--orange) 76%, var(--ink)); }
+.stations-page .station-tile-rejoin-status.is-Succeeded { color: var(--green-ink); }
+.stations-page .station-tile-rejoin-status.is-Failed,
+.stations-page .station-tile-rejoin-status.is-Blocked { color: color-mix(in srgb, var(--red) 78%, var(--ink)); }
 
 /* Inventory rows: the quiet list. */
 .stations-page .stations-inv-list { display: grid; min-width: 0; }

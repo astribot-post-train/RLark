@@ -166,8 +166,8 @@ export const stationsApi = {
     const path = `/api/v1/station/stations/${encodeURIComponent(name)}/running-images`;
     return requestJson<{ items: StationRunningImage[] }>(withQuery(path, { cluster_id: clusterID, node_uid: nodeUID }), { signal });
   },
-  listNodeOperations(clusterID: string, signal?: AbortSignal) {
-    return requestJson<Page<NodeOperation>>(withQuery("/api/v1/station/node-operations", { cluster_id: clusterID, limit: 100 }), { signal });
+  listNodeOperations(clusterID: string, signal?: AbortSignal, pageToken?: string) {
+    return requestJson<Page<NodeOperation>>(withQuery("/api/v1/station/node-operations", { cluster_id: clusterID, limit: 100, continue: pageToken || undefined }), { signal });
   },
   getNodeOperation(name: string, clusterID: string, signal?: AbortSignal) {
     return requestJson<NodeOperation>(withQuery(`/api/v1/station/node-operations/${encodeURIComponent(name)}`, { cluster_id: clusterID }), { signal });
@@ -413,6 +413,16 @@ export const machinesApi = {
       method: "POST",
       body: input,
     });
+  },
+  // One retry of a robot that already joined this cluster. The Gateway returns 202 and the NodeOperation to follow;
+  // the same request_id returns the same operation. No SSH password is sent.
+  async rejoin(name: string, input: { cluster_id: string; request_id: string; robot_model?: string }, signal?: AbortSignal) {
+    const response = await requestJson<{ data?: NodeOperation }>(
+      `/api/v1/station/machines/${encodeURIComponent(name)}/rejoin`,
+      { method: "POST", body: input, signal },
+    );
+    if (!response.data?.metadata?.name) throw new ApiError(502, "rejoin response has no operation", response);
+    return response.data;
   },
   // The node's passwords of a NodeClass: written, never read back.
   setClassAccess(nodeClass: string, input: { node_password: string; sudo_password?: string }) {

@@ -38,14 +38,16 @@ test("a robot carrying a Server SSH join record is told not to use that entry", 
   assert.match(result.message, /扫描发现/);
 });
 
-test("a joined robot that is offline recovers by self-heal; the console starts nothing", () => {
+test("a joined robot that is offline may submit one rejoin of its existing configuration", () => {
   const result = assess(admission("Joined", { self_healed: "节点移除后又以同一个 Node 入网" }));
   assert.equal(result.kind, "joined-offline");
   assert.match(result.message, /已经入网/);
-  assert.match(result.message, /station-agent 恢复上报后会自动恢复/);
-  assert.match(result.message, /没有可幂等触发的重连接口/);
-  assert.match(result.message, /不会替你发起新的接入/);
+  assert.match(result.message, /Machine 与 NodeClass/);
+  assert.match(result.message, /request_id/);
+  assert.match(result.message, /真实阶段/);
+  assert.match(result.message, /刷新或返回场站后按集群、节点和任务标识恢复/);
   assert.match(result.message, /RLark 已自动处理过：节点移除后又以同一个 Node 入网/);
+  assert.doesNotMatch(result.message, /不会替你发起新的接入/);
 });
 
 test("a stopped robot join names the Machine/NodeClass path and does not pretend it is idempotent", () => {
@@ -71,22 +73,26 @@ test("a code still waiting or expired points at reissue, not at an automatic com
   assert.match(assess(undefined).message, /没有这台机器人的入网记录/);
 });
 
-test("the card's Rejoin explains and never navigates; the manual entry is Add node's machine workspace", () => {
-  // The page computes the assessment from data it already holds and keeps it on the card.
+test("the card's Rejoin submits a joined robot and never navigates; the manual entry is Add node's machine workspace", () => {
   assert.match(page, /assessRobotRejoin\(\{/);
   assert.match(page, /setRejoinNotice\(\(current\) => \(\{ \.\.\.current, \[key\]: `\$\{stationRecoveryHint\(item, now, zh\)\} \$\{assessment\.message\}` \}\)\)/);
-  // The explicit manual entry opens the machine workspace with the cluster preselected and no SSH prefill.
   assert.match(page, /const manualRobotRejoin = \(item: StationItem\) =>/);
   assert.match(page, /onJoin\(undefined, \{ \.\.\.\(cluster \? \{ clusterID: cluster\.id \} : \{\}\), method: "machines" \}\)/);
-  // The robot card path has no NodeJoin call at all.
   assert.doesNotMatch(page, /nodeJoinsApi/);
   assert.doesNotMatch(api, /retryStored/);
-  // The primary button only presses the assessment; the manual button appears after the notice.
+  assert.match(api, /\/api\/v1\/station\/machines\/\$\{encodeURIComponent\(name\)\}\/rejoin/);
   assert.match(card, /onClick=\{rejoin\.press\}/);
   assert.match(card, /onClick=\{rejoin\.manual\}/);
-  assert.match(card, /rejoin\.notice && <button[\s\S]*?station-tile-rejoin-manual/);
-  assert.doesNotMatch(card, /rejoin\.pending/);
-  assert.match(page, /机器人不通过 SSH 入网/);
+  assert.match(card, /\(rejoin\.notice \|\| rejoin\.task\?\.alert\) && <button[\s\S]*?station-tile-rejoin-manual/);
+  assert.match(card, /disabled=\{recheck\.pending \|\| rejoin\.pending\}/);
+  assert.match(card, /station-tile-rejoin-status/);
+  assert.match(page, /machinesApi\.rejoin/);
+  assert.match(page, /stationsApi\.getNodeOperation/);
+  const submit = page.slice(page.indexOf("const submitRobotRejoin"), page.indexOf("const manualRobotRejoin"));
+  assert.doesNotMatch(submit, /window\.confirm/);
+  assert.match(submit, /signal/);
+  assert.match(page, /clearInterval\(timer\)/);
+  assert.match(page, /controller\.abort\(\)/);
 });
 
 test("the add-node page honours the machine-workspace target without pre-filling SSH", () => {
