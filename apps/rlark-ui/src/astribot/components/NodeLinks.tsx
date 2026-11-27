@@ -2,6 +2,7 @@ import { ChevronDown, Network } from "lucide-react";
 import {
   nodeLinkHealth,
   nodeLinkLine,
+  nodeNeedsPerson,
   nodeSelfLine,
   nodeSelfStep,
   nodeSelfTime,
@@ -23,7 +24,7 @@ export function NodeLinks({ network, zh, collapsible }: { network?: NodeNetworkD
     Silent: zh ? "收不到" : "Silent",
     Unknown: zh ? "无近况" : "Unknown",
   };
-  const self = site?.self;
+  const selfLine = site ? nodeSelfLine(site, zh) : "";
   const links = site && <>
     {site.summary && <p className="node-link-summary">{site.summary}</p>}
     {site.links.length > 0 && (
@@ -46,14 +47,14 @@ export function NodeLinks({ network, zh, collapsible }: { network?: NodeNetworkD
         ))}
       </dl>
     )}
-    {self && (
+    {site?.self && selfLine && (
       <div className="node-link-self">
-        <p className={`node-link ${self.state === "down" ? "down" : "connected"}`}>
+        <p className={`node-link ${site.self.state === "down" || nodeNeedsPerson(site) ? "down" : "connected"}`}>
           {zh ? "节点自愈：" : "Self-heal: "}
-          {nodeSelfLine(self, zh)}
+          {selfLine}
         </p>
         <ul className="node-link-actions">
-          {[...self.actions].reverse().map((action, index) => (
+          {[...site.self.actions].reverse().map((action, index) => (
             <li key={index}>
               <small>{nodeSelfTime(action.at)}</small> {nodeSelfStep(action.step, zh)} — {action.result}
             </li>

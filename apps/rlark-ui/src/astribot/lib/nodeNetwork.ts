@@ -40,9 +40,11 @@ export interface SiteNodeLinks {
 export interface NodeSelfLink {
   state: "up" | "down";
   since: number;
+  // What restarts the machine when its tunnel stays down; absent: a person does.
+  restartOwner?: string;
   restarts: number;
   restart?: { id: number; at: number; why: string };
-  // The last 10; step is down, recovered, uplink, wireguard, restart or rlark.
+  // The last 10; step is down, recovered, uplink, wireguard, restart, unowned or rlark.
   actions: Array<{ at: number; step: string; result: string }>;
 }
 
@@ -102,15 +104,9 @@ export function nodeLinkLine(site: SiteNodeLinks, zh: boolean): string {
   return zh ? `${site.links.length} 个 Hub 都已连通` : `Connected to all ${site.links.length} hubs`;
 }
 
-// Undefined for no record, one that is not JSON, or one with nothing done yet: nothing to show.
+// Station API alone writes the record, as typed JSON.
 export function nodeSelfLink(raw?: string): NodeSelfLink | undefined {
-  if (!raw) return undefined;
-  try {
-    const link = JSON.parse(raw) as NodeSelfLink;
-    return link.actions?.length ? link : undefined;
-  } catch {
-    return undefined;
-  }
+  return raw ? (JSON.parse(raw) as NodeSelfLink) : undefined;
 }
 
 const selfSteps: Record<string, [string, string]> = {
@@ -119,6 +115,7 @@ const selfSteps: Record<string, [string, string]> = {
   uplink: ["重新拉起网卡", "uplink taken up again"],
   wireguard: ["重建 WireGuard", "WireGuard made anew"],
   restart: ["重启", "restart"],
+  unowned: ["需人工重启", "needs a person to restart"],
   rlark: ["Station API", "Station API"],
 };
 
@@ -131,15 +128,23 @@ export function nodeSelfTime(at: number): string {
   return formatChinaDateTime(new Date(at * 1000).toISOString()).slice(5, 16);
 }
 
+// The hubs hear the node down and nothing on it owns its restart (by the owner it last reported): a person restarts it.
+export function nodeNeedsPerson(site: SiteNodeLinks): boolean {
+  return !!site.self && !site.self.restartOwner && nodeLinkHealth(site) === "down";
+}
+
 // One short line of what the node did of itself: down since when and its last step, or when it recovered and after
-// how long; marked when its last outage asked for no restart because nothing on the machine owns one.
-export function nodeSelfLine(link: NodeSelfLink, zh: boolean): string {
+// how long; "" for nothing to say. The record reaches RLark only once the node is back, so whether a person must
+// restart it now comes from the hubs' links and the owner it last reported; a past outage nothing restarted is marked.
+export function nodeSelfLine(site: SiteNodeLinks, zh: boolean): string {
+  const link = site.self;
+  if (!link) return "";
+  const person = nodeNeedsPerson(site) ? nodeSelfStep("unowned", zh) : "";
   const newest = [...link.actions].reverse();
+  if (!newest.length) return person;
   const lastDown = newest.findIndex((action) => action.step === "down");
-  const unowned = newest
-    .slice(0, lastDown < 0 ? undefined : lastDown)
-    .some((action) => action.step === "restart" && action.result.startsWith("not asked"));
-  const mark = unowned ? (link.state === "down" ? (zh ? " · 需人工重启" : " · needs a person to restart") : zh ? " · 未自动重启" : " · not restarted automatically") : "";
+  const unowned = newest.slice(0, lastDown < 0 ? undefined : lastDown).some((action) => action.step === "unowned");
+  const mark = person ? ` · ${person}` : unowned ? (zh ? " · 未自动重启" : " · not restarted automatically") : "";
   if (link.state === "down")
     return `${zh ? "断网自 " : "Down since "}${nodeSelfTime(link.since)} · ${zh ? "最近：" : "last: "}${nodeSelfStep(newest[0].step, zh)}${mark}`;
   const recovered = newest.find((action) => action.step === "recovered");

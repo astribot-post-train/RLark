@@ -37,7 +37,7 @@ func TestNodeLinkIsKeptOnTheRLarkNodeOfAnEnrolledNode(t *testing.T) {
 		documentHolder("NetworkEnrollment", "farm", "gpu-02", "Enrolled", unplaced.public(), `{}`),
 		documentHolder("NodeAdmission", "farm", "desk", "Redeemed", admitted.public(), `{}`),
 		rlarkNode("farm", "gpu-01"), rlarkNode("farm", "desk"))
-	record := `{"state":"up","since":1800000000,"restarts":0,"actions":[{"at":1799999000,"step":"restart","result":"not asked: nothing on this machine owns its restart (restart-owner); a person restarts it if it needs one"},{"at":1800000000,"step":"recovered","result":"r"}]}`
+	record := `{"state":"up","since":1800000000,"restartOwner":"s1u-robot","restarts":1,"actions":[{"at":1799999000,"step":"restart","result":"restart 1 asked of s1u-robot"},{"at":1800000000,"step":"recovered","result":"r"}]}`
 	if status, body := node.sendLink(api, record); status != http.StatusNoContent {
 		t.Fatalf("enrolled: %d %s", status, body)
 	}

@@ -1,10 +1,11 @@
 import type { CRDNode } from "../../types";
 import { CopyButton } from "./CopyButton.js";
-import { nodeLinkHealth, nodeLinkLine, nodeNetworkModel, nodeSelfLine, type NodeNetworkDisplay } from "../lib/nodeNetwork.js";
+import { nodeLinkHealth, nodeLinkLine, nodeNeedsPerson, nodeNetworkModel, nodeSelfLine, type NodeNetworkDisplay } from "../lib/nodeNetwork.js";
 import { formatChinaDateTime } from "../../utils/time.js";
 
 export function NodeNetworkAddresses({ node, network, zh }: { node: CRDNode; network?: NodeNetworkDisplay; zh: boolean }) {
   const model = nodeNetworkModel(node, network);
+  const selfLine = network?.site ? nodeSelfLine(network.site, zh) : "";
   const messages = {
     unreported: zh ? "未上报" : "Not reported",
     stale: zh ? "上次上报" : "Last reported",
@@ -50,13 +51,13 @@ export function NodeNetworkAddresses({ node, network, zh }: { node: CRDNode; net
           <span>{nodeLinkLine(network.site, zh)}</span>
         </span>
       )}
-      {network?.site?.self && (
+      {network?.site?.self && selfLine && (
         <span
-          className={`node-network-line node-link ${network.site.self.state === "down" ? "down" : "connected"}`}
-          title={network.site.self.actions[network.site.self.actions.length - 1].result}
+          className={`node-network-line node-link ${network.site.self.state === "down" || nodeNeedsPerson(network.site) ? "down" : "connected"}`}
+          title={network.site.self.actions.at(-1)?.result}
         >
           <span className="node-network-label">{zh ? "自愈" : "Self-heal"}</span>
-          <span>{nodeSelfLine(network.site.self, zh)}</span>
+          <span>{selfLine}</span>
         </span>
       )}
     </span>

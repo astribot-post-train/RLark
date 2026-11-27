@@ -159,7 +159,6 @@ test("the node page lists every hub with its state, since and last handshake", (
 });
 
 // The node's own record (site-nodes link): a GPU node that nothing restarts, down 12 min on 11-28 (UTC 02:00).
-const notAsked = "not asked: nothing on this machine owns its restart (restart-owner); a person restarts it if it needs one";
 const gpuOutage = {
   state: "up",
   since: 1795831920,
@@ -168,32 +167,45 @@ const gpuOutage = {
     { at: 1795831200, step: "down", result: "no peer this node dials has answered for 3m0s" },
     { at: 1795831200, step: "uplink", result: "skipped: eno1 has its address and a route to 10.11.14.128" },
     { at: 1795831260, step: "wireguard", result: "st-wg0 removed, made anew by this pass" },
-    { at: 1795831380, step: "restart", result: notAsked },
+    { at: 1795831380, step: "unowned", result: "nothing on this machine owns its restart (restart-owner); a person restarts it if it needs one" },
     { at: 1795831920, step: "recovered", result: "the tunnel answers again after 12m0s" },
   ],
 };
 
-test("a node's own record is read only when it holds something to show", () => {
+test("a node's own record is read as Station API wrote it", () => {
   assert.equal(nodeSelfLink(undefined), undefined);
   assert.equal(nodeSelfLink(""), undefined);
-  assert.equal(nodeSelfLink("{not json"), undefined);
-  assert.equal(nodeSelfLink(JSON.stringify({ state: "up", since: 1, restarts: 0, actions: [] })), undefined);
   assert.deepEqual(nodeSelfLink(JSON.stringify(gpuOutage)), gpuOutage);
 });
 
 test("the self-heal line says when the node recovered, after how long, and what nobody restarted", () => {
-  assert.equal(nodeSelfLine(gpuOutage, true), "11-28 10:12 恢复（断 12 分钟） · 未自动重启");
-  assert.equal(nodeSelfLine(gpuOutage, false), "Recovered 11-28 10:12 after 12 min · not restarted automatically");
-  const down = { ...gpuOutage, state: "down", since: 1795831200, actions: gpuOutage.actions.slice(0, 4) };
-  assert.equal(nodeSelfLine(down, true), "断网自 11-28 10:00 · 最近：重启 · 需人工重启");
-  assert.equal(nodeSelfLine(down, false), "Down since 11-28 10:00 · last: restart · needs a person to restart");
+  assert.equal(nodeSelfLine({ ...connectedLeaf, self: gpuOutage }, true), "11-28 10:12 恢复（断 12 分钟） · 未自动重启");
+  assert.equal(nodeSelfLine({ ...connectedLeaf, self: gpuOutage }, false), "Recovered 11-28 10:12 after 12 min · not restarted automatically");
   // A robot: its restart was asked of its owner, so nothing is marked.
-  const robot = { ...gpuOutage, actions: gpuOutage.actions.map((action) => (action.step === "restart" ? { ...action, result: "restart 1 asked of s1u-robot" } : action)) };
-  assert.equal(nodeSelfLine(robot, false), "Recovered 11-28 10:12 after 12 min");
+  const robot = {
+    ...gpuOutage,
+    restartOwner: "s1u-robot",
+    actions: gpuOutage.actions.map((action) => (action.step === "unowned" ? { ...action, step: "restart", result: "restart 1 asked of s1u-robot" } : action)),
+  };
+  assert.equal(nodeSelfLine({ ...connectedLeaf, self: robot }, false), "Recovered 11-28 10:12 after 12 min");
+  // Nothing done yet and the hubs hear it: nothing to say.
+  assert.equal(nodeSelfLine({ ...connectedLeaf, self: { ...gpuOutage, actions: [] } }, false), "");
   const html = render({ site: { ...connectedLeaf, self: gpuOutage } });
   assert.match(html, /自愈.*11-28 10:12 恢复/);
   assert.match(html, /title="the tunnel answers again after 12m0s"/);
   const page = renderToStaticMarkup(React.createElement(NodeLinks, { network: { site: { ...connectedLeaf, self: gpuOutage } }, zh: false }));
   assert.match(page, /Self-heal: Recovered 11-28 10:12 after 12 min/);
-  assert.match(page, /11-28 10:12<\/small> recovered — the tunnel answers again after 12m0s.*11-28 10:03<\/small> restart — not asked/);
+  assert.match(page, /11-28 10:12<\/small> recovered — the tunnel answers again after 12m0s.*11-28 10:03<\/small> needs a person to restart — nothing/);
+});
+
+// The record arrives only once the node is back: while the hubs hear it down, the owner it last reported says
+// whether a person restarts it.
+test("a node the hubs hear down and nothing restarts needs a person", () => {
+  const fresh = { state: "up", since: 1795831200, restarts: 0, actions: [] };
+  assert.equal(nodeSelfLine({ ...silentLeaf, self: fresh }, true), "需人工重启");
+  assert.equal(nodeSelfLine({ ...silentLeaf, self: gpuOutage }, false), "Recovered 11-28 10:12 after 12 min · needs a person to restart");
+  assert.equal(nodeSelfLine({ ...silentLeaf, self: { ...fresh, restartOwner: "s1u-robot" } }, true), "");
+  assert.equal(nodeSelfLine({ ...silentLeaf }, true), "");
+  const html = render({ site: { ...silentLeaf, self: fresh } }, false);
+  assert.match(html, /node-link down"[^>]*><span class="node-network-label">Self-heal<\/span><span>needs a person to restart/);
 });

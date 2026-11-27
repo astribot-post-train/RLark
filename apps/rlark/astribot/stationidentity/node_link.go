@@ -22,17 +22,19 @@ type nodeLinkRequest struct {
 }
 
 // nodeLink is the station-gateway's link.json without rlark (when Station API last answered, which the gateway leaves
-// out): the tunnel's state since when, the steps of this outage, the restart asked for last and the last actions.
+// out): the tunnel's state since when, what owns the machine's restart, the steps of this outage, the restart asked for last and the last actions.
 // Times are Unix seconds of the node's clock.
 type nodeLink struct {
-	State     string           `json:"state"`
-	RLarkLost bool             `json:"rlarkLost,omitempty"`
-	Since     int64            `json:"since"`
-	Uplink    string           `json:"uplink,omitempty"`
-	Done      []string         `json:"done,omitempty"`
-	Restarts  int              `json:"restarts"`
-	Restart   *nodeLinkRestart `json:"restart,omitempty"`
-	Actions   []nodeLinkAction `json:"actions"`
+	State     string `json:"state"`
+	RLarkLost bool   `json:"rlarkLost,omitempty"`
+	Since     int64  `json:"since"`
+	Uplink    string `json:"uplink,omitempty"`
+	// RestartOwner is what restarts the machine when its tunnel stays down ("": a person).
+	RestartOwner string           `json:"restartOwner,omitempty"`
+	Done         []string         `json:"done,omitempty"`
+	Restarts     int              `json:"restarts"`
+	Restart      *nodeLinkRestart `json:"restart,omitempty"`
+	Actions      []nodeLinkAction `json:"actions"`
 }
 
 type nodeLinkRestart struct {

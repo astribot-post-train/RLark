@@ -1,19 +1,25 @@
 package main
 
 import (
+	"encoding/json"
+	"net"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 )
 
 // An outage takes the uplink, then the device, then asks for a restart, each
 // once; restarts that do not hold the tunnel wait twice as long each time.
 func TestLinkStepsUpThroughAnOutage(t *testing.T) {
 	start := time.Unix(1_800_000_000, 0)
-	l := link{State: "up", Since: start.Unix()}
+	l := link{State: "up", Since: start.Unix(), RestartOwner: "s1u-robot"}
 	at := func(d time.Duration) time.Time { return start.Add(d) }
 	steps := func(d time.Duration, answered bool, keepUplink string) string {
-		step := l.next(answered, at(d), keepUplink, "s1u-robot")
+		step := l.next(answered, at(d), keepUplink)
 		if step == "restart" {
 			l.Restarts++
 			l.Restart = &restartRequest{ID: l.Restarts, At: at(d).Unix()}
@@ -70,19 +76,19 @@ func TestLinkAsksNoRestartOfAMachineWithoutAnOwner(t *testing.T) {
 	start := time.Unix(1_800_000_000, 0)
 	l := link{State: "up", Since: start.Unix()}
 	for _, d := range []time.Duration{0, 4 * time.Minute, 19 * time.Minute, 49 * time.Minute} {
-		if step := l.next(false, start.Add(d), "whole", ""); step != "" && step != "wireguard" {
+		if step := l.next(false, start.Add(d), "whole"); step != "" && step != "wireguard" {
 			t.Fatalf("at %s: step %q", d, step)
 		} else if step != "" {
 			l.Done = append(l.Done, step)
 		}
 	}
-	var restarts []healAction
+	var unowned []healAction
 	for _, action := range l.Actions {
-		if action.Step == "restart" {
-			restarts = append(restarts, action)
+		if action.Step == "unowned" || action.Step == "restart" {
+			unowned = append(unowned, action)
 		}
 	}
-	if len(restarts) != 1 || !strings.HasPrefix(restarts[0].Result, "not asked") || l.Restarts != 0 || l.Restart != nil {
+	if len(unowned) != 1 || unowned[0].Step != "unowned" || l.Restarts != 0 || l.Restart != nil {
 		t.Fatalf("without an owner: %+v", l)
 	}
 }
@@ -112,5 +118,40 @@ func TestLinkHearsStationAPI(t *testing.T) {
 	l.heard(true, started.Add(6*time.Minute), started.Add(6*time.Minute), started)
 	if len(l.Actions) != 2 || l.RLarkLost || l.RLark != started.Add(6*time.Minute).Unix() || l.Actions[1].Result != "Station API answers again" {
 		t.Fatalf("heard: %+v", l)
+	}
+}
+
+// pass reads the owner from restart-owner beside link.json and keeps it in
+// the file: asked of the owner, or recorded for a person without one.
+func TestPassAsksTheRestartOfTheDeclaredOwner(t *testing.T) {
+	d := &desired{peers: []wgtypes.PeerConfig{{Endpoint: &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 51820}}}}
+	d.Interface = "st-test-none"
+	start := time.Unix(1_800_000_000, 0)
+	for _, owner := range []string{"s1u-robot\n", ""} {
+		directory := t.TempDir()
+		if owner != "" {
+			if err := os.WriteFile(filepath.Join(directory, "restart-owner"), []byte(owner), 0644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		h := newHealer(filepath.Join(directory, "link.json"), start)
+		for _, after := range []time.Duration{handshakeAge, handshakeAge + healTunnelAfter, handshakeAge + healRestartAfter} {
+			h.pass(d, nil, start.Add(after))
+		}
+		data, err := os.ReadFile(h.path)
+		var kept link
+		if err == nil {
+			err = json.Unmarshal(data, &kept)
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		last := kept.Actions[len(kept.Actions)-1]
+		switch {
+		case owner != "" && (kept.RestartOwner != "s1u-robot" || kept.Restart == nil || !strings.HasPrefix(last.Result, "restart 1 asked of s1u-robot")):
+			t.Fatalf("with an owner: %+v", kept)
+		case owner == "" && (kept.RestartOwner != "" || kept.Restart != nil || last.Step != "unowned"):
+			t.Fatalf("without an owner: %+v", kept)
+		}
 	}
 }

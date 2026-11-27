@@ -99,6 +99,13 @@ addons:
 
 一次带上两个镜像的发布会停在 `controller` 的门前，不改任何东西。
 
+## 先 tuner 后网关的改动（分两次 apply）
+
+网关只向 `link.json` 旁 `restart-owner` 写了组件名的机器请求重启，这个文件由 `s1u-robot` 的 tuner 写。阶段顺序是 `station-agents`（换网关）在 `addons`（换 tuner）之前，一次上线两个镜像时，中间这段时间里机器人断网 3 分钟以上只记 `unowned`、不重启。所以引入 `restart-owner` 的提交分两次上线，两次用同一个提交：
+
+1. 只换 `s1u-robot`（快速上线 `--image s1u-robot=…`），`station-wireguard` 沿用上一个发布：旧网关照旧向每台机器人请求重启，新 tuner 照旧执行并写上 `restart-owner`。这段时间机器人的链路记录不到 RLark（新 tuner 不再自己写 `rlark.io/link`），只少了可观测性。
+2. 每台机器人主机上都有了 `/var/lib/station/wg/restart-owner`（离线的上线后会写）后，从第一次的发布再生成一个只多 `--image station-wireguard=…` 的发布，照常 `apply`。
+
 ## 发布删掉的手装对象
 
 `release.RetiredNamespaces`（`apps/rlark/astribot/release/site.go`）是站点曾在 Station 旁边手装、现在由 Station 自己做的东西所在的命名空间。带树的运行在 `station-agents` 阶段、换 Station DaemonSet 之前从每个成员集群删掉它们（计划里一行 `<集群> namespace <名字>: present -> (none)`；`--back` 不删也不恢复）；发布账号只对这几个名字有 `delete`（`astribot/release/member-rbac.yaml`）。不手工 `kubectl delete`。

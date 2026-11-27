@@ -90,7 +90,8 @@ rules:
   resources: ["clusters"]
   verbs: ["get", "list"]
 # A machine admitted under a name the management plane knows: the labels its
-# admission declares are put on that Node before it joins (bootstrap.go).
+# admission declares are put on that Node before it joins (bootstrap.go); an
+# enrolled node's link record as annotation rlark.io/link (node_link.go).
 - apiGroups: ["rlinf.io"]
   resources: ["nodes"]
   verbs: ["patch"]

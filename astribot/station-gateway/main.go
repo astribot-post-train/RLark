@@ -661,6 +661,7 @@ func main() {
 	if *computedPath != "" {
 		go func() {
 			var reported []byte
+			forgotten := time.Now()
 			for said, linkSaid := "", ""; ; time.Sleep(30 * time.Second) {
 				if state := ownDocument(filepath.Dir(*configPath), key, *computedPath); state != said {
 					if said = state; state == "" {
@@ -668,7 +669,11 @@ func main() {
 					}
 					log.Printf("own document: %s", state)
 				}
-				// RLark keeps the record on the node's RLark Node (rlark.io/link): sent when it changed.
+				// RLark keeps the record's only copy on the node's RLark Node (rlark.io/link), which a Node
+				// made anew lacks: sent when it changed, and again every 10 minutes.
+				if time.Since(forgotten) >= 10*time.Minute {
+					reported, forgotten = nil, time.Now()
+				}
 				var state string
 				if reported, state = reportLink(filepath.Dir(*configPath), key, linkPath, reported); state != "" && state != linkSaid {
 					linkSaid = state
