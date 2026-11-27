@@ -147,6 +147,12 @@ rlarkctl release apply -e environments/live.yaml -r releases/<名字>.yaml --tre
 - 各集群：`rlarkctl release kubectl -e environments/live.yaml --cluster <集群> -- get pods -A`，看 `rlark-system`、`station-system` 没有异常 Pod；节点都 Ready。这条命令用每个集群里的只读账号 `rlark-system/rlark-reader`（看得到工作负载、日志、事件，读不了 Secret），机器上不留管理员 kubeconfig。
 - 机器人：`s1u-robot` Pod 全就绪，`rlark.io/power-state`、`rlark.io/self-check-state` 正常。
 
+## 发布之外的现网改动
+
+上线可以不走 `release apply`（最快的方式）。这样改的现网就和 `rlark-release-current`、`live.yaml` 记的发布不一样，下一次从上一个发布文件生成新发布时要把这些取值带上，否则会被改回去。
+
+- 2026-11-27 20:31：Fleet dd5e62b 的机器人镜像 `fleet/robot@sha256:9f948f819969b4a09b7593260f4a94f896a88e1b1391641c145940543488cbc7`（底座 f3c2e900 未变）经 Gateway `PUT /api/v1/clusters/<集群>/addons/<名字>` 只换两处：`rlark-robot-s1u-01/s1u-robot` 的 `deviceImage`、`rlark-local-dev-gpu/fleet-episode-relay` 的 `image`（都从 `cb6d0171…` 换来），Addon 版本不变（v1.7.4、v0.1.0）。没走发布：dry-run 会把控制面 gateway、rlark-ui、astribot-iam 换回发布里的镜像，而它们跑着 liangcai 当天 20:08 的热部署。两集群 site-registry 的 `prewarm` 仍列旧摘要。按这次的现网生成的发布文件在管理机 `/var/lib/rlark/release/builds/ci-13b2594-dd5e62b/rlark/astribot/release/releases/ci-13b2594-dd5e62b.yaml`（没 apply，所以不进 `releases/`）。
+
 ## 回退
 
 ```bash
