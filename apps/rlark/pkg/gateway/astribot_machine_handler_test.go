@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -210,5 +211,68 @@ func TestMachineRejoinIsIdempotentAndPreservesExistingNodeAdmission(t *testing.T
 	status, conflict := nodeAdmissionCall(t, g.handleRejoinMachine, "POST", "/api/v1/station/machines/lab-88/rejoin", "lab-88", `{"cluster_id":"cluster-a","request_id":"retry-003","robot_model":"s1u"}`)
 	if status != http.StatusConflict || !strings.Contains(string(conflict), "REJOIN_IN_PROGRESS") {
 		t.Fatalf("active Join status=%d response=%s", status, conflict)
+	}
+}
+
+func TestMachineRejoinHTTPRoutesReturnAndPollTheCurrentOperation(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	cluster := stationHandlerCluster("cluster-a", "agent-a")
+	machine := handlerMachine("lab-88", "Joined", "", "1794925030888")
+	_ = unstructured.SetNestedField(machine.Object, "cluster-a", "status", "clusterID")
+	_ = unstructured.SetNestedField(machine.Object, "s1u-07-x86", "status", "nodeName")
+	_ = unstructured.SetNestedField(machine.Object, "s1u", "spec", "admit", "model")
+	class := &unstructured.Unstructured{Object: map[string]any{"apiVersion": "station.rlark.io/v1alpha1", "kind": "NodeClass", "metadata": map[string]any{"name": "s1u"}, "spec": map[string]any{
+		"kind": "Robot", "model": "s1u", "access": map[string]any{"entry": map[string]any{"port": int64(22), "user": "orin"}, "node": map[string]any{"address": "192.168.0.10", "port": int64(22), "user": "robot"}},
+	}}}
+	admission := &unstructured.Unstructured{Object: map[string]any{"apiVersion": "station.rlark.io/v1alpha1", "kind": "NodeAdmission", "metadata": map[string]any{"name": "s1u-07-x86", "namespace": "agent-a"}, "spec": map[string]any{"clusterID": "cluster-a", "serial": "1794925030888", "nodeClass": "s1u", "machine": map[string]any{"category": "Robot", "model": "s1u"}}, "status": map[string]any{"phase": "Joined"}}}
+	model := &unstructured.Unstructured{Object: map[string]any{"apiVersion": "station.rlark.io/v1alpha1", "kind": "RobotModel", "metadata": map[string]any{"name": "s1u"}, "spec": map[string]any{"displayName": "S1U"}}}
+	client := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), map[schema.GroupVersionResource]string{
+		stationClusterGVR: "ClusterList", machineGVR: "MachineList", nodeAdmissionGVR: "NodeAdmissionList", nodeClassGVR: "NodeClassList", robotModelGVR: "RobotModelList", nodeOperationGVR: "NodeOperationList",
+	}, cluster, machine, admission, class, model)
+	key := []byte(strings.Repeat("r", 32))
+	g := &Gateway{astribotState: astribotState{stationClient: client}, jwtSigningKey: key}
+	token, _, err := g.issueJWT("fixture-admin", "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	router := gin.New()
+	g.RegisterRoutes(router)
+	call := func(method, path, body string) *httptest.ResponseRecorder {
+		recorder := httptest.NewRecorder()
+		request := httptest.NewRequest(method, path, strings.NewReader(body))
+		request.Header.Set("Content-Type", "application/json")
+		request.Header.Set("Authorization", "Bearer "+token)
+		router.ServeHTTP(recorder, request)
+		return recorder
+	}
+	response := call(http.MethodPost, "/api/v1/station/machines/lab-88/rejoin", `{"cluster_id":"cluster-a","request_id":"retry-http-001"}`)
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("POST status=%d body=%s", response.Code, response.Body.String())
+	}
+	var accepted struct {
+		Data map[string]any `json:"data"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &accepted); err != nil {
+		t.Fatal(err)
+	}
+	name, _, _ := unstructured.NestedString(accepted.Data, "metadata", "name")
+	if name == "" || response.Header().Get("Location") != "/api/v1/station/node-operations/"+name+"?cluster_id=cluster-a" {
+		t.Fatalf("POST must return a pollable Location: headers=%v body=%s", response.Header(), response.Body.String())
+	}
+	operation := &unstructured.Unstructured{Object: accepted.Data}
+	operation.Object["metadata"].(map[string]any)["namespace"] = "agent-a"
+	operation.Object["status"] = map[string]any{"phase": "Failed", "stage": "Preflight", "conditions": []any{map[string]any{"type": "Progressing", "status": "False", "reason": "RejoinStateUnavailable", "message": "local WireGuard identity does not match NodeAdmission"}}}
+	if _, err := client.Resource(nodeOperationGVR).Namespace("agent-a").Create(t.Context(), operation, metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	pollPath := response.Header().Get("Location")
+	poll := call(http.MethodGet, pollPath, "")
+	var current map[string]any
+	if poll.Code != http.StatusOK || json.Unmarshal(poll.Body.Bytes(), &current) != nil || current["data"] != nil {
+		t.Fatalf("GET must return the raw NodeOperation: status=%d body=%s", poll.Code, poll.Body.String())
+	}
+	phase, _, _ := unstructured.NestedString(current, "status", "phase")
+	if phase != "Failed" || !strings.Contains(poll.Body.String(), "RejoinStateUnavailable") {
+		t.Fatalf("GET lost the terminal failure status: %s", poll.Body.String())
 	}
 }
