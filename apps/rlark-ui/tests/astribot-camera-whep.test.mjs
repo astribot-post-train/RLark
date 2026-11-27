@@ -5,6 +5,7 @@ import { ApiError } from "../dist/test/api.js";
 import { createCameraMediaScheduler } from "../dist/test/astribot/lib/cameraMediaScheduler.js";
 import { cameraStreamPath } from "../dist/test/astribot/lib/cameras.js";
 import {
+  WHEP_DELETE_TIMEOUT_MS,
   WHEP_FIRST_FRAME_BUDGET_MS,
   WHEP_ICE_GATHERING_TIMEOUT_MS,
   WHEP_RENEW_INTERVAL_MS,
@@ -18,6 +19,16 @@ import {
 
 const ORIGIN = "https://console.example";
 const NAMESPACE = "rlark-robot";
+const SESSION_ID = "123e4567-e89b-42d3-a456-426614174000";
+const POST_PATH = "/api/v1/rlinf.io/v1alpha1/nodes/stream-01/cameras/head/whep";
+
+function sessionLocation(id = SESSION_ID) {
+  return `${POST_PATH}/${id}?namespace=${NAMESPACE}`;
+}
+
+function postTarget() {
+  return cameraWhepPath(cameraStreamPath("stream-01", NAMESPACE, "head", 30));
+}
 
 class FakeMediaStream {
   constructor(tracks) {
@@ -143,10 +154,18 @@ function harness(route, options = {}) {
   const request = async (input, init = {}) => {
     const url = String(input);
     const method = init.method ?? "GET";
-    const entry = { url, method, headers: init.headers, body: init.body, credentials: init.credentials, signal: init.signal };
+    const entry = {
+      url,
+      method,
+      headers: init.headers,
+      body: init.body,
+      credentials: init.credentials,
+      signal: init.signal,
+      keepalive: init.keepalive,
+    };
     calls.push(entry);
     const response = await route(entry);
-    if (!response.ok) throw new ApiError(response.status, response.statusText || `HTTP ${response.status}`);
+    if (!options.rawStatus && !response.ok) throw new ApiError(response.status, response.statusText || `HTTP ${response.status}`);
     return response;
   };
   const preview = startStationWhepPreview({
@@ -231,7 +250,7 @@ test("POST waits until ICE gathering is complete and sends application/sdp", asy
   globalThis.MediaStream = FakeMediaStream;
   const session = harness(() => new Response("v=0\r\nanswer", {
     status: 201,
-    headers: { Location: `/cameras/head/whep/session?namespace=${NAMESPACE}` },
+    headers: { Location: sessionLocation() },
   }));
   await settle();
   assert.equal(session.calls.length, 0);
@@ -254,11 +273,11 @@ test("201 with a relative namespaced Location renews every 6s and DELETEs on clo
   globalThis.MediaStream = FakeMediaStream;
   mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
   t.after(() => mock.timers.reset());
-  const location = `/api/v1/rlinf.io/v1alpha1/nodes/stream-01/cameras/head/whep/session?namespace=${NAMESPACE}`;
+  const location = sessionLocation();
   const session = harness((call) => {
     if (call.method === "POST") return new Response("v=0\r\nanswer", { status: 201, headers: { Location: location } });
     if (call.method === "PUT") return new Response(null, { status: 204 });
-    if (call.method === "DELETE") return new Response(null, { status: 200 });
+    if (call.method === "DELETE") return new Response(null, { status: 202 });
     return new Response("no", { status: 500 });
   }, { videoWidth: 1, peer: peer({ track: Object.assign(track(), { muted: false }) }) });
   await settle();
@@ -277,6 +296,8 @@ test("201 with a relative namespaced Location renews every 6s and DELETEs on clo
   await settle();
   assert.equal(callsOf(session.calls, "DELETE").length, 1);
   assert.equal(callsOf(session.calls, "DELETE")[0].url, puts[0].url);
+  assert.equal(callsOf(session.calls, "DELETE")[0].keepalive, true);
+  assert.equal(session.failure, undefined);
   assert.equal(session.pc.closed, true);
   assert.equal(session.pc.track.stopped, true);
   const putsAfterClose = callsOf(session.calls, "PUT").length;
@@ -291,7 +312,7 @@ test("a failed DELETE still closes the peer connection and clears the renew time
   t.after(() => mock.timers.reset());
   const session = harness((call) => {
     if (call.method === "POST") {
-      return new Response("v=0\r\nanswer", { status: 201, headers: { Location: `/whep/session?namespace=${NAMESPACE}` } });
+      return new Response("v=0\r\nanswer", { status: 201, headers: { Location: sessionLocation() } });
     }
     if (call.method === "DELETE") return new Response("no", { status: 500 });
     return new Response(null, { status: 204 });
@@ -323,7 +344,7 @@ test("a cross-origin Location receives no auth and no PUT or DELETE", async () =
   assert.equal(session.calls.some((call) => call.url.includes("evil.example")), false);
   assert.equal(session.playing, false);
   assert.equal(session.pc.closed, true);
-  assert.equal(resolveWhepSession(`https://evil.example/whep/session?namespace=${NAMESPACE}`, NAMESPACE, ORIGIN).ok, false);
+  assert.equal(resolveWhepSession(`https://evil.example/whep/session?namespace=${NAMESPACE}`, NAMESPACE, ORIGIN, postTarget()).ok, false);
 });
 
 test("a missing Location or one without the namespace is not called", async () => {
@@ -384,7 +405,7 @@ test("timeout, ICE failure, and other technical errors snapshot first and use MJ
   mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
   t.after(() => mock.timers.reset());
 
-  const timedOut = harness(() => new Response("v=0\r\nanswer", { status: 201, headers: { Location: `/s?namespace=${NAMESPACE}` } }));
+  const timedOut = harness(() => new Response("v=0\r\nanswer", { status: 201, headers: { Location: sessionLocation() } }));
   await settle();
   assert.equal(timedOut.calls.length, 0);
   mock.timers.tick(WHEP_ICE_GATHERING_TIMEOUT_MS);
@@ -420,7 +441,7 @@ test("timeout, ICE failure, and other technical errors snapshot first and use MJ
 
   for (const state of ["failed", "disconnected"]) {
     const session = harness((call) => {
-      if (call.method === "POST") return new Response("v=0\r\nanswer", { status: 201, headers: { Location: `/s?namespace=${NAMESPACE}` } });
+      if (call.method === "POST") return new Response("v=0\r\nanswer", { status: 201, headers: { Location: sessionLocation() } });
       return new Response(null, { status: 204 });
     }, { videoWidth: 1, peer: peer({ track: Object.assign(track(), { muted: false }) }) });
     await settle();
@@ -448,7 +469,7 @@ test("HTTP 404 on renew is a technical failure and 401 or 429 on renew do not up
   t.after(() => mock.timers.reset());
   const expectRenew = async (status, kind) => {
     const session = harness((call) => {
-      if (call.method === "POST") return new Response("v=0\r\nanswer", { status: 201, headers: { Location: `/s?namespace=${NAMESPACE}` } });
+      if (call.method === "POST") return new Response("v=0\r\nanswer", { status: 201, headers: { Location: sessionLocation() } });
       if (call.method === "PUT") return new Response("no", { status });
       return new Response(null, { status: 204 });
     }, { videoWidth: 1, peer: peer({ track: Object.assign(track(), { muted: false }) }) });
@@ -490,7 +511,7 @@ test("a missed first frame, an ended track, an empty answer, and a video error a
   t.after(() => mock.timers.reset());
 
   const missed = harness((call) => {
-    if (call.method === "POST") return new Response("v=0\r\nanswer", { status: 201, headers: { Location: `/s?namespace=${NAMESPACE}` } });
+    if (call.method === "POST") return new Response("v=0\r\nanswer", { status: 201, headers: { Location: sessionLocation() } });
     return new Response(null, { status: 204 });
   });
   await settle();
@@ -507,7 +528,7 @@ test("a missed first frame, an ended track, an empty answer, and a video error a
   assert.equal(callsOf(missed.calls, "DELETE").length, 1);
 
   const ended = harness((call) => {
-    if (call.method === "POST") return new Response("v=0\r\nanswer", { status: 201, headers: { Location: `/s?namespace=${NAMESPACE}` } });
+    if (call.method === "POST") return new Response("v=0\r\nanswer", { status: 201, headers: { Location: sessionLocation() } });
     return new Response(null, { status: 204 });
   });
   await settle();
@@ -522,7 +543,7 @@ test("a missed first frame, an ended track, an empty answer, and a video error a
 
   const empty = harness(() => new Response("   ", {
     status: 201,
-    headers: { Location: `/s?namespace=${NAMESPACE}` },
+    headers: { Location: sessionLocation() },
   }));
   await settle();
   empty.pc.completeIce();
@@ -534,7 +555,7 @@ test("a missed first frame, an ended track, an empty answer, and a video error a
   assert.equal(empty.pc.closed, true);
 
   const broken = harness((call) => {
-    if (call.method === "POST") return new Response("v=0\r\nanswer", { status: 201, headers: { Location: `/s?namespace=${NAMESPACE}` } });
+    if (call.method === "POST") return new Response("v=0\r\nanswer", { status: 201, headers: { Location: sessionLocation() } });
     return new Response(null, { status: 204 });
   }, { videoWidth: 1, peer: peer({ track: Object.assign(track(), { muted: false }) }) });
   await settle();
@@ -546,6 +567,176 @@ test("a missed first frame, an ended track, an empty answer, and a video error a
   assert.equal(videoFailure.detail, "video error");
   assert.equal(broken.pc.closed, true);
   assert.equal(callsOf(broken.calls, "DELETE").length, 1);
+});
+
+test("Location must be this POST path plus one UUID, with one exact namespace query", () => {
+  const post = postTarget();
+  const accepted = resolveWhepSession(sessionLocation(), NAMESPACE, ORIGIN, post);
+  assert.equal(accepted.ok, true);
+  assert.equal(accepted.url, `${ORIGIN}${sessionLocation()}`);
+  const upper = SESSION_ID.toUpperCase();
+  assert.equal(resolveWhepSession(sessionLocation(upper), NAMESPACE, ORIGIN, post).ok, true);
+
+  const rejected = [
+    [sessionLocation(), "other-namespace", "namespace"],
+    [`${POST_PATH}/${SESSION_ID}?namespace=${NAMESPACE}&namespace=${NAMESPACE}`, NAMESPACE, "namespace"],
+    [`${POST_PATH}/${SESSION_ID}?namespace=${NAMESPACE}&fps=30`, NAMESPACE, "namespace"],
+    [`${POST_PATH}/${SESSION_ID}?namespace=${NAMESPACE}-extra`, NAMESPACE, "namespace"],
+    [`${POST_PATH}/session?namespace=${NAMESPACE}`, NAMESPACE, "resource"],
+    [`${POST_PATH}/${SESSION_ID}/extra?namespace=${NAMESPACE}`, NAMESPACE, "resource"],
+    [`${POST_PATH}/../admin?namespace=${NAMESPACE}`, NAMESPACE, "resource"],
+    [`/api/v1/secrets/${NAMESPACE}?namespace=${NAMESPACE}`, NAMESPACE, "resource"],
+    [`${sessionLocation()}#fragment`, NAMESPACE, "resource"],
+    [`https://user:pass@console.example${sessionLocation()}`, NAMESPACE, "cross-origin"],
+    [`https://evil.example${sessionLocation()}`, NAMESPACE, "cross-origin"],
+    [`//evil.example${sessionLocation()}`, NAMESPACE, "cross-origin"],
+    [`\\\\evil.example\\${sessionLocation()}`, NAMESPACE, "cross-origin"],
+    ["", NAMESPACE, "missing"],
+    [null, NAMESPACE, "missing"],
+  ];
+  for (const [location, namespace, reason] of rejected) {
+    const result = resolveWhepSession(location, namespace, ORIGIN, post);
+    assert.equal(result.ok, false, String(location));
+    assert.equal(result.reason, reason, String(location));
+  }
+});
+
+test("a same-origin Location that is not this session gets no PUT or DELETE", async () => {
+  globalThis.MediaStream = FakeMediaStream;
+  const attacks = [
+    `${ORIGIN}/api/v1/admin/delete?namespace=${NAMESPACE}`,
+    `${POST_PATH}/session?namespace=${NAMESPACE}`,
+    `https://user:pass@console.example${sessionLocation()}`,
+    `${sessionLocation()}#session`,
+    `${POST_PATH}/${SESSION_ID}?namespace=${NAMESPACE}&namespace=other`,
+  ];
+  for (const location of attacks) {
+    const session = harness(() => new Response("v=0\r\nanswer", { status: 201, headers: { Location: location } }));
+    await settle();
+    session.pc.completeIce();
+    const failure = await session.failurePromise;
+    assert.equal(failure.kind, "technical");
+    assert.deepEqual(session.calls.map((call) => call.method), ["POST"]);
+    assert.equal(session.pc.closed, true);
+    assert.equal(session.playing, false);
+  }
+});
+
+test("a returned 401, 403, or 429 response is classified without an ApiError", async (t) => {
+  globalThis.MediaStream = FakeMediaStream;
+  mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
+  t.after(() => mock.timers.reset());
+  for (const status of [401, 403, 429]) {
+    const session = harness(() => new Response("no", { status, headers: { Location: sessionLocation() } }), { rawStatus: true });
+    await settle();
+    session.pc.completeIce();
+    const failure = await session.failurePromise;
+    assert.equal(failure.kind, status === 429 ? "rate-limited" : "unauthorized");
+    assert.equal(failure.status, status);
+    const plan = cameraTransportPlan({ whepEnabled: true, phase: phaseAfterWhepFailure(failure), mjpegGranted: false });
+    assert.equal(plan.postWhep, false);
+    assert.equal(plan.requestMjpeg, false);
+    assert.equal(plan.requestSnapshot, status === 429);
+    assert.equal(session.playing, false);
+  }
+
+  const created = harness(() => new Response("v=0\r\nanswer", {
+    status: 202,
+    headers: { Location: sessionLocation() },
+  }), { rawStatus: true });
+  await settle();
+  created.pc.completeIce();
+  const createdFailure = await created.failurePromise;
+  assert.equal(createdFailure.kind, "technical");
+  assert.equal(createdFailure.status, 202);
+  assert.equal(created.playing, false);
+  assert.equal(created.pc.remoteDescription, null);
+
+  for (const status of [401, 403, 429, 202]) {
+    const session = harness((call) => {
+      if (call.method === "POST") return new Response("v=0\r\nanswer", { status: 201, headers: { Location: sessionLocation() } });
+      if (call.method === "PUT") return new Response("no", { status });
+      return new Response(null, { status: 202 });
+    }, { rawStatus: true, videoWidth: 1, peer: peer({ track: Object.assign(track(), { muted: false }) }) });
+    await settle();
+    session.pc.completeIce();
+    await session.playingPromise;
+    mock.timers.tick(WHEP_RENEW_INTERVAL_MS);
+    const failure = await session.failurePromise;
+    await settle();
+    const kind = status === 401 || status === 403 ? "unauthorized" : status === 429 ? "rate-limited" : "technical";
+    assert.equal(failure.kind, kind);
+    assert.equal(failure.status, status);
+    const plan = cameraTransportPlan({ whepEnabled: true, phase: phaseAfterWhepFailure(failure), mjpegGranted: false });
+    if (kind === "unauthorized") {
+      assert.equal(plan.requestSnapshot, false);
+      assert.equal(plan.requestMjpeg, false);
+    } else if (kind === "rate-limited") {
+      assert.equal(plan.requestSnapshot, true);
+      assert.equal(plan.requestMjpeg, false);
+    } else {
+      assert.equal(plan.requestSnapshot, true);
+      assert.equal(plan.requestMjpeg, true);
+    }
+    assert.equal(session.pc.closed, true);
+  }
+});
+
+test("close releases the peer before DELETE, and a hung DELETE does not block fallback", async (t) => {
+  globalThis.MediaStream = FakeMediaStream;
+  mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
+  t.after(() => mock.timers.reset());
+  let releaseDelete = () => {};
+  const session = harness((call) => {
+    if (call.method === "POST") return new Response("v=0\r\nanswer", { status: 201, headers: { Location: sessionLocation() } });
+    if (call.method === "DELETE") return new Promise((resolve) => { releaseDelete = () => resolve(new Response(null, { status: 202 })); });
+    return new Response(null, { status: 204 });
+  }, { videoWidth: 1, peer: peer({ track: Object.assign(track(), { muted: false }) }) });
+  await settle();
+  session.pc.completeIce();
+  await session.playingPromise;
+  await settle();
+  assert.equal(session.pc.closed, false);
+  session.pc.iceConnectionState = "failed";
+  session.pc.emit("iceconnectionstatechange");
+  const failure = await session.failurePromise;
+  assert.equal(failure.kind, "technical");
+  assert.equal(session.pc.closed, true);
+  assert.equal(session.pc.track.stopped, true);
+  const deleted = callsOf(session.calls, "DELETE");
+  assert.equal(deleted.length, 1);
+  assert.equal(deleted[0].keepalive, true);
+  assert.equal(deleted[0].signal.aborted, false);
+  assert.equal(deleted[0].url, `${ORIGIN}${sessionLocation()}`);
+  mock.timers.tick(WHEP_DELETE_TIMEOUT_MS);
+  assert.equal(deleted[0].signal.aborted, true);
+  releaseDelete();
+
+  let releaseStop = () => {};
+  const stopping = harness((call) => {
+    if (call.method === "POST") return new Response("v=0\r\nanswer", { status: 201, headers: { Location: sessionLocation() } });
+    if (call.method === "DELETE") return new Promise((resolve) => { releaseStop = () => resolve(new Response(null, { status: 202 })); });
+    return new Response(null, { status: 204 });
+  }, { videoWidth: 1, peer: peer({ track: Object.assign(track(), { muted: false }) }) });
+  await settle();
+  stopping.pc.completeIce();
+  await stopping.playingPromise;
+  await settle();
+  const done = stopping.preview.stop();
+  await settle();
+  assert.equal(stopping.pc.closed, true);
+  const stopDelete = callsOf(stopping.calls, "DELETE")[0];
+  assert.equal(stopDelete.keepalive, true);
+  assert.equal(stopDelete.signal.aborted, false);
+  let settled = false;
+  void done.then(() => { settled = true; });
+  await settle();
+  assert.equal(settled, false);
+  mock.timers.tick(WHEP_DELETE_TIMEOUT_MS);
+  await done;
+  assert.equal(settled, true);
+  assert.equal(stopDelete.signal.aborted, true);
+  releaseStop();
 });
 
 test("the card and dialog gate WHEP on the flag and keep the JPEG stream path", async () => {

@@ -7,6 +7,8 @@ import { ApiError } from "../../api.js";
 export const WHEP_ICE_GATHERING_TIMEOUT_MS = 8000;
 export const WHEP_FIRST_FRAME_BUDGET_MS = WHEP_ICE_GATHERING_TIMEOUT_MS;
 export const WHEP_RENEW_INTERVAL_MS = 6000;
+/** Best-effort session DELETE. A hung request must not hold the preview open. */
+export const WHEP_DELETE_TIMEOUT_MS = 2000;
 
 export type WhepFailureKind = "unauthorized" | "rate-limited" | "technical";
 
@@ -42,7 +44,7 @@ export interface CameraTransportPlan {
 
 export type ResolvedWhepSession =
   | { ok: true; url: string }
-  | { ok: false; reason: "missing" | "namespace" | "cross-origin" };
+  | { ok: false; reason: "missing" | "namespace" | "cross-origin" | "resource" };
 
 export interface WhepSdpRequest {
   (
@@ -52,6 +54,7 @@ export interface WhepSdpRequest {
       headers?: HeadersInit;
       body?: BodyInit | null;
       signal?: AbortSignal;
+      keepalive?: boolean;
     },
   ): Promise<Response>;
 }
@@ -141,25 +144,51 @@ export function cameraWhepPath(streamPath: string): string {
   return `${segments.join("/")}${search ? `?${search}` : ""}`;
 }
 
+// Gateway sessions are uuid.NewString(): 8-4-4-4-12 hex. Anything else is not a
+// session id, so it must not become a PUT or DELETE target.
+const WHEP_SESSION_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// Location is accepted only when it is this POST pathname plus /<uuid>, on this
+// origin, with the namespace query present once and equal to the camera namespace.
+// Userinfo and fragments are rejected so a same-origin URL cannot retarget auth.
 export function resolveWhepSession(
   location: string | null,
   namespace: string,
   origin: string,
+  postPath: string,
 ): ResolvedWhepSession {
-  if (location == null || location.trim() === "") return { ok: false, reason: "missing" };
-  if (!namespace || !location.includes(namespace)) return { ok: false, reason: "namespace" };
+  if (location == null || location.trim() === "" || location !== location.trim()) return { ok: false, reason: "missing" };
+  if (!namespace || !postPath) return { ok: false, reason: "namespace" };
+  if (location.includes("#")) return { ok: false, reason: "resource" };
+  if (location.includes("\\") || location.includes("@")) return { ok: false, reason: "cross-origin" };
   let resolved: URL;
   let page: URL;
+  let posted: URL;
   try {
-    resolved = new URL(location, origin);
     page = new URL(origin);
+    resolved = new URL(location, page);
+    posted = new URL(postPath, page);
   } catch {
     return { ok: false, reason: "missing" };
   }
+  if (page.origin === "null" || page.username || page.password || posted.username || posted.password) {
+    return { ok: false, reason: "cross-origin" };
+  }
+  if (resolved.username || resolved.password || resolved.hash || posted.hash) {
+    return { ok: false, reason: resolved.username || resolved.password ? "cross-origin" : "resource" };
+  }
   // A foreign origin must not receive the IAM Authorization header, cookies, or
   // a session PUT/DELETE. The caller treats this as a technical failure.
-  if (resolved.origin !== page.origin) return { ok: false, reason: "cross-origin" };
-  return { ok: true, url: resolved.href };
+  if (resolved.origin !== page.origin || posted.origin !== page.origin) return { ok: false, reason: "cross-origin" };
+  const names = resolved.searchParams.getAll("namespace");
+  const extraQuery = [...resolved.searchParams.keys()].some((key) => key !== "namespace");
+  if (extraQuery || names.length !== 1 || names[0] !== namespace) return { ok: false, reason: "namespace" };
+  const base = posted.pathname.replace(/\/+$/, "") || "/";
+  const prefix = `${base}/`;
+  if (!resolved.pathname.startsWith(prefix)) return { ok: false, reason: "resource" };
+  const segment = resolved.pathname.slice(prefix.length);
+  if (!WHEP_SESSION_UUID.test(segment)) return { ok: false, reason: "resource" };
+  return { ok: true, url: `${resolved.origin}${resolved.pathname}${resolved.search}` };
 }
 
 export function failureFromStatus(status: number, detail: string): WhepFailure {
@@ -257,6 +286,17 @@ function releasePeer(peer: WhepPeer | undefined) {
   peer.close();
 }
 
+// DELETE is 202 from the Gateway and only best-effort here. The peer connection
+// is released by the caller before this runs. Aborting bounds a hung proxy.
+function deleteSession(url: string, request: WhepSdpRequest): Promise<void> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), WHEP_DELETE_TIMEOUT_MS);
+  return request(url, { method: "DELETE", signal: controller.signal, keepalive: true })
+    .then(() => undefined)
+    .catch(() => undefined)
+    .finally(() => clearTimeout(timer));
+}
+
 export function startStationWhepPreview(options: StationWhepPreviewOptions): WhepPreviewHandle {
   if (!options.enabled) return { stop: () => Promise.resolve() };
 
@@ -311,24 +351,18 @@ export function startStationWhepPreview(options: StationWhepPreviewOptions): Whe
     const current = peer;
     peer = undefined;
     if (video) video.srcObject = null;
-    closing = (async () => {
-      if (url) {
-        try {
-          await options.request(url, { method: "DELETE" });
-        } catch {
-          // The peer connection still has to close when DELETE fails.
-        }
-      }
-      releasePeer(current);
-    })();
+    // Release the peer before DELETE. A hung teardown must not keep the
+    // transceiver, the camera track, or the UI fallback waiting on the network.
+    releasePeer(current);
+    closing = url ? deleteSession(url, options.request) : Promise.resolve();
     return closing;
   };
 
-  const fail = async (failure: WhepFailure) => {
+  const fail = (failure: WhepFailure) => {
     if (disposed) return;
     disposed = true;
     attempt.abort();
-    await deleteAndClose();
+    void deleteAndClose();
     options.onFailure?.(failure);
   };
 
@@ -336,7 +370,15 @@ export function startStationWhepPreview(options: StationWhepPreviewOptions): Whe
     disposed = true;
     attempt.abort();
     await openSettled;
-    await deleteAndClose();
+    const teardown = deleteAndClose();
+    // Peer release already happened. Do not wait past the DELETE bound.
+    await new Promise<void>((resolve) => {
+      const timer = setTimeout(resolve, WHEP_DELETE_TIMEOUT_MS);
+      void teardown.finally(() => {
+        clearTimeout(timer);
+        resolve();
+      });
+    });
   };
 
   const listen = (
@@ -440,7 +482,8 @@ export function startStationWhepPreview(options: StationWhepPreviewOptions): Whe
         await fail({ kind: "technical", detail: "empty offer sdp" });
         return;
       }
-      const response = await options.request(cameraWhepPath(options.streamPath), {
+      const postPath = cameraWhepPath(options.streamPath);
+      const response = await options.request(postPath, {
         method: "POST",
         headers: {
           "Content-Type": "application/sdp",
@@ -449,11 +492,13 @@ export function startStationWhepPreview(options: StationWhepPreviewOptions): Whe
         body: sdp,
         signal: attempt.signal,
       });
-      const answerText = await response.text();
-      const resolved = resolveWhepSession(response.headers.get("Location"), options.namespace, options.origin);
+      // Gateway create is 201. A returned Response is classified here; a thrown
+      // ApiError is classified in failureFromUnknown. 401/403/429 never fall through
+      // as a generic status, whether or not the helper threw.
+      const resolved = resolveWhepSession(response.headers.get("Location"), options.namespace, options.origin, postPath);
       if (response.status !== 201) {
         if (resolved.ok) sessionUrl = resolved.url;
-        await fail({ kind: "technical", status: response.status, detail: "unexpected whep status" });
+        await fail(failureFromStatus(response.status, "unexpected whep status"));
         return;
       }
       if (!resolved.ok) {
@@ -462,6 +507,7 @@ export function startStationWhepPreview(options: StationWhepPreviewOptions): Whe
       }
       sessionUrl = resolved.url;
       if (disposed) return;
+      const answerText = await response.text();
       if (!answerText.trim()) {
         await fail({ kind: "technical", detail: "empty answer sdp" });
         return;
@@ -510,8 +556,9 @@ export function startStationWhepPreview(options: StationWhepPreviewOptions): Whe
     try {
       const response = await options.request(url, { method: "PUT", signal: attempt.signal });
       if (disposed) return;
+      // Gateway renew is 204. 202 is the DELETE status and is not a renew.
       if (response.status !== 204) {
-        await fail({ kind: "technical", status: response.status, detail: "whep renew failed" });
+        await fail(failureFromStatus(response.status, "whep renew failed"));
       }
     } catch (error) {
       if (disposed || attempt.signal.aborted) return;
