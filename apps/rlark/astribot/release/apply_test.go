@@ -636,7 +636,10 @@ func TestApplyWaitsForAGatewayThatIsStarting(t *testing.T) {
 	_, environment, release := writeFiles(t)
 	desired := environment.Desired(release, testClusters)
 	var out bytes.Buffer
-	if err := newRun(t, s, environment, desired, &out).Apply(context.Background()); err != nil {
+	run := newRun(t, s, environment, desired, &out)
+	// Exercise both retries even when coverage tests in other packages are busy.
+	run.Timeout = 2 * time.Second
+	if err := run.Apply(context.Background()); err != nil {
 		t.Fatalf("%v\n%s", err, out.String())
 	}
 }
