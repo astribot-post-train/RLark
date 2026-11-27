@@ -154,6 +154,7 @@ rlarkctl release apply -e environments/live.yaml -r releases/<名字>.yaml --tre
 上线可以不走 `release apply`（最快的方式）。这样改的现网就和 `rlark-release-current`、`live.yaml` 记的发布不一样，下一次从上一个发布文件生成新发布时要把这些取值带上，否则会被改回去。
 
 - 2026-11-27 20:31：Fleet dd5e62b 的机器人镜像 `fleet/robot@sha256:9f948f819969b4a09b7593260f4a94f896a88e1b1391641c145940543488cbc7`（底座 f3c2e900 未变）经 Gateway `PUT /api/v1/clusters/<集群>/addons/<名字>` 只换两处：`rlark-robot-s1u-01/s1u-robot` 的 `deviceImage`、`rlark-local-dev-gpu/fleet-episode-relay` 的 `image`（都从 `cb6d0171…` 换来），Addon 版本不变（v1.7.4、v0.1.0）。没走发布：dry-run 会把控制面 gateway、rlark-ui、astribot-iam 换回发布里的镜像，而它们跑着 liangcai 当天 20:08 的热部署。两集群 site-registry 的 `prewarm` 仍列旧摘要。按这次的现网生成的发布文件在管理机 `/var/lib/rlark/release/builds/ci-13b2594-dd5e62b/rlark/astribot/release/releases/ci-13b2594-dd5e62b.yaml`（没 apply，所以不进 `releases/`）。
+- 同一晚同样只经 Gateway 换 `rlark-robot-s1u-01/s1u-robot` 的 `deviceImage`（底座 f3c2e900 未变，`fleet-episode-relay` 仍是 9f948f81）：21:17 Fleet 2a21d7c `fleet/robot@sha256:7f82d7ddfa0b…`（generation 46）；21:22 Fleet b20be42 `fleet/robot@sha256:f3e2de290170182ff6a4c2b2ec623482d37fdd20b8632024198f9cdde1ba2412`（47）；22:5x Fleet b7a3965 `fleet/robot@sha256:3286630ca30088ff1dde73713dd7ea77dfb8bb534703dda4822965c3129d92d6`（48，记录文件由单独线程分批 fsync）。都在没有 Run、机器人没人占用时换。
 
 ## 回退
 
