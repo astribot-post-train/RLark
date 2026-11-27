@@ -553,7 +553,7 @@ test("the batch drawer shows failed robots and forwards cancel, retry and dismis
 test("the offline recovery line explains the robot boundary and keeps an explicit manual entry", () => {
   // The page assesses from data it already holds and never starts a Server SSH NodeJoin for a robot.
   assert.match(page, /assessRobotRejoin\(\{/);
-  assert.match(page, /setRejoinNotice\(\(current\) => \(\{ \.\.\.current, \[key\]: assessment\.message \}\)\)/);
+  assert.match(page, /setRejoinNotice\(\(current\) => \(\{ \.\.\.current, \[key\]: `\$\{stationRecoveryHint\(item, now, zh\)\} \$\{assessment\.message\}` \}\)\)/);
   assert.match(page, /onJoin\(undefined, \{ \.\.\.\(cluster \? \{ clusterID: cluster\.id \} : \{\}\), method: "machines" \}\)/);
   assert.doesNotMatch(page, /nodeJoinsApi/);
   // The card reports the assessment and only then offers the manual entry; the primary button never navigates.

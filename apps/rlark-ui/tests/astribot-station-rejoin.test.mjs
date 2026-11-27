@@ -74,7 +74,7 @@ test("a code still waiting or expired points at reissue, not at an automatic com
 test("the card's Rejoin explains and never navigates; the manual entry is Add node's machine workspace", () => {
   // The page computes the assessment from data it already holds and keeps it on the card.
   assert.match(page, /assessRobotRejoin\(\{/);
-  assert.match(page, /setRejoinNotice\(\(current\) => \(\{ \.\.\.current, \[key\]: assessment\.message \}\)\)/);
+  assert.match(page, /setRejoinNotice\(\(current\) => \(\{ \.\.\.current, \[key\]: `\$\{stationRecoveryHint\(item, now, zh\)\} \$\{assessment\.message\}` \}\)\)/);
   // The explicit manual entry opens the machine workspace with the cluster preselected and no SSH prefill.
   assert.match(page, /const manualRobotRejoin = \(item: StationItem\) =>/);
   assert.match(page, /onJoin\(undefined, \{ \.\.\.\(cluster \? \{ clusterID: cluster\.id \} : \{\}\), method: "machines" \}\)/);

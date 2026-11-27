@@ -14,7 +14,7 @@ import { useNodeRestart } from "../components/useNodeRestart";
 import { useRobotPower } from "../components/useRobotPower";
 import { outstandingRestart, readNodeRestart, restartPhaseLabel } from "../lib/nodeRestart";
 import { nodeLabel } from "../lib/displayName";
-import { clusterForStation, stationPhase } from "../lib/stationDisplay";
+import { clusterForStation, stationPhase, stationRecoveryHint } from "../lib/stationDisplay";
 import { type NodeJoinTarget } from "../lib/nodeJoin";
 import { assessRobotRejoin } from "../lib/robotRejoin";
 import { isControlPlaneLabels } from "../../utils/nodeVisibility";
@@ -486,7 +486,8 @@ export function StationsPage({ copy: c, onJoin, onModels }: { copy: Copy; onJoin
       siteDataState,
       admission: admissionOf(item),
     });
-    setRejoinNotice((current) => ({ ...current, [key]: assessment.message }));
+    // Keep the concrete last-report and tunnel facts the recovery line showed before the click.
+    setRejoinNotice((current) => ({ ...current, [key]: `${stationRecoveryHint(item, now, zh)} ${assessment.message}` }));
   };
 
   // The explicit manual fallback: Add node's machine workspace, with the station's cluster preselected. It never
