@@ -12,6 +12,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/fake"
+	"k8s.io/utils/ptr"
 	runtimefake "sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
@@ -56,6 +57,14 @@ func TestClusterOnlyRunnerChecksPodIdentityAndKeepsTemplate(t *testing.T) {
 	req := JobRequest{JobUID: childUID, PodName: pod.Name, PodUID: "wrong", Deployment: object.Name, DeployConfig: imagesConfig, AutoRollback: true, HealthTimeout: time.Second}
 	if err := runImageJob(t.Context(), members, reader, req); err == nil {
 		t.Fatal("Job with wrong Pod UID was accepted")
+	}
+	lease.Spec.HolderIdentity = ptr.To("upgrade-job/" + childUID)
+	lease.Spec.RenewTime = ptr.To(metav1.NewMicroTime(time.Now().Add(-time.Hour)))
+	lease.Spec.LeaseDurationSeconds = ptr.To(int32(300))
+	lease.Annotations = map[string]string{executorAnnotation: "missing-executor/old-pod/local-job"}
+	_, err := members.CoordinationV1().Leases(Namespace).Update(t.Context(), lease, metav1.UpdateOptions{})
+	if err != nil {
+		t.Fatal(err)
 	}
 	req.PodUID = string(pod.UID)
 	if err := runImageJob(t.Context(), members, reader, req); err != nil {
@@ -117,5 +126,22 @@ func TestUnconfiguredMembersResolveNoPolicyOnlyWithoutAstribotLease(t *testing.T
 	}).Build()
 	if _, err := ResolveJobPolicy(t.Context(), managed); err == nil || !strings.Contains(err.Error(), "no enabled executor policy") {
 		t.Fatalf("a managed member could use the stock installer: %v", err)
+	}
+}
+
+func TestVanishedUpgradePodRequiresSameJobAndChild(t *testing.T) {
+	member := fake.NewClientset()
+	for _, scenario := range []struct {
+		holder, job string
+		want        bool
+	}{
+		{"upgrade-job/child", "job-uid", true},
+		{"upgrade-job/child", "replacement-job", false},
+		{"upgrade-job/other", "job-uid", false},
+	} {
+		ok, err := executorExited(t.Context(), member, scenario.holder, "missing/pod-uid/job-uid", "upgrade-job/child", scenario.job)
+		if err != nil || ok != scenario.want {
+			t.Fatalf("%+v: got %v %v", scenario, ok, err)
+		}
 	}
 }

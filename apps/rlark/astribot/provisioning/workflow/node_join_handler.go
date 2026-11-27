@@ -600,7 +600,18 @@ func (g *Service) clearUnredeemedJoin(ctx context.Context, j *rlarkv1alpha1.Node
 		if err != nil {
 			return steps, fmt.Errorf("登录 %s@%s：%w", j.Spec.Machine.User, j.Spec.Machine.Address, err)
 		}
-		_, err = machine.Run(ctx, "owner="+nodessh.Quote(string(j.UID))+"\n"+clearTunnelScript, nil, nil)
+		clearHost := "owner=" + nodessh.Quote(string(j.UID)) + "\n" + clearTunnelScript
+		out, err := machine.Run(ctx, clearHost, nil, nil)
+		if err != nil && strings.Contains(out, "host has no matching ownership record") {
+			digest, proofErr := g.authorizeLegacyTunnel(ctx, machine, j)
+			if proofErr == nil {
+				// The cleanup script already takes the lock. Release the
+				// claim lock before running it and let it recheck the UID.
+				_, err = machine.Run(ctx, claimDetachedTunnel(j, digest)+"\nflock -u 8\n"+clearHost, nil, nil)
+			} else {
+				err = proofErr
+			}
+		}
 		_ = machine.Close()
 		if err != nil {
 			return steps, fmt.Errorf("撤掉机器上的隧道：%w", err)

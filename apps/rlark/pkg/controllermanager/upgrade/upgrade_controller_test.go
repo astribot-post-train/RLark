@@ -502,3 +502,14 @@ func TestDeletingBatchLeavesChildrenOfReplacedParent(t *testing.T) {
 	require.Len(t, remaining.Items, 1)
 	assert.Equal(t, child.UID, remaining.Items[0].UID)
 }
+
+func TestStockRollbackPreservesUpstreamFailureBudget(t *testing.T) {
+	job := &rlarkv1alpha1.UpgradeJob{
+		Spec:   rlarkv1alpha1.UpgradeJobSpec{Image: "stock-upgrader", Strategy: rlarkv1alpha1.UpgradeStrategy{FailureTolerate: 0}},
+		Status: rlarkv1alpha1.UpgradeJobStatus{TotalClusters: 2, RollbackClusters: 1},
+	}
+	require.False(t, exceedsFailureTolerance(job, 0))
+	require.True(t, exceedsFailureTolerance(job, 1))
+	job.Status.FailedClusters = 1
+	require.True(t, exceedsFailureTolerance(job, 0))
+}

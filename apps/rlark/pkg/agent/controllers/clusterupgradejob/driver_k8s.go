@@ -299,6 +299,21 @@ func (d *K8sDriver) CheckJobResult(ctx context.Context, child *rlarkv1alpha1.Clu
 		return &JobResult{Status: JobStatusFailed, ExitCode: -1, Message: "the local upgrade Job does not belong to this attempt"}, nil
 	}
 
+	if d.policy != nil && k8sJob.Spec.PodFailurePolicy != nil {
+		for _, condition := range k8sJob.Status.Conditions {
+			if condition.Status != corev1.ConditionTrue {
+				continue
+			}
+			switch condition.Type {
+			case batchv1.JobComplete:
+				return &JobResult{Status: JobStatusSucceeded, ExitCode: 0}, nil
+			case batchv1.JobFailed:
+				return d.failedJobResult(ctx, &k8sJob)
+			}
+		}
+		return &JobResult{Status: JobStatusRunning}, nil
+	}
+
 	if k8sJob.Status.Active > 0 {
 		return &JobResult{Status: JobStatusRunning}, nil
 	}

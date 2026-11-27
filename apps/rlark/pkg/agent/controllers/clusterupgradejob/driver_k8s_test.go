@@ -267,3 +267,35 @@ func TestStockBatchJobSelectsStockTopology(t *testing.T) {
 	}
 	t.Fatal("stock Job did not select the upstream component profile")
 }
+
+func TestImageJobWaitsForReplacementAfterFailedPod(t *testing.T) {
+	ctx := t.Context()
+	scheme := runtime.NewScheme()
+	if err := batchv1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	child := &rlarkv1alpha1.ClusterUpgradeJob{ObjectMeta: metav1.ObjectMeta{Name: "upgrade", UID: "child"}}
+	child.Status.JobName = imageOnlyJobName(child)
+	job := &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{Name: child.Status.JobName, Namespace: StateStoreNamespace,
+			Labels: map[string]string{clusterupgrade.ChildUIDLabel: string(child.UID)}},
+		Spec: batchv1.JobSpec{PodFailurePolicy: &batchv1.PodFailurePolicy{},
+			Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{ServiceAccountName: clusterupgrade.JobServiceAccount}}},
+		Status: batchv1.JobStatus{Failed: 1},
+	}
+	kube := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(job).WithObjects(job).Build()
+	driver := NewK8sDriver(kube, "example")
+	driver.policy = &clusterupgrade.JobPolicy{}
+	result, err := driver.CheckJobResult(ctx, child)
+	if err != nil || result.Status != JobStatusRunning {
+		t.Fatalf("a failed Pod is not a failed Job: %+v %v", result, err)
+	}
+	job.Status.Conditions = []batchv1.JobCondition{{Type: batchv1.JobFailed, Status: corev1.ConditionTrue}}
+	if err := kube.Status().Update(ctx, job); err != nil {
+		t.Fatal(err)
+	}
+	result, err = driver.CheckJobResult(ctx, child)
+	if err != nil || result.Status != JobStatusFailed {
+		t.Fatalf("terminal Job condition not reflected: %+v %v", result, err)
+	}
+}

@@ -19,12 +19,13 @@ import (
 
 const (
 	// Exit codes
-	ExitSuccess           = 0
-	ExitUpgradeFailed     = 1
-	ExitRolledBack        = 2
-	ExitRollbackFailed    = 3
-	ExitPrecheckFailed    = 4
-	ExitHealthCheckFailed = 5
+	ExitSuccess             = 0
+	ExitUpgradeFailed       = 1
+	ExitRolledBack          = 2
+	ExitRollbackFailed      = 3
+	ExitPrecheckFailed      = 4
+	ExitHealthCheckFailed   = 5
+	ExitExecutorInterrupted = 143
 )
 
 func main() {
@@ -69,6 +70,8 @@ func main() {
 		logger.Error(err, "image-only upgrade completed with an error")
 		clusterupgrade.WriteJobDiagnostic(err)
 		switch {
+		case ctx.Err() != nil || errors.Is(err, clusterupgrade.ErrExecutorInterrupted):
+			os.Exit(ExitExecutorInterrupted)
 		case errors.Is(err, clusterupgrade.ErrRolledBack):
 			os.Exit(ExitRolledBack)
 		case errors.Is(err, clusterupgrade.ErrRollbackFailed):

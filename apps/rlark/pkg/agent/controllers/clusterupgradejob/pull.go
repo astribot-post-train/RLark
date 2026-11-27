@@ -2,7 +2,9 @@ package clusterupgradejob
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net"
 	"time"
 
 	"github.com/go-logr/logr"
@@ -101,6 +103,11 @@ func (r *pullReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 	driver, err := r.newDriver(ctx, &clusterUpgradeJob)
 	if err != nil {
 		run.log.Error(err, "failed to create upgrade driver")
+		var networkErr net.Error
+		if apierrors.IsTimeout(err) || apierrors.IsServerTimeout(err) || apierrors.IsTooManyRequests(err) ||
+			apierrors.IsServiceUnavailable(err) || apierrors.IsInternalError(err) || errors.As(err, &networkErr) {
+			return ctrl.Result{}, err
+		}
 		return ctrl.Result{}, run.updateStatus(ctx, &clusterUpgradeJob, rlarkv1alpha1.ClusterUpgradeJobFailed, "", err.Error())
 	}
 	run.driver = driver

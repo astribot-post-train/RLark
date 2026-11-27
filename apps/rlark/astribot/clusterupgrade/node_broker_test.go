@@ -63,7 +63,7 @@ func TestNodeImageBrokerScopesWritesAndRejectsForwardReplay(t *testing.T) {
 	}
 	now := metav1.NewMicroTime(time.Now())
 	lease := &coordinationv1.Lease{
-		ObjectMeta: metav1.ObjectMeta{Name: LeaseName, Namespace: Namespace, Annotations: map[string]string{executorAnnotation: id.PodName + "/" + id.PodUID}},
+		ObjectMeta: metav1.ObjectMeta{Name: LeaseName, Namespace: Namespace, Annotations: map[string]string{executorAnnotation: id.PodName + "/" + id.PodUID + "/" + string(job.UID)}},
 		Spec:       coordinationv1.LeaseSpec{HolderIdentity: ptr.To("upgrade-job/" + id.ChildUID), RenewTime: &now, LeaseDurationSeconds: ptr.To(int32(300))},
 	}
 	ds := &appsv1.DaemonSet{
@@ -247,4 +247,58 @@ func TestVerifyManagedCompletionRequiresAppliedAttemptAndSameReadyDaemonSet(t *t
 	newAttempt := job.DeepCopy()
 	newAttempt.UID = "different-attempt"
 	require.False(t, VerifyManagedNodeCompletion(cluster, daemon, newAttempt, checkpoint))
+}
+
+func TestDegradedNodeRolloutRequiresReadyNodesAtIntendedImage(t *testing.T) {
+	const old, target = "before", "after"
+	ds := &appsv1.DaemonSet{
+		ObjectMeta: metav1.ObjectMeta{Name: nodeagent.Name, Namespace: Namespace, UID: "original", Generation: 2},
+		Spec: appsv1.DaemonSetSpec{Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": "fixture"}},
+			Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: nodeagent.Name, Image: target}}}}},
+		Status: appsv1.DaemonSetStatus{ObservedGeneration: 2, DesiredNumberScheduled: 2, UpdatedNumberScheduled: 1, NumberAvailable: 1},
+	}
+	node := func(name string, status corev1.ConditionStatus) *corev1.Node {
+		return &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: name}, Status: corev1.NodeStatus{
+			Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: status}},
+		}}
+	}
+	pod := func(name, image string, status corev1.ConditionStatus) *corev1.Pod {
+		return &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: Namespace, Labels: map[string]string{"app": "fixture"},
+				OwnerReferences: []metav1.OwnerReference{*metav1.NewControllerRef(ds, appsv1.SchemeGroupVersion.WithKind("DaemonSet"))}},
+			Spec:   corev1.PodSpec{NodeName: name, Containers: []corev1.Container{{Name: nodeagent.Name, Image: image}}},
+			Status: corev1.PodStatus{Phase: corev1.PodRunning, Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: status}}},
+		}
+	}
+	ctx := t.Context()
+	grant := NodeImageGrant{Before: old, Target: target, Phase: NodeImageApplied}
+	online, offline := node("online", corev1.ConditionTrue), node("offline", corev1.ConditionUnknown)
+	updated, stale := pod("online", target, corev1.ConditionTrue), pod("offline", old, corev1.ConditionFalse)
+	member := fake.NewClientset(online, offline, updated, stale)
+	ok, err := observeAvailableNodeAgents(ctx, member, ds, grant)
+	require.NoError(t, err)
+	require.True(t, ok, "confirmed offline node can be deferred")
+
+	offline.Status.Conditions[0].Status = corev1.ConditionTrue
+	_, err = member.CoreV1().Nodes().UpdateStatus(ctx, offline, metav1.UpdateOptions{})
+	require.NoError(t, err)
+	ok, err = observeAvailableNodeAgents(ctx, member, ds, grant)
+	require.NoError(t, err)
+	require.False(t, ok, "a returning node must run the target image")
+
+	updated.Spec.Containers[0].Image = old
+	ds.Spec.Template.Spec.Containers[0].Image = old
+	grant.Phase = NodeImageRolledBack
+	_, err = member.CoreV1().Pods(Namespace).Update(ctx, updated, metav1.UpdateOptions{})
+	require.NoError(t, err)
+	offline.Status.Conditions[0].Status = corev1.ConditionFalse
+	_, err = member.CoreV1().Nodes().UpdateStatus(ctx, offline, metav1.UpdateOptions{})
+	require.NoError(t, err)
+	ok, err = observeAvailableNodeAgents(ctx, member, ds, grant)
+	require.NoError(t, err)
+	require.True(t, ok, "rollback verifies the restored online node while the other is offline")
+	require.NoError(t, member.CoreV1().Pods(Namespace).Delete(ctx, stale.Name, metav1.DeleteOptions{}))
+	ok, err = observeAvailableNodeAgents(ctx, member, ds, grant)
+	require.NoError(t, err)
+	require.False(t, ok, "missing Pods do not prove offline targets")
 }

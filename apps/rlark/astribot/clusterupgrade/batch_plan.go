@@ -137,5 +137,5 @@ func managedGrantTTL(timeout int64) (time.Duration, error) {
 	if timeout < 60 || timeout > 3600 {
 		return 0, errors.New("managed upgrade timeout must be between 60 and 3600 seconds")
 	}
-	return time.Duration(2*timeout+60) * time.Second, nil
+	return time.Duration(2*timeout+leaseDurationSeconds+60) * time.Second, nil
 }

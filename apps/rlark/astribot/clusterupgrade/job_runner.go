@@ -4,16 +4,24 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"strings"
 	"time"
 
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
+
+// ErrExecutorInterrupted is retryable by the same Job. It denotes a Pod
+// being removed or replaced while an upgrade is in progress.
+var ErrExecutorInterrupted = errors.New("upgrade executor Pod was interrupted")
 
 type JobRequest struct {
 	JobUID, PodName, PodUID, Deployment string
@@ -29,6 +37,7 @@ func RunInCluster(ctx context.Context, request JobRequest) error {
 	if err != nil {
 		return err
 	}
+	config.Timeout = 15 * time.Second
 	members, err := kubernetes.NewForConfig(config)
 	if err != nil {
 		return err
@@ -60,7 +69,6 @@ func runImageJob(ctx context.Context, member kubernetes.Interface, reader client
 	if err != nil {
 		return err
 	}
-	pods := member.CoreV1().Pods(Namespace)
 	identity := ExecutorIdentity{ChildUID: request.JobUID, ChildName: request.ChildName, PodName: request.PodName, PodUID: request.PodUID}
 	pod, err := readExecutor(ctx, member, identity)
 	if err != nil {
@@ -69,28 +77,48 @@ func runImageJob(ctx context.Context, member kubernetes.Interface, reader client
 	if err := policy.Validate(ctx, reader, executorImage(pod), request.DeployConfig); err != nil {
 		return err
 	}
-	confirmExited := func(ctx context.Context, _ string, previous string) (bool, error) {
-		name, uid, ok := strings.Cut(previous, "/")
-		if !ok {
-			return false, nil
-		}
-		old, err := pods.Get(ctx, name, metav1.GetOptions{})
-		if err != nil {
-			// A missing Pod cannot prove that its old node stopped running it.
-			return false, nil
-		}
-		return string(old.UID) == uid && (old.Status.Phase == corev1.PodSucceeded || old.Status.Phase == corev1.PodFailed), nil
+	holder := "upgrade-job/" + request.JobUID
+	jobUID := string(metav1.GetControllerOf(pod).UID)
+	confirmExited := func(ctx context.Context, previousHolder, previous string) (bool, error) {
+		return executorExited(ctx, member, previousHolder, previous, holder, jobUID)
 	}
-	guard, work, err := Acquire(ctx, member.CoordinationV1().Leases(Namespace), "upgrade-job/"+request.JobUID, request.PodName+"/"+request.PodUID, confirmExited)
-	if err != nil {
-		return err
+	leases := member.CoordinationV1().Leases(Namespace)
+	var guard *Guard
+	var work context.Context
+	if err := wait.PollUntilContextTimeout(ctx, 2*time.Second, time.Duration(leaseDurationSeconds+10)*time.Second, true, func(call context.Context) (bool, error) {
+		if _, err := readExecutor(call, member, identity); err != nil {
+			return false, err
+		}
+		// The guard belongs to the Job lifetime, not the polling deadline.
+		guard, work, err = Acquire(ctx, leases, holder, leaseExecutor(pod), confirmExited)
+		var conflict *LeaseConflict
+		if errors.As(err, &conflict) && conflict.Holder == holder {
+			return false, nil
+		}
+		if apierrors.IsConflict(err) {
+			return false, nil
+		}
+		return err == nil, err
+	}); err != nil {
+		return fmt.Errorf("acquire upgrade executor lease: %w", err)
+	}
+	check := func(ctx context.Context) error {
+		// A force-deleted Pod can still have a running process. Before
+		// accepting a write, also require its original live Pod and Job.
+		if _, err := readExecutor(ctx, member, identity); err != nil {
+			if apierrors.IsNotFound(err) || errors.Is(err, ErrUnverifiedExecutor) {
+				return errors.Join(ErrExecutorInterrupted, err)
+			}
+			return err
+		}
+		return guard.Check(ctx)
 	}
 	defer func() {
 		cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer cancel()
 		_ = guard.Release(cleanup)
 	}()
-	checkpoint := ConfigMapCheckpoint{ConfigMaps: member.CoreV1().ConfigMaps(Namespace), JobUID: request.JobUID, CheckLease: guard.Check}
+	checkpoint := ConfigMapCheckpoint{ConfigMaps: member.CoreV1().ConfigMaps(Namespace), JobUID: request.JobUID, CheckLease: check}
 	var nodes NodeAgentImages = clusterOnlyNodeImages{reader: reader}
 	if managed {
 		if request.Cluster == "" {
@@ -126,9 +154,33 @@ func runImageJob(ctx context.Context, member kubernetes.Interface, reader client
 	}
 	executor := Executor{
 		Deployments: member.AppsV1().Deployments(Namespace), ExpectedDeployment: request.Deployment,
-		HealthTimeout: request.HealthTimeout, Checkpoints: checkpoint, CheckLease: guard.Check, NodeAgents: nodes,
+		HealthTimeout: request.HealthTimeout, Checkpoints: checkpoint, CheckLease: check, NodeAgents: nodes,
 	}
 	return executor.Run(work, target, nodeImage, request.AutoRollback)
+}
+
+// A vanished Pod is only replaceable by a live Pod of the same immutable Job
+// after lease expiry. Unrelated attempts still need positive terminal evidence.
+func executorExited(ctx context.Context, member kubernetes.Interface, previousHolder, previous, holder, jobUID string) (bool, error) {
+	parts := strings.Split(previous, "/")
+	if len(parts) < 2 || len(parts) > 3 || parts[0] == "" || parts[1] == "" {
+		return false, nil
+	}
+	old, err := member.CoreV1().Pods(Namespace).Get(ctx, parts[0], metav1.GetOptions{})
+	sameJob := previousHolder == holder && len(parts) == 3 && parts[2] != "" && parts[2] == jobUID
+	if apierrors.IsNotFound(err) || err == nil && string(old.UID) != parts[1] {
+		return sameJob, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	child, ok := strings.CutPrefix(previousHolder, "upgrade-job/")
+	owner := metav1.GetControllerOf(old)
+	if !ok || child == "" || owner == nil || owner.Name != JobName(child) || owner.Kind != "Job" ||
+		owner.APIVersion != batchv1.SchemeGroupVersion.String() || (len(parts) == 3 && string(owner.UID) != parts[2]) {
+		return false, nil
+	}
+	return old.Status.Phase == corev1.PodSucceeded || old.Status.Phase == corev1.PodFailed, nil
 }
 
 const BrokerTokenMount = "/var/run/rlark-upgrade/broker"

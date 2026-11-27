@@ -49,6 +49,10 @@ func readExecutor(ctx context.Context, member kubernetes.Interface, identity Exe
 	return pod, nil
 }
 
+func leaseExecutor(pod *corev1.Pod) string {
+	return pod.Name + "/" + string(pod.UID) + "/" + string(metav1.GetControllerOf(pod).UID)
+}
+
 func executorImage(pod *corev1.Pod) string {
 	for _, container := range pod.Spec.Containers {
 		if container.Name == "upgrade" {
@@ -93,7 +97,14 @@ func VerifyExecutor(ctx context.Context, member kubernetes.Interface, token, app
 	}
 	guard := Guard{
 		leases: member.CoordinationV1().Leases(Namespace),
-		holder: "upgrade-job/" + identity.ChildUID, executor: identity.PodName + "/" + identity.PodUID,
+		holder: "upgrade-job/" + identity.ChildUID, executor: leaseExecutor(pod),
 	}
-	return guard.Check(ctx)
+	err = guard.Check(ctx)
+	var conflict *LeaseConflict
+	if errors.As(err, &conflict) && conflict.Holder == guard.holder {
+		// Continue to recognize an already running, pre-Job-UID executor.
+		guard.executor = identity.PodName + "/" + identity.PodUID
+		return guard.Check(ctx)
+	}
+	return err
 }

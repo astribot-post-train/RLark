@@ -52,6 +52,11 @@ func (i BatchGrantIssuer) approve(ctx context.Context, object *unstructured.Unst
 		return NodeImageGrant{}, err
 	}
 	owner := metav1.GetControllerOf(&child)
+	switch child.Status.Phase {
+	case "", rlark.ClusterUpgradeJobPending, rlark.ClusterUpgradeJobUpgrading:
+	default:
+		return NodeImageGrant{}, ErrNodeImageGrant
+	}
 	if child.UID != types.UID(identity.ChildUID) || child.DeletionTimestamp != nil || child.Spec.Image != pinned ||
 		child.Annotations[ChildClusterUIDAnnotation] != string(cluster.UID) || child.Labels["rlark.io/cluster"] != cluster.Name ||
 		owner == nil || owner.UID == "" || owner.Kind != "UpgradeJob" || owner.APIVersion != rlark.GroupVersion.String() ||
@@ -90,7 +95,11 @@ func (i BatchGrantIssuer) approve(ctx context.Context, object *unstructured.Unst
 		return NodeImageGrant{}, err
 	}
 	baseline := NodeImageGrant{DaemonSetUID: ds.UID, Phase: NodeImageApplied, Target: cluster.Spec.NodeAgents.Image}
-	if ds.UID == "" || !ownsNodeDaemonSet(ds, baseline) || !observeNodeImage(ds, baseline) {
+	ready, err := observeAvailableNodeAgents(ctx, member, ds, baseline)
+	if err != nil {
+		return NodeImageGrant{}, err
+	}
+	if ds.UID == "" || !ownsNodeDaemonSet(ds, baseline) || !ready {
 		return NodeImageGrant{}, ErrManagedBaseline
 	}
 	lifetime, err := managedGrantTTL(child.Spec.TimeoutSeconds)

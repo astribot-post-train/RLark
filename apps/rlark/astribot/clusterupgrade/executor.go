@@ -116,7 +116,7 @@ func (e Executor) Run(ctx context.Context, target Images, nodeImage string, auto
 		}
 		return nil
 	}
-	if !autoRollback {
+	if !autoRollback || ctx.Err() != nil || errors.Is(err, ErrExecutorInterrupted) {
 		return err
 	}
 	if leaseErr := e.CheckLease(ctx); leaseErr != nil {
@@ -137,8 +137,20 @@ func (e Executor) rollback(ctx context.Context, checkpoint Checkpoint, upgradeEr
 }
 
 func (e Executor) apply(ctx context.Context, checkpoint Checkpoint, from, to Images, oldNodeImage, nodeImage string, rollback bool) error {
+	// Restore the managed declaration before waiting for the Deployment.
+	// A degraded cluster Agent must not prevent the second image rollback.
+	var nodeRollbackErr error
+	if rollback && checkpoint.NodeAgent.ClusterUID != "" {
+		if err := e.CheckLease(ctx); err != nil {
+			return err
+		}
+		nodeRollbackErr = e.NodeAgents.CompareAndSet(ctx, checkpoint.NodeAgent, oldNodeImage, nodeImage, true)
+	}
 	if err := WriteDeploymentImages(ctx, e.Deployments, checkpoint.Deployment, from, to, e.CheckLease); err != nil {
-		return err
+		return errors.Join(nodeRollbackErr, err)
+	}
+	if nodeRollbackErr != nil {
+		return nodeRollbackErr
 	}
 	health, cancel := context.WithTimeout(ctx, e.HealthTimeout)
 	defer cancel()
@@ -161,8 +173,10 @@ func (e Executor) apply(ctx context.Context, checkpoint Checkpoint, from, to Ima
 	if err := e.CheckLease(health); err != nil {
 		return err
 	}
-	if err := e.NodeAgents.CompareAndSet(health, checkpoint.NodeAgent, oldNodeImage, nodeImage, rollback); err != nil {
-		return err
+	if !rollback {
+		if err := e.NodeAgents.CompareAndSet(health, checkpoint.NodeAgent, oldNodeImage, nodeImage, false); err != nil {
+			return err
+		}
 	}
 	return e.NodeAgents.WaitReady(health, checkpoint.NodeAgent, nodeImage)
 }

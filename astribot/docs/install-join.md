@@ -38,6 +38,8 @@
 - 扫到的机器：场站声明了 `discovery` 时，枢纽的网关在声明的 `ranges` 和枢纽自己接着的每个私有 IPv4 网段（如办公网 10.11.12.0/22、Wi-Fi，比 /22 大的只扫自己地址所在的 /22；不含公网、隧道、容器和集群网络）里找认得出的机器，报给 Station API，成为 `Machine`；它的转发口让管理面 SSH 过去（同样只到这些网段）。机器人插上枢纽所在的任何网都能被扫到，不用先把网段写进 `ranges`。控制台“场站节点 → 扫描设置”可改 `discovery` 的 `enabled`、`ranges`、`intervalSeconds`；`from` 是管理面拨号源，不是扫描器；该 site 的所有 Hub 执行扫描。
 - SSH 入网在机器上以 systemd 单元 `rlark-join` 运行，日志 `/var/log/rlark-join.log`；Gateway 断开不影响它。安装器在 boot ID 匹配时即记录原节点 UID，无需等待 Ready。清理中断的 SSH 入网时，仅对已绑定原 UID 的节点提交移除。缺少 UID 时可清理可确认未使用的入网许可，或选择机器已不在以清除旧尝试；归属不明或已兑换的许可和隧道留给场站节点页处理。
 
+- 历史 SSH 隧道可在主机指纹和 WireGuard 公钥匹配、安装已停且 Kubernetes 凭据已清除、成员 API 确认 Node 不存在时清理或重新绑定。缺失旧标记也可验证。有同名节点或 API 无法确认时会停止。
+
 ## 安装器做什么
 
 安装器是 `station-bootstrap`（`astribot/station/bootstrap/`）：拷安装包到 `/var/lib/rlark/bootstrap`，生成 WireGuard 私钥，向 Station API 兑换入网码，再交给 `install.sh` 在宿主机上执行：

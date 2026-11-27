@@ -40,6 +40,13 @@ func (r *nodeJoinRun) tunnel(ctx context.Context, j *rlarkv1alpha1.NodeJoin) (st
 		return "", err
 	}
 	out, err := machine.Run(ctx, claimHostMarker(joinTunnelHostMarker, j.UID, joinTunnelHostUnused)+"\n"+tunnelScript, strings.NewReader(document), nil)
+	if err != nil && strings.Contains(out, "installation artifacts") {
+		digest, proofErr := r.g.authorizeLegacyTunnel(ctx, machine, j)
+		if proofErr != nil {
+			return "", fmt.Errorf("verify historical tunnel before reuse: %w", proofErr)
+		}
+		out, err = machine.Run(ctx, claimDetachedTunnel(j, digest)+"\n"+tunnelScript, strings.NewReader(document), nil)
+	}
 	if err != nil {
 		return "", err
 	}

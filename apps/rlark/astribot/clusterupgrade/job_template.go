@@ -11,6 +11,18 @@ import (
 // image-only Job. The launcher attaches only the immutable DeployConfig volume.
 func ConfigureExecutor(job *batchv1.Job, policy JobPolicy, childUID, childName, cluster string) {
 	metav1.SetMetaDataLabel(&job.ObjectMeta, ChildUIDLabel, childUID)
+	// Retry a lost/disrupted executor, but preserve structured terminal
+	// results (including completed rollback) without replaying the work.
+	job.Spec.BackoffLimit = ptr.To(int32(2))
+	job.Spec.PodReplacementPolicy = ptr.To(batchv1.Failed)
+	job.Spec.PodFailurePolicy = &batchv1.PodFailurePolicy{Rules: []batchv1.PodFailurePolicyRule{
+		{Action: batchv1.PodFailurePolicyActionFailJob, OnExitCodes: &batchv1.PodFailurePolicyOnExitCodesRequirement{
+			ContainerName: ptr.To("upgrade"), Operator: batchv1.PodFailurePolicyOnExitCodesOpNotIn, Values: []int32{137, 143},
+		}},
+	}}
+	if job.Spec.ActiveDeadlineSeconds != nil {
+		job.Spec.ActiveDeadlineSeconds = ptr.To(*job.Spec.ActiveDeadlineSeconds + leaseDurationSeconds)
+	}
 	pod := &job.Spec.Template.Spec
 	executor := &pod.Containers[0]
 	pod.ServiceAccountName = JobServiceAccount

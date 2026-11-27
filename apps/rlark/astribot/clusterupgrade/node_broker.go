@@ -108,9 +108,6 @@ func (b NodeImageBroker) execute(ctx context.Context, cluster string, identity E
 		if err != nil {
 			return NodeImageResult{}, err
 		}
-		if err := VerifyExecutor(ctx, member, token, grant.ExecutorImage, identity); err != nil {
-			return NodeImageResult{}, err
-		}
 		if err := b.storeGrant(ctx, object, grant, grant.Before); err != nil {
 			return NodeImageResult{}, err
 		}
@@ -129,8 +126,8 @@ func (b NodeImageBroker) execute(ctx context.Context, cluster string, identity E
 	case ReadNodeImage:
 		return result, nil
 	case ObserveNodeRollout:
-		result.Ready = observeNodeImage(daemonSet, grant)
-		return result, nil
+		result.Ready, err = observeAvailableNodeAgents(ctx, member, daemonSet, grant)
+		return result, err
 	case ApplyNodeImage, RestoreNodeImage:
 		return result, b.change(ctx, object, grant, action)
 	default:
@@ -238,6 +235,83 @@ func observeNodeImage(ds *appsv1.DaemonSet, grant NodeImageGrant) bool {
 	}) && status.ObservedGeneration >= ds.Generation && status.DesiredNumberScheduled > 0 &&
 		status.UpdatedNumberScheduled == status.DesiredNumberScheduled &&
 		status.NumberAvailable == status.DesiredNumberScheduled && status.NumberMisscheduled == 0
+}
+
+// An unavailable node can only be deferred when a current owned Pod proves
+// this DaemonSet actually targets it. An online node must run the intended
+// image and be Ready; a missing Pod cannot be counted as offline.
+func observeAvailableNodeAgents(ctx context.Context, member kubernetes.Interface, ds *appsv1.DaemonSet, grant NodeImageGrant) (bool, error) {
+	if observeNodeImage(ds, grant) {
+		return true, nil
+	}
+	image := grant.Target
+	if grant.Phase == NodeImageRolledBack {
+		image = grant.Before
+	} else if grant.Phase != NodeImageApplied {
+		return false, nil
+	}
+	status := ds.Status
+	hasImage := func(containers []corev1.Container) bool {
+		return slices.ContainsFunc(containers, func(c corev1.Container) bool {
+			return c.Name == nodeagent.Name && c.Image == image
+		})
+	}
+	if ds.Spec.Selector == nil || status.ObservedGeneration < ds.Generation || status.DesiredNumberScheduled == 0 ||
+		status.NumberMisscheduled != 0 || !hasImage(ds.Spec.Template.Spec.Containers) {
+		return false, nil
+	}
+	selector, err := metav1.LabelSelectorAsSelector(ds.Spec.Selector)
+	if err != nil {
+		return false, err
+	}
+	pods, err := member.CoreV1().Pods(ds.Namespace).List(ctx, metav1.ListOptions{LabelSelector: selector.String()})
+	if err != nil {
+		return false, err
+	}
+	nodes, err := member.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return false, err
+	}
+	nodesByName := make(map[string]*corev1.Node, len(nodes.Items))
+	for i := range nodes.Items {
+		nodesByName[nodes.Items[i].Name] = &nodes.Items[i]
+	}
+	var available int32
+	covered := make(map[string]bool)
+	for _, pod := range pods.Items {
+		owner := metav1.GetControllerOf(&pod)
+		if pod.Spec.NodeName == "" || owner == nil || owner.UID != ds.UID || owner.Name != ds.Name ||
+			owner.Kind != "DaemonSet" || owner.APIVersion != appsv1.SchemeGroupVersion.String() ||
+			pod.DeletionTimestamp != nil || pod.Status.Phase == corev1.PodFailed || pod.Status.Phase == corev1.PodSucceeded {
+			continue
+		}
+		if covered[pod.Spec.NodeName] {
+			return false, nil
+		}
+		covered[pod.Spec.NodeName] = true
+		node := nodesByName[pod.Spec.NodeName]
+		if node == nil {
+			return false, nil
+		}
+		ready := slices.IndexFunc(node.Status.Conditions, func(c corev1.NodeCondition) bool { return c.Type == corev1.NodeReady })
+		if node.DeletionTimestamp != nil || ready == -1 {
+			return false, nil
+		}
+		switch node.Status.Conditions[ready].Status {
+		case corev1.ConditionFalse, corev1.ConditionUnknown:
+			continue
+		case corev1.ConditionTrue:
+		default:
+			return false, nil
+		}
+		if !hasImage(pod.Spec.Containers) || !slices.ContainsFunc(pod.Status.Conditions, func(c corev1.PodCondition) bool {
+			return c.Type == corev1.PodReady && c.Status == corev1.ConditionTrue
+		}) {
+			return false, nil
+		}
+		available++
+	}
+	return available > 0 && len(covered) == int(status.DesiredNumberScheduled), nil
 }
 
 // VerifyManagedNodeCompletion checks persisted management and member evidence

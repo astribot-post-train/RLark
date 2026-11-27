@@ -67,6 +67,7 @@ func TestImageOnlyAttemptDoesNotUseStockState(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, JobStatusFailed, foreign.Status)
 	job.Status.Succeeded = 1
+	job.Status.Conditions = []batchv1.JobCondition{{Type: batchv1.JobComplete, Status: "True"}}
 	require.NoError(t, kube.Status().Update(t.Context(), &job))
 	_, err = run.monitorUpgrade(t.Context(), child)
 	require.NoError(t, err)
