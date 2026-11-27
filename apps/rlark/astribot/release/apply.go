@@ -344,7 +344,14 @@ func (r *Run) applyLocked(ctx context.Context) error {
 			return stopped
 		}
 	}
-	r.log.printf("release %s: every stage done", r.Name)
+	if len(r.stockDeferred) > 0 {
+		r.log.printf("release %s: stock upgrade configuration deferred on %d member(s)", r.Name, len(r.stockDeferred))
+		for _, name := range slices.Sorted(maps.Keys(r.stockDeferred)) {
+			r.log.printf("  %s: %s", name, r.stockDeferred[name])
+		}
+	} else {
+		r.log.printf("release %s: every stage done", r.Name)
+	}
 	return r.record(ctx, current)
 }
 
@@ -494,7 +501,7 @@ func (r *Run) act(ctx context.Context, stage string, current State) error {
 				continue
 			}
 			if err := r.initializeStockMember(ctx, cluster); err != nil {
-				var busy *activeStockUpgrade
+				var busy *stockDeferredError
 				if errors.As(err, &busy) {
 					r.log.printf("%s", r.deferStockMember(cluster, busy.Error()))
 					continue

@@ -1,14 +1,9 @@
 """Read-only S1U ROS1 observer. Serves one bounded snapshot on the Pod network."""
 
-import json
 import math
-import os
 import struct
 import threading
 import time
-from http.server import BaseHTTPRequestHandler, HTTPServer
-from pathlib import Path
-from urllib.parse import urlsplit
 
 JOINT_TYPE = ("astribot_msgs/RobotJointState", "45165dcf13478cde61ebfe1f96d06307")
 ENDPOINT_TYPE = ("astribot_msgs/RobotCartesianState", "44bea01d596ff699fa1447bec34167ac")
@@ -124,57 +119,3 @@ def subscribe(rospy, profile, body, uid):
         }
 
     return snapshot, subscriptions
-
-
-def main():
-    import rospy
-
-    profile = json.loads(Path(os.environ["S1U_CAPABILITIES"]).read_text())
-    body = os.environ["S1U_BODY"]
-    uid = os.environ["S1U_NODE_UID"]
-    host = os.environ["S1U_OBSERVER_ADDRESS"]
-    rospy.init_node("rlark_body_observer", anonymous=True, disable_rosout=True, disable_rostime=True)
-    master = rospy.get_master()
-    _, _, initial_master_pid = master.getPid()
-
-    def watch_master():
-        while not rospy.is_shutdown():
-            time.sleep(2)
-            try:
-                code, _, pid = master.getPid()
-            except OSError:
-                continue
-            if code == 1 and pid != initial_master_pid:
-                rospy.signal_shutdown("ROS master restarted")
-                return
-
-    threading.Thread(target=watch_master, daemon=True).start()
-    snapshot, subscriptions = subscribe(rospy, profile, body, uid)
-
-    class Handler(BaseHTTPRequestHandler):
-        def log_message(self, _format, *_args):
-            pass
-
-        def do_GET(self):
-            if urlsplit(self.path).path.rstrip("/") != "/body-state":
-                self.send_error(404)
-                return
-            payload = json.dumps(snapshot(), allow_nan=False).encode()
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Cache-Control", "no-store")
-            self.send_header("Content-Length", str(len(payload)))
-            self.end_headers()
-            self.wfile.write(payload)
-
-    with HTTPServer((host, 18892), Handler) as server:
-        # Return control regularly so SIGTERM and rospy shutdown can unregister all topics.
-        server.timeout = 0.5
-        while not rospy.is_shutdown():
-            server.handle_request()
-    for subscription in subscriptions:
-        subscription.unregister()
-
-
-if __name__ == "__main__":
-    main()

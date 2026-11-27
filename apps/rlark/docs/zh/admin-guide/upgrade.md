@@ -2,9 +2,7 @@
 
 RLark 支持对数据面集群进行批量升级。通过创建升级任务，可以指定目标镜像和配置，系统会自动在选定的集群上执行升级，并在失败时自动回滚。
 
-对标准安装执行批量升级前，管理员必须在管理面 Cluster 上明确设置注解 `rlark.io/upgrade-driver: stock`。缺少此声明或定义了托管节点 Agent 的集群无法使用上游安装器。启用前先确认标准安装器可以重建成员集群的部署。使用定制工作负载的 Astribot 集群请走专用发布流程。
-
-Astribot 托管成员须显式启用批量升级。在同一个部署配置字段中填写 `BatchDeployConfig` 可提交混合批次，标准与托管成员分别收到各自的子任务配置。已回滚的子任务也计入失败阈值。参见[混合批次入口](../developer-guide/astribot-upstream-upgrade.md)。 明确启用的标准批次使用上游组件清单，会同时预检、升级并回滚集群 Agent Deployment 和独立的节点 Agent DaemonSet。
+[Astribot 升级说明](https://github.com/astribot-post-train/RLark/blob/astribot/main/astribot/docs/upstream-upgrade.zh.md)
 
 ## 创建升级任务
 
@@ -171,7 +169,3 @@ control-plane-address: https://new-server:8443
 ### Q: 多个集群同时升级失败怎么办？
 
 每个集群独立执行升级和回滚。失败的集群会根据配置决定是否回滚。可在详情页查看每个集群的具体状态。
-
-## 使用 Astribot 发布锁的标准升级
-
-对显式声明 `rlark.io/upgrade-driver: stock` 的标准成员，兼容的 Astribot 发布会自动准备共享 Lease，并在集群 Agent 完成滚动后初始化可信本地策略。发布包需提供按摘要固定的 `rlark-upgrade` 镜像。`stock-upgrades` 阶段安装执行器 RBAC，仅在 `rlark-state` 缺失时创建，保留已有回滚状态。仍有升级 Job 的成员会在本阶段标为延后，其余成员继续。后续发布会重试。成员 Lease 的互斥规则仍然适用。发布创建的执行器 Role 和 RoleBinding 可随版本原地更新，匹配的手工权限定义保留。更改不可变的 RoleBinding 角色引用需使用新绑定名。兼容的手工策略保留已有摘要。发起标准升级时使用该策略的镜像摘要。独立 Job 在升级、健康检查、回滚和写入状态期间持锁，并发操作会报告持有者。已显式启用标准升级且既无发布 Lease 也无本地策略的成员沿用上游执行路径。

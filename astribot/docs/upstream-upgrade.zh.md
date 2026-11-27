@@ -37,10 +37,10 @@ CRD 字段与生成产物、共享角色、鉴权和错误转换、组件接线�
 
 参考文档
 
-- [上游集群升级](../admin-guide/upgrade.md)
-- [节点管理](../admin-guide/nodes.md)
-- [任务](../user-guide/jobs.md)
-- [Agent](../admin-guide/agent.md)
+- [上游集群升级](../../apps/rlark/docs/zh/admin-guide/upgrade.md)
+- [节点管理](../../apps/rlark/docs/zh/admin-guide/nodes.md)
+- [任务](../../apps/rlark/docs/zh/user-guide/jobs.md)
+- [Agent](../../apps/rlark/docs/zh/admin-guide/agent.md)
 
 Gateway、管理面控制器和升级后的成员 Agent 都要求集群明确设置 `rlark.io/upgrade-driver: stock` 后才允许使用上游安装器。声明了托管节点 Agent 的集群无法使用该安装器。若成员已有 Astribot 发布租约但未配置执行策略，Agent 同样拒绝启动。隔离测试的仅镜像模式在目标就绪后由 Job 持成员租约写入完成检查点。若本地 Job 消失，Agent 会确认检查点属于本轮子任务 UID，并核验相同 Deployment 的两个目标镜像摘要及实际就绪状态。找不到匹配的检查点时会报告结果无法确认。 纯标准批次单独统计已成功回滚的子任务，不将其计入失败阈值，与上游 `d06745e` 一致。在混合批次中，托管子任务回滚仍计入 Astribot 的失败预算，标准子任务回滚则单独统计。标准安装器的 Job 重试和截止时间保持上游行为。显式声明驱动、批次预检遇不支持目标即停止、已有 Astribot 发布 Lease 的成员须使用经过批准且按摘要固定的标准执行器，均为 Astribot 保留的兼容边界。
 
@@ -58,7 +58,7 @@ Gateway、管理面控制器和升级后的成员 Agent 都要求集群明确设
 
 独立代理和 Job 适配器已可用于托管模式的隔离验证。在一次性成员集群中安装现有的执行器 ServiceAccount、检查点和租约，并应用 `astribot/release/member-upgrade-verifier.yaml`。验证身份能发起 TokenReview，并读取成员的执行器 Pod、Job、Lease 和节点 Agent DaemonSet。凭据只挂载给代理。运行 `rlark-upgrade` 时，把 `RLARK_NODE_IMAGE_BROKER_CONFIG` 指向一份 JSON 配置，其中包含 `listen`、`tlsCert`、`tlsKey`、`managementKubeconfig` 和 `members`。后者按管理面 Cluster 名称索引，每项填写 `clusterUID` 和该成员验证身份的 `kubeconfig`。代理的管理面身份只授予已批准的 Cluster 名称上的读取和更新权限。代理监听指定的内网地址并要求直连 TLS。
 
-隔离子任务的本地 `rlark-agent-upgrade-policy` ConfigMap 设置 `mode=astribot-managed-node`、`deployment`、摘要固定的 `executorImage`、HTTPS `brokerOrigin` 和可信 PEM `brokerCA`。托管模式的 DeployConfig 要求 `kubernetes.agent-image`、`kubernetes.image` 和 `kubernetes.node-agent-image` 都固定到镜像摘要。可信管理面运维人员在启动该子任务前为 Cluster 写入 `rlark.io/node-image-upgrade-grant`。这份 JSON 授权包含 `ClusterUID`、`DaemonSetUID`、`ChildUID`、`Before`（已观测且固定摘要的节点 Agent 镜像）、`Target`（节点 Agent 目标）、`Deployment`（批准的 `Agent` 和 `Tools` 摘要）、`ExecutorImage`、`Expires`（RFC 3339，晚于 Job 截止时间以覆盖回滚）和初始值为 `Approved` 的 `Phase`。不要替换仍在使用的授权。Job 使用绑定 Pod、可轮换的专用受众令牌；代理通过同一次 Cluster 资源版本检查提交镜像和授权阶段，迟到的正向请求无法撤销回滚。代理核验同一托管 DaemonSet UID、预期模板镜像、已观测代际、已更新节点数和可用节点数。隔离模式检查符合条件的节点是否收敛，滚动开始时已排除的不可用节点不阻塞升级或回滚。
+托管 DeployConfig 要求 `kubernetes.agent-image`、`kubernetes.image` 和 `kubernetes.node-agent-image` 按摘要固定。本地可信策略配置 `mode=astribot-managed-node`、`deployment`、`executorImage`、`brokerOrigin` 和 `brokerCA`，并按下文启用自动授权。Job 使用轮转的 Pod 绑定令牌。代理在同一次 Cluster 资源版本更新中写入镜像和授权阶段，限制过期请求，并核对原 DaemonSet UID、目标镜像和符合条件节点的滚动状态。
 
 托管 Job 被清理后，恢复流程会核验本轮子任务的完成检查点、实际集群 Agent Deployment、托管节点 DaemonSet 和 Cluster 上已应用的授权。过期授权仍可作为本轮只读证据。证据缺失或发生变化时，报告结果无法核验。开放批量升级前，用标准与托管成员完成混合批次验收，覆盖授权过期、资源替换、成员租约冲突、部分滚动和回滚，并确认成员无法变更其他 Cluster 或已批准镜像以外的字段。
 
@@ -95,3 +95,13 @@ SSH 安装器在 Kubernetes boot ID 与主机一致时即记录原生 Node UID�
 ### Server 隧道验收
 
 独立验收使用 kcp v0.30.0 root workspace、一个 Kind 成员和本地构建的真实 Server、Cluster Agent、Node Agent。两个 Agent 使用 Server 签发的客户端证书连接，并续约各自的管理面心跳 Lease。通过 `/api/proxy/:agent/api/kubernetes/api/v1/nodes` 和 `/api/nodeproxy/:agent/:node/api/kubernetes/api/v1/nodes/:node` 发起认证请求，均读到了实际成员 API。请求未连接的节点返回 HTTP 502，节点专用路由未降级到集群隧道。Server 拒绝了无客户端证书的请求。重启测试 Server 后，两个 Agent 均自动重连，原请求再次成功。本次覆盖 Agent 反向隧道。机器 SSH 入网、Station WireGuard 链路和生产发布有各自的验收流程。
+
+## 标准成员与批次行为
+
+拒绝的目标会单独计入失败阈值。未超过阈值时继续调度可升级成员。标准升级继续要求管理员确认安装拓扑并声明 `stock`。托管批次按下面的代理配置自动签发授权。
+
+对显式声明 `rlark.io/upgrade-driver: stock` 的标准成员，兼容的 Astribot 发布会自动准备共享 Lease，并在集群 Agent 完成滚动后初始化可信本地策略。发布包需提供按摘要固定的 `rlark-upgrade` 镜像。`stock-upgrades` 阶段安装执行器 RBAC，仅在 `rlark-state` 缺失时创建，保留已有回滚状态。仍有升级 Job 的成员会在本阶段标为延后，其余成员继续。后续发布会重试。成员 Lease 的互斥规则仍然适用。发布创建的执行器 Role 和 RoleBinding 可随版本原地更新，匹配的手工权限定义保留。更改不可变的 RoleBinding 角色引用需使用新绑定名。兼容的手工策略保留已有摘要。发起标准升级时使用该策略的镜像摘要。独立 Job 在升级、健康检查、回滚和写入状态期间持锁，并发操作会报告持有者。已显式启用标准升级且既无发布 Lease 也无本地策略的成员沿用上游执行路径。
+
+执行器延期也包括集群 Agent 未就绪或手工 RBAC 与发布定义不符。发布结束时汇总成员和原因。
+
+授权数据损坏时，只有独立收据能证明同一 Cluster 上原授权已过期，代理才能为另一个获准子任务补发。旧版损坏授权没有可核实收据时，运维须先独立确认原任务已结束，再清理损坏注解。

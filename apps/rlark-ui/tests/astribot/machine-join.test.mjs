@@ -11,7 +11,7 @@ const machine = (name, fields) => ({
   last_seen: at(20, 15, 59), admit_cluster_id: "robots", requested_at: at(20, 15, 50), ...fields,
 });
 
-test("the scan list shows only recent results from the latest run and active joins", () => {
+test("the scan list shows recent periodic and latest manual results and active joins", () => {
   const recent = machine("recent", { discovery_scan_id: "run-b", admissible: true, last_seen: at(20, 15, 51) });
   const expired = machine("expired", { discovery_scan_id: "run-b", admissible: true, last_seen: at(20, 15, 50) });
   const previous = machine("previous", { discovery_scan_id: "run-a", last_seen: at(20, 15, 59) });
@@ -21,10 +21,10 @@ test("the scan list shows only recent results from the latest run and active joi
   const joined = machine("joined", { discovery_scan_id: "run-b", phase: "Joined" });
   const names = (items) => items.map((item) => item.name);
   const records = [expired, joined, recent, previous, legacy, absent, joining];
-  assert.deepEqual(names(scanJoinMachines(records, "robots", now)), ["joining"]);
-  assert.deepEqual(names(scanJoinMachines(records, "robots", now, "run-b")), ["recent", "joining"]);
-  assert.deepEqual(names(scanJoinMachines(records, "office", now, "run-b")), ["recent"]);
-  assert.deepEqual(names(scanJoinMachines(records, "robots", now, "run-c")), ["joining"]);
+  assert.deepEqual(names(scanJoinMachines(records, "robots", now)), ["legacy", "joining"]);
+  assert.deepEqual(names(scanJoinMachines(records, "robots", now, "run-b")), ["recent", "legacy", "joining"]);
+  assert.deepEqual(names(scanJoinMachines(records, "office", now, "run-b")), ["recent", "legacy"]);
+  assert.deepEqual(names(scanJoinMachines(records, "robots", now, "run-c")), ["legacy", "joining"]);
 });
 
 test("each admitted machine says the step it has reached, and the batch how many joined", () => {

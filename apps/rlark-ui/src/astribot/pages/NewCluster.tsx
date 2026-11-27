@@ -32,6 +32,7 @@ import {
   provisionProgress,
   type NewClusterField,
 } from "../lib/newClusterForm";
+import { offersHistoricalOwnership } from "../lib/provisionMigration";
 import "../components/provision.css";
 
 const emptyForm: NewClusterForm = {
@@ -67,6 +68,7 @@ export function NewClusterPage({ lang }: { lang: Lang }) {
   const [loadError, setLoadError] = useState("");
   const [migration, setMigration] = useState<{ name: string; uid: string }>();
   const [migrationNotice, setMigrationNotice] = useState("");
+  const [migrationCandidateUID, setMigrationCandidateUID] = useState("");
   const [cleared, setCleared] = useState<string[]>([]);
   const { pending: busy, error, setError, run } = useAction();
   const refs = useRef<Partial<Record<NewClusterField, HTMLElement | null>>>({});
@@ -80,6 +82,38 @@ export function NewClusterPage({ lang }: { lang: Lang }) {
     provisions.find((p) => p.metadata?.name === selected) ?? provisions[0];
   const view = current ? provisionView(current, lang) : undefined;
   const progress = provisionProgress(current);
+  const historyName = current?.metadata?.name;
+  const historyUID = current?.metadata?.uid;
+  const historyVersion = current?.metadata?.resourceVersion;
+  const legacyRecord =
+    (view?.phase === "Failed" || view?.phase === "Succeeded") &&
+    offersHistoricalOwnership(current?.metadata?.annotations);
+  useEffect(() => {
+    setMigrationCandidateUID("");
+    if (!legacyRecord || !historyName || !historyUID) return;
+    const request = new AbortController();
+    void clusterProvisionsApi
+      .migrationCandidates(historyName, request.signal)
+      .then(
+        (preview) => {
+          if (
+            !request.signal.aborted &&
+            preview.provision_uid === historyUID &&
+            (preview.native_state === "review" ||
+              preview.candidates.some(
+                (item) => item.state === "review" || item.state === "blocked",
+              ))
+          ) {
+            setMigrationCandidateUID(historyUID);
+          }
+        },
+        () => {
+          // Let the dialog report the failure and offer a refresh.
+          if (!request.signal.aborted) setMigrationCandidateUID(historyUID);
+        },
+      );
+    return () => request.abort();
+  }, [historyName, historyUID, historyVersion, legacyRecord, migrationNotice]);
 
   const refresh = useCallback(async () => {
     try {
@@ -619,9 +653,10 @@ export function NewClusterPage({ lang }: { lang: Lang }) {
                 </p>
               )}
               <StageList stages={view.stages} zh={zh} />
-              {current.metadata?.name &&
-                current.metadata.uid &&
-                (view.phase === "Failed" || view.phase === "Succeeded") && (
+              {historyName &&
+                historyUID &&
+                legacyRecord &&
+                migrationCandidateUID === historyUID && (
                   <div className="provision-migration-entry">
                     <button
                       type="button"
@@ -629,23 +664,20 @@ export function NewClusterPage({ lang }: { lang: Lang }) {
                       disabled={busy}
                       onClick={() => {
                         setMigrationNotice("");
-                        setMigration({
-                          name: current.metadata!.name!,
-                          uid: current.metadata!.uid!,
-                        });
+                        setMigration({ name: historyName, uid: historyUID });
                       }}
                     >
                       {zh ? "核对历史归属" : "Review historical ownership"}
                     </button>
-                    {migrationNotice === current.metadata.name && (
-                      <p role="status">
-                        {zh
-                          ? "已记录归属，可按原流程清理。"
-                          : "Ownership recorded. You can use the existing cleanup action."}
-                      </p>
-                    )}
                   </div>
                 )}
+              {migrationNotice && migrationNotice === historyName && (
+                <p role="status">
+                  {zh
+                    ? "已记录归属，可按原流程清理。"
+                    : "Ownership recorded. You can use the existing cleanup action."}
+                </p>
+              )}
               <RetryClear
                 zh={zh}
                 view={view}

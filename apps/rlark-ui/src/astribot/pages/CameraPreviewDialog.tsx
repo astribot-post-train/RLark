@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Camera } from "lucide-react";
-import { request } from "../../api";
+import { ApiError, request } from "../../api";
 import {
   cameraStreamPath,
   type CameraCell,
@@ -41,7 +41,9 @@ export function CameraPreviewDialog({
     useState<ReturnType<typeof cameraDisplayLatency>>();
   const paint = useRef(0);
   const cameraClock = useCameraClock(node, namespace, cell?.present !== false);
-  const [reconnecting, setReconnecting] = useState(false);
+  const [streamIssue, setStreamIssue] = useState<
+    "capacity" | "no-frame" | "disconnected"
+  >();
   const dismiss = useRef(onDismiss);
   dismiss.current = onDismiss;
 
@@ -60,7 +62,7 @@ export function CameraPreviewDialog({
     setFrame(undefined);
     setActualFps(null);
     setLatency(undefined);
-    setReconnecting(false);
+    setStreamIssue(undefined);
     if (cell?.present === false) return;
     let connection: AbortController | undefined;
     let retry = 0;
@@ -74,11 +76,16 @@ export function CameraPreviewDialog({
       connection = controller;
       let watchdog = 0;
       let lastFrame: CameraFrame | undefined;
+      let issue: typeof streamIssue;
+      let timedOut = false;
       let distinct = 0;
       let measuredAt = performance.now();
       const resetWatchdog = () => {
         window.clearTimeout(watchdog);
-        watchdog = window.setTimeout(() => controller.abort(), 8000);
+        watchdog = window.setTimeout(() => {
+          timedOut = true;
+          controller.abort();
+        }, 8000);
       };
       resetWatchdog();
       try {
@@ -100,7 +107,7 @@ export function CameraPreviewDialog({
         for await (const received of readCameraFrames(response)) {
           if (connection !== controller || controller.signal.aborted) break;
           resetWatchdog();
-          setReconnecting(false);
+          setStreamIssue(undefined);
           if (sameCameraFrame(lastFrame, received)) continue;
           lastFrame = received;
           const { jpeg, capturedAtMs } = received;
@@ -110,8 +117,14 @@ export function CameraPreviewDialog({
           url = URL.createObjectURL(new Blob([jpeg], { type: "image/jpeg" }));
           setFrame({ url, capturedAtMs });
         }
-      } catch {
-        // A disconnected stream is retried below while the preview is visible.
+        issue = lastFrame ? "disconnected" : "no-frame";
+      } catch (reason) {
+        issue =
+          reason instanceof ApiError && reason.status === 503
+            ? "capacity"
+            : timedOut && !lastFrame
+              ? "no-frame"
+              : "disconnected";
       } finally {
         window.clearTimeout(watchdog);
         controller.abort();
@@ -120,7 +133,7 @@ export function CameraPreviewDialog({
           connection = undefined;
           setActualFps(null);
           setLatency(undefined);
-          setReconnecting(true);
+          setStreamIssue(issue ?? "disconnected");
           if (!document.hidden)
             retry = window.setTimeout(() => void connect(), 1500);
         }
@@ -263,9 +276,19 @@ export function CameraPreviewDialog({
               : "—"}
           </small>
         )}
-        {reconnecting && (
+        {streamIssue && (
           <small role="status">
-            {zh ? "视频流中断，正在重连" : "Stream interrupted, reconnecting"}
+            {streamIssue === "capacity"
+              ? zh
+                ? "预览服务暂忙，正在重试"
+                : "Preview service busy, retrying"
+              : streamIssue === "no-frame"
+                ? zh
+                  ? "暂未收到相机画面，正在重试"
+                  : "No camera frame received, retrying"
+                : zh
+                  ? "视频流中断，正在重连"
+                  : "Stream interrupted, reconnecting"}
           </small>
         )}
         {cell?.note && <small>{cell.note}</small>}

@@ -42,7 +42,7 @@ func stockRBACChanges(ctx context.Context, plane dynamic.Interface, definitions 
 			continue
 		}
 		if owner == "" {
-			return nil, fmt.Errorf("manually managed stock executor %s differs from the release definition", definitionName(definition))
+			return nil, &stockDeferredError{reason: fmt.Sprintf("manually managed stock executor %s differs from the release definition", definitionName(definition))}
 		}
 		// A binding's roleRef cannot be edited in place. A role migration must
 		// specify a new binding name so this action never deletes an old binding.

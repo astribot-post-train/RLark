@@ -343,17 +343,41 @@ func TestDiscoveryAttemptWaitsForARequestAndRetriesTheReportWithoutProbingAgain(
 			return 0, nil, nil
 		}
 	}
-	if err := attempt.run(request, probe); err != nil || probes != 0 || reports != 0 {
+	if err := attempt.run(request, probe, 0); err != nil || probes != 0 || reports != 0 {
 		t.Fatalf("idle polling had side effects: %d probes, %d reports, %v", probes, reports, err)
 	}
 	pending = true
-	if err := attempt.run(request, probe); !errors.Is(err, unavailable) {
+	if err := attempt.run(request, probe, 0); !errors.Is(err, unavailable) {
 		t.Fatalf("wanted transient report failure, got %v", err)
 	}
-	if err := attempt.run(request, probe); err != nil || probes != 1 || reports != 2 {
+	if err := attempt.run(request, probe, 0); err != nil || probes != 1 || reports != 2 {
 		t.Fatalf("retry: %d probes, %d reports, %v", probes, reports, err)
 	}
-	if err := attempt.run(request, probe); err != nil || probes != 1 || reports != 2 || attempt.id != "" {
+	if err := attempt.run(request, probe, 0); err != nil || probes != 1 || reports != 2 || attempt.id != "" {
 		t.Fatalf("idle again: %d probes, %d reports, %v", probes, reports, err)
+	}
+}
+
+func TestPeriodicDiscoveryUsesConfiguredInterval(t *testing.T) {
+	var attempt discoveryAttempt
+	probes, reports := 0, 0
+	request := func(path string, body map[string]any) (int, []byte, error) {
+		if path == "/v1/network/discovery-scan" {
+			return http.StatusNoContent, nil, nil
+		}
+		reports++
+		if _, found := body["scan_id"]; found {
+			t.Fatal("periodic report claimed a manual scan")
+		}
+		return http.StatusOK, nil, nil
+	}
+	probe := func(context.Context) ([]discoveredHost, error) { probes++; return nil, nil }
+	for range 2 {
+		if err := attempt.run(request, probe, 30); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if probes != 1 || reports != 1 {
+		t.Fatalf("expected one periodic probe and report: %d %d", probes, reports)
 	}
 }

@@ -17,6 +17,7 @@ import (
 )
 
 const provisionClusterReceipt = "rlark.io/provisioned-cluster-uid"
+const provisionOwnershipOrigin = "rlark.io/provision-ownership-origin"
 
 // Reserve the name before agent registration can create a Cluster independently.
 // A later attempt to reserve the same name needs the same provisioning receipt.

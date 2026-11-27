@@ -135,9 +135,15 @@ func (r *Reconciler) reconcileClusterUpgradeJobs(ctx context.Context, job *rlark
 		}
 	}
 
-	if hasRejectedTarget(job) || exceedsFailureTolerance(job, managedRolledBack) {
+	if exceedsFailureTolerance(job, managedRolledBack) {
 		return nil
 	}
+	for _, condition := range job.Status.Conditions {
+		if condition.Type == clusterupgrade.TargetRejected {
+			existingByCluster[condition.Cluster] = struct{}{}
+		}
+	}
+	rejectedBefore := len(job.Status.Conditions)
 	targets := make(map[string]clusterupgrade.BatchTarget, len(clusters))
 	targetUIDs := make(map[string]string, len(clusters))
 	plan, planErr := clusterupgrade.ParseBatchPlan(job.Spec)
@@ -161,10 +167,14 @@ func (r *Reconciler) reconcileClusterUpgradeJobs(ctx context.Context, job *rlark
 		}
 		if err != nil {
 			job.Status.Conditions = append(job.Status.Conditions, clusterupgrade.RejectedTargetCondition(name, job.Spec.Image, err))
-			return r.Status().Update(ctx, job)
+			existingByCluster[name] = struct{}{}
 		}
 	}
 
+	if len(job.Status.Conditions) != rejectedBefore {
+		// Account for rejected targets against the configured threshold before dispatch.
+		return r.Status().Update(ctx, job)
+	}
 	remaining := max(0, int(job.Spec.Strategy.Concurrency)-active)
 
 	for _, clusterName := range clusters {
@@ -304,15 +314,7 @@ func (r *Reconciler) aggregateStatus(ctx context.Context, job *rlarkv1alpha1.Upg
 	})
 	job.Status.Conditions = conditions
 
-	if rejected && upgrading == 0 {
-		job.Status.Phase = rlarkv1alpha1.UpgradeJobFailed
-		if job.Status.CompletionTime == nil {
-			now := metav1.Now()
-			job.Status.CompletionTime = &now
-		}
-	} else {
-		r.updatePhase(job, managedRolledBack)
-	}
+	r.updatePhase(job, managedRolledBack)
 
 	if reflect.DeepEqual(*before, job.Status) {
 		return ctrl.Result{}, nil

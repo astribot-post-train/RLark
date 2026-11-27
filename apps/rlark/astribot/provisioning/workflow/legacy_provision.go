@@ -200,7 +200,14 @@ func (g *Service) planLegacyProvision(ctx context.Context, p *rlark.ClusterProvi
 			})
 		}
 	}
+	if len(actions) > 0 && p.Annotations[provisionOwnershipOrigin] == "" {
+		metav1.SetMetaDataAnnotation(&p.ObjectMeta, provisionOwnershipOrigin, "legacy-reviewed")
+		provisionChanged = true
+	}
 	if provisionChanged {
+		if p.Annotations[provisionOwnershipOrigin] == "" {
+			metav1.SetMetaDataAnnotation(&p.ObjectMeta, provisionOwnershipOrigin, "legacy-reviewed")
+		}
 		actions = append(actions, func(ctx context.Context) error {
 			_, err := g.kubeClient.RlinfV1alpha1().ClusterProvisions().Update(ctx, p, metav1.UpdateOptions{})
 			return err

@@ -1,6 +1,7 @@
 package clusterupgrade
 
 import (
+	"errors"
 	"fmt"
 	"slices"
 
@@ -64,14 +65,22 @@ func Preflight(spec rlark.UpgradeJobSpec, clusters []rlark.Cluster) error {
 	if len(targets) == 0 {
 		return fmt.Errorf("no clusters match the upgrade targets")
 	}
+	var rejected []error
+	eligible := 0
 	for _, name := range targets {
 		cluster, ok := candidates[name]
 		if !ok {
-			return fmt.Errorf("upgrade target cluster %s does not exist", name)
+			rejected = append(rejected, fmt.Errorf("upgrade target cluster %s does not exist", name))
+			continue
 		}
 		if _, err := plan.ForCluster(cluster); err != nil {
-			return fmt.Errorf("upgrade target %s: %w", name, err)
+			rejected = append(rejected, fmt.Errorf("upgrade target %s: %w", name, err))
+			continue
 		}
+		eligible++
+	}
+	if eligible == 0 {
+		return errors.Join(rejected...)
 	}
 	return nil
 }

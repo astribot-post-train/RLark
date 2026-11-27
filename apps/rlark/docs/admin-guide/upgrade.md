@@ -2,9 +2,7 @@
 
 RLark supports batch upgrades of data-plane clusters. By creating an upgrade job, you specify the target image and configuration, and the system automatically performs the upgrade on selected clusters with automatic rollback on failure.
 
-An administrator must explicitly set the management Cluster annotation `rlark.io/upgrade-driver: stock` before selecting a standard installation for batch upgrade. Clusters without this annotation and clusters that declare managed node Agents are ineligible for the stock installer. Verify that the standard installer can reproduce the member's deployment before opting in. For Astribot installations with custom workloads, use their dedicated release procedure.
-
-Astribot managed members require explicit site activation. For a mixed batch, enter a `BatchDeployConfig` in the same Deploy Config field. Stock and managed members receive independent child configurations. A rolled-back child counts toward the failure tolerance. See [mixed-batch activation](../developer-guide/astribot-upstream-upgrade.md#mixed-batch-activation). Explicitly opted-in stock batches use the upstream component profile, so both the cluster Agent Deployment and the separate node Agent DaemonSet are checked, upgraded and rolled back.
+[Astribot upgrade guide](https://github.com/astribot-post-train/RLark/blob/astribot/main/astribot/docs/upstream-upgrade.md)
 
 ## Create an Upgrade Job
 
@@ -171,7 +169,3 @@ control-plane-address: https://new-server:8443
 ### Q: What if multiple clusters fail simultaneously?
 
 Each cluster executes upgrade and rollback independently. Failed clusters will decide whether to rollback based on configuration. Check the detail page for specific status of each cluster.
-
-## Standard upgrades with the Astribot release lock
-
-For a standard member explicitly annotated `rlark.io/upgrade-driver: stock`, a compatible Astribot release automatically bootstraps the shared Lease and initializes the trusted local policy after its cluster Agent rollout. The release must supply a digest-pinned `rlark-upgrade` image. The `stock-upgrades` stage installs the executor RBAC and creates `rlark-state` only when absent, leaving existing rollback data intact. A member with an active upgrade Job is reported as deferred for this stage and retried on a later release. Other members continue. The normal member Lease conflict rules still apply. The stage reconciles release-owned executor Roles and RoleBindings in place and preserves matching manually managed definitions. An immutable RoleBinding role reference requires a new binding name. A compatible manually managed policy keeps its existing executor pin. Submit standard upgrades using the resulting policy digest. The independent Job holds the Lease through the upgrade, health checks, rollback and state recording. Concurrent operations report the holder. Explicitly opted-in standard members with neither a release Lease nor a local policy retain the upstream execution path.

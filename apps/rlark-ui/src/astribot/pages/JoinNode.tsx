@@ -1005,8 +1005,7 @@ function UnjoinedMachines({
       return (
         current &&
         selectable(current) &&
-        scanID &&
-        current.discovery_scan_id === scanID &&
+        (!current.discovery_scan_id || current.discovery_scan_id === scanID) &&
         !machineUnseen(current, submittedAt) &&
         current.address === selected.address &&
         current.port === selected.port &&
@@ -1314,8 +1313,8 @@ function UnjoinedMachines({
                   : "Waiting for Hub scan results."
                 : !scanID
                   ? zh
-                    ? "点击「开始扫描」查找此站点的机器。"
-                    : "Select Start scan to find machines at this site."
+                    ? "等待站点自动发现，或点击「开始扫描」立即查找。"
+                    : "Wait for automatic discovery or select Start scan to look now."
                   : zh
                     ? "没有符合筛选条件的近期结果。可重新扫描、调整筛选或使用 SSH 入网。"
                     : "No recent scan results match. Scan again, adjust filters, or join over SSH."}

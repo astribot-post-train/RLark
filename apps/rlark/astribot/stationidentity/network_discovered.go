@@ -147,7 +147,7 @@ func (d *NetworkDocuments) discovered(ctx context.Context, key string, hosts []d
 		if err != nil {
 			return 0, err
 		}
-		if scan.ID != "" {
+		if scan.ID != "" && clock(d.Now).Before(scan.StartedAt.Add(DiscoveryScanLifetime)) {
 			return http.StatusForbidden, nil
 		}
 	}
@@ -200,7 +200,7 @@ func (d *NetworkDocuments) discovered(ctx context.Context, key string, hosts []d
 			return http.StatusForbidden, nil
 		}
 	} else {
-		// Preserve the last periodic report for older controllers during rollout.
+		// Record the last periodic report for site discovery diagnostics.
 		annotations := current.GetAnnotations()
 		if annotations == nil {
 			annotations = map[string]string{}

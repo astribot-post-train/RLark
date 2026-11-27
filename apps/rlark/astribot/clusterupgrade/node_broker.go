@@ -95,7 +95,7 @@ func (b NodeImageBroker) execute(ctx context.Context, cluster string, identity E
 		return NodeImageResult{}, err
 	}
 	grant, grantErr := currentNodeImageGrant(object, identity)
-	issue := action == ReadNodeImage && b.Issuer != nil && errors.Is(grantErr, ErrNodeImageGrant) && mayIssueGrant(object, identity)
+	issue := action == ReadNodeImage && b.Issuer != nil && errors.Is(grantErr, ErrNodeImageGrant) && mayIssueGrant(object, identity, time.Now())
 	if grantErr != nil && !issue {
 		return NodeImageResult{}, grantErr
 	}
@@ -211,6 +211,11 @@ func (b NodeImageBroker) storeGrant(ctx context.Context, object *unstructured.Un
 	}
 	annotations := updated.GetAnnotations()
 	annotations[NodeImageGrantAnnotation] = string(payload)
+	receipt, err := json.Marshal(grantReceipt{ClusterUID: grant.ClusterUID, ChildUID: grant.ChildUID, Expires: grant.Expires})
+	if err != nil {
+		return fmt.Errorf("encode node Agent upgrade grant receipt: %w", err)
+	}
+	annotations[nodeImageGrantReceipt] = string(receipt)
 	updated.SetAnnotations(annotations)
 	// A late apply cannot race a rollback. Their grant and image updates use
 	// the same Cluster resourceVersion, even if the rollback is a no-op.

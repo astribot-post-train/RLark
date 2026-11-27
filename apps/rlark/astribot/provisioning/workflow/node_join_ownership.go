@@ -3,15 +3,19 @@ package workflow
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"strings"
+	"time"
 
 	rlarkv1alpha1 "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
 	"github.com/rlinf/rlark/apps/rlark/astribot/nodessh"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/validation"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/util/retry"
 )
 
@@ -87,15 +91,33 @@ func (g *Service) verifyNativeJoinUID(ctx context.Context, j *rlarkv1alpha1.Node
 	if g.hooks.ProxyKubeRequest == nil {
 		return fmt.Errorf("member API is unavailable to verify the SSH join's Node UID")
 	}
-	response, err := g.hooks.ProxyKubeRequest(ctx, http.MethodGet, provisionAgentID(j.Spec.ClusterID), "api/v1/nodes/"+j.Spec.NodeName, nil)
+
+	var transient error
+	err := wait.PollUntilContextTimeout(ctx, time.Second, 20*time.Second, true, func(call context.Context) (bool, error) {
+		response, err := g.hooks.ProxyKubeRequest(call, http.MethodGet, provisionAgentID(j.Spec.ClusterID), "api/v1/nodes/"+j.Spec.NodeName, nil)
+		if err != nil {
+			var network net.Error
+			if errors.As(err, &network) {
+				transient = err
+				return false, nil
+			}
+			return false, err
+		}
+		defer func() { _ = response.Body.Close() }()
+		switch response.StatusCode {
+		case http.StatusTooManyRequests, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout, http.StatusInternalServerError:
+			transient = fmt.Errorf("member API returned HTTP %d", response.StatusCode)
+			return false, nil
+		}
+		var node corev1.Node
+		if response.StatusCode != http.StatusOK || json.NewDecoder(response.Body).Decode(&node) != nil ||
+			node.Name != j.Spec.NodeName || string(node.UID) != uid || node.DeletionTimestamp != nil {
+			return false, fmt.Errorf("the member API did not confirm the SSH join's original Node UID")
+		}
+		return true, nil
+	})
 	if err != nil {
-		return fmt.Errorf("verify the SSH join's Node UID: %w", err)
-	}
-	defer func() { _ = response.Body.Close() }()
-	var node corev1.Node
-	if response.StatusCode != http.StatusOK || json.NewDecoder(response.Body).Decode(&node) != nil ||
-		node.Name != j.Spec.NodeName || string(node.UID) != uid || node.DeletionTimestamp != nil {
-		return fmt.Errorf("the member API did not confirm the SSH join's original Node UID")
+		return fmt.Errorf("verify the SSH join's Node UID: %w", errors.Join(err, transient))
 	}
 	return nil
 }

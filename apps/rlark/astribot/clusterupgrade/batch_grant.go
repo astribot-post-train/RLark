@@ -124,11 +124,27 @@ func batchSelects(spec rlark.UpgradeJobSpec, cluster rlark.Cluster) bool {
 	return err == nil && selector.Matches(labels.Set(cluster.Labels))
 }
 
-func mayIssueGrant(object *unstructured.Unstructured, identity ExecutorIdentity) bool {
+const nodeImageGrantReceipt = "rlark.io/node-image-upgrade-receipt"
+
+type grantReceipt struct {
+	ClusterUID types.UID
+	ChildUID   types.UID
+	Expires    time.Time
+}
+
+func mayIssueGrant(object *unstructured.Unstructured, identity ExecutorIdentity, now time.Time) bool {
 	existing := object.GetAnnotations()[NodeImageGrantAnnotation]
 	if existing == "" {
 		return true
 	}
 	var previous NodeImageGrant
-	return json.Unmarshal([]byte(existing), &previous) == nil && previous.ChildUID != "" && previous.ChildUID != types.UID(identity.ChildUID)
+	if json.Unmarshal([]byte(existing), &previous) == nil && previous.ChildUID != "" && !previous.Expires.IsZero() {
+		return previous.ChildUID != types.UID(identity.ChildUID)
+	}
+	// Corrupt grants fail closed until a separately recorded, same-Cluster
+	// receipt proves that the different previous attempt's window ended.
+	var receipt grantReceipt
+	return json.Unmarshal([]byte(object.GetAnnotations()[nodeImageGrantReceipt]), &receipt) == nil &&
+		receipt.ClusterUID != "" && receipt.ClusterUID == object.GetUID() && receipt.ChildUID != "" &&
+		receipt.ChildUID != types.UID(identity.ChildUID) && !receipt.Expires.IsZero() && !now.Before(receipt.Expires)
 }

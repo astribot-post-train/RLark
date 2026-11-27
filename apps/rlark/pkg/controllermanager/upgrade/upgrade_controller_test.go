@@ -2,6 +2,8 @@ package upgrade
 
 import (
 	"context"
+	"fmt"
+	"slices"
 	"strings"
 	"testing"
 
@@ -408,26 +410,36 @@ func stockCluster(name string) *rlarkv1alpha1.Cluster {
 	}}
 }
 
-func TestReconcileRejectsBatchWithUnmarkedTarget(t *testing.T) {
-	job := &rlarkv1alpha1.UpgradeJob{
-		ObjectMeta: metav1.ObjectMeta{Name: "mixed-upgrade"},
-		Spec: rlarkv1alpha1.UpgradeJobSpec{
-			Image: "stock-upgrader", ClusterNames: []string{"stock", "legacy"},
-			Strategy: rlarkv1alpha1.UpgradeStrategy{Concurrency: 2, FailureTolerate: 1},
-		},
+func TestReconcileCountsRejectedTargetAgainstTolerance(t *testing.T) {
+	for _, tolerance := range []float64{0, 0.5} {
+		t.Run(fmt.Sprint(tolerance), func(t *testing.T) {
+			job := &rlarkv1alpha1.UpgradeJob{
+				ObjectMeta: metav1.ObjectMeta{Name: "mixed-upgrade", UID: "batch-test"},
+				Spec: rlarkv1alpha1.UpgradeJobSpec{
+					Image: "stock-upgrader", ClusterNames: []string{"stock", "legacy"},
+					Strategy: rlarkv1alpha1.UpgradeStrategy{Concurrency: 2, FailureTolerate: tolerance},
+				},
+			}
+			legacy := &rlarkv1alpha1.Cluster{ObjectMeta: metav1.ObjectMeta{Name: "legacy"}}
+			r := setupTestReconciler(job, stockCluster("stock"), legacy)
+			require.NoError(t, reconcileN(r, job.Name, 4))
+			var children rlarkv1alpha1.ClusterUpgradeJobList
+			require.NoError(t, r.List(t.Context(), &children))
+			var updated rlarkv1alpha1.UpgradeJob
+			require.NoError(t, r.Get(t.Context(), types.NamespacedName{Name: job.Name}, &updated))
+			if tolerance == 0 {
+				require.Empty(t, children.Items)
+				require.Equal(t, rlarkv1alpha1.UpgradeJobFailed, updated.Status.Phase)
+			} else {
+				require.Len(t, children.Items, 1)
+				require.Equal(t, "stock", children.Items[0].Namespace)
+			}
+			require.EqualValues(t, 1, updated.Status.FailedClusters)
+			require.True(t, slices.ContainsFunc(updated.Status.Conditions, func(condition rlarkv1alpha1.UpgradeJobCondition) bool {
+				return condition.Type == clusterupgrade.TargetRejected && condition.Cluster == "legacy"
+			}))
+		})
 	}
-	legacy := &rlarkv1alpha1.Cluster{ObjectMeta: metav1.ObjectMeta{Name: "legacy"}}
-	r := setupTestReconciler(job, stockCluster("stock"), legacy)
-	require.NoError(t, reconcileN(r, job.Name, 3))
-	var children rlarkv1alpha1.ClusterUpgradeJobList
-	require.NoError(t, r.List(t.Context(), &children))
-	require.Empty(t, children.Items)
-	var updated rlarkv1alpha1.UpgradeJob
-	require.NoError(t, r.Get(t.Context(), types.NamespacedName{Name: job.Name}, &updated))
-	require.Equal(t, rlarkv1alpha1.UpgradeJobFailed, updated.Status.Phase)
-	require.Len(t, updated.Status.Conditions, 1)
-	assert.Equal(t, "legacy", updated.Status.Conditions[0].Cluster)
-	assert.Contains(t, updated.Status.Conditions[0].Reason, "explicitly declare")
 }
 
 func TestMixedBatchDispatchAndRollbackStopsFurtherScheduling(t *testing.T) {

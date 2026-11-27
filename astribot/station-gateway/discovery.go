@@ -354,7 +354,7 @@ func (d *discovery) pipeRelay(conn net.Conn, reader *bufio.Reader, target string
 }
 
 // discover keeps the management relay available and checks for administrator
-// requests. Network probes run only for an outstanding operation.
+// requests. Configured sites also get bounded periodic discovery between requests.
 func discover(read func() *desired, directory string, key wgtypes.Key) {
 	var serving *discovery
 	var listener net.Listener
@@ -414,9 +414,10 @@ type discoveryRequest struct {
 }
 
 type discoveryAttempt struct {
-	id      string
-	hosts   []discoveredHost
-	scanErr error
+	id           string
+	hosts        []discoveredHost
+	scanErr      error
+	nextPeriodic time.Time
 }
 
 type discoveryAPI func(path string, request map[string]any) (int, []byte, error)
@@ -435,17 +436,31 @@ func (attempt *discoveryAttempt) poll(declared *discovery, directory string, key
 		return askStationAPI(url, ca, key, path, request)
 	}, func(ctx context.Context) ([]discoveredHost, error) {
 		return declared.scan(ctx, attached(), neighbour)
-	})
+	}, declared.IntervalSeconds)
 }
 
-func (attempt *discoveryAttempt) run(request discoveryAPI, probe func(context.Context) ([]discoveredHost, error)) error {
+func (attempt *discoveryAttempt) run(request discoveryAPI, probe func(context.Context) ([]discoveredHost, error), intervalSeconds int) error {
 	status, body, err := request("/v1/network/discovery-scan", map[string]any{})
 	if err != nil {
 		return err
 	}
 	if status == http.StatusNoContent {
-		*attempt = discoveryAttempt{}
-		return nil
+		attempt.id, attempt.hosts, attempt.scanErr = "", nil, nil
+		now := time.Now()
+		if intervalSeconds < 10 || intervalSeconds > 3600 || now.Before(attempt.nextPeriodic) {
+			return nil
+		}
+		attempt.nextPeriodic = now.Add(time.Duration(intervalSeconds) * time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		defer cancel()
+		hosts, err := probe(ctx)
+		if err != nil {
+			return err
+		}
+		return reportDiscoveryScan(discoveryRequest{}, hosts, func(body map[string]any) (int, error) {
+			status, _, err := request("/v1/network/discovered", body)
+			return status, err
+		})
 	}
 	if status != http.StatusOK {
 		return fmt.Errorf("Station API answered %d to the discovery scan check", status)
@@ -461,7 +476,7 @@ func (attempt *discoveryAttempt) run(request discoveryAPI, probe func(context.Co
 		ctx, cancel := context.WithDeadline(context.Background(), scan.Deadline)
 		hosts, err := probe(ctx)
 		cancel()
-		*attempt = discoveryAttempt{id: scan.ID, hosts: hosts, scanErr: err}
+		attempt.id, attempt.hosts, attempt.scanErr = scan.ID, hosts, err
 	}
 	if attempt.scanErr != nil {
 		status, _, err := request("/v1/network/discovered", map[string]any{"scan_id": scan.ID, "final": true, "failed": true})
@@ -480,11 +495,15 @@ func reportDiscoveryScan(scan discoveryRequest, found []discoveredHost, send fun
 	for start := 0; ; start += 256 {
 		end := min(start+256, len(found))
 		final := end == len(found)
-		status, err := send(map[string]any{"scan_id": scan.ID, "hosts": found[start:end], "final": final})
+		body := map[string]any{"hosts": found[start:end]}
+		if scan.ID != "" {
+			body["scan_id"], body["final"] = scan.ID, final
+		}
+		status, err := send(body)
 		if err != nil || status == http.StatusConflict {
 			return err
 		}
-		if status == http.StatusTooManyRequests && !final {
+		if status == http.StatusTooManyRequests && !final && scan.ID != "" {
 			_, err := send(map[string]any{"scan_id": scan.ID, "final": true, "failed": true})
 			return errors.Join(fmt.Errorf("Station API reached the discovery candidate limit"), err)
 		}

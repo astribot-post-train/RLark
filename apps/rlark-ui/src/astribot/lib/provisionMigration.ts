@@ -83,3 +83,14 @@ export function migrationConfirmation(
   }
   return reviewed ? result : undefined;
 }
+
+export function offersHistoricalOwnership(
+  annotations: Record<string, string> | undefined,
+) {
+  const origin = annotations?.["rlark.io/provision-ownership-origin"];
+  return (
+    origin !== "current" &&
+    (origin === "legacy-reviewed" ||
+      !annotations?.["rlark.io/provisioned-cluster-uid"])
+  );
+}

@@ -322,8 +322,7 @@ export function scanJoinMachines(
   return [
     ...unjoinedMachines(machines, clusterID).filter(
       (machine) =>
-        scanID &&
-        machine.discovery_scan_id === scanID &&
+        (!machine.discovery_scan_id || machine.discovery_scan_id === scanID) &&
         !machineUnseen(machine, now),
     ),
     ...machines.filter(

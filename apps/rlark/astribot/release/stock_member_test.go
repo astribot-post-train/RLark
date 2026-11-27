@@ -142,8 +142,8 @@ func verifyStockRBACUpgrade(t *testing.T, run *Run, ctx context.Context) {
 		t.Fatal(err)
 	}
 
-	if _, err := run.stockChanges(ctx, "lab"); err == nil {
-		t.Fatal("plan proposed overwriting manual RBAC")
+	if changes, err := run.stockChanges(ctx, "lab"); err != nil || len(changes) != 1 || changes[0].DeferredReason == "" {
+		t.Fatalf("plan did not defer manual RBAC: %v %v", changes, err)
 	}
 	if err := run.initializeStockMember(ctx, "lab"); err == nil {
 		t.Fatal("apply overwrote manual RBAC")

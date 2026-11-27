@@ -26,11 +26,9 @@ const stockMemberRBACPath = "apps/rlark/astribot/release/stock_member_rbac.yaml"
 
 const stockPolicyOwner = "rlark.io/stock-policy-cluster-uid"
 
-type activeStockUpgrade struct{ job string }
+type stockDeferredError struct{ reason string }
 
-func (e *activeStockUpgrade) Error() string {
-	return fmt.Sprintf("upgrade Job %s is still active", e.job)
-}
+func (e *stockDeferredError) Error() string { return e.reason }
 
 func (r *Run) deferStockMember(name, reason string) Change {
 	if r.stockDeferred != nil {
@@ -105,6 +103,10 @@ func (r *Run) stockChanges(ctx context.Context, name string) ([]Change, error) {
 		return nil, err
 	}
 	roles, err := stockRBACChanges(ctx, r.Site.MemberDefinitions[name], defs, cluster.UID)
+	var deferred *stockDeferredError
+	if errors.As(err, &deferred) {
+		return []Change{r.deferStockMember(name, deferred.Error())}, nil
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -112,7 +114,7 @@ func (r *Run) stockChanges(ctx context.Context, name string) ([]Change, error) {
 		changes = append(changes, Change{Stage: stockUpgradeStage, What: name + " " + definitionName(role.object), To: "as in " + short(r.Tree.Commit)})
 	}
 	if len(changes) > 0 {
-		var busy *activeStockUpgrade
+		var busy *stockDeferredError
 		if err := checkNoActiveStockJob(ctx, member); errors.As(err, &busy) {
 			return []Change{r.deferStockMember(name, busy.Error())}, nil
 		} else if err != nil {
@@ -184,7 +186,7 @@ func (r *Run) initializeStockMember(ctx context.Context, name string) error {
 		if err != nil {
 			return err
 		}
-		return fmt.Errorf("cluster Agent must settle before installing stock upgrade policy: %s", reading)
+		return &stockDeferredError{reason: "cluster Agent must settle before installing stock upgrade policy: " + reading}
 	}
 	if err := checkNoActiveStockJob(ctx, member); err != nil {
 		return err
@@ -239,7 +241,7 @@ func checkNoActiveStockJob(ctx context.Context, member kubernetes.Interface) err
 		if !slices.ContainsFunc(job.Status.Conditions, func(c batch.JobCondition) bool {
 			return c.Status == core.ConditionTrue && (c.Type == batch.JobComplete || c.Type == batch.JobFailed)
 		}) {
-			return &activeStockUpgrade{job: job.Name}
+			return &stockDeferredError{reason: fmt.Sprintf("upgrade Job %s is still active", job.Name)}
 		}
 	}
 	return nil

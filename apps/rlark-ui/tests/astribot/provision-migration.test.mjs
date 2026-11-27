@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { migrationConfirmation } from "../../dist/test/astribot/lib/provisionMigration.js";
+import {
+  migrationConfirmation,
+  offersHistoricalOwnership,
+} from "../../dist/test/astribot/lib/provisionMigration.js";
 
 const identity = { uid: "original", resource_version: "18" };
 const candidate = (key, state, includeIdentity = true) => ({
@@ -79,5 +82,28 @@ test("no evidence or no new reviewed resources cannot be submitted", () => {
       " ",
     ),
     undefined,
+  );
+});
+
+test("historical review is available for legacy records, including partial migrations", () => {
+  assert.equal(offersHistoricalOwnership(undefined), true);
+  assert.equal(
+    offersHistoricalOwnership({
+      "rlark.io/provision-ownership-origin": "current",
+    }),
+    false,
+  );
+  assert.equal(
+    offersHistoricalOwnership({
+      "rlark.io/provisioned-cluster-uid": "original",
+    }),
+    false,
+  );
+  assert.equal(
+    offersHistoricalOwnership({
+      "rlark.io/provision-ownership-origin": "legacy-reviewed",
+      "rlark.io/provisioned-cluster-uid": "original",
+    }),
+    true,
   );
 });
