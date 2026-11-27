@@ -3,6 +3,7 @@ package gateway
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"mime"
@@ -13,11 +14,14 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"k8s.io/apimachinery/pkg/util/validation"
+
+	"github.com/rlinf/rlark/apps/rlark/pkg/log"
 )
 
 const (
@@ -33,9 +37,16 @@ type cameraWHEP struct {
 	password string
 	key      string
 	client   *http.Client
+	control  cameraMediaControl
+	ready    atomic.Bool
 	limiter  cameraStreamLimiter
 	mu       sync.Mutex
 	sessions map[string]*cameraWHEPSession
+}
+
+type cameraMediaControl struct {
+	origin         *url.URL
+	user, password string
 }
 
 type cameraWHEPSession struct {
@@ -51,25 +62,125 @@ func newCameraWHEP() (*cameraWHEP, error) {
 	if origin == "" {
 		return nil, nil
 	}
-	target, err := url.Parse(origin)
-	if err != nil || (target.Scheme != "https" && target.Scheme != "http") ||
-		target.Hostname() == "" || target.User != nil || (target.Path != "" && target.Path != "/") ||
-		target.RawQuery != "" || target.Fragment != "" {
-		return nil, fmt.Errorf("RLARK_CAMERA_WHEP_ORIGIN must be a private HTTP(S) origin")
+	target, err := cameraMediaOrigin("RLARK_CAMERA_WHEP_ORIGIN")
+	if err != nil {
+		return nil, err
+	}
+	controlOrigin, err := cameraMediaOrigin("RLARK_CAMERA_WHEP_CONTROL_ORIGIN")
+	if err != nil {
+		return nil, err
 	}
 	user, password := os.Getenv("RLARK_CAMERA_WHEP_USER"), os.Getenv("RLARK_CAMERA_WHEP_PASSWORD")
+	controlUser, controlPassword := os.Getenv("RLARK_CAMERA_WHEP_CONTROL_USER"), os.Getenv("RLARK_CAMERA_WHEP_CONTROL_PASSWORD")
 	key := os.Getenv("RLARK_CAMERA_SOURCE_KEY")
 	if user == "" || password == "" || len(key) < 32 {
 		return nil, fmt.Errorf("camera WHEP requires reader credentials and a source key of at least 32 bytes")
 	}
+	if controlUser == "" || controlPassword == "" || controlUser == user {
+		return nil, fmt.Errorf("camera WHEP requires separate MediaMTX control credentials")
+	}
 	return &cameraWHEP{
 		origin: target, user: user, password: password, key: key,
+		control: cameraMediaControl{origin: controlOrigin, user: controlUser, password: controlPassword},
 		client: &http.Client{
 			Timeout:       5 * time.Second,
 			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 		},
 		sessions: make(map[string]*cameraWHEPSession),
 	}, nil
+}
+
+func cameraMediaOrigin(variable string) (*url.URL, error) {
+	target, err := url.Parse(os.Getenv(variable))
+	if err != nil || (target.Scheme != "https" && target.Scheme != "http") ||
+		target.Hostname() == "" || target.User != nil || (target.Path != "" && target.Path != "/") ||
+		target.RawQuery != "" || target.Fragment != "" || target.ForceQuery {
+		return nil, fmt.Errorf("%s must be a private HTTP(S) origin", variable)
+	}
+	return target, nil
+}
+
+// A single Gateway owns the dedicated MediaMTX instance in the pilot.
+// Keep WHEP unavailable until all previous readers have been disconnected.
+func (m *cameraWHEP) reconcileStartup(ctx context.Context) {
+	logger := log.FromContext(ctx)
+	delay := time.NewTicker(5 * time.Second)
+	defer delay.Stop()
+	for ctx.Err() == nil {
+		err := m.drainPreviousSessions(ctx)
+		if err == nil {
+			m.ready.Store(true)
+			return
+		}
+		logger.Error(err, "Camera WHEP is waiting for MediaMTX session reconciliation")
+		select {
+		case <-ctx.Done():
+			return
+		case <-delay.C:
+		}
+	}
+}
+
+func (m *cameraWHEP) controlRequest(ctx context.Context, method, path string) (*http.Response, error) {
+	target := *m.control.origin
+	target.Path = path
+	req, err := http.NewRequestWithContext(ctx, method, target.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+	req.SetBasicAuth(m.control.user, m.control.password)
+	return m.client.Do(req)
+}
+
+func (m *cameraWHEP) drainPreviousSessions(ctx context.Context) error {
+	for range 4 {
+		ids, err := m.previousSessions(ctx)
+		if err != nil || len(ids) == 0 {
+			return err
+		}
+		for _, id := range ids {
+			response, err := m.controlRequest(ctx, http.MethodPost, "/v3/webrtc/sessions/kick/"+id.String())
+			if err != nil {
+				return fmt.Errorf("MediaMTX session removal request failed")
+			}
+			_ = response.Body.Close()
+			if response.StatusCode != http.StatusOK && response.StatusCode != http.StatusNoContent &&
+				response.StatusCode != http.StatusNotFound {
+				return fmt.Errorf("MediaMTX session removal returned HTTP %d", response.StatusCode)
+			}
+		}
+	}
+	return fmt.Errorf("MediaMTX still has sessions after reconciliation")
+}
+
+func (m *cameraWHEP) previousSessions(ctx context.Context) ([]uuid.UUID, error) {
+	response, err := m.controlRequest(ctx, http.MethodGet, "/v3/webrtc/sessions/list")
+	if err != nil {
+		return nil, fmt.Errorf("MediaMTX session listing request failed")
+	}
+	defer func() { _ = response.Body.Close() }()
+	if response.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("MediaMTX session listing returned HTTP %d", response.StatusCode)
+	}
+	var page struct {
+		ItemCount *int `json:"itemCount"`
+		Items     []struct {
+			ID uuid.UUID `json:"id"`
+		} `json:"items"`
+	}
+	err = json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(&page)
+	if err != nil || page.ItemCount == nil || *page.ItemCount < len(page.Items) ||
+		(*page.ItemCount > 0 && len(page.Items) == 0) {
+		return nil, fmt.Errorf("MediaMTX returned an invalid session listing")
+	}
+	ids := make([]uuid.UUID, 0, len(page.Items))
+	for _, item := range page.Items {
+		if item.ID == uuid.Nil {
+			return nil, fmt.Errorf("MediaMTX returned a session without an ID")
+		}
+		ids = append(ids, item.ID)
+	}
+	return ids, nil
 }
 
 func (m *cameraWHEP) request(ctx context.Context, method, path string, sdp []byte) (*http.Response, error) {
@@ -133,6 +244,10 @@ func (g *Gateway) openCameraWHEP(c *gin.Context) {
 	m := g.cameraMedia
 	if m == nil {
 		c.Status(http.StatusNotFound)
+		return
+	}
+	if !m.ready.Load() {
+		c.Status(http.StatusServiceUnavailable)
 		return
 	}
 	contentType, _, _ := mime.ParseMediaType(c.GetHeader("Content-Type"))

@@ -20,8 +20,10 @@ and a DELETE to request teardown. A lease expires after 14 seconds without renew
 The Gateway revalidates the Node's cluster and the publisher on renewal and
 retains the quota slot until MediaMTX confirms removal. The pilot is disabled by
 default. It uses one 480p software-encoded source per robot and holds up to four
-readers per principal and 20 readers per Gateway. Session recovery across Gateway
-restarts requires further work before production enablement.
+readers per principal and 20 readers per Gateway. One Gateway owns a dedicated
+MediaMTX instance. After a Gateway restart, the private Control API disconnects
+previous WebRTC sessions and verifies the session list is empty before playback
+reopens. JPEG service remains available while reconciliation runs.
 
 ## CRD resources
 

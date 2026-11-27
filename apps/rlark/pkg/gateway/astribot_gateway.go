@@ -11,6 +11,8 @@ import (
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/rest"
 	"k8s.io/utils/lru"
+
+	"github.com/rlinf/rlark/apps/rlark/pkg/log"
 )
 
 // astribotState is what our part of the Gateway holds; Gateway embeds it.
@@ -65,11 +67,11 @@ func (g *Gateway) setupAstribot() {
 }
 
 // initAstribot is init's part for our clients, right after the Kubernetes clients.
-func (g *Gateway) initAstribot(restConfig *rest.Config) error {
+func (g *Gateway) initAstribot(ctx context.Context, restConfig *rest.Config) error {
 	var err error
 	g.cameraMedia, err = newCameraWHEP()
 	if err != nil {
-		return err
+		log.FromContext(ctx).Error(err, "Camera WHEP disabled because its configuration is invalid")
 	}
 	g.stationClient, err = dynamic.NewForConfig(restConfig)
 	if err != nil {
@@ -99,6 +101,9 @@ func (g *Gateway) startAstribot(ctx context.Context) error {
 		return err
 	}
 	go g.sweepRobotClaims(ctx)
+	if g.cameraMedia != nil {
+		go g.cameraMedia.reconcileStartup(ctx)
+	}
 	return nil
 }
 
