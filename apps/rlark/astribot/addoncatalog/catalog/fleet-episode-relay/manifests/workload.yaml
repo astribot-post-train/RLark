@@ -1,0 +1,93 @@
+# A site's standing episode relay (Fleet's fleet.workers.relay_service): one process on the node the site chose, on
+# the node's own network, where the robots reach it by the node's address in the site tunnel.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .AddonName }}
+  namespace: rlark-system
+  labels:
+    app: {{ .AddonName }}
+  annotations:
+    rlark.io/not-ready-message: 场站 episode 中继不可用
+spec:
+  replicas: 1
+  # One process over the volume and the port.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: {{ .AddonName }}
+  template:
+    metadata:
+      labels:
+        app: {{ .AddonName }}
+    spec:
+      hostNetwork: true
+      # The node volume is made in the node's own namespaces (the init container).
+      hostPID: true
+      dnsPolicy: ClusterFirstWithHostNet
+      automountServiceAccountToken: false
+      nodeSelector:
+        {{ index (splitList "=" .Values.nodeSelector) 0 }}: {{ index (splitList "=" .Values.nodeSelector) 1 | printf "%q" }}
+      tolerations:
+        - key: node-role.kubernetes.io/control-plane
+          operator: Exists
+          effect: NoSchedule
+      {{- if .Values.imagePullSecret }}
+      imagePullSecrets:
+        - name: {{ .Values.imagePullSecret }}
+      {{- end }}
+      # Its send to the next hop in flight ends with the process; the package stays on the volume.
+      terminationGracePeriodSeconds: 30
+      initContainers:
+        # The data directory as a volume of its own on the node (volume.sh), made and mounted where it is not yet, as
+        # the node's systemd mounts it (systemctl does nothing from a chroot): episodes that wait for the uplink fill
+        # this volume, never the disk the node itself runs on.
+        - name: make-volume
+          image: {{ .Values.image }}
+          imagePullPolicy: IfNotPresent
+          command: [sh, -c, 'nsenter -t 1 -m -u -i -n -p -- /bin/sh -s $(basename {{ .Values.dataDir }}) {{ .Values.volumeSize }} {{ .Values.dataDir }} < /etc/fleet-episode-relay/volume.sh']
+          securityContext:
+            privileged: true
+          resources:
+            requests: {cpu: 10m, memory: 16Mi}
+            limits: {memory: 64Mi}
+          volumeMounts:
+            - {name: scripts, mountPath: /etc/fleet-episode-relay}
+      containers:
+        - name: relay
+          image: {{ .Values.image }}
+          imagePullPolicy: IfNotPresent
+          workingDir: /fleet
+          command: [/opt/fleet/bin/python, -m, fleet.workers.relay_service, --config, {{ .Values.config | printf "%q" }}]
+          env:
+            - {name: FLEET_SITE_TOKEN_FILE, value: /var/lib/fleet/site_token}
+          # Ready once it answers: it serves from its start, whether or not its next hop is there.
+          readinessProbe:
+            httpGet: {path: /health, port: {{ .Values.port }}}
+            periodSeconds: 5
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests: {cpu: 100m, memory: 256Mi}
+            limits: {memory: 1Gi}
+          volumeMounts:
+            - {name: data, mountPath: /var/lib/fleet/relay}
+            - {name: token, mountPath: /var/lib/fleet/site_token, subPath: site_token, readOnly: true}
+            # The node's own hosts file, not the copy of it from when the Pod started: the site's Dashboard, whose
+            # inference readings pace the relay, is a name the site network keeps there, and is followed when it moves.
+            - {name: hosts, mountPath: /etc/hosts, readOnly: true}
+      volumes:
+        - name: scripts
+          configMap:
+            name: {{ .AddonName }}
+        - name: data
+          hostPath: {path: {{ .Values.dataDir }}, type: DirectoryOrCreate}
+        - name: token
+          secret:
+            secretName: {{ .Values.tokenSecret }}
+            defaultMode: 0400
+        - name: hosts
+          hostPath: {path: /etc/hosts, type: File}

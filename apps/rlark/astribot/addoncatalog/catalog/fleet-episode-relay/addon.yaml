@@ -1,0 +1,67 @@
+name: fleet-episode-relay
+displayName: 场站 episode 中继
+category: other
+version: v0.1.0
+description: |
+  机器人场站的 episode 中继（Fleet 的 fleet.workers.relay_service），场站所有 Run 的第一个数据跳，常驻、不属于任何 Run：机器人的发件箱把 episode 包和标注经 HTTP 发到它（节点地址的 port 端口，场站令牌鉴权），它落到自己的盘上、回执，再按场站上行在推理之外剩下的带宽转给下一跳（Run 的 collector）；被杀掉重启后照着盘上的内容接着转，回执过的不丢。
+  一个 Deployment（宿主机网络，钉在带 nodeSelector 标签的节点上；标签换到别的节点，中继随之换机器，那台机器上还没转走的 episode 留在它的卷里，换回去后接着转）。镜像是 Fleet 的机器人镜像（发布里的 fleet-robot，/opt/fleet 的 Python 和 /fleet 的代码），和机器人上的发件箱同一个提交。下一跳、推理门控读的 Dashboard 地址、分片大小、盘的保留量都在镜像里 Fleet 的配置文件（config）里，随代码走；config 里的端口要和 port 一致。
+  盘是 dataDir 上一个与节点根盘分开的定长卷，由本 Addon 在所选节点上建好并挂上（/var/lib/rlark/volumes/<目录名>.img，定长 ext4，开机由 systemd 挂载，和 site-registry 的本地卷同一做法；已是独立卷的目录原样用；卷已有时只校验大小，不扩缩）：上行不够时积压留在这个卷里，写满了中继拒收（507），机器人留在自己盘上，节点根盘不受影响。卸载本 Addon 不删卷。
+  场站令牌不在参数里：rlark-system 里的站点级 Secret（tokenSecret，键 site_token），只读挂进容器。就绪 = GET /health 返回 200。
+icon: package
+
+parameters:
+  - name: image
+    displayName: 镜像
+    description: Fleet 的机器人镜像，带 digest，例如 registry.rlark.internal:5443/fleet/robot@sha256:…
+    type: string
+    default: ""
+    required: true
+
+  - name: nodeSelector
+    displayName: 节点选择
+    description: 中继所在节点的标签 label=value：场站里机器人都能到、带出口的那台机器（场地缓存机）
+    type: string
+    default: rlark.io/episode-relay=true
+    required: true
+
+  - name: dataDir
+    displayName: 数据目录
+    description: 节点上放 episode 包的目录，须是独立的定长卷（见 volumeSize）
+    type: string
+    default: /var/lib/rlark/fleet-episode-relay
+    required: true
+
+  - name: volumeSize
+    displayName: 卷大小
+    description: dataDir 这个卷的大小，例如 500G：上行断开时场站要攒多少天的数据就给多少，要大于 config 里的 reserve_bytes。由本 Addon 在节点上建好并挂上；建好后不能改
+    type: string
+    default: ""
+    required: true
+
+  - name: port
+    displayName: 端口
+    description: 中继在节点上监听的端口（config 里的 port），机器人经节点在站点隧道里的地址访问
+    type: string
+    default: "8030"
+    required: true
+
+  - name: config
+    displayName: 配置文件
+    description: 镜像里 /fleet 下中继的配置文件
+    type: string
+    default: configs/workers/site_relay.yaml
+    required: true
+
+  - name: tokenSecret
+    displayName: 场站令牌的 Secret
+    description: rlark-system 里的站点级 Secret（键 site_token）：机器人和下一跳都认的场站令牌
+    type: string
+    default: fleet-site-token
+    required: true
+
+  - name: imagePullSecret
+    displayName: 拉镜像的 Secret
+    description: rlark-system 里拉本 Addon 镜像用的 Secret 名（RLark「镜像仓库」凭据分发到本集群的 ir-…）；仓库不要认证时留空
+    type: string
+    default: ""
+    required: false

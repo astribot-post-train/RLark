@@ -248,6 +248,19 @@ func TestS1URobotRendersTheDeviceLayerAndEachPayload(t *testing.T) {
 			"host:/run/rlark/s1u": true, "in-use:/run/rlark/in-use": false}) || *pod.TerminationGracePeriodSeconds < 60 {
 		t.Fatalf("station %+v, volume %+v, grace %d", station, volume, *pod.TerminationGracePeriodSeconds)
 	}
+	// The episode outbox: the device layer's image, on its own beside the Station, with no capability and nothing
+	// of the host writable but the data directory.
+	episodes := pod.Containers[slices.Index(names, "episodes")]
+	mounts = map[string]bool{}
+	for _, mount := range episodes.VolumeMounts {
+		mounts[mount.Name+":"+mount.MountPath] = mount.ReadOnly
+	}
+	if episodes.Image != values["deviceImage"] || !slices.Equal(episodes.Command, []string{"/device/start", "--episodes"}) ||
+		len(episodes.SecurityContext.Capabilities.Add) != 0 || episodes.Resources.Limits.Memory().IsZero() ||
+		!maps.Equal(mounts, map[string]bool{"device-data:/var/lib/fleet": false, "device-token:/site-token": true,
+			"profile:/etc/rlark/s1u": true, "host:/run/rlark/s1u": true}) {
+		t.Fatalf("episodes %+v", episodes)
+	}
 	// The cameras: served on the node's port the Gateway reaches through the Pod's proxy, ready once it answers; it
 	// and the orin container share the directory a USB reset is asked through, and of the host's it reads only whether
 	// the robot is in use (a stuck camera's driver is restarted only while it is not).
@@ -282,6 +295,32 @@ func TestS1URobotRendersTheDeviceLayerAndEachPayload(t *testing.T) {
 	}
 	if room := mib("S1U_KUBERNETES_MEMORY_MIB") - 256<<20; limited > room {
 		t.Fatalf("the Pod's memory limits are %d MiB, the node profile leaves it %d MiB", limited>>20, room>>20)
+	}
+}
+
+// fleet-episode-relay: one Pod on the site's node, on its network, over a node volume the Addon makes, with the site
+// token as the file Fleet reads and ready by its /health.
+func TestFleetEpisodeRelayRenders(t *testing.T) {
+	item, _ := Catalog.Get("fleet-episode-relay")
+	values := map[string]string{"image": "registry/fleet/robot@sha256:2", "nodeSelector": "kubernetes.io/hostname=cache", "volumeSize": "60G"}
+	if missing := MissingRequired(item.Meta(), map[string]string{"image": values["image"]}); !slices.Equal(missing, []string{"volumeSize"}) {
+		t.Fatalf("a relay without its volume's size: missing %v", missing)
+	}
+	var deployment *appsv1.Deployment
+	for _, object := range render(t, "fleet-episode-relay", values) {
+		if d, ok := object.(*appsv1.Deployment); ok {
+			deployment = d
+		}
+	}
+	pod := deployment.Spec.Template.Spec
+	relay, volume := pod.Containers[0], pod.InitContainers[0]
+	if !pod.HostNetwork || pod.NodeSelector["kubernetes.io/hostname"] != "cache" || len(pod.ImagePullSecrets) != 0 ||
+		!strings.Contains(volume.Command[2], " 60G /var/lib/rlark/fleet-episode-relay <") ||
+		!slices.Equal(relay.Command, []string{"/opt/fleet/bin/python", "-m", "fleet.workers.relay_service", "--config", "configs/workers/site_relay.yaml"}) ||
+		relay.ReadinessProbe.HTTPGet.Path != "/health" || relay.ReadinessProbe.HTTPGet.Port.IntValue() != 8030 ||
+		relay.Env[0].Value != "/var/lib/fleet/site_token" || relay.VolumeMounts[1].MountPath != relay.Env[0].Value || relay.VolumeMounts[1].SubPath != "site_token" ||
+		relay.VolumeMounts[0].MountPath != "/var/lib/fleet/relay" || pod.Volumes[1].HostPath.Path != "/var/lib/rlark/fleet-episode-relay" || pod.Volumes[2].Secret.SecretName != "fleet-site-token" {
+		t.Fatalf("relay %+v", pod)
 	}
 }
 

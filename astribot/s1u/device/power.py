@@ -91,8 +91,9 @@ This service converges the robot on it every few seconds, for as long as the x86
   sink (the node profile's S1U_DRIVER_STOP_SECONDS), for level power the motors off for POWER_OFF_SECONDS, then
   brought up again to ready. Only while the claim names that holder, every component's mark under /run/rlark/in-use
   names its Run ("... Run <holder> ...", the holder not followed or preceded by a word character, "." or "-"), the
-  device layer has no session (its mark DEVICE_MARK: a session drives the robot until it is released, whoever asked)
-  and no maintenance holds the robot; otherwise it fails with the reason. Nothing else lowers or raises the robot meanwhile
+  device layer has no session that may move the robot (its mark DEVICE_MARK: a session drives the robot until it is
+  released, whoever asked; the holder's own observation, OBSERVATION, moves nothing and stays, the arms lowered under
+  it) and no maintenance holds the robot; otherwise it fails with the reason. Nothing else lowers or raises the robot meanwhile
   (the convergence waits, a press is refused "restarting"). Its progress is the annotation rlark.io/power.restart,
   {id, level, holder, phase: lowering | raising | done | failed, error, at}, and "restart" in rlark.io/power.
 - not up before the tuner's first word since the host booted (no lease file yet): a robot whose node profile needs
@@ -143,6 +144,9 @@ RESTART, RESTARTED = "rlark.io/robot-restart", "rlark.io/power.restart"
 RESTARTING = ("lowering", "raising")  # the phases of a restart under way
 RESTART_HISTORY = 32  # the restarts started on this host, by (id, holder), that are never run again
 DEVICE_MARK = "s1u-device"  # the device layer's (deviceImage) mark while a session is admitted or attached
+# The device layer's mark of an attach that only reads the robot (motion not enabled: a Station's env between captures,
+# Fleet's device/session.py), of the Run it names.
+OBSERVATION = "an observation of Run %s is attached to the device layer"
 
 
 def robot_state(codes, powered_off_s=None, driver_stop_wait_s=0.0):
@@ -181,6 +185,8 @@ def restart_refusal(holder, lease):
     if held != holder:
         return "the robot is held by %s, not by %s" % (held or "nobody", holder)
     found = marks()
+    if found.get(DEVICE_MARK) == OBSERVATION % holder:
+        del found[DEVICE_MARK]
     if DEVICE_MARK in found:
         return "a session of the device layer still drives the robot (%s: %s): it is released first" % (
             DEVICE_MARK, found[DEVICE_MARK])

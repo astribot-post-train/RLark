@@ -1,0 +1,31 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .AddonName }}
+  namespace: rlark-system
+data:
+  # The node volume at the data directory, as site-registry makes its own (its volume.sh): a file of a fixed size
+  # with ext4 in it, mounted by a systemd unit of the node; run in the node's own namespaces.
+  volume.sh: |
+    set -eu
+    name=$1 size=$2 path=$3
+    if mountpoint -q "$path"; then echo "$path: a volume of its own"; exit 0; fi
+    [ -z "$(ls -A "$path" 2>/dev/null)" ] || { echo "$path holds data on the node's disk: move it into a volume first"; exit 1; }
+    image=/var/lib/rlark/volumes/$name.img bytes=$(numfmt --from=iec "$size")
+    if [ -e "$image" ]; then
+      [ "$(stat -c %s "$image")" = "$bytes" ] || { echo "the volume $name is $(stat -c %s "$image" | numfmt --to=iec), not $size: a volume is not resized"; exit 1; }
+    else
+      install -d /var/lib/rlark/volumes
+      fallocate -l "$bytes" "$image.new" || { rm -f "$image.new"; echo "no room for $size in /var/lib/rlark/volumes: $(df -h --output=avail /var/lib/rlark/volumes | tail -1) free"; exit 1; }
+      mkfs.ext4 -q -F -m 0 -L "$name" "$image.new"
+      debugfs -w -R 'rmdir lost+found' "$image.new" >/dev/null 2>&1 || true
+      mv "$image.new" "$image"
+      echo "volume $name: $size in $image"
+    fi
+    unit=$(systemd-escape --path --suffix=mount "$path")
+    printf '[Unit]\nDescription=RLark node volume %s\n\n[Mount]\nWhat=%s\nWhere=%s\nType=ext4\nOptions=loop\n\n[Install]\nWantedBy=local-fs.target\n' "$name" "$image" "$path" > "/etc/systemd/system/$unit"
+    systemctl daemon-reload
+    systemctl enable "$unit" >/dev/null 2>&1
+    install -d "$path"
+    systemctl start "$unit"
+    echo "$path: volume $name mounted"
