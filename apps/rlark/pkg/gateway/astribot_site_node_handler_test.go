@@ -41,7 +41,7 @@ func TestGetSiteNodeJoinsIdentityNetworkAndRobot(t *testing.T) {
 	node := &unstructured.Unstructured{Object: map[string]interface{}{
 		"apiVersion": "rlinf.io/v1alpha1", "kind": "Node",
 		"metadata": map[string]interface{}{"name": "s1u-01-x86", "namespace": "agent-a", "labels": map[string]interface{}{"rlark.io/robot-id": "s1u-01"},
-			"annotations": map[string]interface{}{"rlark.io/cameras": `{"state":"ok"}`}},
+			"annotations": map[string]interface{}{"rlark.io/cameras": `{"state":"ok"}`, "rlark.io/link": `{"state":"up","since":1800000000,"restarts":0,"actions":[]}`}},
 	}}
 	admission := &unstructured.Unstructured{Object: map[string]interface{}{
 		"apiVersion": "station.rlark.io/v1alpha1", "kind": "NodeAdmission",
@@ -60,7 +60,7 @@ func TestGetSiteNodeJoinsIdentityNetworkAndRobot(t *testing.T) {
 
 	code, got := siteNodeRequest(t, gateway, "s1u-01-x86", "?cluster_id=cluster-a")
 	want := siteNode{ClusterID: "cluster-a", NodeName: "s1u-01-x86", NodeUID: "uid-1", Phase: "Bound", Online: true, DeclaredType: "Robot", DeclaredModel: "s1u", ObservedType: "Robot", ObservedModel: "s1u-v2", IdentityVerified: "False", IdentityReason: "ModelMismatch",
-		LastSeenTime: "2026-11-12T08:00:00Z", RobotID: "s1u-01", Cameras: `{"state":"ok"}`, Tunnel: "failed", RLarkNode: "unknown", BootTime: "2026-11-12T03:58:58Z", Reboots: 1}
+		LastSeenTime: "2026-11-12T08:00:00Z", RobotID: "s1u-01", Cameras: `{"state":"ok"}`, Link: `{"state":"up","since":1800000000,"restarts":0,"actions":[]}`, Tunnel: "failed", RLarkNode: "unknown", BootTime: "2026-11-12T03:58:58Z", Reboots: 1}
 	if code != 200 || !reflect.DeepEqual(got.Network, &siteNodeNetwork{State: "Enrolled", Site: "lab", Role: "Leaf", Address: "10.254.240.3", TunnelAddress: "10.254.240.3", PublicKey: "key",
 		LinkSummary: "nothing arrives from this node at any hub it dials since 2026-11-12T07:50:00Z",
 		Links:       []siteNodeLink{{Hub: "dev/cailiang", State: "Silent", Since: "2026-11-12T07:50:00Z", LatestHandshake: "2026-11-12T07:46:00Z"}}}) {

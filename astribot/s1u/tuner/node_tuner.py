@@ -73,8 +73,9 @@ the cluster the result, with no shell on the box:
   for no one's use: with the site gone no Run reaches the robot. It is the maintenance of a host restart all the
   same: the lease held, the robot lowered by its power service (the driver stopped, the arms let sink, the motors off
   S1U_DRIVER_STOP_SECONDS later), then the vendor's restart of the whole robot (the Orin, then this x86). A robot not
-  down and restarted within LOWER_SECONDS is left to the gateway's next request. The file is on the Node as annotation rlark.io/link once
-  the site is back;
+  down and restarted within LOWER_SECONDS is left to the gateway's next request. The gateway asks only where the
+  file restart-owner beside link.json names an owner: this container writes "s1u-robot" there once the profile is
+  installed and removes it when the profile is taken back;
 - publishes the robot's self-check, which its device layer runs by itself and leaves on the host
   (/run/rlark/s1u/self-check.json: the round without motor power after the robot joined, the full round at every
   session's attach): label rlark.io/self-check-state = ok | failed | pending (none yet), annotation
@@ -129,8 +130,8 @@ POWER_STATE, ORIN_ALL = "rlark.io/power-state", "s1u.rlark.io/orin"  # the power
 SERIAL, PARAMETERS = "rlark.io/body-serial", "s1u.rlark.io/body-parameters"
 ROBOT, BODY = "rlark.io/robot-id", "rlark.io/robot-body"
 SELF_CHECK_STATE, SELF_CHECK = "rlark.io/self-check-state", "rlark.io/self-check"
-LINK = "rlark.io/link"
 LINK_FILE = "/proc/1/root/var/lib/station/wg/link.json"  # the host's station-gateway's (this Pod is in its PID namespace)
+RESTART_OWNER = os.path.join(os.path.dirname(LINK_FILE), "restart-owner")  # read by the gateway: who carries out its restart
 
 
 def host(*arguments, quiet=False):
@@ -479,8 +480,6 @@ def follow(profile, source):
     identity[ROLLOUT], identity[MAINTENANCE] = json.dumps(rollout), json.dumps(maintenance)
     if asked:
         identity[REQUESTED] = json.dumps(asked)
-    if os.path.exists(LINK_FILE):
-        identity[LINK] = open(LINK_FILE).read().strip()
     # The attempt is on the Node before it is made: a restart of the host ends this Pod.
     publish(value, report, conforms, **dict(identity, **({work["record"]: json.dumps(attempt)} if attempt else {})))
     if attempt:
@@ -500,6 +499,8 @@ def main():
         while True:
             time.sleep(3600)
     if os.environ["S1U_NODE_WANTED"] == "removed":
+        if os.path.exists(RESTART_OWNER):
+            os.remove(RESTART_OWNER)  # relink no longer runs here
         code, removal = host("uninstall")
         publish("drift" if code else "removed", removal[-900:] if code else
                 "the host is as before the node profile from its next boot")
@@ -511,6 +512,8 @@ def main():
     if code:
         publish("drift", "install failed: " + install[-900:])
         raise SystemExit(code)
+    with open(RESTART_OWNER, "w") as owner:
+        owner.write("s1u-robot\n")
     profile = hashlib.sha256(b"".join(open(f"{SOURCE}/{name}", "rb").read() for name in (
         "node_profile.sh", "node_profile.env", "node_spec.py"))).hexdigest()[:16]
     # The Addon's timeSource: declared, the clock must be locked to it. An empty one comes as no variable at all (RLark

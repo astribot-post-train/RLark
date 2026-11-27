@@ -7,3 +7,8 @@ package v1alpha1
 // Node without the annotation has not been reported yet and counts as in
 // use. Whatever would disturb the machine from the cluster reads it.
 const NodeInUseAnnotation = "rlark.io/in-use"
+
+// NodeLinkAnnotation is the node's own link record (the station-gateway's
+// link.json without when Station API last answered, JSON) as the node last
+// reported it to Station API. Station API alone writes it, on the RLark Node.
+const NodeLinkAnnotation = "rlark.io/link"

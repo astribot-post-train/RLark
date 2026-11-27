@@ -33,10 +33,12 @@ const (
 // documentServer is Station API as this program meets it: one key per
 // process instead of one per challenge, which a node cannot tell apart.
 type documentServer struct {
-	t        *testing.T
-	key      *ecdh.PrivateKey
-	document string // none: 404
-	requests int
+	t          *testing.T
+	key        *ecdh.PrivateKey
+	document   string // none: 404
+	requests   int
+	links      []string // the link records taken
+	linkAnswer int      // to a proven link record; none: 204
 	*httptest.Server
 }
 
@@ -61,11 +63,12 @@ func newDocumentServer(t *testing.T, directory, document string) *documentServer
 func (s *documentServer) serve(w http.ResponseWriter, r *http.Request) {
 	s.requests++
 	var request struct {
-		PublicKey string `json:"public_key"`
-		Challenge string `json:"challenge"`
-		Proof     string `json:"proof"`
+		PublicKey string          `json:"public_key"`
+		Challenge string          `json:"challenge"`
+		Proof     string          `json:"proof"`
+		Link      json.RawMessage `json:"link"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&request); err != nil || r.URL.Path != "/v1/network/document" || r.Header.Get("Content-Type") != "application/json" {
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil || r.URL.Path != "/v1/network/document" && r.URL.Path != "/v1/network/link" || r.Header.Get("Content-Type") != "application/json" {
 		s.t.Errorf("request %s %s: %v", r.Method, r.URL.Path, err)
 	}
 	raw, _ := base64.StdEncoding.DecodeString(request.PublicKey)
@@ -83,6 +86,11 @@ func (s *documentServer) serve(w http.ResponseWriter, r *http.Request) {
 	case request.Challenge != vectorChallenge || !hmac.Equal(proof, mac.Sum(nil)):
 		w.WriteHeader(http.StatusUnauthorized)
 		json.NewEncoder(w).Encode(map[string]string{"challenge": vectorChallenge, "server_key": base64.StdEncoding.EncodeToString(s.key.PublicKey().Bytes())})
+	case r.URL.Path == "/v1/network/link" && s.linkAnswer != 0:
+		w.WriteHeader(s.linkAnswer)
+	case r.URL.Path == "/v1/network/link":
+		s.links = append(s.links, string(request.Link))
+		w.WriteHeader(http.StatusNoContent)
 	case s.document == "":
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(map[string]string{"error": "no document for this key"})
@@ -173,5 +181,41 @@ func TestOwnDocumentProof(t *testing.T) {
 	}
 	if proof != vectorProof {
 		t.Fatalf("proof %s", proof)
+	}
+}
+
+// The record goes to Station API without when Station API last answered, and
+// only when it is another than the one RLark took.
+func TestReportLinkSendsTheRecordWhenItChanged(t *testing.T) {
+	directory := t.TempDir()
+	path := filepath.Join(directory, "link.json")
+	key, _ := wgtypes.GeneratePrivateKey()
+	server := newDocumentServer(t, directory, "")
+	if sent, state := reportLink(directory, key, path, nil); sent != nil || state != "" || server.requests != 0 {
+		t.Fatalf("without link.json: %q %q after %d requests", sent, state, server.requests)
+	}
+	write := func(record link) {
+		data, _ := json.Marshal(record)
+		if err := os.WriteFile(path, data, 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(link{State: "up", RLark: 1_800_000_100, Since: 1_800_000_000, Actions: []healAction{{At: 1_800_000_000, Step: "recovered", Result: "r"}}})
+	sent, state := reportLink(directory, key, path, nil)
+	want := `{"state":"up","since":1800000000,"restarts":0,"actions":[{"at":1800000000,"step":"recovered","result":"r"}]}`
+	if string(sent) != want || len(server.links) != 1 || server.links[0] != want || !strings.Contains(state, "has the link record") {
+		t.Fatalf("first report: %s %q %q", sent, state, server.links)
+	}
+	// Station API answered again: the record is the same and nothing is sent.
+	write(link{State: "up", RLark: 1_800_000_130, Since: 1_800_000_000, Actions: []healAction{{At: 1_800_000_000, Step: "recovered", Result: "r"}}})
+	requests := server.requests
+	if again, state := reportLink(directory, key, path, sent); string(again) != want || state != "" || server.requests != requests {
+		t.Fatalf("the same record: %s %q after %d requests", again, state, server.requests-requests)
+	}
+	// A record Station API does not take stays to be sent.
+	write(link{State: "down", Since: 1_800_000_200})
+	server.linkAnswer = http.StatusNotFound
+	if kept, state := reportLink(directory, key, path, sent); string(kept) != want || !strings.HasSuffix(state, "answered 404 to the link record") {
+		t.Fatalf("not taken: %s %q", kept, state)
 	}
 }

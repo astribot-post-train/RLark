@@ -4,7 +4,7 @@ import { clustersApi } from "../../backend";
 import { siteNodesApi } from "../api";
 import type { ClusterSummary, CRDNode } from "../../types";
 import { forEachLimited } from "../lib/forEachLimited";
-import type { NodeNetworkDisplay, SiteNodeLinks } from "../lib/nodeNetwork";
+import { nodeSelfLink, type NodeNetworkDisplay, type SiteNodeLinks } from "../lib/nodeNetwork";
 import { clusterForStation } from "../lib/stationDisplay";
 
 type Summary = Omit<NonNullable<NodeNetworkDisplay["wireguard"]>, "state"> & { state: "current" | "stale" | "unreported" };
@@ -44,7 +44,12 @@ export function useNodeNetworks(nodes: CRDNode[]) {
         if (!clusterID) return;
         const { items } = await siteNodesApi.list(clusterID, signal).catch(() => ({ items: [] }));
         for (const item of items)
-          sites[`${namespace}/${item.node_name}`] = { online: item.online, links: item.network?.links ?? [], summary: item.network?.link_summary ?? "" };
+          sites[`${namespace}/${item.node_name}`] = {
+            online: item.online,
+            links: item.network?.links ?? [],
+            summary: item.network?.link_summary ?? "",
+            self: nodeSelfLink(item.link),
+          };
       };
       await Promise.all([forEachLimited(targets, 6, signal, read), ...[...new Set(targets.map(([namespace]) => namespace))].map(readSites)]);
       for (const [key, site] of Object.entries(sites)) next[key] = { ...next[key], site };

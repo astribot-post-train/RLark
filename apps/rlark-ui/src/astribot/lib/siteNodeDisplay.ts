@@ -16,6 +16,8 @@ export interface SiteNode {
   identity_reason?: string;
   // A robot's cameras as its Node's annotation rlark.io/cameras has them (lib/cameras.ts publishedCameras).
   cameras?: string;
+  // The node's own record of its tunnel as its Node's annotation rlark.io/link has it (lib/nodeNetwork.ts nodeSelfLink).
+  link?: string;
   network?: { public_key?: string; links?: SiteNodeLink[]; link_summary?: string };
 }
 

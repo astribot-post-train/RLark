@@ -59,7 +59,7 @@
 
 | 程序 | 在哪 | 做什么 |
 |---|---|---|
-| station-api | `rlark-local-dev-gpu` 的 `station-system`；入网的机器经 `https://10.11.14.128:18443`，Gateway 经 `https://10.254.240.1:18443` | 节点上报（TokenReview 核对 Pod→Node，写进它的 NetworkEnrollment）、入网登记、发安装包和入网码兑换（`/b/<码>`、`/v1/bootstrap/*`）、节点凭隧道密钥取文档（`/v1/network/document`）、扫描请求（`/v1/network/discovery-scan`）和结果（`/v1/network/discovered`） |
+| station-api | `rlark-local-dev-gpu` 的 `station-system`；入网的机器经 `https://10.11.14.128:18443`，Gateway 经 `https://10.254.240.1:18443` | 节点上报（TokenReview 核对 Pod→Node，写进它的 NetworkEnrollment）、入网登记、发安装包和入网码兑换（`/b/<码>`、`/v1/bootstrap/*`）、节点凭隧道密钥取文档（`/v1/network/document`）和交断网记录（`/v1/network/link`）、扫描请求（`/v1/network/discovery-scan`）和结果（`/v1/network/discovered`） |
 | station-controller | 同上 | 每台节点的在线状态和身份变化、每台节点的隧道文档、NodeClass、Machine、NodeOperation |
 | station-agent | 每个成员集群的 DaemonSet | 心跳、登记公钥、取回文档、探测对端 |
 | station-gateway | 每台节点 | 按文档维护 WireGuard 接口、对端、路由、`/etc/hosts` 里的站点名字、给 kubelet 的 `resolv.conf`、到场站网段的转发；每 10 s 协调一次 |
@@ -109,11 +109,11 @@
 
 1. 上联：本机到 hub 的路由所在网卡没了 IPv4 地址或根本没有路由时，经管它的网络管理器重新拉起（`nmcli device up`，否则 `networkctl reconfigure`，否则网卡 down/up），租约和静态地址、路由随之回来。网卡地址和路由都在时不动（GPU 节点的训练网卡就在这种情况里）；机器在用（`/run/rlark/in-use` 下有文件）时也不动。
 2. 1 分钟后仍断：删掉自己建的 WireGuard 设备，同一轮按文档重建（新套接字、新端口、所有会话重来）。
-3. 再 2 分钟仍断：请求重启。网关自己不重启机器，只写进 `link.json`；由管这台机器重启的人来做：机器人是 `s1u-robot` 的 tuner（下一节）。没有这样的组件的机器不重启。重启后仍断的，下一次请求等 15 分钟，之后每次翻倍，最长 4 小时；连续通 30 分钟后清零。
+3. 再 2 分钟仍断：请求重启。网关自己不重启机器，只写进 `link.json`，由管这台机器重启的组件来做；只有 `link.json` 旁的 `restart-owner` 写了组件名才请求（机器人上 `s1u-robot` 的 tuner 安装后写上，见下节；卸载时删掉）。其他机器（工作站、GPU 节点）不请求、不自动重启，记一条 `restart` 动作“not asked …”，由人重启：断网的节点够不着 API server，没法先排空；RLark 的 Task Pod 不在 `/run/rlark/in-use` 里登记，网关看不出它在训练还是推理；工作站可能承载成员集群的控制面，重启它全站机器人都掉。重启后仍断的，下一次请求等 15 分钟，之后每次翻倍，最长 4 小时；连续通 30 分钟后清零。
 
-状态在主机 `/var/lib/station/wg/link.json`（随重启保留）：`state`（up / down）、`since`、`rlark`（Station API 最后一次应答）和 `rlarkLost`、`uplink`、本次断网做过的级别、`restart`（`{id, at, why}`）、最近 10 条动作（时间都是 Unix 秒）。机器人上 tuner 把它原样发到节点注解 `rlark.io/link`，网络恢复后在控制台和 Dashboard 的节点上看得到。
+状态在主机 `/var/lib/station/wg/link.json`（随重启保留）：`state`（up / down）、`since`、`rlark`（Station API 最后一次应答）和 `rlarkLost`、`uplink`、本次断网做过的级别、`restart`（`{id, at, why}`）、最近 10 条动作（时间都是 Unix 秒）。每种节点的网关在心跳的同一个 30 s 循环里，记录（去掉 `rlark`，它每次应答都变）变了就凭隧道密钥交给 Station API（`POST /v1/network/link`，204 才算交到，否则下一轮再交）；Station API 校验后写到同名 RLark Node 的注解 `rlark.io/link`（只有已入网的节点；这个注解归管理面，集群 agent 的上报不覆盖也不删）。网关 `GET /api/v1/site-nodes` 的 `link` 字段原样给出，控制台的节点列表、节点页和 Station 面板显示“断网自 … / … 恢复（断 N 分钟）”、最近的动作，以及需要人工重启的提示。记录要等隧道和 Station API 恢复后才到 RLark，断网期间实时的“断”看 hub 那边的 `links`。
 
-机器人的重启（`node_tuner.py` 的 `relink`）不需要 API server，也不等使用者：断网时没有 Run 够得着机器人。仍是一次整机重启的维护：持有维护租约，电源容器停驱动、手臂缓落、`S1U_DRIVER_STOP_SECONDS` 后下电，然后厂商的整机重启（先 Orin，再 x86），所以 Orin 卡住或掉线也一起重启。另一个维护占着机器人时不做；`LOWER_SECONDS` 内没降下来并重启的放弃，等网关下一次请求。比本次开机早的请求视为已做。
+机器人的重启（`node_tuner.py` 的 `relink`）不需要 API server，也不等使用者：断网时没有 Run 够得着机器人。仍是一次整机重启的维护：持有维护租约，电源容器停驱动、手臂缓落、`S1U_DRIVER_STOP_SECONDS` 后下电，然后厂商的整机重启（先 Orin，再 x86），所以 Orin 卡住或掉线也一起重启。另一个维护占着机器人时不做；`LOWER_SECONDS` 内没降下来并重启的放弃，等网关下一次请求。比本次开机早的请求视为已做。tuner 装好 profile 后在主机 `/var/lib/station/wg/restart-owner` 写 `s1u-robot`，声明自己管这台的重启（`S1U_NODE_WANTED=removed` 时删掉）。升级时新网关程序（station-agents 阶段）早于新 tuner（addons 阶段）落地，这段时间里机器人断网 3 分钟以上记为 “not asked”、不重启，直到新 tuner 写上 `restart-owner`。
 
 ### 转发到场站的网段
 

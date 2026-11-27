@@ -160,3 +160,40 @@ func ownDocument(directory string, key wgtypes.Key, computed string) string {
 	}
 	return "has the document of Station API at " + url + ": " + answer.ConfigHash
 }
+
+// reportLink gives Station API this node's link record (link.json at path) when it is another than the one RLark
+// last took (sent), and returns the one RLark has now and what there is to say ("": nothing new). The record goes
+// without rlark, when Station API last answered: that changes with every answer, the rest only with the tunnel.
+func reportLink(directory string, key wgtypes.Key, path string, sent []byte) ([]byte, string) {
+	data, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return sent, "" // a hub, or no pass has written it yet
+	}
+	var record link
+	if err == nil {
+		err = json.Unmarshal(data, &record)
+	}
+	if err != nil {
+		return sent, fmt.Sprintf("read %s: %v", path, err)
+	}
+	record.RLark = 0
+	data, _ = json.Marshal(record)
+	if bytes.Equal(data, sent) {
+		return sent, ""
+	}
+	url, ca, err := stationAPIOf(directory)
+	if errors.Is(err, errNoStationAPI) {
+		return sent, ""
+	}
+	var status int
+	if err == nil {
+		status, _, err = askStationAPI(url, ca, key, "/v1/network/link", map[string]any{"link": json.RawMessage(data)})
+	}
+	switch {
+	case err != nil:
+		return sent, err.Error()
+	case status != http.StatusNoContent:
+		return sent, fmt.Sprintf("Station API at %s answered %d to the link record", url, status)
+	}
+	return data, fmt.Sprintf("Station API at %s has the link record (%s since %d)", url, record.State, record.Since)
+}

@@ -10,6 +10,7 @@ import (
 	neturl "net/url"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"slices"
 	"sync"
 	"time"
@@ -35,7 +36,11 @@ import (
 // restart is asked for, not done: link.json says so, and what owns the
 // machine's restart does it when it can do it safely (s1u-robot's tuner: the
 // driver stopped, the arms let sink, the motors off, then the whole robot).
-// A machine without such an owner is not restarted. While a restart did not
+// The owner declares itself in restart-owner beside link.json. A machine
+// without one (a workstation, a GPU node) is not asked of and not restarted,
+// and the record says a person restarts it: a node cut off cannot be drained,
+// nothing marks the RLark Tasks it runs as a use, and a workstation may hold
+// its site's control plane. While a restart did not
 // bring the tunnel back for good, the next waits twice as long as the one
 // before it, so a site whose own network is gone does not keep its robots
 // restarting.
@@ -82,8 +87,8 @@ type link struct {
 // next is the step the tunnel's state calls for now, "" for none. answered
 // says whether a dialled peer answered within handshakeAge; a node that dials
 // no one is never down. keepUplink, when not "", is why the uplink is not
-// taken up again.
-func (l *link) next(answered bool, now time.Time, keepUplink string) string {
+// taken up again; restartOwner is what owns the machine's restart ("": nothing).
+func (l *link) next(answered bool, now time.Time, keepUplink, restartOwner string) string {
 	if answered {
 		if l.State == "down" {
 			l.record(now, "recovered", fmt.Sprintf("the tunnel answers again after %s", time.Duration(now.Unix()-l.Since)*time.Second))
@@ -111,6 +116,12 @@ func (l *link) next(answered bool, now time.Time, keepUplink string) string {
 		return "uplink"
 	case elapsed >= healTunnelAfter && !slices.Contains(l.Done, "wireguard"):
 		return "wireguard"
+	case elapsed >= healRestartAfter && restartOwner == "":
+		if !slices.Contains(l.Done, "restart") {
+			l.Done = append(l.Done, "restart")
+			l.record(now, "restart", "not asked: nothing on this machine owns its restart (restart-owner); a person restarts it if it needs one")
+		}
+		return ""
 	case elapsed >= healRestartAfter && (l.Restart == nil || now.Sub(time.Unix(l.Restart.At, 0)) >= l.restartWait()):
 		return "restart"
 	}
@@ -216,7 +227,9 @@ func (h *healer) pass(d *desired, current *wgtypes.Device, now time.Time) {
 		// robot's x86 and its Orin talk over it): not under a use.
 		keepUplink = "the machine is in use"
 	}
-	step := h.next(answered, now, keepUplink)
+	declared, _ := os.ReadFile(filepath.Join(filepath.Dir(h.path), "restart-owner"))
+	restartOwner := string(bytes.TrimSpace(declared))
+	step := h.next(answered, now, keepUplink, restartOwner)
 	switch step {
 	case "uplink":
 		h.record(now, step, uplinkAgain(h.Uplink))
@@ -229,7 +242,7 @@ func (h *healer) pass(d *desired, current *wgtypes.Device, now time.Time) {
 			id = h.Restart.ID + 1
 		}
 		h.Restart = &restartRequest{ID: id, At: now.Unix(), Why: fmt.Sprintf("the tunnel has not answered since %s", time.Unix(h.Since, 0).UTC().Format(time.RFC3339))}
-		h.record(now, step, fmt.Sprintf("restart %d asked of the machine's owner (the next no sooner than %s later)", id, h.restartWait()))
+		h.record(now, step, fmt.Sprintf("restart %d asked of %s (the next no sooner than %s later)", id, restartOwner, h.restartWait()))
 	}
 	if step != "" {
 		h.Done = append(h.Done, step)

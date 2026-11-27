@@ -123,6 +123,16 @@ func TestRobotAnnotationsStayTheManagementPlanes(t *testing.T) {
 	if merged := mergeManagementAnnotations(map[string]string{"rlark.io/cameras": "{}"}, map[string]string{"rlark.io/cameras": cameras}); merged["rlark.io/cameras"] != cameras {
 		t.Fatalf("annotations = %v", merged)
 	}
+	// The node's link record is Station API's on the management Node: a member Node's (an older s1u-robot tuner
+	// wrote one) does not replace it, and the report does not remove it.
+	record := `{"state":"up","since":1800000000,"restarts":0,"actions":[]}`
+	merged = mergeManagementAnnotations(map[string]string{"rlark.io/link": record}, map[string]string{"rlark.io/link": `{"state":"down"}`})
+	if merged["rlark.io/link"] != record {
+		t.Fatalf("annotations = %v", merged)
+	}
+	if merged := mergeManagementAnnotations(map[string]string{"rlark.io/link": record}, map[string]string{}); merged["rlark.io/link"] != record {
+		t.Fatalf("annotations = %v", merged)
+	}
 }
 
 func TestTheRestartAskedForReachesTheNodeAndGoesWithIt(t *testing.T) {

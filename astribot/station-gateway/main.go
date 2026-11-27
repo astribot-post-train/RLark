@@ -657,14 +657,22 @@ func main() {
 	}
 	// Apart from the passes below, which take the document up as they take
 	// the agent's: asking must not wait for a pass, nor a pass for an answer.
+	linkPath := filepath.Join(filepath.Dir(*keyPath), "link.json")
 	if *computedPath != "" {
 		go func() {
-			for said := ""; ; time.Sleep(30 * time.Second) {
+			var reported []byte
+			for said, linkSaid := "", ""; ; time.Sleep(30 * time.Second) {
 				if state := ownDocument(filepath.Dir(*configPath), key, *computedPath); state != said {
 					if said = state; state == "" {
 						state = stationAPIFile + " is gone: not asking"
 					}
 					log.Printf("own document: %s", state)
+				}
+				// RLark keeps the record on the node's RLark Node (rlark.io/link): sent when it changed.
+				var state string
+				if reported, state = reportLink(filepath.Dir(*configPath), key, linkPath, reported); state != "" && state != linkSaid {
+					linkSaid = state
+					log.Printf("link record: %s", state)
 				}
 			}
 		}()
@@ -685,7 +693,7 @@ func main() {
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
 	origin := ""
-	links := newHealer(filepath.Join(filepath.Dir(*keyPath), "link.json"), time.Now())
+	links := newHealer(linkPath, time.Now())
 	for {
 		data, d, source, e := from.read()
 		if e == nil {

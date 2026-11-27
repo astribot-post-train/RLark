@@ -9,6 +9,7 @@ import { NodeCameras } from "../components/NodeCameras";
 import { NodeLinks } from "../components/NodeLinks";
 import { RobotPoseButton } from "../components/RobotControls";
 import { cameraCells, publishedCameras, type CameraView } from "../lib/cameras";
+import { nodeSelfLink } from "../lib/nodeNetwork";
 import { admissionLabels, conditionView, stationDeleteReason } from "../lib/stationDrawer";
 import { stationNetworkState, stationPhase, stationPhaseLabel, stationRecoveryHint, stationStatusClass, shortUID } from "../lib/stationDisplay";
 import {
@@ -201,7 +202,7 @@ export function StationDetailPanel({
         </section>
       </div>
 
-      {siteNode && <NodeLinks network={{ site: { online: siteNode.online, links: siteNode.network?.links ?? [], summary: siteNode.network?.link_summary ?? "" } }} zh={zh} collapsible />}
+      {siteNode && <NodeLinks network={{ site: { online: siteNode.online, links: siteNode.network?.links ?? [], summary: siteNode.network?.link_summary ?? "", self: nodeSelfLink(siteNode.link) } }} zh={zh} collapsible />}
     </details>
 
     {!retired && <StationRunningImages name={station.metadata.name} clusterID={cluster?.id ?? ""} uid={station.spec.nodeUID} zh={zh} />}

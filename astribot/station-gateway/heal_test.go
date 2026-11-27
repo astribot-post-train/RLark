@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -12,7 +13,7 @@ func TestLinkStepsUpThroughAnOutage(t *testing.T) {
 	l := link{State: "up", Since: start.Unix()}
 	at := func(d time.Duration) time.Time { return start.Add(d) }
 	steps := func(d time.Duration, answered bool, keepUplink string) string {
-		step := l.next(answered, at(d), keepUplink)
+		step := l.next(answered, at(d), keepUplink, "s1u-robot")
 		if step == "restart" {
 			l.Restarts++
 			l.Restart = &restartRequest{ID: l.Restarts, At: at(d).Unix()}
@@ -60,6 +61,29 @@ func TestLinkStepsUpThroughAnOutage(t *testing.T) {
 	}
 	if got := steps(93*time.Minute, false, "x"); got != "restart" {
 		t.Fatalf("in use: step %q, want restart", got)
+	}
+}
+
+// A machine nothing owns the restart of (a workstation, a GPU node) is not
+// asked of: the record says once per outage that a person restarts it.
+func TestLinkAsksNoRestartOfAMachineWithoutAnOwner(t *testing.T) {
+	start := time.Unix(1_800_000_000, 0)
+	l := link{State: "up", Since: start.Unix()}
+	for _, d := range []time.Duration{0, 4 * time.Minute, 19 * time.Minute, 49 * time.Minute} {
+		if step := l.next(false, start.Add(d), "whole", ""); step != "" && step != "wireguard" {
+			t.Fatalf("at %s: step %q", d, step)
+		} else if step != "" {
+			l.Done = append(l.Done, step)
+		}
+	}
+	var restarts []healAction
+	for _, action := range l.Actions {
+		if action.Step == "restart" {
+			restarts = append(restarts, action)
+		}
+	}
+	if len(restarts) != 1 || !strings.HasPrefix(restarts[0].Result, "not asked") || l.Restarts != 0 || l.Restart != nil {
+		t.Fatalf("without an owner: %+v", l)
 	}
 }
 

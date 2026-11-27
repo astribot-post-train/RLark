@@ -105,10 +105,12 @@ func (a *API) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ready"})
 	case a.Bootstrap != nil && (strings.HasPrefix(r.URL.Path, "/b/") || strings.HasPrefix(r.URL.Path, "/v1/bootstrap/")):
 		a.Bootstrap.ServeHTTP(w, r)
-	// For the node's WireGuard key, with no token: its own document, how far a new node's key has reached its
-	// peers, and what a hub found on its site's network.
+	// For the node's WireGuard key, with no token: its own document, its link record, how far a new node's key has
+	// reached its peers, and what a hub found on its site's network.
 	case route == "POST /v1/network/document":
 		a.Documents.ServeHTTP(w, r)
+	case route == "POST /v1/network/link":
+		a.Documents.ServeLink(w, r)
 	case route == "POST /v1/network/propagation":
 		a.Documents.ServePropagation(w, r)
 	case route == "POST /v1/network/discovery-scan":

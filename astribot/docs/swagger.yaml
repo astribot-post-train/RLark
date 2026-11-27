@@ -131,6 +131,7 @@ paths:
                   reboots: {type: integer, description: Boot-time changes seen since the record was made or passed to this Node}
                   labels: {type: object, additionalProperties: {type: string}}
                   cameras: {type: string, description: "A robot's cameras as its camera service last wrote them (the Node annotation rlark.io/cameras, the JSON of GET .../nodes/{name}/cameras)"}
+                  link: {type: string, description: "The node's own record of its tunnel, as its station-gateway last reported it to Station API once that answered (the Node annotation rlark.io/link, JSON: state up|down, since, rlarkLost, uplink, done, restarts, restart {id, at, why}, actions (the last 10) [{at, step: down|recovered|uplink|wireguard|restart|rlark, result}]; Unix seconds of the node's clock). A restart action whose result begins 'not asked' is a machine nothing restarts by itself: a person restarts it. Absent for a hub and before the first report"}
                   robot_id: {type: string}
                   workstation_id: {type: string}
                   network:
@@ -1768,7 +1769,8 @@ components:
         Annotations: rlark.io/power ({desired, used_by_a_run, state, waiting, recovered, errors, restart}),
         rlark.io/power.restart (the last restart asked for, POST nodes/{name}/robot-restart), rlark.io/robot-claim-set,
         rlark.io/station-mark-set, rlark.io/cameras, rlark.io/self-check, rlark.io/clock-report ({offset_ms: the robot
-        ahead of the source, frequency_ppm, source, device, at}). status.addresses: the address of type InternalIP is the one the node reaches its cluster at,
+        ahead of the source, frequency_ppm, source, device, at}). On every node kind, rlark.io/link: the node's own
+        record of its tunnel (see link of GET /api/v1/site-nodes/{name}), which Station API alone writes. status.addresses: the address of type InternalIP is the one the node reaches its cluster at,
         for a robot its WireGuard tunnel address (10.254.240.x), at which its device layer and vendor page answer.
     SiteNetworkView:
       type: object

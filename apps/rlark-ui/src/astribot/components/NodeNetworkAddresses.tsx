@@ -1,6 +1,6 @@
 import type { CRDNode } from "../../types";
 import { CopyButton } from "./CopyButton.js";
-import { nodeLinkHealth, nodeLinkLine, nodeNetworkModel, type NodeNetworkDisplay } from "../lib/nodeNetwork.js";
+import { nodeLinkHealth, nodeLinkLine, nodeNetworkModel, nodeSelfLine, type NodeNetworkDisplay } from "../lib/nodeNetwork.js";
 import { formatChinaDateTime } from "../../utils/time.js";
 
 export function NodeNetworkAddresses({ node, network, zh }: { node: CRDNode; network?: NodeNetworkDisplay; zh: boolean }) {
@@ -48,6 +48,15 @@ export function NodeNetworkAddresses({ node, network, zh }: { node: CRDNode; net
         <span className={`node-network-line node-link ${nodeLinkHealth(network.site)}`} title={network.site.summary || undefined}>
           <span className="node-network-label">{zh ? "链路" : "Link"}</span>
           <span>{nodeLinkLine(network.site, zh)}</span>
+        </span>
+      )}
+      {network?.site?.self && (
+        <span
+          className={`node-network-line node-link ${network.site.self.state === "down" ? "down" : "connected"}`}
+          title={network.site.self.actions[network.site.self.actions.length - 1].result}
+        >
+          <span className="node-network-label">{zh ? "自愈" : "Self-heal"}</span>
+          <span>{nodeSelfLine(network.site.self, zh)}</span>
         </span>
       )}
     </span>

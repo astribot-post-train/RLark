@@ -7,6 +7,8 @@ import {
   nodeNetworkKey,
   nodeNetworkModel,
   nodeNetworkSearchText,
+  nodeSelfLine,
+  nodeSelfLink,
 } from "../dist/test/astribot/lib/nodeNetwork.js";
 import { NodeNetworkAddresses } from "../dist/test/astribot/components/NodeNetworkAddresses.js";
 import { NodeLinks } from "../dist/test/astribot/components/NodeLinks.js";
@@ -154,4 +156,44 @@ test("the node page lists every hub with its state, since and last handshake", (
   assert.match(html, /nothing arrives from this node/);
   assert.match(renderToStaticMarkup(React.createElement(NodeLinks, { network: {}, zh: true })), /不在站点网络中/);
   assert.match(renderToStaticMarkup(React.createElement(NodeLinks, { zh: true })), /读取中/);
+});
+
+// The node's own record (site-nodes link): a GPU node that nothing restarts, down 12 min on 11-28 (UTC 02:00).
+const notAsked = "not asked: nothing on this machine owns its restart (restart-owner); a person restarts it if it needs one";
+const gpuOutage = {
+  state: "up",
+  since: 1795831920,
+  restarts: 0,
+  actions: [
+    { at: 1795831200, step: "down", result: "no peer this node dials has answered for 3m0s" },
+    { at: 1795831200, step: "uplink", result: "skipped: eno1 has its address and a route to 10.11.14.128" },
+    { at: 1795831260, step: "wireguard", result: "st-wg0 removed, made anew by this pass" },
+    { at: 1795831380, step: "restart", result: notAsked },
+    { at: 1795831920, step: "recovered", result: "the tunnel answers again after 12m0s" },
+  ],
+};
+
+test("a node's own record is read only when it holds something to show", () => {
+  assert.equal(nodeSelfLink(undefined), undefined);
+  assert.equal(nodeSelfLink(""), undefined);
+  assert.equal(nodeSelfLink("{not json"), undefined);
+  assert.equal(nodeSelfLink(JSON.stringify({ state: "up", since: 1, restarts: 0, actions: [] })), undefined);
+  assert.deepEqual(nodeSelfLink(JSON.stringify(gpuOutage)), gpuOutage);
+});
+
+test("the self-heal line says when the node recovered, after how long, and what nobody restarted", () => {
+  assert.equal(nodeSelfLine(gpuOutage, true), "11-28 10:12 恢复（断 12 分钟） · 未自动重启");
+  assert.equal(nodeSelfLine(gpuOutage, false), "Recovered 11-28 10:12 after 12 min · not restarted automatically");
+  const down = { ...gpuOutage, state: "down", since: 1795831200, actions: gpuOutage.actions.slice(0, 4) };
+  assert.equal(nodeSelfLine(down, true), "断网自 11-28 10:00 · 最近：重启 · 需人工重启");
+  assert.equal(nodeSelfLine(down, false), "Down since 11-28 10:00 · last: restart · needs a person to restart");
+  // A robot: its restart was asked of its owner, so nothing is marked.
+  const robot = { ...gpuOutage, actions: gpuOutage.actions.map((action) => (action.step === "restart" ? { ...action, result: "restart 1 asked of s1u-robot" } : action)) };
+  assert.equal(nodeSelfLine(robot, false), "Recovered 11-28 10:12 after 12 min");
+  const html = render({ site: { ...connectedLeaf, self: gpuOutage } });
+  assert.match(html, /自愈.*11-28 10:12 恢复/);
+  assert.match(html, /title="the tunnel answers again after 12m0s"/);
+  const page = renderToStaticMarkup(React.createElement(NodeLinks, { network: { site: { ...connectedLeaf, self: gpuOutage } }, zh: false }));
+  assert.match(page, /Self-heal: Recovered 11-28 10:12 after 12 min/);
+  assert.match(page, /11-28 10:12<\/small> recovered — the tunnel answers again after 12m0s.*11-28 10:03<\/small> restart — not asked/);
 });

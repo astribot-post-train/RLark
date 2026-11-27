@@ -88,9 +88,10 @@ func isSiteOwnedNodeLabel(key string) bool {
 	return false
 }
 
-// isSiteOwnedNodeAnnotation: what the management plane says of a robot beside its labels (who set its desired power).
+// isSiteOwnedNodeAnnotation: what the management plane says of a robot beside its labels (who set its desired power),
+// and the node's link record, which Station API writes from what the node's station-gateway reports.
 func isSiteOwnedNodeAnnotation(key string) bool {
-	return strings.HasPrefix(key, nodeRobotLabelPrefix) || key == "rlark.io/station-mark-set"
+	return strings.HasPrefix(key, nodeRobotLabelPrefix) || key == "rlark.io/station-mark-set" || key == rlarkv1alpha1.NodeLinkAnnotation
 }
 
 // nodeReport is one report of a node onto its management Node, written as a merge patch of only the fields the

@@ -10,6 +10,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+
+	rlarkv1alpha1 "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
 )
 
 var (
@@ -57,6 +59,9 @@ type siteNode struct {
 	WorkstationID    string            `json:"workstation_id,omitempty"`
 	// A robot's cameras as its camera service last wrote them (the annotation rlark.io/cameras, JSON).
 	Cameras string `json:"cameras,omitempty"`
+	// The node's own record of its tunnel (the annotation rlark.io/link, JSON as in its station-gateway's link.json
+	// without rlark), as it last reported it once Station API answered.
+	Link string `json:"link,omitempty"`
 }
 
 type siteNodeNetwork struct {
@@ -95,10 +100,11 @@ func (g *Gateway) siteNodes(c *gin.Context, clusterID, namespace string) ([]site
 	if err != nil {
 		return nil, err
 	}
-	labelsOf, camerasOf := map[string]map[string]string{}, map[string]string{}
+	labelsOf, camerasOf, linkOf := map[string]map[string]string{}, map[string]string{}, map[string]string{}
 	for i := range nodes.Items {
 		labelsOf[nodes.Items[i].GetName()] = nodes.Items[i].GetLabels()
 		camerasOf[nodes.Items[i].GetName()] = nodes.Items[i].GetAnnotations()[siteNodeCameras]
+		linkOf[nodes.Items[i].GetName()] = nodes.Items[i].GetAnnotations()[rlarkv1alpha1.NodeLinkAnnotation]
 	}
 	admissions, err := g.stationClient.Resource(nodeAdmissionGVR).Namespace(namespace).List(ctx, metav1.ListOptions{})
 	if err != nil {
@@ -139,7 +145,7 @@ func (g *Gateway) siteNodes(c *gin.Context, clusterID, namespace string) ([]site
 		if retired, _, _ := unstructured.NestedBool(enrollment.Object, "spec", "retired"); retired {
 			continue
 		}
-		result := siteNode{ClusterID: clusterID, NodeName: enrollment.GetName(), Tunnel: "unknown", RLarkNode: "unknown", Labels: labelsOf[enrollment.GetName()], Cameras: camerasOf[enrollment.GetName()]}
+		result := siteNode{ClusterID: clusterID, NodeName: enrollment.GetName(), Tunnel: "unknown", RLarkNode: "unknown", Labels: labelsOf[enrollment.GetName()], Cameras: camerasOf[enrollment.GetName()], Link: linkOf[enrollment.GetName()]}
 		result.RobotID, result.WorkstationID = result.Labels[siteNodeRobotLabel], result.Labels[siteNodeWorkstationID]
 		result.DeclaredType, result.DeclaredModel = declared[enrollment.GetName()][0], declared[enrollment.GetName()][1]
 		result.ObservedType, result.ObservedModel = identities[enrollment.GetName()][0], identities[enrollment.GetName()][1]

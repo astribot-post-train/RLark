@@ -2,6 +2,9 @@ import { ChevronDown, Network } from "lucide-react";
 import {
   nodeLinkHealth,
   nodeLinkLine,
+  nodeSelfLine,
+  nodeSelfStep,
+  nodeSelfTime,
   type NodeNetworkDisplay,
 } from "../lib/nodeNetwork.js";
 import { formatChinaDateTime } from "../../utils/time.js";
@@ -20,6 +23,7 @@ export function NodeLinks({ network, zh, collapsible }: { network?: NodeNetworkD
     Silent: zh ? "收不到" : "Silent",
     Unknown: zh ? "无近况" : "Unknown",
   };
+  const self = site?.self;
   const links = site && <>
     {site.summary && <p className="node-link-summary">{site.summary}</p>}
     {site.links.length > 0 && (
@@ -41,6 +45,21 @@ export function NodeLinks({ network, zh, collapsible }: { network?: NodeNetworkD
           </div>
         ))}
       </dl>
+    )}
+    {self && (
+      <div className="node-link-self">
+        <p className={`node-link ${self.state === "down" ? "down" : "connected"}`}>
+          {zh ? "节点自愈：" : "Self-heal: "}
+          {nodeSelfLine(self, zh)}
+        </p>
+        <ul className="node-link-actions">
+          {[...self.actions].reverse().map((action, index) => (
+            <li key={index}>
+              <small>{nodeSelfTime(action.at)}</small> {nodeSelfStep(action.step, zh)} — {action.result}
+            </li>
+          ))}
+        </ul>
+      </div>
     )}
   </>;
 

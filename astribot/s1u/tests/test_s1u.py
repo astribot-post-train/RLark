@@ -1140,6 +1140,31 @@ def test_a_robot_cut_off_from_the_site_is_lowered_and_restarted_when_its_gateway
     assert node_tuner.relink() is False and robot.lease()["of"] == "payload x"
     link.write_text(json.dumps(dict(state="up", since=robot.now, restart=dict(id=4, at=robot.now, why="w"))))
     assert node_tuner.relink() is False
-    # Once the site is back the file is on the Node.
-    robot.follow()
-    assert json.loads(robot.annotations[node_tuner.LINK])["state"] == "up"
+
+
+def test_the_tuner_declares_itself_the_owner_of_a_robots_restart_and_takes_it_back_on_removal(tmp_path, monkeypatch):
+    # The gateway asks for a restart only of a machine whose restart something owns (restart-owner beside link.json).
+    owner = tmp_path / "restart-owner"
+    monkeypatch.setattr(node_tuner, "RESTART_OWNER", str(owner))
+    monkeypatch.setenv("NODE_NAME", "s1u-01-x86")
+    monkeypatch.setattr(node_tuner.shutil, "copy", lambda *paths: None)
+    monkeypatch.setattr(node_tuner, "host", lambda *arguments, quiet=False: (0, ""))
+    monkeypatch.setattr(node_tuner, "publish", lambda *arguments, **annotations: None)
+    monkeypatch.setattr(node_tuner, "node", lambda: ({node_tuner.CATEGORY: "robot"}, {}))
+
+    class Stop(Exception):
+        pass
+
+    def stop(*arguments):
+        raise Stop
+
+    monkeypatch.setattr(node_tuner.os, "sched_setaffinity", stop)  # past the install: the loop is not this test's
+    monkeypatch.setattr(node_tuner.time, "sleep", stop)
+    monkeypatch.setenv("S1U_NODE_WANTED", "installed")
+    with pytest.raises(Stop):
+        node_tuner.main()
+    assert owner.read_text() == "s1u-robot\n"
+    monkeypatch.setenv("S1U_NODE_WANTED", "removed")
+    with pytest.raises(Stop):
+        node_tuner.main()
+    assert not owner.exists()
