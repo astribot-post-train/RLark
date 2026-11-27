@@ -59,7 +59,7 @@ func (g *Service) requireLegacyProvisionReceipts(ctx context.Context, p *rlark.C
 	if err != nil {
 		return err
 	}
-	if matchesLegacyProvisionNetwork(p, network) && network.GetAnnotations()[siteProvisionAnnotation(p.Name)] == "" {
+	if present, _ := legacyProvisionNetwork(p, network); present && network.GetAnnotations()[siteProvisionAnnotation(p.Name)] == "" {
 		return reject("the historical site declaration has no ownership receipt")
 	}
 	return nil

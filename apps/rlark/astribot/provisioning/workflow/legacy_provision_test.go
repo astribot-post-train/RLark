@@ -23,7 +23,6 @@ func TestMigrateDeletedLegacyProvisionLeavesHistoryUntilOwned(t *testing.T) {
 	network.SetResourceVersion("2")
 	spec := network.Object["spec"].(map[string]any)
 	spec["sites"] = append(spec["sites"].([]any), map[string]any{"name": "baidu", "clusters": []any{name, "another-cluster"}})
-	spec["names"] = append(spec["names"].([]any), map[string]any{"name": "cp." + name + ".rlark.internal", "address": "10.254.240.6"})
 	spec["nodes"] = append(spec["nodes"].([]any), map[string]any{"clusterID": name, "nodeName": "gpu-1", "publicKey": "original-key", "address": "10.254.240.6"})
 	provision := &rlark.ClusterProvision{
 		ObjectMeta: metav1.ObjectMeta{Name: name, UID: "original-provision", ResourceVersion: "10"},

@@ -23,6 +23,6 @@
 }
 ```
 
-原 Cluster 仍在时，通过 `cluster` 提供它的资源身份。接口要求核对当前 Cluster 实例，否则会拒绝迁移。凭据键支持 `station-read`、`station-operations`、`release` 和 `agent-certificate`。只提交你已核实的资源。若要迁移历史控制面主机，还需要从原集群记录取得 `kube-system` 命名空间 UID，填入 `native_cluster_uid`。后续清理登录主机时，会核对已保存的 SSH 指纹和主机上的原生 UID，再补写清理所需的标记。
+原 Cluster 仍在时，通过 `cluster` 提供它的资源身份。接口要求核对当前 Cluster 实例，否则会拒绝迁移。凭据键支持 `station-read`、`station-operations`、`release` 和 `agent-certificate`。只提交你已核实的资源。SiteNetwork 声明已部分清理时，剩余条目与原开集群记录一致即可迁移。若要迁移历史控制面主机，还需要从原集群记录取得 `kube-system` 命名空间 UID，填入 `native_cluster_uid`。后续清理登录主机时，会核对已保存的 SSH 指纹和主机上的原生 UID，再补写清理所需的标记。
 
 迁移写入归属元数据，并在审计日志记录管理员和证据引用。主机安装、Secret 数据以及独立的 NodeAdmission 和 NetworkEnrollment 都保留。核实后使用原清理入口。已成功创建且仍存在的 Cluster 要先走正常的集群删除流程。写入冲突时重新核实剩余资源，用最新资源版本重试。同一 UID 已写入的归属记录可继续复用。原始归属无法确认时，请保留相应历史记录。

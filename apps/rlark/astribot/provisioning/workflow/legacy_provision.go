@@ -187,7 +187,7 @@ func (g *Service) planLegacyProvision(ctx context.Context, p *rlark.ClusterProvi
 			return nil, reject(fmt.Errorf("the network declaration has a different owner"))
 		}
 		if owner == "" {
-			if !matchesLegacyProvisionNetwork(p, object) {
+			if present, matches := legacyProvisionNetwork(p, object); !present || !matches {
 				return nil, reject(fmt.Errorf("the reviewed SiteNetwork does not match the provision's original declaration"))
 			}
 			annotations := object.GetAnnotations()
@@ -212,18 +212,30 @@ func (g *Service) planLegacyProvision(ctx context.Context, p *rlark.ClusterProvi
 	return actions, nil
 }
 
-func matchesLegacyProvisionNetwork(p *rlark.ClusterProvision, object *unstructured.Unstructured) bool {
+// A historical declaration can be partially removed. Remaining entries must
+// still agree with the provision, and sibling node and site records stay independent.
+func legacyProvisionNetwork(p *rlark.ClusterProvision, object *unstructured.Unstructured) (present, matches bool) {
 	f := p.Status.Facts
-	if f.TunnelAddress == "" || f.NodeName == "" || f.PublicKey == "" || p.Spec.Site == "" {
-		return false
-	}
+	matches = true
 	n := provisioning.Network{Object: object}
-	return slices.ContainsFunc(n.Entries("spec", "names"), func(entry map[string]interface{}) bool {
-		return entry["name"] == "cp."+p.Name+".rlark.internal" && entry["address"] == f.TunnelAddress
-	}) && slices.ContainsFunc(n.Entries("spec", "nodes"), func(entry map[string]interface{}) bool {
-		return entry["clusterID"] == p.Name && entry["nodeName"] == f.NodeName && entry["address"] == f.TunnelAddress && entry["publicKey"] == f.PublicKey
-	}) && slices.ContainsFunc(n.Entries("spec", "sites"), func(entry map[string]interface{}) bool {
+	for _, entry := range n.Entries("spec", "names") {
+		if entry["name"] == "cp."+p.Name+".rlark.internal" {
+			present = true
+			matches = matches && f.TunnelAddress != "" && entry["address"] == f.TunnelAddress
+		}
+	}
+	for _, entry := range n.Entries("spec", "nodes") {
+		if f.NodeName != "" && entry["clusterID"] == p.Name && entry["nodeName"] == f.NodeName {
+			present = true
+			matches = matches && f.PublicKey != "" && f.TunnelAddress != "" && entry["address"] == f.TunnelAddress && entry["publicKey"] == f.PublicKey
+		}
+	}
+	for _, entry := range n.Entries("spec", "sites") {
 		members, _, _ := unstructured.NestedStringSlice(entry, "clusters")
-		return entry["name"] == p.Spec.Site && slices.Contains(members, p.Name)
-	})
+		if slices.Contains(members, p.Name) {
+			present = true
+			matches = matches && p.Spec.Site != "" && entry["name"] == p.Spec.Site
+		}
+	}
+	return present, matches
 }
