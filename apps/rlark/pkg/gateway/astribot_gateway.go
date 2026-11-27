@@ -162,6 +162,7 @@ func (g *Gateway) registerAstribotRoutes(api *gin.RouterGroup) {
 		clusterProvisions.POST("/:name/clear", g.handleClearClusterProvision)
 	}
 	adminAPI.GET("/station/machines", g.handleListMachines)
+	adminAPI.POST("/station/machines/:name/rejoin", g.handleRejoinMachine)
 	adminAPI.POST("/station/machines/admit", g.handleAdmitMachines)
 	adminAPI.GET("/station/node-classes/:name/access", g.handleGetNodeClassAccess)
 	adminAPI.PUT("/station/node-classes/:name/access", g.handleSetNodeClassAccess)

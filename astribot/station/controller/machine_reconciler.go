@@ -304,6 +304,51 @@ func (r *MachineReconciler) reconcile(ctx context.Context, machine *stationv1alp
 		status.Problem, status.Message = stationv1alpha1.MachineClassIncomplete, "NodeClass "+machine.Spec.NodeClass+" declares no access or no discovery"
 		return reconcile.Result{}, nil
 	}
+	if requestID := machine.Spec.RejoinRequestID; requestID != "" && requestID != status.RejoinRequestID {
+		retryStoppedRejoin := false
+		if status.Phase == stationv1alpha1.MachineAdmitted && status.RejoinRequestID != "" && status.Operation != "" {
+			previousNamespace, err := r.Clusters.Namespace(ctx, status.ClusterID)
+			if err != nil {
+				return reconcile.Result{}, fmt.Errorf("resolve cluster %s: %w", status.ClusterID, err)
+			}
+			previous := &stationv1alpha1.NodeOperation{}
+			if err := r.Reader.Get(ctx, types.NamespacedName{Namespace: previousNamespace, Name: status.Operation}, previous); err != nil {
+				return reconcile.Result{}, fmt.Errorf("read previous rejoin operation %s: %w", status.Operation, err)
+			}
+			retryStoppedRejoin = previous.Status.Phase == "Failed" || previous.Status.Phase == "Blocked"
+		}
+		if (status.Phase != stationv1alpha1.MachineJoined && !retryStoppedRejoin) || status.NodeName == "" || status.ClusterID == "" {
+			status.Problem, status.Message = stationv1alpha1.MachineJoinBlocked, "machine is not an existing joined node"
+			return reconcile.Result{}, nil
+		}
+		namespace, err := r.Clusters.Namespace(ctx, status.ClusterID)
+		if err != nil {
+			return reconcile.Result{}, fmt.Errorf("resolve cluster %s: %w", status.ClusterID, err)
+		}
+		admission := &stationv1alpha1.NodeAdmission{}
+		if err := r.Reader.Get(ctx, types.NamespacedName{Namespace: namespace, Name: status.NodeName}, admission); err != nil {
+			if apierrors.IsNotFound(err) {
+				status.Problem, status.Message = stationv1alpha1.MachineJoinBlocked, "the existing NodeAdmission is missing"
+				return reconcile.Result{}, nil
+			}
+			return reconcile.Result{}, fmt.Errorf("read NodeAdmission %s: %w", status.NodeName, err)
+		}
+		if admission.Spec.ClusterID != status.ClusterID || admission.Spec.Serial == "" || admission.Spec.Serial != status.Serial || admission.Spec.NodeClass != class.Name || admission.Spec.Machine == nil || admission.Spec.Machine.Category != stationv1alpha1.MachineCategoryRobot {
+			status.Problem, status.Message = stationv1alpha1.MachineJoinBlocked, "the existing NodeAdmission identity does not match this Robot Machine"
+			return reconcile.Result{}, nil
+		}
+		requestedBy := machine.Spec.RejoinRequestedBy
+		if requestedBy == "" {
+			requestedBy = "station-controller"
+		}
+		digest := sha256.Sum256([]byte(status.NodeName + "\x00" + requestID))
+		operationID := "rejoin-" + hex.EncodeToString(digest[:8])
+		if err := r.startJoinRequest(ctx, machine, class, namespace, requestedBy, "rejoin-"+requestID, operationID); err != nil {
+			return reconcile.Result{}, err
+		}
+		status.RejoinRequestID = requestID
+		return reconcile.Result{}, nil
+	}
 	// Station API creates a Machine and then says where it saw it.
 	if status.Entry.Address == "" {
 		return reconcile.Result{}, nil
@@ -606,7 +651,7 @@ func (r *MachineReconciler) follow(ctx context.Context, machine *stationv1alpha1
 		status.Phase, status.Problem, status.Message = stationv1alpha1.MachineJoined, "", ""
 	case "Blocked", "Failed":
 		// Asked for again since: the stopped join gives way to a new one.
-		if machine.Spec.Admit != nil && operation.Annotations[machineRequestAnnotation] != strconv.FormatInt(machine.Generation, 10) {
+		if machine.Spec.Admit != nil && !strings.HasPrefix(operation.Spec.RequestID, "rejoin-") && operation.Annotations[machineRequestAnnotation] != strconv.FormatInt(machine.Generation, 10) {
 			if err := r.Client.Delete(ctx, operation); err != nil && !apierrors.IsNotFound(err) {
 				return reconcile.Result{}, fmt.Errorf("remove the stopped NodeOperation %s: %w", operation.Name, err)
 			}

@@ -116,6 +116,14 @@ spec:
                 - requestedAt
                 - requestedBy
                 type: object
+              rejoinRequestID:
+                description: RejoinRequestID identifies a one-shot retry for the existing node. It never changes or replaces the NodeAdmission.
+                maxLength: 128
+                type: string
+              rejoinRequestedBy:
+                description: RejoinRequestedBy is the authenticated Gateway actor for that request.
+                maxLength: 256
+                type: string
               nodeClass:
                 description: |-
                   NodeClass is the legacy class hint. Empty means Station API observed a
@@ -137,6 +145,10 @@ spec:
             type: object
           status:
             properties:
+              rejoinRequestID:
+                description: RejoinRequestID is the last rejoin request started by station-controller.
+                maxLength: 128
+                type: string
               clusterID:
                 description: ClusterID and NodeName are the node the machine is or
                   is becoming.

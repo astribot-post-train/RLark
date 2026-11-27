@@ -65,6 +65,52 @@ paths:
         '409':
           description: The requested cluster has no unique agent namespace, or the fleet includes enrollments in a shared cluster namespace.
 
+  /api/v1/station/machines/{name}/rejoin:
+    post:
+      tags: [Node]
+      summary: Rejoin an existing robot machine
+      description: Starts a tracked Join operation for an existing Robot Machine using its NodeClass credentials and existing NodeAdmission.
+      operationId: rejoinStationMachine
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [cluster_id, request_id]
+              properties:
+                cluster_id:
+                  type: string
+                request_id:
+                  type: string
+                robot_model:
+                  type: string
+      responses:
+        '202':
+          description: Rejoin operation accepted
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: object
+                    description: NodeOperation to poll through the station node-operations API.
+        '400':
+          description: Invalid request or unregistered RobotModel
+        '404':
+          description: Machine not found
+        '409':
+          description: Existing identity mismatch or active Join conflict
+        '502':
+          description: Station resource lookup failed
   /api/v1/images:
     get:
       tags: [Image]
