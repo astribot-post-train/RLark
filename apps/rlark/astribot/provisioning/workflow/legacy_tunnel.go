@@ -40,7 +40,7 @@ if [ -f "$marker.identity" ]; then
   [ "$(cat "$marker.identity")" = "$join_identity" ] ||
     { echo 'host belongs to a different SSH join identity' >&2; exit 1; }
 elif [ -e /etc/kubernetes/kubelet.conf ] || [ -e /etc/kubernetes/bootstrap-kubelet.conf ]; then
-  echo 'residual Kubernetes worker has no matching SSH join identity' >&2; exit 1
+  printf '%s\n' 'reason=ownership_missing' 'residual Kubernetes worker has no matching SSH join identity' >&2; exit 1
 fi
 `
 

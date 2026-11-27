@@ -21,14 +21,16 @@ const StockStateName = "rlark-state"
 const StockAttemptKey = "upgrade-attempt-uid"
 
 type LockedStock struct {
-	Context         context.Context
-	Check           func(context.Context) error
-	Release         func()
-	state           core.ConfigMapInterface
-	childUID, image string
-	jobUID, podUID  string
-	replacement     bool
-	stop            func()
+	Context           context.Context
+	Check             func(context.Context) error
+	Release           func()
+	state             core.ConfigMapInterface
+	childUID, image   string
+	jobUID, podUID    string
+	mutationRecorded  bool
+	beforeMutation    func(context.Context) error
+	previousJobExited func(context.Context, stockCheckpoint) (bool, error)
+	stop              func()
 }
 
 func (s *LockedStock) ReadState(ctx context.Context) (*corev1.ConfigMap, error) {
@@ -123,7 +125,20 @@ func holdStock(ctx context.Context, member kubernetes.Interface, reader client.R
 		}
 	}
 	return &LockedStock{Context: work, Check: check, Release: release, state: member.CoreV1().ConfigMaps(Namespace), childUID: identity.ChildUID, image: policy.ExecutorImage, jobUID: string(job.UID), podUID: identity.PodUID,
-		replacement: guard.handoff || job.Status.Failed > 0 || job.Status.Succeeded > 0 ||
-			(job.Status.UncountedTerminatedPods != nil && (len(job.Status.UncountedTerminatedPods.Failed) > 0 || len(job.Status.UncountedTerminatedPods.Succeeded) > 0)),
-		stop: func() { guard.cancel(context.Canceled); <-guard.done }}, nil
+		mutationRecorded: guard.stockMutationRecorded,
+		beforeMutation:   guard.recordStockMutation,
+		previousJobExited: func(call context.Context, saved stockCheckpoint) (bool, error) {
+			old, err := member.BatchV1().Jobs(Namespace).Get(call, LockedStockJobName(saved.ChildUID), metav1.GetOptions{})
+			if apierrors.IsNotFound(err) {
+				return true, nil
+			}
+			if err != nil {
+				return false, err
+			}
+			if string(old.UID) != saved.JobUID {
+				return true, nil
+			}
+			return old.Labels[ChildUIDLabel] == saved.ChildUID && upgradeJobTerminal(old), nil
+		},
+		stop: guard.stopRenewing}, nil
 }

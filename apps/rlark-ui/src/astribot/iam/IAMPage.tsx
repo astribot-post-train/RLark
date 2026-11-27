@@ -926,7 +926,7 @@ export function IAMPage({ zh }: { zh: boolean }) {
         setProfileNew("");
         setProfileConfirm("");
         if (iamPortalEnabled()) {
-          void signOutOfConsole();
+          void signOutOfConsole("/admin/iam");
           return;
         }
         notify(text(zh, "passwordUpdated"));

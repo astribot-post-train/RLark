@@ -97,8 +97,6 @@ Clients must use `code` and `details.fields` for localized field feedback instea
 
 Updates the object storage configuration and target clusters for the specified StorageClass declaration. The `clusters` field is the desired final target-cluster set; the distribution workflow cleans up resources from clusters omitted from that set. During an update, `access_key_id` and `access_key_secret` may be left empty; the Gateway reads and reuses the corresponding stored values, so credentials are not replaced with empty values. A listed `accessKeyId` is masked with five asterisks; clients must treat any submitted `access_key_id` containing `*****` as unchanged rather than as a replacement. When credentials are retained, the Gateway validates the updated connection with the previously stored Access Key ID and secret.
 
-If another request changes the declaration between read and write, updates and deletes return `409 RESOURCE_CONFLICT`. Reload the current declaration before retrying.
-
 ### 5. Delete a StorageClass
 **DELETE** `/api/v1/storage/storageclass/{name}`
 

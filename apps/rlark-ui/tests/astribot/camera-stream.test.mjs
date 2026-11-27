@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { readCameraFrames, sameCameraFrame } from "../../dist/test/astribot/lib/cameraStream.js";
+import { cameraFrameStale, cameraStreamIssue, readCameraFrames, sameCameraFrame } from "../../dist/test/astribot/lib/cameraStream.js";
 import { cameraStreamPath, formatCameraMilliseconds, readCameraAge } from "../../dist/test/astribot/lib/cameras.js";
 
 import { cameraClockSample, cameraDisplayLatency } from "../../dist/test/astribot/lib/cameraLatency.js";
@@ -32,6 +32,7 @@ test("split multipart parts preserve JPEG bytes and repeated frames compare equa
   for await (const frame of readCameraFrames(response(Buffer.concat([part(first, "X-Camera-Capture-Ms: 1795000000000.123\r\n"), part(first), part(second)])))) frames.push(frame);
   assert.deepEqual(frames.map((frame) => Buffer.from(frame.jpeg)), [first, first, second]);
   assert.deepEqual(frames.map((frame) => frame.capturedAtMs), [1795000000000.123, undefined, undefined]);
+  assert.deepEqual(frames.map((frame) => frame.ageSeconds), [0.18, 0.18, 0.18]);
   assert.equal(sameCameraFrame(undefined, frames[0]), false);
   assert.equal(sameCameraFrame(frames[0], frames[1]), false);
   assert.equal(sameCameraFrame(frames[1], frames[2]), false);
@@ -72,4 +73,16 @@ test("latency maps browser paint to the sampled camera clock and rejects unusabl
   assert.equal(cameraDisplayLatency(100200, 175, clock), undefined);
   assert.equal(cameraDisplayLatency(99995, 31000, clock), undefined);
   assert.equal(cameraClockSample(100, 500, { received_ms: 100010, sent_ms: 100020 }), undefined);
+});
+
+
+test("stale repeated frames and preview capacity are distinct from initial camera wait", () => {
+  const last = { jpeg: Buffer.from("same image"), capturedAtMs: 1000, ageSeconds: 0.18 };
+  const stalled = { ...last, ageSeconds: 5 };
+  assert.equal(sameCameraFrame(last, stalled), true);
+  assert.equal(cameraFrameStale(last), false);
+  assert.equal(cameraFrameStale(stalled), true);
+  assert.equal(cameraStreamIssue(503), "no-frame");
+  assert.equal(cameraStreamIssue(429), "capacity");
+  assert.equal(cameraStreamIssue(502), "disconnected");
 });

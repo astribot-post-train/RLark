@@ -348,3 +348,11 @@ test("the admin console identifies its role in the shared account menu", async (
   assert.match(header, /accountRole === "admin"[\s\S]*?"管理员"\s*:\s*"Administrator"/);
   assert.match(header, /<span>\{accountRoleLabel\}<\/span>/);
 });
+
+test("password change can return the user to the IAM page after sign-in", async () => {
+  const tab = consoleTab({ session: adminSession("admin", "session-token") });
+  await tab.portal.enter();
+  await tab.portal.signOut("/admin/iam");
+  assert.deepEqual(tab.navigations, ["/login?next=%2Fadmin%2Fiam"]);
+  assert.equal(tab.store.getItem("rlark-auth-token"), null);
+});

@@ -724,3 +724,22 @@ func TestPartialProvisionRollbackRequiresOriginalInstallJournal(t *testing.T) {
 		})
 	}
 }
+
+func TestClearKeepsProvisionWhenSiteNetworkReceiptLacksPersistedFacts(t *testing.T) {
+	const name = "rlark-baidu-gpu"
+	network := provisionTestNetwork()
+	network.SetUID("site-network")
+	network.SetAnnotations(map[string]string{siteProvisionAnnotation(name): siteProvisionReceipt("attempt", "site-network", "cp."+name+".rlark.internal", "cp-1", "10.254.240.8", "key", "baidu")})
+	p := &rlarkv1alpha1.ClusterProvision{
+		ObjectMeta: metav1.ObjectMeta{Name: name, UID: "attempt", Annotations: map[string]string{provisionClusterReceipt: "original"}},
+		Spec:       rlarkv1alpha1.ClusterProvisionSpec{Site: "baidu"},
+	}
+	g := provisionGateway(t, network, p)
+	code, out := provisionCall(t, g, http.MethodPost, "/cluster-provisions/"+name+"/clear", name, `{"machine_gone":true}`)
+	if code != http.StatusConflict {
+		t.Fatalf("clear=%d %v", code, out)
+	}
+	if _, err := g.kubeClient.RlinfV1alpha1().ClusterProvisions().Get(t.Context(), name, metav1.GetOptions{}); err != nil {
+		t.Fatalf("lost provisioning record: %v", err)
+	}
+}

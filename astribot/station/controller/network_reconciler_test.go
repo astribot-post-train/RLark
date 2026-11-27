@@ -849,8 +849,19 @@ func TestNetworkTellsTheHubsOfADiscoverySiteWhatToLookForAndSaysWhenOneGoesSilen
 		}
 		return nil
 	}
-	if condition := stale(); condition != nil {
-		t.Fatalf("an idle site has no scan freshness condition: %+v", condition)
+	if condition := stale(); condition == nil || condition.Status != metav1.ConditionTrue {
+		t.Fatalf("a silent periodic Hub must be visible: %+v", condition)
+	}
+	var enrolledHub stationv1alpha1.NetworkEnrollment
+	if err := c.Get(ctx, client.ObjectKey{Namespace: "ns-robot-01", Name: "cp"}, &enrolledHub); err != nil {
+		t.Fatal(err)
+	}
+	enrolledHub.Annotations = map[string]string{"station.rlark.io/discovery-reported-at": r.now().Format(time.RFC3339)}
+	if err := c.Update(ctx, &enrolledHub); err != nil {
+		t.Fatal(err)
+	}
+	if condition := stale(); condition == nil || condition.Status != metav1.ConditionFalse {
+		t.Fatalf("a fresh report must clear the condition: %+v", condition)
 	}
 
 	hub := enrollmentStatus(t, c, "robot-01", "cp")

@@ -5,6 +5,7 @@ const LF = 10;
 export interface CameraFrame {
   jpeg: Uint8Array<ArrayBuffer>;
   capturedAtMs?: number;
+  ageSeconds?: number;
 }
 
 // The camera service sends a Content-Length for every JPEG. Reading exactly
@@ -33,6 +34,7 @@ export async function* readCameraFrames(
   let frame: Uint8Array<ArrayBuffer> | undefined;
   let frameSize = 0;
   let capturedAtMs: number | undefined;
+  let ageSeconds: number | undefined;
   try {
     while (true) {
       const { value: chunk, done } = await reader.read();
@@ -50,7 +52,7 @@ export async function* readCameraFrames(
           offset += size;
           frameSize += size;
           if (frameSize === frame.length) {
-            yield { jpeg: frame, capturedAtMs };
+            yield { jpeg: frame, capturedAtMs, ageSeconds };
             frame = undefined;
             frameSize = 0;
           }
@@ -85,6 +87,10 @@ export async function* readCameraFrames(
             throw new Error("Invalid camera frame headers");
           }
           frame = new Uint8Array(length);
+          const age = Number(
+            /^x-age-seconds:[ \t]*(\d+(?:\.\d+)?)[ \t]*$/im.exec(headers)?.[1],
+          );
+          ageSeconds = Number.isFinite(age) ? age : undefined;
           const stamp = Number(
             /^x-camera-capture-ms:\s*(\d+(?:\.\d+)?)\s*$/im.exec(headers)?.[1],
           );
@@ -111,4 +117,14 @@ export function sameCameraFrame(
     previous.jpeg.length === next.jpeg.length &&
     next.jpeg.every((byte, index) => previous.jpeg[index] === byte)
   );
+}
+
+export function cameraFrameStale(frame: CameraFrame): boolean {
+  return frame.ageSeconds !== undefined && frame.ageSeconds >= 5;
+}
+
+export function cameraStreamIssue(status?: number, waiting = false) {
+  if (status === 429) return "capacity";
+  if (status === 503 || waiting) return "no-frame";
+  return "disconnected";
 }

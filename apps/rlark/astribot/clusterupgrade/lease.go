@@ -9,10 +9,12 @@ import (
 	"sync"
 	"time"
 
+	coordinationv1 "k8s.io/api/coordination/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
 	coordination "k8s.io/client-go/kubernetes/typed/coordination/v1"
+	"k8s.io/client-go/util/retry"
 	"k8s.io/utils/ptr"
 )
 
@@ -51,6 +53,7 @@ func retryMemberAPI(ctx context.Context, action func(context.Context) error) err
 }
 
 const executorAnnotation = "rlark.io/upgrade-executor"
+const stockMutationAnnotation = "rlark.io/stock-upgrade-mutation"
 
 // LeaseConflict describes who must release the member cluster before it can be
 // changed. Job executors require independent termination evidence.
@@ -64,13 +67,13 @@ func (e *LeaseConflict) Error() string {
 
 // Guard owns a provisioned member-cluster Lease for exactly one executor.
 type Guard struct {
-	leases   coordination.LeaseInterface
-	holder   string
-	executor string
-	handoff  bool
-	cancel   context.CancelCauseFunc
-	done     chan struct{}
-	stop     sync.Once
+	leases                coordination.LeaseInterface
+	holder                string
+	executor              string
+	stockMutationRecorded bool
+	cancel                context.CancelCauseFunc
+	done                  chan struct{}
+	stop                  sync.Once
 }
 
 // Acquire claims the provisioned Lease with an optimistic concurrency check.
@@ -118,31 +121,53 @@ func Acquire(ctx context.Context, leases coordination.LeaseInterface, holder, ex
 	}
 	work, cancel := context.WithCancelCause(ctx)
 	guard := &Guard{leases: leases, holder: holder, executor: executor,
-		handoff: previous == holder && previousExecutor != executor, cancel: cancel, done: make(chan struct{})}
+		stockMutationRecorded: current.Annotations[stockMutationAnnotation] != "", cancel: cancel, done: make(chan struct{})}
 	go guard.renew(work, now.Add(leaseDurationSeconds*time.Second))
 	return guard, work, nil
 }
 
 // Check fences each workload write against the current Lease holder.
 func (g *Guard) Check(ctx context.Context) error {
+	_, err := g.checkedLease(ctx)
+	return err
+}
+
+func (g *Guard) checkedLease(ctx context.Context) (*coordinationv1.Lease, error) {
 	if err := context.Cause(ctx); err != nil {
-		return err
+		return nil, err
 	}
 	current, err := g.leases.Get(ctx, LeaseName, metav1.GetOptions{})
 	if apierrors.IsNotFound(err) {
-		return errors.Join(ErrLeaseLost, err)
+		return nil, errors.Join(ErrLeaseLost, err)
 	}
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if ptr.Deref(current.Spec.HolderIdentity, "") != g.holder || current.Annotations[executorAnnotation] != g.executor {
-		return errors.Join(ErrLeaseLost, &LeaseConflict{Holder: ptr.Deref(current.Spec.HolderIdentity, "")})
+		return nil, errors.Join(ErrLeaseLost, &LeaseConflict{Holder: ptr.Deref(current.Spec.HolderIdentity, "")})
 	}
 	if current.Spec.RenewTime == nil || current.Spec.LeaseDurationSeconds == nil ||
 		!time.Now().Before(current.Spec.RenewTime.Add(time.Duration(*current.Spec.LeaseDurationSeconds)*time.Second)) {
-		return fmt.Errorf("%w: expired", ErrLeaseLost)
+		return nil, fmt.Errorf("%w: expired", ErrLeaseLost)
 	}
-	return nil
+	return current, nil
+}
+
+func (g *Guard) recordStockMutation(ctx context.Context) error {
+	return retryMemberAPI(ctx, func(call context.Context) error {
+		return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+			current, err := g.checkedLease(call)
+			if err != nil {
+				return err
+			}
+			if current.Annotations[stockMutationAnnotation] == g.executor {
+				return nil
+			}
+			current.Annotations[stockMutationAnnotation] = g.executor
+			_, err = g.leases.Update(call, current, metav1.UpdateOptions{})
+			return err
+		})
+	})
 }
 
 func (g *Guard) renew(ctx context.Context, expires time.Time) {
@@ -197,9 +222,13 @@ func (g *Guard) update(ctx context.Context, release bool) error {
 	return err
 }
 
-// Release stops renewal and clears the Lease if the same executor still owns it.
-func (g *Guard) Release(ctx context.Context) error {
+func (g *Guard) stopRenewing() {
 	g.stop.Do(func() { g.cancel(context.Canceled) })
 	<-g.done
+}
+
+// Release stops renewal and clears the Lease if the same executor still owns it.
+func (g *Guard) Release(ctx context.Context) error {
+	g.stopRenewing()
 	return g.update(ctx, true)
 }

@@ -157,7 +157,7 @@ type bufferedConn struct {
 func (c bufferedConn) Read(p []byte) (int, error) { return c.reader.Read(p) }
 
 func hostKey(ctx context.Context, address string, algorithms []string) sshObservation {
-	ctx, cancel := context.WithTimeout(ctx, 4*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, discoveryHandshakeTimeout)
 	defer cancel()
 	conn, err := (&net.Dialer{Timeout: time.Second}).DialContext(ctx, "tcp", address)
 	if err != nil {
@@ -185,6 +185,41 @@ func hostKey(ctx context.Context, address string, algorithms []string) sshObserv
 	return observed
 }
 
+const (
+	discoveryProbeSlots       = 128
+	discoveryHandshakeTimeout = 4 * time.Second
+)
+
+func (d *discovery) probePorts() []int {
+	ports := slices.Clone(d.Ports)
+	if d.IncludeUnclassified {
+		sshPorts := d.SSHPorts
+		if len(sshPorts) == 0 {
+			sshPorts = []int{22}
+		}
+		for _, port := range sshPorts {
+			if !slices.Contains(ports, port) {
+				ports = append(ports, port)
+			}
+		}
+	}
+	return ports
+}
+
+func (d *discovery) periodicBudget(attached []netip.Prefix) (time.Duration, error) {
+	networks, err := d.networks(attached)
+	if err != nil {
+		return 0, err
+	}
+	var candidates int
+	for _, prefix := range networks {
+		candidates += 1 << (32 - prefix.Bits())
+	}
+	probes := candidates * len(d.probePorts())
+	waves := (probes + discoveryProbeSlots - 1) / discoveryProbeSlots
+	return max(time.Minute, time.Duration(waves)*discoveryHandshakeTimeout+30*time.Second), nil
+}
+
 // scan looks at every address of the ranges and of the attached networks
 // and returns the hosts that show one of the host keys looked for. An
 // address where nothing answers takes a slot for the dial's second: 128
@@ -198,19 +233,8 @@ func (d *discovery) scan(ctx context.Context, attached []netip.Prefix, hardware 
 	found := []discoveredHost{}
 	var mu sync.Mutex
 	var group sync.WaitGroup
-	slots := make(chan struct{}, 128)
-	ports := slices.Clone(d.Ports)
-	if d.IncludeUnclassified {
-		sshPorts := d.SSHPorts
-		if len(sshPorts) == 0 {
-			sshPorts = []int{22}
-		}
-		for _, port := range sshPorts {
-			if !slices.Contains(ports, port) {
-				ports = append(ports, port)
-			}
-		}
-	}
+	slots := make(chan struct{}, discoveryProbeSlots)
+	ports := d.probePorts()
 	algorithms := []string{ssh.KeyAlgoED25519, ssh.KeyAlgoECDSA256, ssh.KeyAlgoECDSA384, ssh.KeyAlgoECDSA521, ssh.KeyAlgoRSASHA512, ssh.KeyAlgoRSASHA256}
 scanAddresses:
 	for _, address := range addresses(networks) {
@@ -356,7 +380,7 @@ func (d *discovery) pipeRelay(conn net.Conn, reader *bufio.Reader, target string
 // discover keeps the management relay available and checks for administrator
 // requests. Configured sites also get bounded periodic discovery between requests.
 func discover(read func() *desired, directory string, key wgtypes.Key) {
-	var serving *discovery
+	var serving, scanning *discovery
 	var listener net.Listener
 	var attempt discoveryAttempt
 	said := ""
@@ -367,6 +391,10 @@ func discover(read func() *desired, directory string, key wgtypes.Key) {
 		if d != nil && d.Discovery != nil {
 			declared = d.Discovery
 			at = net.JoinHostPort(d.address.IP.String(), strconv.Itoa(declared.RelayPort))
+		}
+		if !reflect.DeepEqual(scanning, declared) {
+			attempt.stopPeriodic()
+			attempt, scanning = discoveryAttempt{}, declared
 		}
 		if listener != nil && (declared == nil || listener.Addr().String() != at || !reflect.DeepEqual(serving, declared)) {
 			_ = listener.Close()
@@ -414,10 +442,26 @@ type discoveryRequest struct {
 }
 
 type discoveryAttempt struct {
-	id           string
-	hosts        []discoveredHost
-	scanErr      error
-	nextPeriodic time.Time
+	id              string
+	hosts           []discoveredHost
+	scanErr         error
+	nextPeriodic    time.Time
+	periodicHosts   []discoveredHost
+	periodicPending bool
+	periodicWork    chan periodicDiscoveryResult
+	periodicCancel  context.CancelFunc
+}
+
+type periodicDiscoveryResult struct {
+	hosts []discoveredHost
+	err   error
+}
+
+func (attempt *discoveryAttempt) stopPeriodic() {
+	if attempt.periodicCancel != nil {
+		attempt.periodicCancel()
+		attempt.periodicCancel, attempt.periodicWork = nil, nil
+	}
 }
 
 type discoveryAPI func(path string, request map[string]any) (int, []byte, error)
@@ -432,35 +476,60 @@ func (attempt *discoveryAttempt) poll(declared *discovery, directory string, key
 	if err != nil {
 		return err
 	}
+	local := attached()
+	budget, err := declared.periodicBudget(local)
+	if err != nil {
+		return err
+	}
 	return attempt.run(func(path string, request map[string]any) (int, []byte, error) {
 		return askStationAPI(url, ca, key, path, request)
 	}, func(ctx context.Context) ([]discoveredHost, error) {
-		return declared.scan(ctx, attached(), neighbour)
-	}, declared.IntervalSeconds)
+		return declared.scan(ctx, local, neighbour)
+	}, declared.IntervalSeconds, budget)
 }
 
-func (attempt *discoveryAttempt) run(request discoveryAPI, probe func(context.Context) ([]discoveredHost, error), intervalSeconds int) error {
+func (attempt *discoveryAttempt) run(request discoveryAPI, probe func(context.Context) ([]discoveredHost, error), intervalSeconds int, periodicBudget time.Duration) error {
 	status, body, err := request("/v1/network/discovery-scan", map[string]any{})
 	if err != nil {
 		return err
 	}
-	if status == http.StatusNoContent {
+	if status == http.StatusNoContent || status == http.StatusNotFound {
 		attempt.id, attempt.hosts, attempt.scanErr = "", nil, nil
 		now := time.Now()
 		if intervalSeconds < 10 || intervalSeconds > 3600 || now.Before(attempt.nextPeriodic) {
 			return nil
 		}
-		attempt.nextPeriodic = now.Add(time.Duration(intervalSeconds) * time.Second)
-		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
-		defer cancel()
-		hosts, err := probe(ctx)
-		if err != nil {
-			return err
+		if !attempt.periodicPending {
+			if attempt.periodicWork == nil {
+				ctx, cancel := context.WithTimeout(context.Background(), periodicBudget)
+				work := make(chan periodicDiscoveryResult, 1)
+				attempt.periodicWork, attempt.periodicCancel = work, cancel
+				go func() {
+					defer cancel()
+					hosts, err := probe(ctx)
+					work <- periodicDiscoveryResult{hosts, err}
+				}()
+			}
+			select {
+			case completed := <-attempt.periodicWork:
+				attempt.stopPeriodic()
+				if completed.err != nil {
+					return completed.err
+				}
+				attempt.periodicHosts, attempt.periodicPending = completed.hosts, true
+			default:
+				return nil
+			}
 		}
-		return reportDiscoveryScan(discoveryRequest{}, hosts, func(body map[string]any) (int, error) {
+		err := reportDiscoveryScan(discoveryRequest{}, attempt.periodicHosts, func(body map[string]any) (int, error) {
 			status, _, err := request("/v1/network/discovered", body)
 			return status, err
 		})
+		if err == nil {
+			attempt.periodicHosts, attempt.periodicPending = nil, false
+			attempt.nextPeriodic = time.Now().Add(time.Duration(intervalSeconds) * time.Second)
+		}
+		return err
 	}
 	if status != http.StatusOK {
 		return fmt.Errorf("Station API answered %d to the discovery scan check", status)
@@ -473,6 +542,8 @@ func (attempt *discoveryAttempt) run(request discoveryAPI, probe func(context.Co
 		return nil
 	}
 	if attempt.id != scan.ID {
+		attempt.stopPeriodic()
+		attempt.periodicHosts, attempt.periodicPending = nil, false
 		ctx, cancel := context.WithDeadline(context.Background(), scan.Deadline)
 		hosts, err := probe(ctx)
 		cancel()

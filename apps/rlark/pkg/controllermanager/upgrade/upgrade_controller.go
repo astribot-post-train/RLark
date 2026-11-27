@@ -237,12 +237,6 @@ func isTerminalPhase(phase rlarkv1alpha1.ClusterUpgradeJobPhase) bool {
 		phase == rlarkv1alpha1.ClusterUpgradeJobRolledBack
 }
 
-func hasRejectedTarget(job *rlarkv1alpha1.UpgradeJob) bool {
-	return slices.ContainsFunc(job.Status.Conditions, func(condition rlarkv1alpha1.UpgradeJobCondition) bool {
-		return condition.Type == clusterupgrade.TargetRejected
-	})
-}
-
 func isOwnedUpgradeChild(parent *rlarkv1alpha1.UpgradeJob, child *rlarkv1alpha1.ClusterUpgradeJob) bool {
 	owner := metav1.GetControllerOf(child)
 	return parent.UID != "" && owner != nil && owner.UID == parent.UID &&
@@ -260,7 +254,6 @@ func (r *Reconciler) aggregateStatus(ctx context.Context, job *rlarkv1alpha1.Upg
 
 	var upgraded, failed, rolledBack, managedRolledBack, upgrading int32
 	var conditions []rlarkv1alpha1.UpgradeJobCondition
-	rejected := hasRejectedTarget(job)
 	for _, condition := range job.Status.Conditions {
 		if condition.Type == clusterupgrade.TargetRejected {
 			conditions = append(conditions, condition)
@@ -291,12 +284,8 @@ func (r *Reconciler) aggregateStatus(ctx context.Context, job *rlarkv1alpha1.Upg
 			if isManagedRollback(&cuj) {
 				managedRolledBack++
 			}
-		case rlarkv1alpha1.ClusterUpgradeJobUpgrading:
+		case "", rlarkv1alpha1.ClusterUpgradeJobPending, rlarkv1alpha1.ClusterUpgradeJobUpgrading:
 			upgrading++
-		case "", rlarkv1alpha1.ClusterUpgradeJobPending:
-			if rejected {
-				upgrading++
-			}
 		}
 	}
 

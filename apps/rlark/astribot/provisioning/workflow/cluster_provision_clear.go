@@ -133,6 +133,15 @@ func (g *Service) clearProvision(ctx context.Context, p *rlarkv1alpha1.ClusterPr
 			return steps, err
 		}
 	}
+	network, err := stationidentity.ReadSiteNetwork(ctx, g.stationClient)
+	if err != nil && !apierrors.IsNotFound(err) {
+		return steps, err
+	}
+	if err == nil {
+		if _, err := verifyProvisionNetwork(p, network); err != nil {
+			return steps, err
+		}
+	}
 	if len(password) > 0 && p.UID != "" && p.Status.HostKey != "" {
 		machine, _, err := g.provisionDial(ctx, p.Spec.Machine, password, p.Status.HostKey)
 		if err != nil {
@@ -177,17 +186,20 @@ func (g *Service) clearProvision(ctx context.Context, p *rlarkv1alpha1.ClusterPr
 	// Provisioning does not own that namespace's records.
 	controlPlaneName := "cp." + p.Name + ".rlark.internal"
 	clearedSite := false
-	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+	err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		object, err := stationidentity.ReadSiteNetwork(ctx, g.stationClient)
+		if apierrors.IsNotFound(err) {
+			return nil
+		}
 		if err != nil {
+			return err
+		}
+		owned, err := verifyProvisionNetwork(p, object)
+		if err != nil || !owned {
 			return err
 		}
 		receiptKey := siteProvisionAnnotation(p.Name)
 		annotations := object.GetAnnotations()
-		if p.UID == "" || object.GetUID() == "" || annotations[receiptKey] !=
-			siteProvisionReceipt(p.UID, object.GetUID(), controlPlaneName, facts.NodeName, facts.TunnelAddress, facts.PublicKey, p.Spec.Site) {
-			return nil
-		}
 		network := provisioning.Network{Object: object}
 		var names, sites, nodes []interface{}
 		for _, entry := range network.Entries("spec", "names") {
@@ -231,7 +243,7 @@ func (g *Service) clearProvision(ctx context.Context, p *rlarkv1alpha1.ClusterPr
 	if clearedSite {
 		steps = append(steps, "SiteNetwork：已清理本次创建的站点声明")
 	} else {
-		steps = append(steps, "SiteNetwork：没有匹配的 UID 归属记录，保留现有声明")
+		steps = append(steps, "SiteNetwork：没有需要清理的声明")
 	}
 	if clusterUID != "" {
 		opts := metav1.DeleteOptions{Preconditions: &metav1.Preconditions{UID: &clusterUID}}
@@ -245,4 +257,19 @@ func (g *Service) clearProvision(ctx context.Context, p *rlarkv1alpha1.ClusterPr
 		return steps, fmt.Errorf("delete the record of the making: %w", err)
 	}
 	return append(steps, "删掉这次新建的记录"), nil
+}
+
+// An incomplete ownership receipt must keep the provisioning record available
+// for recovery. An absent declaration, including one already cleared, is safe.
+func verifyProvisionNetwork(p *rlarkv1alpha1.ClusterProvision, object *unstructured.Unstructured) (bool, error) {
+	owner, receipt := provisionNetworkReceipt(p, object)
+	present, matches := legacyProvisionNetwork(p, object)
+	if owner == "" && !present {
+		return false, nil
+	}
+	if p.UID == "" || object.GetUID() == "" || owner != receipt || !matches {
+		return false, apierrors.NewConflict(siteNetworkGVR.GroupResource(), object.GetName(),
+			fmt.Errorf("cannot verify SiteNetwork declarations for provisioning record %s", p.Name))
+	}
+	return true, nil
 }

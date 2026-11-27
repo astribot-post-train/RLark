@@ -499,6 +499,23 @@ def served(tmp_path):
     server.server_close()
 
 
+def test_stream_capacity_is_separate_from_waiting_for_a_frame(served):
+    cameras_, get = served
+    assert get("/cameras/head/stream").status == 503
+    raw, _ = message((200, 30, 30))
+    cameras_.receive("head", raw)
+    streams = []
+    try:
+        for _ in range(cameras.STREAMS):
+            stream = get("/cameras/head/stream")
+            streams.append(stream)
+            assert stream.status == 200
+        assert get("/cameras/head/stream").status == 429
+    finally:
+        for stream in streams:
+            stream.close()
+
+
 def image(jpeg):
     return cv2.imdecode(numpy.frombuffer(jpeg, numpy.uint8), cv2.IMREAD_COLOR)
 

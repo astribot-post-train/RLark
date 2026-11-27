@@ -114,12 +114,12 @@ if [ -e "$marker" ]; then
   case "$saved" in
     "$owner") ;;
     *)
-      host_unused || { echo 'host belongs to another attempt and still has installation artifacts' >&2; exit 1; }
+      host_unused || { printf '%s\n' 'reason=installation_artifacts' 'host belongs to another attempt and still has installation artifacts' >&2; exit 1; }
       rm -f "$marker.cluster" "$marker.node" "$marker.identity"
       (umask 077; printf '%s\n' "$owner" > "$marker");;
   esac
 else
-  host_unused || { echo 'host has installation artifacts without a matching ownership record' >&2; exit 1; }
+  host_unused || { printf '%s\n' 'reason=installation_artifacts' 'host has installation artifacts without a matching ownership record' >&2; exit 1; }
   (umask 077; printf '%s\n' "$owner" > "$marker")
 fi
 `
@@ -139,7 +139,7 @@ if [ -f "$marker" ] && [ "$(cat "$marker")" = "cleared-$owner" ]; then
   exit 0
 fi
 if [ ! -f "$marker" ] || [ "$(cat "$marker")" != "$owner" ]; then
-  echo 'host has no matching ownership record' >&2
+  printf '%s\n' 'reason=ownership_missing' 'host has no matching ownership record' >&2
   exit 1
 fi
 `

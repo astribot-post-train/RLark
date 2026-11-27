@@ -9,6 +9,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -343,17 +344,17 @@ func TestDiscoveryAttemptWaitsForARequestAndRetriesTheReportWithoutProbingAgain(
 			return 0, nil, nil
 		}
 	}
-	if err := attempt.run(request, probe, 0); err != nil || probes != 0 || reports != 0 {
+	if err := attempt.run(request, probe, 0, time.Minute); err != nil || probes != 0 || reports != 0 {
 		t.Fatalf("idle polling had side effects: %d probes, %d reports, %v", probes, reports, err)
 	}
 	pending = true
-	if err := attempt.run(request, probe, 0); !errors.Is(err, unavailable) {
+	if err := attempt.run(request, probe, 0, time.Minute); !errors.Is(err, unavailable) {
 		t.Fatalf("wanted transient report failure, got %v", err)
 	}
-	if err := attempt.run(request, probe, 0); err != nil || probes != 1 || reports != 2 {
+	if err := attempt.run(request, probe, 0, time.Minute); err != nil || probes != 1 || reports != 2 {
 		t.Fatalf("retry: %d probes, %d reports, %v", probes, reports, err)
 	}
-	if err := attempt.run(request, probe, 0); err != nil || probes != 1 || reports != 2 || attempt.id != "" {
+	if err := attempt.run(request, probe, 0, time.Minute); err != nil || probes != 1 || reports != 2 || attempt.id != "" {
 		t.Fatalf("idle again: %d probes, %d reports, %v", probes, reports, err)
 	}
 }
@@ -372,12 +373,98 @@ func TestPeriodicDiscoveryUsesConfiguredInterval(t *testing.T) {
 		return http.StatusOK, nil, nil
 	}
 	probe := func(context.Context) ([]discoveredHost, error) { probes++; return nil, nil }
-	for range 2 {
-		if err := attempt.run(request, probe, 30); err != nil {
+	for deadline := time.Now().Add(time.Second); reports == 0 && time.Now().Before(deadline); {
+		if err := attempt.run(request, probe, 30, time.Minute); err != nil {
 			t.Fatal(err)
 		}
+		time.Sleep(time.Millisecond)
+	}
+	if err := attempt.run(request, probe, 30, time.Minute); err != nil {
+		t.Fatal(err)
 	}
 	if probes != 1 || reports != 1 {
 		t.Fatalf("expected one periodic probe and report: %d %d", probes, reports)
+	}
+}
+
+func TestPeriodicDiscoveryBudgetAndLegacyEndpoint(t *testing.T) {
+	d := discovery{Ports: []int{22, 8022}, Ranges: []string{
+		"10.0.0.0/22", "10.0.4.0/22", "10.0.8.0/22", "10.0.12.0/22",
+		"10.0.16.0/22", "10.0.20.0/22", "10.0.24.0/22", "10.0.28.0/22",
+	}}
+	budget, err := d.periodicBudget([]netip.Prefix{netip.MustParsePrefix("10.1.0.0/22")})
+	if err != nil || budget < 9*time.Minute {
+		t.Fatalf("large periodic budget: %v, %v", budget, err)
+	}
+	var attempt discoveryAttempt
+	probes, sends := 0, 0
+	offline := errors.New("management temporarily unavailable")
+	request := func(path string, _ map[string]any) (int, []byte, error) {
+		if path == "/v1/network/discovery-scan" {
+			return http.StatusNotFound, nil, nil
+		}
+		sends++
+		if sends == 1 {
+			return 0, nil, offline
+		}
+		return http.StatusOK, nil, nil
+	}
+	probe := func(ctx context.Context) ([]discoveredHost, error) {
+		probes++
+		if deadline, ok := ctx.Deadline(); !ok || time.Until(deadline) < budget-time.Second {
+			return nil, fmt.Errorf("periodic probe deadline: %v", deadline)
+		}
+		return nil, nil
+	}
+	for deadline := time.Now().Add(time.Second); sends == 0 && time.Now().Before(deadline); {
+		if err := attempt.run(request, probe, 30, budget); err != nil && !errors.Is(err, offline) {
+			t.Fatalf("first report: %v", err)
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if err := attempt.run(request, probe, 30, budget); err != nil || probes != 1 || sends != 2 {
+		t.Fatalf("legacy retry: %d probes, %d reports, %v", probes, sends, err)
+	}
+}
+
+func TestManualScanPreemptsLongPeriodicProbe(t *testing.T) {
+	var attempt discoveryAttempt
+	started, cancelled := make(chan struct{}), make(chan struct{})
+	periodic := func(ctx context.Context) ([]discoveredHost, error) {
+		close(started)
+		<-ctx.Done()
+		close(cancelled)
+		return nil, ctx.Err()
+	}
+	request := func(path string, body map[string]any) (int, []byte, error) {
+		if path == "/v1/network/discovery-scan" {
+			if attempt.periodicWork == nil {
+				return http.StatusNoContent, nil, nil
+			}
+			payload, err := json.Marshal(discoveryRequest{ID: "manual", Deadline: time.Now().Add(time.Minute)})
+			return http.StatusOK, payload, err
+		}
+		if body["scan_id"] != "manual" {
+			t.Fatalf("unexpected report: %v", body)
+		}
+		return http.StatusOK, nil, nil
+	}
+	if err := attempt.run(request, periodic, 30, 10*time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("periodic probe never started")
+	}
+	if err := attempt.run(request, func(context.Context) ([]discoveredHost, error) {
+		return nil, nil
+	}, 30, 10*time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-cancelled:
+	case <-time.After(time.Second):
+		t.Fatal("manual scan did not cancel the periodic probe")
 	}
 }

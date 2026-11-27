@@ -1171,7 +1171,7 @@ func (r *Run) hold(ctx context.Context) (context.Context, func(), error) {
 		other, _, _ := unstructured.NestedString(current.Object, "spec", "holderIdentity")
 		renewed, _, _ := unstructured.NestedString(current.Object, "spec", "renewTime")
 		if renewing && other != holder {
-			return fmt.Errorf("site release lease was taken by %q", other)
+			return fmt.Errorf("%w: %q", errSiteLeaseReplaced, other)
 		}
 		if other != "" && other != holder {
 			at, _ := time.Parse(time.RFC3339Nano, renewed)
@@ -1188,6 +1188,7 @@ func (r *Run) hold(ctx context.Context) (context.Context, func(), error) {
 		_, err = leases.Update(ctx, current, metav1.UpdateOptions{})
 		return err
 	}
+	started := time.Now()
 	if err := write(ctx, false); err != nil {
 		return ctx, nil, err
 	}
@@ -1195,21 +1196,13 @@ func (r *Run) hold(ctx context.Context) (context.Context, func(), error) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		for {
-			select {
-			case <-renewing.Done():
-				return
-			case <-time.After(leaseSeconds * time.Second / 5):
-				leaseCtx, cancel := context.WithTimeout(renewing, 10*time.Second)
-				err := write(leaseCtx, true)
-				cancel()
-				if err != nil {
-					stop(fmt.Errorf("the site release lease was not renewed: %w", err))
-					return
-				}
-			}
+		if err := renewSiteLease(renewing, started, leaseSeconds*time.Second, 5*time.Second, func(call context.Context) error {
+			return write(call, true)
+		}); err != nil {
+			stop(err)
 		}
 	}()
+
 	return renewing, func() {
 		stop(context.Canceled)
 		<-done
@@ -1225,4 +1218,37 @@ func (r *Run) hold(ctx context.Context) (context.Context, func(), error) {
 			}})
 		}
 	}, nil
+}
+
+var errSiteLeaseReplaced = errors.New("site release lease was taken by another holder")
+
+// renewSiteLease retries bounded API failures while the last confirmed renewal
+// is still valid. Loss of the observed holder fences the release immediately.
+func renewSiteLease(ctx context.Context, started time.Time, duration, retryDelay time.Duration, renew func(context.Context) error) error {
+	expires := started.Add(duration)
+	timer := time.NewTimer(max(0, time.Until(started.Add(duration/5))))
+	defer timer.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-timer.C:
+		}
+		at := time.Now()
+		if !at.Before(expires) {
+			return errors.New("the site release lease expired")
+		}
+		call, cancel := context.WithTimeout(ctx, min(10*time.Second, time.Until(expires)))
+		err := renew(call)
+		cancel()
+		if err == nil {
+			expires = at.Add(duration)
+			timer.Reset(max(0, time.Until(at.Add(duration/5))))
+			continue
+		}
+		if errors.Is(err, errSiteLeaseReplaced) || apierrors.IsNotFound(err) || time.Until(expires) <= 0 {
+			return fmt.Errorf("the site release lease was not renewed: %w", err)
+		}
+		timer.Reset(min(retryDelay, time.Until(expires)))
+	}
 }

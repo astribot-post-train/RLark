@@ -52,7 +52,7 @@ func RunInCluster(ctx context.Context, request JobRequest) error {
 	return runImageJob(ctx, members, reader, request)
 }
 
-func runImageJob(ctx context.Context, member kubernetes.Interface, reader client.Reader, request JobRequest) error {
+func runImageJob(ctx context.Context, member kubernetes.Interface, reader client.Reader, request JobRequest) (result error) {
 	if request.JobUID == "" || request.PodName == "" || request.PodUID == "" || request.Deployment == "" || request.HealthTimeout <= 0 {
 		return errors.New("invalid image-only upgrade executor identity or timeout")
 	}
@@ -120,6 +120,11 @@ func runImageJob(ctx context.Context, member kubernetes.Interface, reader client
 		return guard.Check(ctx)
 	}
 	defer func() {
+		if ctx.Err() != nil || errors.Is(result, ErrExecutorInterrupted) || errors.Is(result, ErrLeaseLost) || errors.Is(context.Cause(work), ErrLeaseLost) {
+			result = errors.Join(result, ErrExecutorInterrupted, context.Cause(work))
+			guard.stopRenewing()
+			return
+		}
 		cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer cancel()
 		if err := guard.Release(cleanup); err != nil {
@@ -236,12 +241,16 @@ func executorExited(ctx context.Context, member kubernetes.Interface, previousHo
 	if previousHolder == holder && string(identified.UID) == jobUID && identified.DeletionTimestamp == nil {
 		return true, nil
 	}
-	for _, condition := range identified.Status.Conditions {
+	return upgradeJobTerminal(identified), nil
+}
+
+func upgradeJobTerminal(job *batchv1.Job) bool {
+	for _, condition := range job.Status.Conditions {
 		if condition.Status == corev1.ConditionTrue && (condition.Type == batchv1.JobComplete || condition.Type == batchv1.JobFailed) {
-			return true, nil
+			return true
 		}
 	}
-	return false, nil
+	return false
 }
 
 // PreviousUpgradeExecutorExited allows a release to take over a terminal

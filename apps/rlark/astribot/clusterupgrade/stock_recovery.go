@@ -73,6 +73,9 @@ func (s *LockedStock) Run(requested string, fromState, autoRollback bool, prepar
 	var saved stockCheckpoint
 	switch record := state.Data[stockCheckpointKey]; {
 	case record == "":
+		if s.mutationRecorded {
+			return ErrStockRecoveryUnverified
+		}
 	case json.Unmarshal([]byte(record), &saved) != nil || saved.StateUID != string(state.UID) || saved.ChildUID == "" || saved.JobUID == "" || saved.PodUID == "" ||
 		saved.Image == "" || saved.TargetHash == "" || saved.BaselineHash == "":
 		return ErrStockRecoveryUnverified
@@ -104,8 +107,20 @@ func (s *LockedStock) Run(requested string, fromState, autoRollback bool, prepar
 		if saved.Phase == stockFailed {
 			return ErrStockRecoveryUnverified
 		}
-	} else if s.replacement || saved.Phase == stockApplying || saved.Phase == stockRollingBack {
-		return ErrStockRecoveryUnverified
+	} else if saved.Phase == stockApplying || saved.Phase == stockRollingBack {
+		// A new attempt may reapply the interrupted target or the verified
+		// baseline after the original Job has stopped.
+		matches := saved.TargetHash == targetHash || (oldImage != "" && baseline != "" && effective == baseline)
+		if saved.BaselineHash != baselineHash || !matches || s.previousJobExited == nil {
+			return ErrStockRecoveryUnverified
+		}
+		exited, err := s.previousJobExited(ctx, saved)
+		if err != nil {
+			return stockInterrupted(ctx, err)
+		}
+		if !exited {
+			return ErrStockRecoveryUnverified
+		}
 	}
 
 	resume := sameAttempt
@@ -154,9 +169,18 @@ func (s *LockedStock) Run(requested string, fromState, autoRollback bool, prepar
 		})
 	}
 
+	markMutation := func() error {
+		if s.beforeMutation == nil {
+			return nil
+		}
+		return stockInterrupted(ctx, s.beforeMutation(ctx))
+	}
 	if !resume {
 		if err := write(stockApplying); err != nil {
 			return stockInterrupted(ctx, err)
+		}
+		if err := markMutation(); err != nil {
+			return err
 		}
 		err = runner.Upgrade(ctx)
 		if err == nil {
@@ -171,6 +195,9 @@ func (s *LockedStock) Run(requested string, fromState, autoRollback bool, prepar
 	}
 	if writeErr := write(stockRollingBack); writeErr != nil {
 		return stockInterrupted(ctx, errors.Join(ErrRollbackFailed, err, writeErr))
+	}
+	if err := markMutation(); err != nil {
+		return err
 	}
 	if rollbackErr := runner.Rollback(ctx); rollbackErr != nil {
 		return stockInterrupted(ctx, errors.Join(ErrRollbackFailed, err, rollbackErr))

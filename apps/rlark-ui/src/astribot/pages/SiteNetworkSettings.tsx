@@ -912,6 +912,13 @@ export function SiteNetworkSettingsPage({
                       </section>
                     </div>
 
+                    {conditionIsTrue("DiscoveryStale") && (
+                      <p className="site-network-warning" role="status">
+                        {zh
+                          ? "有 Hub 长时间未上报周期扫描结果。"
+                          : "A Hub has stopped reporting periodic discovery."}
+                      </p>
+                    )}
                     {notice[selectedSite] && (
                       <p
                         className={

@@ -151,7 +151,7 @@ export function createIamPortal(host: PortalHost) {
     if (!existingToken) await leave(consolePath(host));
   }
 
-  async function signOut(): Promise<void> {
+  async function signOut(next?: string): Promise<void> {
     if (!beginDeparture(leaveMessage("sign-out"))) return;
     const token = sessionStorage.getItem(tokenKey);
     const timeout = requestSignal();
@@ -169,7 +169,7 @@ export function createIamPortal(host: PortalHost) {
       timeout.dispose();
       clearAuthSession();
       host.broadcastLogout();
-      host.location.replace("/login");
+      host.location.replace(next ? portalPath(next) : "/login");
     }
   }
 
@@ -293,8 +293,8 @@ export function enterIamPortal(): Promise<void> {
   return iamPortalEnabled() ? iamPortal().enter() : Promise.resolve();
 }
 
-export function signOutOfConsole(): Promise<void> {
-  return iamPortalEnabled() ? iamPortal().signOut() : Promise.resolve();
+export function signOutOfConsole(next?: string): Promise<void> {
+  return iamPortalEnabled() ? iamPortal().signOut(next) : Promise.resolve();
 }
 
 export function returnToPortal(path: string): Promise<void> {

@@ -1472,3 +1472,22 @@ func TestARetiredNamespaceGoesWithTheStationAgents(t *testing.T) {
 		t.Fatalf("still there: %v", err)
 	}
 }
+
+func TestSiteLeaseRenewalRetriesUntilOwnershipChanges(t *testing.T) {
+	var attempts int
+	transient := errors.New("API temporarily unavailable")
+	err := renewSiteLease(t.Context(), time.Now(), time.Second, time.Millisecond, func(context.Context) error {
+		attempts++
+		switch attempts {
+		case 1:
+			return transient
+		case 2:
+			return nil
+		default:
+			return errSiteLeaseReplaced
+		}
+	})
+	if attempts != 3 || !errors.Is(err, errSiteLeaseReplaced) {
+		t.Fatalf("renewal attempts: %d, error: %v", attempts, err)
+	}
+}

@@ -4,6 +4,14 @@
 - 官方基线：`d06745e`。`9ad4a21` 是最初的快照导入点，仍可用于追溯站点层起源。
 - 产品接口写在 [swagger.yaml](swagger.yaml)。
 
+## 扩展约定
+
+- Astribot 专属 Go、UI、站点与部署代码分别放在 `apps/rlark/astribot/`、`apps/rlark-ui/src/astribot/`、`astribot/`。共享文件保留必要的契约和接入点。若必须在共享包旁实现扩展，使用 `astribot_*` 文件名并说明包依赖。
+- 官方文档保持上游内容。Astribot 的界面、运行和发布说明放在本目录。官方文档在必要时只链接到本目录，共同 API 的生成参考从类型定义重新生成。
+- 同步上游时核对完整提交范围，验证 UI、API、权限、控制器、Agent 和部署产物的实际入口。分别记录源码覆盖和环境验收，保留上游行为和仍适用的 Astribot 扩展。
+
+[Astribot 控制台](console.zh.md) · [部署和存储](operations.zh.md) · [升级验收](upstream-upgrade.zh.md)
+
 ## 改了哪些官方文件
 
 `git diff --name-status d06745e HEAD | grep -v '^A'` 列出全部。按原因分：
@@ -35,7 +43,7 @@
 | | `apps/rlark/go.mod`、`go.sum` | 随上面的依赖 |
 | 内嵌 Addon | `pkg/addons/catalog/csi-driver-rclone/` 的 `addon.yaml` 和三个清单 | `nodeUpdateStrategy`、`nodeImagePullPolicy`、`controllerNodeSelector`、`nodeTpsLimit` |
 | 控制台（整页换成我们的） | `apps/rlark-ui/src/` 的 `App.tsx`、`admin/AdminApp.tsx`、`admin/AdminPage.tsx` | 钩子：只把存储、集群管理、集群列表三页和 `NodeResourceBrowser` 的 import 路径指到 `src/astribot/pages/`、`src/astribot/components/` 下的同名文件（存储的 SMB/主机目录/挂载档位、集群和节点的显示名、控制面和 Kubernetes 版本两列、节点的 WireGuard 地址和删除，见 [architecture.md](architecture.md)）；官方的那四个文件原样留着、不再挂载（见下节）。它们的样式在同目录的 `.css` 里（`ClusterManagement.css`、`Clusters.css`、`NodeResourceBrowser.css`、`nodeNetwork.css`、`controlPlaneBadge.css`）；我们别的组件的样式也从官方 `src/styles/` 挪到了 `src/astribot/components/` 下：`provision.css`（新建集群页和创建进度，原在 `admin/settings-and-certificates.css`；`.cert-form.new-cluster-form label`、`.cert-form label.provision-clear-gone` 盖过官方的 `.cert-form label`）、`RegistryImagePicker.css`（原在 `jobs/create.css`；`.image-picker .image-picker-*` 套在官方的 `.image-picker` 下，`.image-picker .image-picker-browser label` 盖过官方的 `.modal-body label`）、`RegistryPassword.css`（原在 `storage/index.css`，不盖官方规则）。官方 `src/styles/` 保持原样；组件引入的样式排在官方样式之前，要盖过官方值的规则多套一层类名。`data.ts` 的 `StorageClass` 是官方的，我们的字段在 `astribot/lib/storageClass.ts` 的 `StorageClass`（继承官方的）；存储页的文案是官方的加上 `astribot/i18n.ts` 的（`storageCopy`），`i18n.ts` 保持原样。`tests/astribot/pages.test.mjs` 把官方对这几页的测试指到我们的文件再跑一遍 |
-| 控制台（官方文件里的钩子） | `apps/rlark-ui/` 下：`src/main.tsx`、`admin/{AdminApp,AdminPage,AdminDashboard}.tsx`、`constants.ts`、`utils/{route,crd,job,dag,nodeVisibility}.ts`、`pages/{Overview,Jobs,CreateJob,Workflows,ImageRegistries,SystemConfig}.tsx`、`components/{create,ResourcePlacementPicker}.tsx`、`backend.ts`、`data.ts`、`types.ts`、`mockBackend.ts`、`scripts/generate-crd-models.mjs`、`tsconfig.test.json`，及测试 `job-storage`、`job-clone-fidelity`、`clipboard`、`refresh-feedback` | 钩子：`src/main.tsx` 一行引入我们的全局样式 `src/astribot/styles.css`（`.real-name`，排在官方样式之后）；`admin/AdminApp.tsx` 挂 `AstribotAdminPages`（场站节点、加入节点）和 `NewClusterPage`（`constants.ts` 加“场站节点”导航，`utils/route.ts` 加 `stations`）；`admin/AdminPage.tsx`（显示名、改名后替换列表里的节点、节点表 `removable`）、`admin/AdminDashboard.tsx`、`pages/Overview.tsx`、`components/create.tsx`、`components/ResourcePlacementPicker.tsx`（`NodeName`）、`pages/Jobs.tsx`（`RealName`、`clusterLabel`、`clusterIDsLabel`、`workerNodeLabel`，挂载档位一栏 `storageMountLabel`）：集群和节点显示名；`pages/CreateJob.tsx`、`pages/Workflows.tsx`：选镜像 `RegistryImagePicker`、存储挂载的档位和只读 `StorageMountOptions`（代替官方的 PVC 大小）、按名字引用存储、集群只按 ID 选、取不到存储时的演示存储取我们的；`pages/ImageRegistries.tsx`：`RegistryPassword`、`RegistryBrowser`、`registryClusterOption`；`utils/crd.ts`、`utils/job.ts` 调 `astribot/lib/storageVolume.ts`（卷是 CSI `storage.rlark.io`，按名字引用存储）；`mockBackend.ts` 先问 `astribot/mockBackend.ts` 的 `astribotMockRoute`。改动：“创建集群”改叫“新建集群”（`AdminApp.tsx`、`constants.ts`）；`backend.ts` 的 `imageRegistriesApi.list` 多收一个 `signal`（`RegistryImagePicker` 关掉浏览时取消读仓库列表）；`pages/SystemConfig.tsx` 去掉“部署配置默认值”一栏（随删掉的创建集群页，见下面“有意删除”）；Job 的存储挂载：`data.ts`、`types.ts` 的挂载项由 `pvcSizeGb` 换成 `profile`、`readOnly`，`utils/dag.ts` 跟着换默认值；`types.ts` 给 Node 加 `spec.displayName`；`utils/nodeVisibility.ts` 把控制面判断抽成 `isControlPlaneLabels`，带 `rlark.io/enabled=true` 的控制面节点也算业务节点；`mockBackend.ts` 的集群加显示名，保存的存储加我们的字段，演示存储取我们的；`scripts/generate-crd-models.mjs` 加 `ClusterProvision`、`NodeJoin`；`tsconfig.test.json` 编译我们的模块。官方测试 `job-storage`、`job-clone-fidelity` 随存储挂载改，`clipboard`、`refresh-feedback` 去掉删掉的创建集群页和部署配置一栏 |
+| 控制台（官方文件里的钩子） | `apps/rlark-ui/` 下：`src/main.tsx`、`admin/{AdminApp,AdminPage,AdminDashboard}.tsx`、`constants.ts`、`utils/{route,crd,job,dag,nodeVisibility}.ts`、`pages/{Overview,Jobs,CreateJob,Workflows,ImageRegistries,SystemConfig}.tsx`、`components/{create,ResourcePlacementPicker}.tsx`、`backend.ts`、`data.ts`、`types.ts`、`mockBackend.ts`、`scripts/generate-crd-models.mjs`、`tsconfig.test.json`，及测试 `job-storage`、`job-clone-fidelity`、`clipboard`、`refresh-feedback` | 钩子：`src/main.tsx` 一行引入我们的全局样式 `src/astribot/styles.css`（`.real-name`，排在官方样式之后）；`admin/AdminApp.tsx` 挂 `AstribotAdminPages`（场站节点、加入节点）和 `NewClusterPage`（`constants.ts` 加“场站节点”导航，`utils/route.ts` 加 `stations`）；`admin/AdminPage.tsx`（显示名、改名后替换列表里的节点、节点表 `removable`）、`admin/AdminDashboard.tsx`、`pages/Overview.tsx`、`components/create.tsx`、`components/ResourcePlacementPicker.tsx`（`NodeName`）、`pages/Jobs.tsx`（`RealName`、`clusterLabel`、`clusterIDsLabel`、`workerNodeLabel`，挂载档位一栏 `storageMountLabel`）：集群和节点显示名；`pages/CreateJob.tsx`、`pages/Workflows.tsx`：选镜像 `RegistryImagePicker`、存储挂载的档位和只读 `StorageMountOptions`（代替官方的 PVC 大小）、按名字引用存储、集群只按 ID 选、取不到存储时的演示存储取我们的；`pages/ImageRegistries.tsx`：`RegistryPassword`、`RegistryBrowser`、`registryClusterOption`；`utils/crd.ts`、`utils/job.ts` 调 `astribot/lib/storageVolume.ts`（卷是 CSI `storage.rlark.io`，按名字引用存储）；`mockBackend.ts` 先问 `astribot/mockBackend.ts` 的 `astribotMockRoute`。改动：“创建集群”改叫“新建集群”（`AdminApp.tsx`、`constants.ts`）；`backend.ts` 的 `imageRegistriesApi.list` 多收一个 `signal`（`RegistryImagePicker` 关掉浏览时取消读仓库列表）；`pages/SystemConfig.tsx` 去掉“部署配置默认值”一栏（随删掉的创建集群页，见下面“有意删除”）；Job 的存储挂载：`data.ts`、`types.ts` 的挂载项由 `pvcSizeGb` 换成 `profile`、`readOnly`，`utils/dag.ts` 跟着换默认值；`types.ts` 给 Node 加 `spec.displayName`；`astribot/lib/controlPlanes.ts` 把控制面判断抽成 `isControlPlaneLabels`，带 `rlark.io/enabled=true` 的控制面节点也算业务节点；`mockBackend.ts` 的集群加显示名，保存的存储加我们的字段，演示存储取我们的；`scripts/generate-crd-models.mjs` 加 `ClusterProvision`、`NodeJoin`；`tsconfig.test.json` 编译我们的模块。官方测试 `job-storage`、`job-clone-fidelity` 随存储挂载改，`clipboard`、`refresh-feedback` 去掉删掉的创建集群页和部署配置一栏 |
 | 可执行示例 | `apps/rlark/docs/examples/` 的 `deploy-data-plane.yaml`（去掉 `containerd-socket`）、`quickstart-cp.sh`、`update-kcp-crds.sh`（读 kcp Pod 本次启动写的 `/.kcp/admin.kubeconfig`） | 随行为改 |
 
 ### 升级入口的共享文件
@@ -45,11 +53,14 @@
 | `apps/rlark/pkg/gateway/upgrade_handler.go` | 核对批次目标及配置，避免托管成员走标准安装器。 |
 | `apps/rlark/pkg/controllermanager/upgrade/upgrade_controller.go` | 保留上游父子任务，添加托管批次派发、所属 UID 核对和托管批次失败预算。 |
 | `apps/rlark/pkg/agent/controllers/clusterupgradejob/{driver_k8s,pull}.go` | 选择成员执行策略，创建独立的升级 Job，并以检查点、实际工作负载或 Job 终态核实结果。 |
-| `apps/rlark/cmd/rlark-upgrade/main.go`、`apps/rlark/Dockerfile.upgrade`、`apps/rlark/pkg/upgrade/` | 同一候选镜像包含标准安装器、原地换镜像执行器和托管节点镜像代理入口。 |
+| `apps/rlark/cmd/rlark-upgrade/main.go`、`apps/rlark/Dockerfile.upgrade`、`apps/rlark/pkg/upgrade/` | 同一候选镜像包含标准安装器、原地换镜像执行器和托管节点镜像代理入口。二进制通过 `astribot/clusterupgrade/command` 分发 Astribot 模式。标准模式显式选择上游组件清单，因为 Astribot 的普通安装使用托管节点 Agent。 |
 | `apps/rlark/pkg/rlarkadm/upgrade.go`、`apps/rlark/pkg/rlarkadm/upgrader/kubernetes/kubernetes.go` | 标准安装器使用上游集群和节点 Agent 布局，避免套用 Astribot 安装拓扑。 |
 | `apps/rlark/pkg/addons/catalog.go` | 加载 Astribot Addon 目录并保留上游目录入口。 |
 
 共享代码保留上游对象生命周期和启动入口，成员策略、租约、执行器、恢复与授权业务位于 `apps/rlark/astribot/clusterupgrade`。中英文核对清单仍通过站点文档导航发布。
+
+- `src/components/shared.tsx` 保留通用复制交互和共享展示接入。`admin/AdminPage.tsx` 还调整了节点操作文案。
+- Gateway 的 `cert_handler.go`、`config.go`、`kube_handler.go`，网络的 `netstack.go` 和任务的 `dispatch.go`、`execution_kubernetes.go` 含共享错误处理或 lint 调整，合上游时按原契约核对。
 
 ## 恢复成官方原样、但没有调用方的代码
 

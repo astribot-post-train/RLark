@@ -700,7 +700,11 @@ func (r *NetworkReconciler) reconcile(ctx context.Context) (reconcile.Result, er
 	} else {
 		apimeta.RemoveStatusCondition(&status.Conditions, "GatewayRelayReady")
 	}
-	apimeta.RemoveStatusCondition(&status.Conditions, "DiscoveryStale")
+	if stale := periodicDiscoveryStatus(r.now(), topology.Sites, enrollments.Items); stale != nil {
+		conditions = append(conditions, *stale)
+	} else {
+		apimeta.RemoveStatusCondition(&status.Conditions, "DiscoveryStale")
+	}
 	status.ObservedGeneration = siteNetwork.Generation
 	for _, condition := range conditions {
 		condition.ObservedGeneration = siteNetwork.Generation
@@ -714,6 +718,43 @@ func (r *NetworkReconciler) reconcile(ctx context.Context) (reconcile.Result, er
 		}
 	}
 	return reconcile.Result{RequeueAfter: again}, nil
+}
+
+// Manual-only sites cannot infer a Hub outage from the absence of a scan.
+func periodicDiscoveryStatus(now time.Time, sites []network.Site, enrollments []stationv1alpha1.NetworkEnrollment) *metav1.Condition {
+	status := metav1.Condition{Type: "DiscoveryStale", Status: metav1.ConditionFalse, Reason: "HubsReport",
+		Message: "periodic discovery Hubs are reporting"}
+	looking := false
+	for _, site := range sites {
+		if site.Discovery == nil || site.Discovery.IntervalSeconds < 10 {
+			continue
+		}
+		// A large configured scan and a slow SSH handshake both legitimately
+		// extend the time between complete reports.
+		interval := time.Duration(site.Discovery.IntervalSeconds) * time.Second
+		silence := max(15*time.Minute, 3*interval)
+		for i := range enrollments {
+			hub := &enrollments[i]
+			if hub.Status.Site != site.Name || hub.Status.Role != string(network.RoleHub) || hub.Status.Phase != stationv1alpha1.NetworkEnrollmentEnrolled {
+				continue
+			}
+			looking = true
+			last, err := time.Parse(time.RFC3339, hub.Annotations["station.rlark.io/discovery-reported-at"])
+			if err != nil {
+				last = hub.CreationTimestamp.Time
+			}
+			if !last.IsZero() && now.Sub(last) <= silence {
+				continue
+			}
+			status.Status, status.Reason = metav1.ConditionTrue, "HubSilent"
+			status.Message = fmt.Sprintf("site %s: Hub %s/%s has not reported periodic discovery within %s", site.Name, hub.Spec.ClusterID, hub.Name, silence)
+			return &status
+		}
+	}
+	if !looking {
+		return nil
+	}
+	return &status
 }
 
 // JoinTokenIssuedAnnotation is, on a NodeAdmission, when Station API last gave

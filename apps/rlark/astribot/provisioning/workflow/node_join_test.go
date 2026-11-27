@@ -754,3 +754,33 @@ func (s *joinScene) nativeNodeUID(uid string) {
 		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(body))}, nil
 	}
 }
+
+func TestClearMissingIssuedAdmissionPreservesDeclaredHubAndJoin(t *testing.T) {
+	status := newJoinStatus("SHA256:box")
+	status.Phase = rlarkv1alpha1.ClusterProvisionFailed
+	status.Facts.DeclaredHub = true
+	now := metav1.Now()
+	status.Facts.AdmissionIssuedAt = &now
+	setStage(&status.Stages, &status.Stage, stageInstall, rlarkv1alpha1.ClusterProvisionStageFailed, "", "interrupted")
+	join := &rlarkv1alpha1.NodeJoin{
+		ObjectMeta: metav1.ObjectMeta{Name: "cluster-a.box", UID: "join-1"},
+		Spec:       rlarkv1alpha1.NodeJoinSpec{ClusterID: "cluster-a", NodeName: "box"},
+		Status:     status,
+	}
+	scene := newJoinScene(t, joinNetwork(nil, nil), join)
+	code, out := scene.call(http.MethodPost, "/station/node-joins/cluster-a.box/clear", `{"machine_gone":true}`)
+	if code != http.StatusConflict {
+		t.Fatalf("clear=%d %v", code, out)
+	}
+	if _, err := scene.g.kubeClient.RlinfV1alpha1().NodeJoins().Get(t.Context(), join.Name, metav1.GetOptions{}); err != nil {
+		t.Fatalf("lost original SSH join: %v", err)
+	}
+}
+
+func TestHostFailureReasonIsIndependentOfDiagnosticText(t *testing.T) {
+	if !hasHostReason("ssh warning\r\nreason=worker_credentials\r\nlocalized message\n", "worker_credentials") ||
+		hasHostReason("the host still has Kubernetes credentials", "worker_credentials") ||
+		hasHostReason("remote: reason=worker_credentials", "worker_credentials") {
+		t.Fatal("host cleanup did not use an exact reason line")
+	}
+}

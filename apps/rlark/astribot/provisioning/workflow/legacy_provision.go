@@ -55,13 +55,13 @@ func (g *Service) HandleMigrateClusterProvision(c *gin.Context) {
 		return
 	}
 	if request.ProvisionUID == "" || strings.TrimSpace(request.Evidence) == "" || (request.Cluster == nil && request.SiteNetwork == nil && len(request.Credentials) == 0 && request.NativeClusterUID == "") {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "provision UID, evidence reference and at least one reviewed resource are required"})
+		g.http.RespondError(c, http.StatusBadRequest, g.http.CodeInvalidRequest, "provision UID, evidence reference and at least one reviewed resource are required")
 		return
 	}
 	ctx := c.Request.Context()
 	name := c.Param("name")
 	if !g.provisions.start(name) {
-		c.JSON(http.StatusConflict, gin.H{"error": "the provision is busy"})
+		g.http.RespondError(c, http.StatusConflict, g.http.CodeResourceConflict, "the provision is busy")
 		return
 	}
 	defer g.provisions.end(name)
@@ -71,7 +71,7 @@ func (g *Service) HandleMigrateClusterProvision(c *gin.Context) {
 		return
 	}
 	if p.UID != request.ProvisionUID || (request.ProvisionResourceVersion != "" && p.ResourceVersion != request.ProvisionResourceVersion) || p.DeletionTimestamp != nil || p.Status.Phase == rlark.ClusterProvisionRunning {
-		c.JSON(http.StatusConflict, gin.H{"error": "the provision UID changed or the operation is active"})
+		g.http.RespondError(c, http.StatusConflict, g.http.CodeResourceConflict, "the provision UID changed or the operation is active")
 		return
 	}
 	actions, err := g.planLegacyProvision(ctx, p, request)

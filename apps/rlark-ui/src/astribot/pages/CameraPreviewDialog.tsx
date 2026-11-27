@@ -7,6 +7,8 @@ import {
   type CameraView,
 } from "../lib/cameras";
 import {
+  cameraFrameStale,
+  cameraStreamIssue,
   readCameraFrames,
   sameCameraFrame,
   type CameraFrame,
@@ -106,9 +108,11 @@ export function CameraPreviewDialog({
         }, 1000);
         for await (const received of readCameraFrames(response)) {
           if (connection !== controller || controller.signal.aborted) break;
-          resetWatchdog();
+          if (cameraFrameStale(received)) break;
+          const repeated = sameCameraFrame(lastFrame, received);
+          if (!repeated || received.ageSeconds !== undefined) resetWatchdog();
+          if (repeated) continue;
           setStreamIssue(undefined);
-          if (sameCameraFrame(lastFrame, received)) continue;
           lastFrame = received;
           const { jpeg, capturedAtMs } = received;
           distinct++;
@@ -119,12 +123,10 @@ export function CameraPreviewDialog({
         }
         issue = lastFrame ? "disconnected" : "no-frame";
       } catch (reason) {
-        issue =
-          reason instanceof ApiError && reason.status === 503
-            ? "capacity"
-            : timedOut && !lastFrame
-              ? "no-frame"
-              : "disconnected";
+        issue = cameraStreamIssue(
+          reason instanceof ApiError ? reason.status : undefined,
+          timedOut && !lastFrame,
+        );
       } finally {
         window.clearTimeout(watchdog);
         controller.abort();

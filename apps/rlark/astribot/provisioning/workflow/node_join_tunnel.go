@@ -40,7 +40,7 @@ func (r *nodeJoinRun) tunnel(ctx context.Context, j *rlarkv1alpha1.NodeJoin) (st
 		return "", err
 	}
 	out, err := machine.Run(ctx, claimHostMarker(joinTunnelHostMarker, j.UID, joinTunnelHostUnused)+"\n"+joinHostIdentity(j)+rememberJoinHostIdentity+tunnelScript, strings.NewReader(document), nil)
-	if err != nil && strings.Contains(out, "installation artifacts") {
+	if err != nil && hasHostReason(out, "installation_artifacts") {
 		digest, proofErr := r.g.authorizeLegacyTunnel(ctx, machine, j)
 		if proofErr != nil {
 			return "", fmt.Errorf("verify historical tunnel before reuse: %w", proofErr)
@@ -138,4 +138,14 @@ func describeTimings(timings []rlarkv1alpha1.NodeJoinTiming) string {
 		parts = append(parts, t.Event+" "+t.At.Local().Format("15:04:05"))
 	}
 	return strings.Join(parts, "，")
+}
+
+// hasHostReason reads the embedded host script protocol independently of its diagnostics.
+func hasHostReason(output, reason string) bool {
+	for _, line := range strings.Split(output, "\n") {
+		if strings.TrimSpace(line) == "reason="+reason {
+			return true
+		}
+	}
+	return false
 }

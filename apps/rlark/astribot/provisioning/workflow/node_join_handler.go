@@ -467,7 +467,7 @@ esac
 ` + detachedJoinHost + `
 if [ -e /etc/kubernetes/kubelet.conf ] || [ -e /etc/kubernetes/bootstrap-kubelet.conf ]; then
   [ "${reset_worker:-}" = yes ] ||
-    { echo 'host still has Kubernetes credentials; use a verified node removal' >&2; exit 1; }
+    { printf '%s\n' 'reason=worker_credentials' 'host still has Kubernetes credentials; use a verified node removal' >&2; exit 1; }
   ` + workerJoinIdentity + resetDetachedWorker + `
 fi
 systemctl disable --now rlark-station-gateway >/dev/null 2>&1 || true
@@ -547,7 +547,11 @@ func (g *Service) HandleClearNodeJoin(c *gin.Context) {
 		}
 	}
 	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error(), "steps": steps})
+		status := http.StatusBadGateway
+		if apierrors.IsConflict(err) {
+			status = http.StatusConflict
+		}
+		c.JSON(status, gin.H{"error": err.Error(), "steps": steps})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"steps": steps})
@@ -560,7 +564,10 @@ func (g *Service) clearJoinWithoutNodeUID(ctx context.Context, namespace string,
 	switch {
 	case apierrors.IsNotFound(err):
 		if machineGone && j.Status.Facts.AdmissionIssuedAt != nil {
-			return []string{"Preserved the tunnel because the issued admission is no longer available for verification"}, true, nil
+			if j.Status.Facts.DeclaredHub {
+				return nil, false, apierrors.NewConflict(nodeAdmissionGVR.GroupResource(), j.Spec.NodeName,
+					fmt.Errorf("issued admission is missing, so the SSH join and its Hub declaration require ownership verification"))
+			}
 		}
 	case err != nil:
 		return nil, false, err
@@ -609,7 +616,7 @@ func (g *Service) clearUnredeemedJoin(ctx context.Context, j *rlarkv1alpha1.Node
 		// Keep the ordinary pre-install clear path independent of member API availability.
 		// Only a confirmed absent native Node can authorize a local worker reset.
 		out, err := machine.Run(ctx, clearHost, nil, nil)
-		if err != nil && strings.Contains(out, "host still has Kubernetes credentials") {
+		if err != nil && hasHostReason(out, "worker_credentials") {
 			if j.Status.HostKey == "" {
 				return steps, fmt.Errorf("the SSH host fingerprint is required before resetting a worker")
 			}
@@ -618,7 +625,7 @@ func (g *Service) clearUnredeemedJoin(ctx context.Context, j *rlarkv1alpha1.Node
 			}
 			out, err = machine.Run(ctx, "reset_worker=yes\n"+clearHost, nil, nil)
 		}
-		if err != nil && (strings.Contains(out, "host has no matching ownership record") || strings.Contains(out, "no matching SSH join identity")) {
+		if err != nil && hasHostReason(out, "ownership_missing") {
 			digest, proofErr := g.authorizeLegacyTunnel(ctx, machine, j)
 			if proofErr == nil {
 				// The cleanup script already takes the lock. Release the

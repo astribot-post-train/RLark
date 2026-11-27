@@ -75,7 +75,7 @@ func TestStockRecoveryRequiresOriginalAttemptAndBaseline(t *testing.T) {
 				t.Fatalf("original execution: %v", err)
 			}
 			stock.podUID = "pod-2"
-			stock.replacement = true
+			stock.mutationRecorded = true
 			state, err := stock.ReadState(ctx)
 			if err != nil {
 				t.Fatal(err)
@@ -107,5 +107,49 @@ func TestStockRecoveryRequiresOriginalAttemptAndBaseline(t *testing.T) {
 				t.Fatal("unverified recovery rewrote the original checkpoint")
 			}
 		})
+	}
+}
+
+func TestStockRestartsAnInterruptedFirstUpgradeOnlyWithProvenTarget(t *testing.T) {
+	ctx := t.Context()
+	member := fake.NewClientset(&corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{Namespace: Namespace, Name: StockStateName, UID: "state"},
+	})
+	stock := &LockedStock{Context: ctx, Check: func(context.Context) error { return nil },
+		state: member.CoreV1().ConfigMaps(Namespace), childUID: "first", jobUID: "original-job", podUID: "pod-1", image: "next"}
+	err := stock.Run("target", false, true, func(_, _ string) (StockOperations, error) {
+		return stockTestOperations{upgrade: func(context.Context) error { return ErrExecutorInterrupted }}, nil
+	})
+	if !errors.Is(err, ErrExecutorInterrupted) {
+		t.Fatalf("first attempt: %v", err)
+	}
+	stock.childUID, stock.jobUID, stock.podUID = "second", "new-job", "pod-2"
+	active := true
+	stock.previousJobExited = func(_ context.Context, previous stockCheckpoint) (bool, error) {
+		if previous.ChildUID != "first" || previous.JobUID != "original-job" {
+			t.Fatalf("wrong original job: %+v", previous)
+		}
+		return !active, nil
+	}
+	for _, target := range []string{"target", "different config"} {
+		if target != "target" {
+			active = false
+		}
+		err := stock.Run(target, false, true, func(_, _ string) (StockOperations, error) {
+			t.Fatal("unverified attempt entered installer")
+			return nil, nil
+		})
+		if !errors.Is(err, ErrStockRecoveryUnverified) {
+			t.Fatalf("unexpected admission of %s: %v", target, err)
+		}
+	}
+	if err := stock.Run("target", false, true, func(_, _ string) (StockOperations, error) {
+		return stockTestOperations{}, nil
+	}); err != nil {
+		t.Fatalf("verified fresh attempt: %v", err)
+	}
+	state, err := stock.ReadState(ctx)
+	if err != nil || state.Data[StockAttemptKey] != "second" || state.Data["deploy-config"] != "target" {
+		t.Fatalf("state: %v, %v", state, err)
 	}
 }

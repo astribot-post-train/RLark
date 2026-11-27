@@ -65,6 +65,7 @@ export function ProvisionMigrationDialog({
 
   useEffect(() => {
     const controller = new AbortController();
+    setLoading(true);
     void clusterProvisionsApi
       .migrationCandidates(name, controller.signal)
       .then((result) => {

@@ -515,7 +515,7 @@ def handler(cameras, recovery, wall=time.time, body_state=None):
             if not rate.isdigit() or not 1 <= int(rate) <= most:
                 return self.refuse(400, "fps is 1 to %d" % most)
             if not open_streams.acquire(blocking=False):
-                return self.refuse(503, "%d streams are open already" % STREAMS)
+                return self.refuse(429, "%d streams are open already" % STREAMS)
             try:
                 self.stream(view, int(rate))
             except OSError:
@@ -649,7 +649,7 @@ def main():
                          queue_size=1, buff_size=16 * 1024 * 1024)
     try:
         capabilities = json.loads(Path("/s1u/device/capabilities.json").read_text())
-        observer, body_subscriptions = body_observer.subscribe(rospy, capabilities, body, metadata["uid"])
+        _body_observer, _body_subscriptions = body_observer.subscribe(rospy, capabilities, body, metadata["uid"])
     except (OSError, ValueError, KeyError) as error:
         print("Read-only body state unavailable: %s" % error, flush=True)
     threading.Event().wait()

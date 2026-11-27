@@ -434,8 +434,6 @@ The cluster agent reports Node storage capacity by reading kubelet stats through
 
 rlark supports declarative Addon management across data plane clusters. Addons are defined in the addon catalog (`../pkg/addons/catalog/`) and installed via the Addon API.
 
-Astribot bundles its additional catalog items from `apps/rlark/astribot/addoncatalog/catalog/`. Both sources are embedded in the Gateway. Station Controller packaging and release archives also read both catalog directories. Published Addon names and versions retain their identity when the source directory moves.
-
 ### 6.1 Addon Catalog Structure
 
 ```

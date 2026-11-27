@@ -17,3 +17,5 @@ The console submits the observed UIDs and resource versions for you. If a select
 The administrator API exposes `GET /api/v1/cluster-provisions/{name}/migration-candidates`, `POST /api/v1/cluster-provisions/{name}/migration-candidates/host`, and `POST /api/v1/cluster-provisions/{name}/migrate-ownership`. The existing programmatic confirmation request remains supported. A record whose original ownership cannot be verified should be retained.
 
 Temporary network and upstream service errors are retried before rejecting a recovered SSH Node UID. A different live UID is still rejected immediately.
+
+Cleanup returns HTTP 409 and preserves the provisioning record when SiteNetwork still has a declaration whose receipt cannot be verified. If an SSH join issued an admission that is now missing while its Hub declaration remains, cleanup also preserves the SSH record for ownership review. A namespace match alone does not authorize bulk deletion of historical NetworkEnrollments or NodeAdmissions.

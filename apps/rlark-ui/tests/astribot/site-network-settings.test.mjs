@@ -109,6 +109,7 @@ test("the discovery page is one workbench with site activity cards at the bottom
   assert.match(source, /<details className="site-network-diagnostics">[\s\S]+site-network-health/);
   assert.match(source, /<details className="site-network-advanced">[\s\S]+draft.includeUnclassified/);
   assert.match(source, /<SiteScan\s+key=\{selectedSite\}/);
-  assert.doesNotMatch(source, /扫描频率|扫描间隔|DiscoveryStale/);
+  assert.doesNotMatch(source, /扫描频率|扫描间隔/);
+  assert.match(source, /conditionIsTrue\("DiscoveryStale"\)/);
   assert.match(styles, /\.site-network-page\s*\{[^}]*align-content: start/);
 });
