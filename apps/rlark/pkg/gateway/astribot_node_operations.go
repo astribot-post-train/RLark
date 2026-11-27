@@ -8,6 +8,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/rlinf/rlark/apps/rlark/astribot/provisioning/workflow"
 	"github.com/rlinf/rlark/apps/rlark/astribot/stationidentity"
+	"github.com/rlinf/rlark/apps/rlark/astribot/stations"
 	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -47,6 +48,17 @@ func (g *Gateway) handleCreateNodeOperation(c *gin.Context) {
 	namespace, err := g.stationNamespace(c, request.ClusterID)
 	if err != nil {
 		return
+	}
+	if request.NodeUID == "" {
+		record, err := g.stationClient.Resource(networkEnrollmentGVR).Namespace(namespace).Get(c.Request.Context(), request.NodeName, metav1.GetOptions{})
+		switch {
+		case err == nil && stations.HasNodeUIDConflict(record):
+			c.JSON(http.StatusConflict, gin.H{"error": "the node UID is ambiguous; clear the stale enrollment or specify the Node UID to remove"})
+			return
+		case err != nil && !apierrors.IsNotFound(err):
+			c.JSON(http.StatusBadGateway, gin.H{"error": "Station API request failed"})
+			return
+		}
 	}
 	name := stationidentity.NodeOperationName(request.ClusterID, request.RequestID)
 	resource := g.stationClient.Resource(nodeOperationGVR).Namespace(namespace)

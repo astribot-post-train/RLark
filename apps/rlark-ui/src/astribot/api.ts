@@ -18,7 +18,7 @@ type Page<T> = { items: T[]; continue?: string };
 
 // A site node: the NetworkEnrollment of the node its name is, as GET /api/v1/station/stations lists it.
 export interface StationItem {
-  metadata: { name: string; namespace: string };
+  metadata: { name: string; namespace: string; uid?: string };
   spec: {
     nodeUID: string;
     // The node was removed: the record stays until it is deleted or the node is admitted again.
@@ -363,6 +363,15 @@ export const selfHealApi = {
   },
   // Deletes the record of a removed node, of a node in Conflict, or of a name no node reports under and RLark has
   // no Node of.
+  forgetConflictingStation(name: string, clusterID: string, recordUID: string) {
+    return request(
+      withQuery(`/api/v1/station/stations/${encodeURIComponent(name)}/conflict`, {
+        cluster_id: clusterID,
+        record_uid: recordUID,
+      }),
+      { method: "DELETE" },
+    );
+  },
   deleteStation(name: string, clusterID: string) {
     return request(withQuery(`/api/v1/station/stations/${encodeURIComponent(name)}`, { cluster_id: clusterID }), { method: "DELETE" });
   },

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/rlinf/rlark/apps/rlark/astribot/stationidentity"
 	"net"
 	"net/http"
 	"net/netip"
@@ -16,6 +15,7 @@ import (
 
 	rlarkv1alpha1 "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
 	"github.com/rlinf/rlark/apps/rlark/astribot/provisioning"
+	"github.com/rlinf/rlark/apps/rlark/astribot/stationidentity"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/client-go/util/retry"
@@ -238,6 +238,21 @@ func (r *provisionRun) declare(ctx context.Context, p *rlarkv1alpha1.ClusterProv
 			return fmt.Errorf("the SiteNetwork's names give %s the address %s, not this cluster's control plane's", facts.ControlPlaneName, address)
 		}
 		object := network.Object
+		receiptKey := siteProvisionAnnotation(p.Name)
+		receipt := siteProvisionReceipt(p.UID, object.GetUID(), facts.ControlPlaneName, facts.NodeName, facts.TunnelAddress, facts.PublicKey, p.Spec.Site)
+		if existing := object.GetAnnotations()[receiptKey]; existing != "" && existing != receipt ||
+			existing == "" && (network.SiteOf(p.Name) != "" || network.NameAddress(facts.ControlPlaneName) != "") {
+			return fmt.Errorf("the SiteNetwork declaration for %s does not belong to this provision", p.Name)
+		}
+		if p.UID == "" || object.GetUID() == "" {
+			return fmt.Errorf("the SiteNetwork or cluster provision has no UID")
+		}
+		annotations := object.GetAnnotations()
+		if annotations == nil {
+			annotations = map[string]string{}
+		}
+		annotations[receiptKey] = receipt
+		object.SetAnnotations(annotations)
 		names, _, _ := unstructured.NestedSlice(object.Object, "spec", "names")
 		if network.NameAddress(facts.ControlPlaneName) == "" {
 			names = append(names, map[string]interface{}{"name": facts.ControlPlaneName, "address": facts.TunnelAddress})

@@ -412,12 +412,24 @@ func (r *nodeJoinRun) install(ctx context.Context, j *rlarkv1alpha1.NodeJoin) (s
 		return "", err
 	}
 	state := provisioning.OutputValues(out)
+	if facts.AdmissionIssuedAt != nil {
+		receipt, err := machine.Run(ctx, "grep -E '^("+joinAttemptLogPrefix+"|"+joinNodeUIDLogPrefix+")' "+sshJoinLog+" || true", nil, nil)
+		if err != nil {
+			return "", err
+		}
+		if err := r.g.recordJoinedNodeUID(ctx, j, receipt); err != nil {
+			return "", err
+		}
+	}
 	switch {
 	case state["active"] == "yes":
-		// A join this NodeJoin started that is still running on the machine (the Gateway restarted): followed again.
+		// Follow the original unit after a Gateway restart.
 	case facts.AdmissionIssuedAt != nil && state["last"] == sshJoinExit+"0":
 		return r.installReadback(ctx, admission, sshJoinExit+"0"), nil
 	default:
+		if j.Annotations[nodeJoinNodeUID] != "" {
+			return "", fmt.Errorf("this SSH join already recorded a Node UID; refusing to issue a new code")
+		}
 		login := j.Spec.Machine.User + "@" + net.JoinHostPort(j.Spec.Machine.Address, strconv.Itoa(int(j.Spec.Machine.Port)))
 		joinLabels := map[string]string{}
 		_ = json.Unmarshal([]byte(j.Annotations[nodeJoinInstallLabelsAnnotation]), &joinLabels)
@@ -426,7 +438,7 @@ func (r *nodeJoinRun) install(ctx context.Context, j *rlarkv1alpha1.NodeJoin) (s
 			machineIntent["model"] = model
 		}
 		issued, _, refused := r.g.admissionService().Issue(ctx, j.Spec.RequestedBy, r.namespace, &stationidentity.IssueAdmissionRequest{ClusterID: cluster, NodeName: node, Labels: joinLabels, Machine: machineIntent},
-			map[string]string{stationidentity.AdmissionSSHLoginAnnotation: login, stationidentity.AdmissionSSHHostKeyAnnotation: j.Status.HostKey})
+			map[string]string{stationidentity.AdmissionSSHLoginAnnotation: login, stationidentity.AdmissionSSHHostKeyAnnotation: j.Status.HostKey, stationidentity.SSHJoinUIDAnnotation: string(j.UID)})
 		if refused != nil {
 			return "", fmt.Errorf("发入网码：%w", refused)
 		}
@@ -443,12 +455,17 @@ func (r *nodeJoinRun) install(ctx context.Context, j *rlarkv1alpha1.NodeJoin) (s
 		}
 		// The log of an earlier join goes first: what is followed is this one's.
 		if out, err := machine.Run(ctx, "rm -f "+sshJoinLog+" && systemd-run --unit="+sshJoinUnit+" --collect --quiet /bin/sh -c "+
-			nodessh.Quote("exec >"+sshJoinLog+" 2>&1; ("+issued.Command+"); echo \""+sshJoinExit+"$?\""), nil, nil); err != nil {
+			nodessh.Quote(joinInstallCommand(j, issued.Command)), nil, nil); err != nil {
 			return "", fmt.Errorf("在机器上启动入网（已经有一个在跑？）：%s", strings.TrimSpace(out))
 		}
 	}
 	last, status := "", ""
+	var receipts []string
 	_, err = machine.Run(ctx, "tail -n +1 -F "+sshJoinLog+" 2>/dev/null & t=$!; while systemctl is-active -q "+sshJoinUnit+"; do sleep 1; done; sleep 1; kill $t", nil, func(line string) {
+		if strings.HasPrefix(line, joinAttemptLogPrefix) || strings.HasPrefix(line, joinNodeUIDLogPrefix) {
+			receipts = append(receipts, line)
+			return
+		}
 		if code, ended := strings.CutPrefix(line, sshJoinExit); ended {
 			status = code
 			return
@@ -458,6 +475,10 @@ func (r *nodeJoinRun) install(ctx context.Context, j *rlarkv1alpha1.NodeJoin) (s
 			r.line(ctx, stageInstall, line)
 		}
 	})
+	receiptErr := r.g.recordJoinedNodeUID(ctx, j, strings.Join(receipts, "\n"))
+	if receiptErr != nil {
+		return "", receiptErr
+	}
 	switch {
 	case err != nil:
 		return "", fmt.Errorf("没能跟到机器上入网的结束（看机器上的 %s）：%w", sshJoinLog, err)
@@ -508,6 +529,9 @@ func (r *nodeJoinRun) nodeReady(ctx context.Context, j *rlarkv1alpha1.NodeJoin) 
 			return "", err
 		}
 		if err == nil {
+			if uid := j.Annotations[nodeJoinNodeUID]; uid != "" && node.Status.KubernetesNodeUID != "" && string(node.Status.KubernetesNodeUID) != uid {
+				return "", fmt.Errorf("the joined Node UID changed")
+			}
 			phase = string(node.Status.Phase)
 			ready := slices.ContainsFunc(node.Status.Conditions, func(c metav1.Condition) bool {
 				return c.Type == rlarkv1alpha1.ConditionTypeReady && c.Status == metav1.ConditionTrue

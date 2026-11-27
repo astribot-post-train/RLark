@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -27,8 +28,10 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
 	kubefake "k8s.io/client-go/kubernetes/fake"
+	ktesting "k8s.io/client-go/testing"
 )
 
 const (
@@ -123,7 +126,15 @@ func newJoinScene(t *testing.T, network *unstructured.Unstructured, rlark ...run
 		siteNetworkGVR: "SiteNetworkList", nodeAdmissionGVR: "NodeAdmissionList",
 		networkEnrollmentGVR: "NetworkEnrollmentList", nodeOperationGVR: "NodeOperationList", nodeClassGVR: "NodeClassList",
 	}, network)
-	s.g = &Service{kubeClient: clientset.NewSimpleClientset(rlark...), rawClient: kubefake.NewSimpleClientset(provisionTestRecord()), stationClient: station, stationBootstrap: s.bootstrap, http: testHTTP()}
+	kube := clientset.NewSimpleClientset(rlark...)
+	var serial int
+	kube.PrependReactor("create", "nodejoins", func(action ktesting.Action) (bool, runtime.Object, error) {
+		join := action.(ktesting.CreateAction).GetObject().(*rlarkv1alpha1.NodeJoin)
+		serial++
+		join.UID = types.UID(fmt.Sprintf("created-join-%d", serial))
+		return false, nil, nil
+	})
+	s.g = &Service{kubeClient: kube, rawClient: kubefake.NewSimpleClientset(provisionTestRecord()), stationClient: station, stationBootstrap: s.bootstrap, http: testHTTP()}
 	s.g.namespace = "default"
 	s.box = &joinBox{answer: s.answer}
 	s.g.provisionDial = func(_ context.Context, _ rlarkv1alpha1.ClusterProvisionMachine, password []byte, _ string) (provisioning.Machine, string, error) {
@@ -179,6 +190,8 @@ func (s *joinScene) answer(script string) (string, error) {
 		_ = unstructured.SetNestedField(admission.Object, "Joined", "status", "phase")
 		_, err = admissions.Update(context.Background(), admission, metav1.UpdateOptions{})
 		return "", err
+	case strings.Contains(script, "grep -E '^("+joinAttemptLogPrefix):
+		return s.follow, nil
 	case strings.Contains(script, "tail -n +1 -F "+sshJoinLog):
 		return s.follow, nil
 	case strings.Contains(script, "rlark-station-gateway.service"):
@@ -266,11 +279,15 @@ func (s *joinScene) enrolled() {
 func TestAMachineThatReachesStationAPIJoinsInStages(t *testing.T) {
 	s := newJoinScene(t, joinNetwork(nil, nil), readyNode(2),
 		&rlarkv1alpha1.Addon{ObjectMeta: metav1.ObjectMeta{Name: "nvidia-gpu", Namespace: "cluster-a"}})
+	s.follow = "RLARK_SSH_JOIN created-join-1\nRLARK_JOIN_NODE_UID box original-native-uid\n" + s.follow
 	s.reach["10.11.14.128:18443"] = true
 	s.precheck = "gpu=NVIDIA H20\ngpu=NVIDIA H20\n"
 	s.enrolled()
 	s.create()
 	j := s.wait()
+	if j.Annotations[nodeJoinNodeUID] != "original-native-uid" {
+		t.Fatalf("native node UID was not recorded: %v", j.Annotations)
+	}
 	if j.Status.Phase != rlarkv1alpha1.ClusterProvisionSucceeded || j.Status.Facts.Route != rlarkv1alpha1.NodeJoinRouteDirect || j.Spec.NodeName != "box" || j.Status.HostKey != "SHA256:box" {
 		t.Fatalf("status %+v", j.Status)
 	}
@@ -493,10 +510,11 @@ func TestALineThatEndedWhileTheGatewayWasDownIsNotRunAgain(t *testing.T) {
 		t.Fatalf("status %+v; the issue was written before the line: %v", j.Status, s.issued)
 	}
 	s.last = sshJoinExit + "0"
+	s.follow = "RLARK_SSH_JOIN created-join-1\nRLARK_JOIN_NODE_UID box original-native-uid\n"
 	if code, out := s.call(http.MethodPost, "/station/node-joins/cluster-a.box/retry", `{"password":"`+joinPassword+`"}`); code != http.StatusAccepted {
 		t.Fatalf("retry = %d %v", code, out)
 	}
-	if j := s.wait(); j.Status.Phase != rlarkv1alpha1.ClusterProvisionSucceeded || len(s.box.scripts("systemd-run")) != 1 {
+	if j := s.wait(); j.Status.Phase != rlarkv1alpha1.ClusterProvisionSucceeded || j.Annotations[nodeJoinNodeUID] != "original-native-uid" || len(s.box.scripts("systemd-run")) != 1 {
 		t.Fatalf("status %+v, the line started %d times", j.Status, len(s.box.scripts("systemd-run")))
 	}
 }
@@ -507,7 +525,7 @@ func TestAnInterruptedJoinIsRetriedFromItsStageAndHoldsItsName(t *testing.T) {
 	status := newJoinStatus("SHA256:box")
 	status.Facts.Route = rlarkv1alpha1.NodeJoinRouteDirect
 	setStage(&status.Stages, &status.Stage, stageNodeReady, rlarkv1alpha1.ClusterProvisionStageRunning, "", "")
-	j := &rlarkv1alpha1.NodeJoin{ObjectMeta: metav1.ObjectMeta{Name: "cluster-a.box", Labels: map[string]string{nodeJoinClusterLabel: "cluster-a"}},
+	j := &rlarkv1alpha1.NodeJoin{ObjectMeta: metav1.ObjectMeta{Name: "cluster-a.box", UID: "previous-attempt", Labels: map[string]string{nodeJoinClusterLabel: "cluster-a"}},
 		Spec: rlarkv1alpha1.NodeJoinSpec{ClusterID: "cluster-a", NodeName: "box", Machine: rlarkv1alpha1.NodeJoinMachine{Address: "1.2.3.4", Port: 8023, User: "root"}}, Status: status}
 	s := newJoinScene(t, joinNetwork(nil, nil), j, readyNode(0))
 	s.enrolled()
@@ -561,9 +579,9 @@ func TestAJoinWhoseLoginIsRefusedIsNotRecorded(t *testing.T) {
 func TestAJoinThatStoppedAtItsTunnelIsCleared(t *testing.T) {
 	status := newJoinStatus("SHA256:box")
 	status.Phase = rlarkv1alpha1.ClusterProvisionFailed
-	status.Facts = rlarkv1alpha1.NodeJoinFacts{Route: rlarkv1alpha1.NodeJoinRouteTunnel, DeclaredHub: true, TunnelAddress: "10.254.240.6"}
+	status.Facts = rlarkv1alpha1.NodeJoinFacts{Route: rlarkv1alpha1.NodeJoinRouteTunnel, DeclaredHub: true, TunnelAddress: "10.254.240.6", PublicKey: joinKey}
 	setStage(&status.Stages, &status.Stage, stageTunnel, rlarkv1alpha1.ClusterProvisionStageFailed, "", "no answer")
-	j := &rlarkv1alpha1.NodeJoin{ObjectMeta: metav1.ObjectMeta{Name: "cluster-a.box"},
+	j := &rlarkv1alpha1.NodeJoin{ObjectMeta: metav1.ObjectMeta{Name: "cluster-a.box", UID: "test-join"},
 		Spec: rlarkv1alpha1.NodeJoinSpec{ClusterID: "cluster-a", NodeName: "box", Machine: rlarkv1alpha1.NodeJoinMachine{Address: "1.2.3.4", Port: 8023, User: "root"}}, Status: status}
 	other := map[string]interface{}{"clusterID": "rlark-ksyun-gpu", "nodeName": "10-0-2-57", "address": "10.254.240.3"}
 	s := newJoinScene(t, joinNetwork([]interface{}{other, map[string]interface{}{"clusterID": "cluster-a", "nodeName": "box", "address": "10.254.240.6", "publicKey": joinKey}}, nil), j)
@@ -587,7 +605,7 @@ func TestClearingASucceededJoinKeepsItsNode(t *testing.T) {
 	for _, stage := range joinStages {
 		setStage(&status.Stages, &status.Stage, stage, rlarkv1alpha1.ClusterProvisionStageDone, "", "")
 	}
-	j := &rlarkv1alpha1.NodeJoin{ObjectMeta: metav1.ObjectMeta{Name: "cluster-a.box"},
+	j := &rlarkv1alpha1.NodeJoin{ObjectMeta: metav1.ObjectMeta{Name: "cluster-a.box", UID: "test-join"},
 		Spec: rlarkv1alpha1.NodeJoinSpec{ClusterID: "cluster-a", NodeName: "box", Machine: rlarkv1alpha1.NodeJoinMachine{Address: "1.2.3.4", Port: 8023, User: "root"}}, Status: status}
 	s := newJoinScene(t, joinNetwork(nil, nil), j)
 	code, out := s.call(http.MethodPost, "/station/node-joins/cluster-a.box/clear", `{}`)
@@ -618,5 +636,57 @@ func TestRetryRejectsUnknownJoinStage(t *testing.T) {
 	})
 	if code, out := s.call(http.MethodPost, "/station/node-joins/cluster-a.box/retry", `{"password":"fixture"}`); code != http.StatusConflict {
 		t.Fatalf("retry = %d %v", code, out)
+	}
+}
+
+func TestClearInterruptedJoinUsesOriginalUIDOrRefusesLegacyRecord(t *testing.T) {
+	for _, uid := range []string{"original-native-uid", ""} {
+		t.Run("uid="+uid, func(t *testing.T) {
+			status := newJoinStatus("SHA256:box")
+			status.Phase = rlarkv1alpha1.ClusterProvisionFailed
+			setStage(&status.Stages, &status.Stage, stageInstall, rlarkv1alpha1.ClusterProvisionStageFailed, "", "interrupted")
+			j := &rlarkv1alpha1.NodeJoin{
+				ObjectMeta: metav1.ObjectMeta{Name: "cluster-a.box", UID: "join-1", Annotations: map[string]string{nodeJoinNodeUID: uid}},
+				Spec:       rlarkv1alpha1.NodeJoinSpec{ClusterID: "cluster-a", NodeName: "box"},
+				Status:     status,
+			}
+			replacement := readyNode(0)
+			replacement.Status.KubernetesNodeUID = "replacement-native-uid"
+			s := newJoinScene(t, joinNetwork(nil, nil), j, replacement)
+			code, out := s.call(http.MethodPost, "/station/node-joins/cluster-a.box/clear", `{}`)
+			operations, err := s.g.stationClient.Resource(nodeOperationGVR).Namespace("agent-a").List(context.Background(), metav1.ListOptions{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if uid == "" {
+				if code != http.StatusConflict || len(operations.Items) != 0 {
+					t.Fatalf("legacy clear = %d %v, operations %v", code, out, operations.Items)
+				}
+				return
+			}
+			if code != http.StatusOK || len(operations.Items) != 1 {
+				t.Fatalf("clear = %d %v, operations %v", code, out, operations.Items)
+			}
+			got, _, _ := unstructured.NestedString(operations.Items[0].Object, "spec", "nodeUID")
+			if got != uid {
+				t.Fatalf("removal targeted %q, want %q", got, uid)
+			}
+		})
+	}
+}
+
+func TestJoinUIDReceiptCannotBeReplacedOrAdoptedFromOlderAttempt(t *testing.T) {
+	j := &rlarkv1alpha1.NodeJoin{ObjectMeta: metav1.ObjectMeta{Name: "cluster-a.box", UID: "join-1"}, Spec: rlarkv1alpha1.NodeJoinSpec{NodeName: "box"}}
+	s := newJoinScene(t, joinNetwork(nil, nil), j)
+	ctx := context.Background()
+	if err := s.g.recordJoinedNodeUID(ctx, j, "RLARK_SSH_JOIN older-join\nRLARK_JOIN_NODE_UID box unknown\nRLARK_SSH_JOIN join-1\nRLARK_JOIN_NODE_UID box original"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.g.recordJoinedNodeUID(ctx, j, "RLARK_SSH_JOIN join-1\nRLARK_JOIN_NODE_UID box replacement"); err == nil {
+		t.Fatal("a second native UID must not overwrite the original")
+	}
+	current, err := s.g.kubeClient.RlinfV1alpha1().NodeJoins().Get(ctx, j.Name, metav1.GetOptions{})
+	if err != nil || current.Annotations[nodeJoinNodeUID] != "original" {
+		t.Fatalf("join UID receipt = %v, %v", current, err)
 	}
 }

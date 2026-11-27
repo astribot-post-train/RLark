@@ -106,37 +106,40 @@ func CreateClass(ctx context.Context, client kubernetes.Interface, namespace str
 	return nil, ErrClassIDAllocation
 }
 
-// UpdateClass replaces the current declaration of the name being edited.
-func UpdateClass(ctx context.Context, client kubernetes.Interface, namespace, name string, stored StoredClass) error {
-	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
-		secret, err := ClassSecretByName(ctx, client, namespace, name)
-		if err != nil {
-			return err
-		}
-		id, _, err := ClassFromSecret(secret)
-		if err != nil {
-			return errors.NewNotFound(v1.Resource("secrets"), secret.Name)
-		}
-		rebuilt, err := RenderReplication(secret.Namespace, id, stored)
-		if err != nil {
-			return err
-		}
-		secret.Data = rebuilt.Data
-		_, err = client.CoreV1().Secrets(secret.Namespace).Update(ctx, secret, metav1.UpdateOptions{})
+// UpdateClass replaces the definition only if the declaration read for the edit is still current.
+func UpdateClass(ctx context.Context, client kubernetes.Interface, identity *v1.Secret, stored StoredClass) error {
+	id, _, err := ClassFromSecret(identity)
+	if err != nil {
 		return err
-	})
+	}
+	rebuilt, err := RenderReplication(identity.Namespace, id, stored)
+	if err != nil {
+		return err
+	}
+	update := identity.DeepCopy()
+	update.Data = rebuilt.Data
+	_, err = client.CoreV1().Secrets(update.Namespace).Update(ctx, update, metav1.UpdateOptions{})
+	return err
 }
 
-// DeleteClass deletes the declaration selected by its storage Secret.
+// DeleteClass removes the exact declaration selected by the caller.
 func DeleteClass(ctx context.Context, client kubernetes.Interface, identity *v1.Secret) error {
 	return deleteSecret(ctx, client, identity)
 }
 
 func deleteSecret(ctx context.Context, client kubernetes.Interface, identity *v1.Secret) error {
-	return client.CoreV1().Secrets(identity.Namespace).Delete(ctx, identity.Name, metav1.DeleteOptions{})
+	options := metav1.DeleteOptions{Preconditions: &metav1.Preconditions{}}
+	if identity.UID != "" {
+		options.Preconditions.UID = &identity.UID
+	}
+	if identity.ResourceVersion != "" {
+		options.Preconditions.ResourceVersion = &identity.ResourceVersion
+	}
+	return client.CoreV1().Secrets(identity.Namespace).Delete(ctx, identity.Name, options)
 }
 
-// AddClusterToSiteClasses extends S3 classes shared by all other clusters.
+// AddClusterToSiteClasses extends only S3 classes shared by all other clusters.
+// A concurrent storage edit is re-read before computing the new membership.
 func AddClusterToSiteClasses(ctx context.Context, client kubernetes.Interface, namespace, cluster string, others []string) ([]string, error) {
 	secrets, err := ListClassSecrets(ctx, client, namespace)
 	if err != nil {
@@ -144,23 +147,50 @@ func AddClusterToSiteClasses(ctx context.Context, client kubernetes.Interface, n
 	}
 	var added []string
 	for i := range secrets {
-		_, stored, err := ClassFromSecret(&secrets[i])
-		if err != nil || stored.Type != "" && stored.Type != TypeS3 ||
-			slices.Contains(stored.Clusters, cluster) ||
-			slices.ContainsFunc(others, func(other string) bool { return !slices.Contains(stored.Clusters, other) }) {
-			continue
-		}
-		stored.Clusters = append(stored.Clusters, cluster)
-		if stored.MountEndpoint != "" && stored.MountEndpoint != stored.Endpoint {
-			if stored.ClusterMountEndpoints == nil {
-				stored.ClusterMountEndpoints = map[string]string{}
+		identity := &secrets[i]
+		var included string
+		err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+			current, err := client.CoreV1().Secrets(namespace).Get(ctx, identity.Name, metav1.GetOptions{})
+			if errors.IsNotFound(err) {
+				return nil
 			}
-			stored.ClusterMountEndpoints[cluster] = stored.Endpoint
+			if err != nil {
+				return err
+			}
+			if current.UID != identity.UID || current.DeletionTimestamp != nil {
+				return nil
+			}
+			id, stored, err := ClassFromSecret(current)
+			if err != nil || stored.Type != TypeS3 {
+				return nil
+			}
+			if !slices.Contains(stored.Clusters, cluster) {
+				if slices.ContainsFunc(others, func(other string) bool { return !slices.Contains(stored.Clusters, other) }) {
+					return nil
+				}
+				stored.Clusters = append(stored.Clusters, cluster)
+				if stored.MountEndpoint != "" && stored.MountEndpoint != stored.Endpoint {
+					if stored.ClusterMountEndpoints == nil {
+						stored.ClusterMountEndpoints = map[string]string{}
+					}
+					stored.ClusterMountEndpoints[cluster] = stored.Endpoint
+				}
+				if err := UpdateClass(ctx, client, current, stored); err != nil {
+					return err
+				}
+			}
+			if err := SyncEndpointSecrets(ctx, client, namespace, id, &stored, current); err != nil {
+				return err
+			}
+			included = stored.Name
+			return nil
+		})
+		if err != nil {
+			return nil, fmt.Errorf("give storage declaration %s to %s: %w", identity.Name, cluster, err)
 		}
-		if err := UpdateClass(ctx, client, namespace, stored.Name, stored); err != nil {
-			return nil, fmt.Errorf("give storage %s to %s: %w", stored.Name, cluster, err)
+		if included != "" {
+			added = append(added, included)
 		}
-		added = append(added, stored.Name)
 	}
 	return added, nil
 }

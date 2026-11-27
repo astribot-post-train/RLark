@@ -191,7 +191,7 @@ func (g *Gateway) updateStorageClass(c *gin.Context) {
 		respondStorageClassCredentialValidationError(c, err)
 		return
 	}
-	if err := storageconfig.UpdateClass(c.Request.Context(), g.rawClient, g.managementNamespace(), name, stored); err != nil {
+	if err := storageconfig.UpdateClass(c.Request.Context(), g.rawClient, identity, stored); err != nil {
 		if errors.IsNotFound(err) {
 			respondError(c, http.StatusNotFound, CodeResourceNotFound, "storage class not found")
 			return

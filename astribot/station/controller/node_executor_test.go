@@ -97,6 +97,10 @@ func TestNodeLifecycleExecutorDeleteWaitsAndRejectsReplacement(t *testing.T) {
 	listed.SetGroupVersionKind(rlarkNodeGVK)
 	listed.SetNamespace(testNamespace)
 	listed.SetName("worker")
+	listed.SetUID("management-original")
+	if err := unstructured.SetNestedField(listed.Object, "uid", "status", "kubernetesNodeUID"); err != nil {
+		t.Fatal(err)
+	}
 	scheme := runtime.NewScheme()
 	if err := stationv1alpha1.AddToScheme(scheme); err != nil {
 		t.Fatal(err)
@@ -122,7 +126,52 @@ func TestNodeLifecycleExecutorDeleteWaitsAndRejectsReplacement(t *testing.T) {
 	if _, err := member.client.CoreV1().Nodes().Create(ctx, &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "worker", UID: "new"}}, metav1.CreateOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := executor.Execute(ctx, op, "VerifyRemoval"); !errors.Is(err, ErrNodeIdentityChanged) {
-		t.Fatalf("replacement: %v", err)
+	for _, stage := range []string{"Preflight", "DeleteNode", "VerifyRemoval"} {
+		if _, _, err := executor.Execute(ctx, op, stage); !errors.Is(err, ErrNodeIdentityChanged) {
+			t.Fatalf("replacement at %s: %v", stage, err)
+		}
+	}
+}
+
+func TestUIDBoundRemovalKeepsReplacementManagementRecords(t *testing.T) {
+	for _, record := range []string{"management Node", "NetworkEnrollment"} {
+		t.Run(record, func(t *testing.T) {
+			ctx := context.Background()
+			member := &memberClientStub{client: fake.NewSimpleClientset()}
+			scheme := runtime.NewScheme()
+			if err := stationv1alpha1.AddToScheme(scheme); err != nil {
+				t.Fatal(err)
+			}
+			key := client.ObjectKey{Namespace: testNamespace, Name: "worker"}
+			var replacement client.Object
+			stage := "DeleteNode"
+			if record == "management Node" {
+				listed := &unstructured.Unstructured{}
+				listed.SetGroupVersionKind(rlarkNodeGVK)
+				listed.SetNamespace(key.Namespace)
+				listed.SetName(key.Name)
+				listed.SetUID("replacement-record")
+				if err := unstructured.SetNestedField(listed.Object, "replacement-native", "status", "kubernetesNodeUID"); err != nil {
+					t.Fatal(err)
+				}
+				replacement = listed
+			} else {
+				stage = "VerifyRemoval"
+				replacement = &stationv1alpha1.NetworkEnrollment{
+					ObjectMeta: metav1.ObjectMeta{Namespace: key.Namespace, Name: key.Name, UID: "replacement-record"},
+					Spec:       stationv1alpha1.NetworkEnrollmentSpec{ClusterID: "cluster", NodeUID: "replacement-native"},
+				}
+			}
+			management := ctrlfake.NewClientBuilder().WithScheme(scheme).WithObjects(replacement).Build()
+			executor := &NodeLifecycleExecutor{Members: member, Management: management}
+			op := &stationv1alpha1.NodeOperation{ObjectMeta: metav1.ObjectMeta{Namespace: testNamespace},
+				Spec: stationv1alpha1.NodeOperationSpec{Action: "Remove", ClusterID: "cluster", NodeName: "worker", NodeUID: "original-native"}}
+			if _, _, err := executor.Execute(ctx, op, stage); !errors.Is(err, ErrNodeIdentityChanged) {
+				t.Fatalf("replacement should block %s: %v", stage, err)
+			}
+			if err := management.Get(ctx, key, replacement); err != nil || replacement.GetUID() != "replacement-record" {
+				t.Fatalf("replacement was modified: %s %v", replacement.GetUID(), err)
+			}
+		})
 	}
 }

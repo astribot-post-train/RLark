@@ -87,14 +87,14 @@ func (g *Gateway) setupProvisioningWorkflow() {
 		ServerAddress:       g.config.ServerAddress,
 		StationCAFile:       g.config.StationAPICAFile,
 	}, g.kubeClient, g.rawClient, g.stationClient, g.stationBootstrap, workflow.Hooks{
-		GetKCPAdminCerts:          g.getKCPAdminCerts,
-		SignCertViaServer:         g.signCertViaServer,
-		StoreOwnedAgentCertSecret: g.storeOwnedAgentCertSecret,
-		ImagePullSecretsOf:        g.imagePullSecretsOf,
-		ProxyKubeRequest:          g.proxyKubeRequest,
-		PublishAddonPackage:       g.publishAddonPackage,
-		FetchPodLogs:              g.fetchPodLogs,
-		DistributeJobSecret:       g.distributeJobSecret,
+		GetKCPAdminCerts:              g.getKCPAdminCerts,
+		SignCertViaServer:             g.signCertViaServer,
+		StoreProvisionAgentCertSecret: g.storeProvisionAgentCertSecret,
+		ImagePullSecretsOf:            g.imagePullSecretsOf,
+		ProxyKubeRequest:              g.proxyKubeRequest,
+		PublishAddonPackage:           g.publishAddonPackage,
+		FetchPodLogs:                  g.fetchPodLogs,
+		DistributeJobSecret:           g.distributeJobSecret,
 	}, workflow.HTTP{
 		RespondError:              respondError,
 		RespondKubeError:          respondKubeError,
@@ -148,6 +148,7 @@ func (g *Gateway) registerAstribotRoutes(api *gin.RouterGroup) {
 		station.GET("/:name", g.handleGetStation)
 		g.registerStationObservation(station)
 		station.DELETE("/:name", g.handleDeleteStation)
+		station.DELETE("/:name/conflict", g.handleForgetConflictingStation)
 	}
 	stationNodeOperations := adminAPI.Group("/station/node-operations")
 	{

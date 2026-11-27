@@ -92,6 +92,9 @@ func (r *provisionRun) controlPlane(ctx context.Context, p *rlarkv1alpha1.Cluste
 	if document == "" {
 		return "", fmt.Errorf("the SiteNetwork publishes no tunnel document for %s (status.declared): station-controller has not taken the declaration", facts.NodeName)
 	}
+	if _, err := machine.Run(ctx, claimProvisionHost(p.UID), nil, nil); err != nil {
+		return "", fmt.Errorf("claim the control-plane host: %w", err)
+	}
 	// The machine's tunnel first, waited for on its peers' reports (awaitTunnel): the installer's own wait for a
 	// handshake (station-gateway --await-peers) has no Station API to ask on a declared hub.
 	if _, err := machine.Run(ctx, tunnelScript, strings.NewReader(document), nil); err != nil {
@@ -109,6 +112,9 @@ func (r *provisionRun) controlPlane(ctx context.Context, p *rlarkv1alpha1.Cluste
 	}
 	if ready := provisioning.OutputValues(out)["ready"]; ready != "True" {
 		return tunnel + "; node " + facts.NodeName + " Ready=" + ready, fmt.Errorf("the control plane is made, but node %s is not Ready", facts.NodeName)
+	}
+	if _, err := machine.Run(ctx, recordProvisionHostCluster(p.UID), nil, nil); err != nil {
+		return tunnel, fmt.Errorf("record the host's Kubernetes cluster UID: %w", err)
 	}
 	// The management plane reaches the API through the tunnel: the first handshake shows the hub's UDP port is open.
 	address := net.JoinHostPort(facts.TunnelAddress, "6443")

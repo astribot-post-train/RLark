@@ -8,11 +8,11 @@ import (
 	"net"
 	"net/http"
 	"slices"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/rlinf/rlark/api/kubeclients/clientset/versioned"
 	rlarkv1alpha1 "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
 	"github.com/rlinf/rlark/apps/rlark/astribot/nodessh"
@@ -226,8 +226,8 @@ func (g *Service) HandleCreateNodeJoin(c *gin.Context) {
 	}
 	for _, other := range joins.Items {
 		switch {
-		case other.Name == name && other.Status.Phase == rlarkv1alpha1.ClusterProvisionSucceeded:
-			if err := client.Delete(ctx, name, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
+		case other.Name == name && other.UID != "" && other.Status.Phase == rlarkv1alpha1.ClusterProvisionSucceeded:
+			if err := client.Delete(ctx, name, metav1.DeleteOptions{Preconditions: &metav1.Preconditions{UID: &other.UID, ResourceVersion: &other.ResourceVersion}}); err != nil && !apierrors.IsNotFound(err) {
 				g.http.RespondKubeError(c, "delete the earlier join: "+err.Error(), err)
 				return
 			}
@@ -239,6 +239,7 @@ func (g *Service) HandleCreateNodeJoin(c *gin.Context) {
 			return
 		}
 	}
+	var machineClaim string
 	if candidate != nil {
 		resource := g.stationClient.Resource(machineGVR).Namespace(machineNamespace)
 		latest, err := resource.Get(ctx, candidate.GetName(), metav1.GetOptions{})
@@ -256,12 +257,13 @@ func (g *Service) HandleCreateNodeJoin(c *gin.Context) {
 			latestPort = 22
 		}
 		_, alreadyAdmitted, _ := unstructured.NestedMap(latest.Object, "spec", "admit")
-		if latestAddress != request.Address || latestPort != int64(request.Port) || latestKey != request.HostKey || latestAlgorithm != request.HostKeyAlgorithm || latestSite != initialSite || alreadyAdmitted {
+		if latest.GetUID() != candidate.GetUID() || latestAddress != request.Address || latestPort != int64(request.Port) || latestKey != request.HostKey || latestAlgorithm != request.HostKeyAlgorithm || latestSite != initialSite || alreadyAdmitted {
 			c.JSON(http.StatusConflict, gin.H{"error": "scanned candidate identity changed; refresh discovery and review before joining"})
 			return
 		}
+		machineClaim = uuid.NewString()
 		patch, _ := json.Marshal(map[string]interface{}{
-			"metadata": map[string]string{"resourceVersion": latest.GetResourceVersion()},
+			"metadata": map[string]interface{}{"resourceVersion": latest.GetResourceVersion(), "annotations": map[string]string{nodeJoinMachineClaim: machineClaim}},
 			"spec":     map[string]interface{}{"admit": machineAdmissionForServer(request, g.http.Actor(c), time.Now().UTC().Format(time.RFC3339))},
 		})
 		if _, err := resource.Patch(ctx, latest.GetName(), types.MergePatchType, patch, metav1.PatchOptions{}); err != nil {
@@ -277,6 +279,8 @@ func (g *Service) HandleCreateNodeJoin(c *gin.Context) {
 	labels := map[string]string{nodeJoinClusterLabel: request.ClusterID}
 	if candidate != nil {
 		labels[nodeJoinMachineAnnotation] = candidate.GetName()
+		annotations[nodeJoinMachineClaim] = machineClaim
+		annotations[nodeJoinMachineUID] = string(candidate.GetUID())
 	}
 	j, err := client.Create(ctx, &rlarkv1alpha1.NodeJoin{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Labels: labels, Annotations: annotations},
@@ -287,20 +291,24 @@ func (g *Service) HandleCreateNodeJoin(c *gin.Context) {
 	}, metav1.CreateOptions{})
 	if err != nil {
 		if candidate != nil {
-			_ = g.clearMachineAdmission(ctx, candidate.GetName(), request.ClusterID, g.http.Actor(c))
+			_ = g.clearMachineAdmission(ctx, candidate.GetName(), request.ClusterID, g.http.Actor(c), candidate.GetUID(), machineClaim)
 		}
 		g.http.RespondKubeError(c, "create node join: "+err.Error(), err)
 		return
 	}
 	j.Status = newJoinStatus(hostKey)
-	if j, err = client.UpdateStatus(ctx, j, metav1.UpdateOptions{}); err != nil {
+	written, err := client.UpdateStatus(ctx, j, metav1.UpdateOptions{})
+	if err != nil {
 		if candidate != nil {
-			_ = g.clearMachineAdmission(ctx, candidate.GetName(), request.ClusterID, g.http.Actor(c))
+			_ = g.clearMachineAdmission(ctx, candidate.GetName(), request.ClusterID, g.http.Actor(c), candidate.GetUID(), machineClaim)
 		}
-		_ = client.Delete(ctx, name, metav1.DeleteOptions{})
+		if j.UID != "" {
+			_ = client.Delete(ctx, name, metav1.DeleteOptions{Preconditions: &metav1.Preconditions{UID: &j.UID, ResourceVersion: &j.ResourceVersion}})
+		}
 		g.http.RespondKubeError(c, "write the node join's status: "+err.Error(), err)
 		return
 	}
+	j = written
 	started = g.startNodeJoin(ctx, &nodeJoinRun{g: g, name: name, namespace: namespace, password: password, sudoPassword: sudoPassword, machine: machine}, joinStages[0])
 	c.Header("Cache-Control", "no-store")
 	c.JSON(http.StatusCreated, gin.H{"data": j})
@@ -343,11 +351,8 @@ func NodeJoinsOf(ctx context.Context, kubeClient versioned.Interface, clusterID 
 	items := make([]rlarkv1alpha1.NodeJoin, 0, len(list.Items))
 	for _, j := range list.Items {
 		// A join that succeeded is listed for joinKeptFor after its last stage.
-		if j.Status.Phase == rlarkv1alpha1.ClusterProvisionSucceeded && joinExpired(j.Status.Stages) {
-			options := metav1.DeleteOptions{}
-			if j.UID != "" && j.ResourceVersion != "" {
-				options.Preconditions = &metav1.Preconditions{UID: &j.UID, ResourceVersion: &j.ResourceVersion}
-			}
+		if j.UID != "" && j.Status.Phase == rlarkv1alpha1.ClusterProvisionSucceeded && joinExpired(j.Status.Stages) {
+			options := metav1.DeleteOptions{Preconditions: &metav1.Preconditions{UID: &j.UID, ResourceVersion: &j.ResourceVersion}}
 			if err := client.Delete(ctx, j.Name, options); err != nil && !apierrors.IsNotFound(err) {
 				return nil, err
 			}
@@ -450,18 +455,19 @@ func (g *Service) HandleRetryNodeJoin(c *gin.Context) {
 
 // clearTunnelScript takes away the tunnel a join started on the machine; its key and the installer stay, so that a
 // join that starts over finds the same machine.
+const joinTunnelHostMarker = "/var/lib/rlark/node-join-tunnel.uid"
+
 const clearTunnelScript = `set -eu
-systemctl disable --now rlark-station-gateway >/dev/null 2>&1 || true
+marker=` + joinTunnelHostMarker + "\n" + verifyHostMarker + `systemctl disable --now rlark-station-gateway >/dev/null 2>&1 || true
 rm -f /etc/systemd/system/rlark-station-gateway.service /etc/rlark/station/bootstrap.json /var/lib/station/wg/last-applied.json
 ip link del st-wg0 2>/dev/null || true
 systemctl daemon-reload
 echo cleared=yes
-`
+` + finishHostCleanup
 
-// HandleClearNodeJoin answers POST /api/v1/station/node-joins/:name/clear: a join that is not running is taken away,
-// with what it left. Before its code's line ran: its declaration as a hub, and with the password the tunnel it
-// started on the machine. After: the node's name is removed as a removal by name does (a NodeOperation Remove), which
-// retires its site node record and deletes its admission or its Node. It answers what it did, a line a step.
+// HandleClearNodeJoin clears owned tunnel state before installation, or
+// submits a UID-bound removal for an interrupted installation. Successful
+// joins can be removed from history without removing their nodes.
 func (g *Service) HandleClearNodeJoin(c *gin.Context) {
 	var request nodeJoinRequest
 	if !g.http.DecodeOneJSON(c, maxNodeAdmissionRequestBytes, &request, true) {
@@ -497,22 +503,27 @@ func (g *Service) HandleClearNodeJoin(c *gin.Context) {
 	if user := strings.TrimSpace(request.User); user != "" {
 		j.Spec.Machine.User = user
 	}
+	installReached := reached(stageInstall) || slices.Index(joinStages, j.Status.Stage) >= slices.Index(joinStages, stageInstall)
+	if j.UID == "" || j.Status.Phase != rlarkv1alpha1.ClusterProvisionSucceeded && installReached && j.Annotations[nodeJoinNodeUID] == "" {
+		c.JSON(http.StatusConflict, gin.H{"error": "the SSH join has no verified original UID for cleanup"})
+		return
+	}
 	// A join that succeeded leaves its node in the cluster: only its record goes (a node is removed on its own page).
 	var steps []string
 	switch {
 	case j.Status.Phase == rlarkv1alpha1.ClusterProvisionSucceeded:
-	case reached(stageInstall):
-		steps, err = g.removeJoinedName(ctx, namespace, j, g.http.Actor(c))
+	case installReached:
+		steps, err = g.removeJoinedNode(ctx, namespace, j, g.http.Actor(c))
 	default:
 		steps, err = g.clearUnredeemedJoin(ctx, j, password, sudoPassword)
 	}
 	if err == nil {
-		if err = g.clearNodeJoinMachineAdmission(ctx, j); err == nil && j.Annotations[nodeJoinMachineAnnotation] != "" {
+		if err = g.clearNodeJoinMachineAdmission(ctx, j); err == nil && j.Annotations[nodeJoinMachineClaim] != "" {
 			steps = append(steps, "cleared the scanned Machine admission")
 		}
 	}
 	if err == nil {
-		if err = client.Delete(ctx, j.Name, metav1.DeleteOptions{}); err == nil || apierrors.IsNotFound(err) {
+		if err = client.Delete(ctx, j.Name, metav1.DeleteOptions{Preconditions: &metav1.Preconditions{UID: &j.UID, ResourceVersion: &j.ResourceVersion}}); err == nil || apierrors.IsNotFound(err) {
 			err = nil
 			steps = append(steps, "删掉这条 SSH 入网记录")
 		}
@@ -537,7 +548,7 @@ func (g *Service) clearUnredeemedJoin(ctx context.Context, j *rlarkv1alpha1.Node
 		if err != nil {
 			return steps, fmt.Errorf("登录 %s@%s：%w", j.Spec.Machine.User, j.Spec.Machine.Address, err)
 		}
-		_, err = machine.Run(ctx, clearTunnelScript, nil, nil)
+		_, err = machine.Run(ctx, "owner="+nodessh.Quote(string(j.UID))+"\n"+clearTunnelScript, nil, nil)
 		_ = machine.Close()
 		if err != nil {
 			return steps, fmt.Errorf("撤掉机器上的隧道：%w", err)
@@ -557,7 +568,8 @@ func (g *Service) clearUnredeemedJoin(ctx context.Context, j *rlarkv1alpha1.Node
 		nodes, _, _ := unstructured.NestedSlice(network.Object.Object, "spec", "nodes")
 		nodes = slices.DeleteFunc(nodes, func(raw interface{}) bool {
 			entry, _ := raw.(map[string]interface{})
-			return entry["clusterID"] == j.Spec.ClusterID && entry["nodeName"] == j.Spec.NodeName
+			return j.Status.Facts.PublicKey != "" && j.Status.Facts.TunnelAddress != "" && entry["clusterID"] == j.Spec.ClusterID &&
+				entry["nodeName"] == j.Spec.NodeName && entry["publicKey"] == j.Status.Facts.PublicKey && entry["address"] == j.Status.Facts.TunnelAddress
 		})
 		if err := unstructured.SetNestedSlice(network.Object.Object, nodes, "spec", "nodes"); err != nil {
 			return err
@@ -571,17 +583,35 @@ func (g *Service) clearUnredeemedJoin(ctx context.Context, j *rlarkv1alpha1.Node
 	return append(steps, fmt.Sprintf("SiteNetwork：撤掉 %s 的 Hub 声明（隧道地址 %s 放出）", j.Spec.NodeName, j.Status.Facts.TunnelAddress)), nil
 }
 
-// removeJoinedName removes the node's name as the console's "start over" of an admission does: a NodeOperation
-// Remove without a UID, which station-controller carries out (the Node its cluster has, or what RLark keeps of the
-// name: the site node record, the admission).
-func (g *Service) removeJoinedName(ctx context.Context, namespace string, j *rlarkv1alpha1.NodeJoin, actor string) ([]string, error) {
-	requestID := "clear-" + j.Spec.NodeName + "-" + strconv.FormatInt(time.Now().Unix(), 36)
+// removeJoinedNode submits a repeatable removal of the native Node recorded by the installer.
+func (g *Service) removeJoinedNode(ctx context.Context, namespace string, j *rlarkv1alpha1.NodeJoin, actor string) ([]string, error) {
+	uid := j.Annotations[nodeJoinNodeUID]
+	if j.UID == "" || uid == "" {
+		return nil, fmt.Errorf("the SSH join has no verified original Node UID")
+	}
+	requestID := "clear-" + string(j.UID)
 	name := stationidentity.NodeOperationName(j.Spec.ClusterID, requestID)
-	spec := map[string]any{"requestID": requestID, "action": "Remove", "clusterID": j.Spec.ClusterID, "nodeName": j.Spec.NodeName, "requestedBy": actor}
+	spec := map[string]any{"requestID": requestID, "action": "Remove", "clusterID": j.Spec.ClusterID, "nodeName": j.Spec.NodeName, "nodeUID": uid, "requestedBy": actor}
 	operation := &unstructured.Unstructured{Object: map[string]any{"apiVersion": "station.rlark.io/v1alpha1", "kind": "NodeOperation",
 		"metadata": map[string]any{"name": name, "namespace": namespace}, "spec": spec}}
-	if _, err := g.stationClient.Resource(nodeOperationGVR).Namespace(namespace).Create(ctx, operation, metav1.CreateOptions{}); err != nil {
+	operation.SetAnnotations(map[string]string{stationidentity.SSHJoinUIDAnnotation: string(j.UID)})
+	resource := g.stationClient.Resource(nodeOperationGVR).Namespace(namespace)
+	if _, err := resource.Create(ctx, operation, metav1.CreateOptions{}); apierrors.IsAlreadyExists(err) {
+		current, err := resource.Get(ctx, name, metav1.GetOptions{})
+		if err != nil {
+			return nil, err
+		}
+		if current.GetDeletionTimestamp() != nil || current.GetAnnotations()[stationidentity.SSHJoinUIDAnnotation] != string(j.UID) {
+			return nil, fmt.Errorf("the existing removal does not belong to this SSH join")
+		}
+		for _, field := range []string{"requestID", "action", "clusterID", "nodeName", "nodeUID"} {
+			value, _, _ := unstructured.NestedString(current.Object, "spec", field)
+			if value != spec[field] {
+				return nil, fmt.Errorf("the existing removal has a different %s", field)
+			}
+		}
+	} else if err != nil {
 		return nil, fmt.Errorf("提交删除节点 %s：%w", j.Spec.NodeName, err)
 	}
-	return []string{fmt.Sprintf("提交删除节点 %s（%s）：集群里有这个节点就删掉它；没有就退役它的场站节点记录、删掉入网许可，放出公钥和隧道地址", j.Spec.NodeName, name)}, nil
+	return []string{fmt.Sprintf("提交删除节点 %s（UID %s，操作 %s）", j.Spec.NodeName, uid, name)}, nil
 }

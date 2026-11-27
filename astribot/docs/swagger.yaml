@@ -225,10 +225,9 @@ paths:
       tags: [Clusters]
       summary: Take away a making that stopped, or what the making of a deleted cluster left (administrator only)
       description: >-
-        Puts the machine back (the installer's control-plane undo, the tunnel), deletes the Cluster a making that did
-        not finish listed and the credentials the management plane reaches it with, takes the making's site, name and
-        nodes out of the SiteNetwork, and deletes the record; the site, the cluster's name and the machine can then be
-        used again. Answers what it did, a line a step.
+        Clears the resources owned by this provisioning attempt. Cluster deletion requires the recorded original UID.
+        A replacement or a missing binding for a live Cluster returns 409. Credentials, site declarations and host
+        rollback require matching ownership evidence. Independent Station records are retained. Returns the steps taken.
       parameters:
         - {name: name, in: path, required: true, schema: {type: string}}
       requestBody:
@@ -244,7 +243,7 @@ paths:
       responses:
         '200': {description: Cleared, content: {application/json: {schema: {type: object, properties: {steps: {type: array, items: {type: string}}}}}}}
         '400': {description: The making reached the machine and neither its password nor machine_gone was given}
-        '409': {description: "The making runs, or its cluster is made and listed (delete the cluster first)"}
+        '409': {description: "The provision is running, its completed Cluster is still listed, or the live Cluster has no matching UID binding"}
         '502': {description: "A step failed; steps holds what was done before it"}
   /api/v1/station/node-admissions:
     get:
@@ -440,9 +439,9 @@ paths:
       tags: [Station]
       summary: Take away a join that is not running, with what it left (administrator only)
       description: >-
-        Before its code's line ran: the tunnel it started on the machine (with the password; the key and the installer
-        stay) and its declaration of the machine as a hub. After: the node's name is removed as a removal by name does
-        (a NodeOperation Remove). Then the record goes. Answers what it did, a line a step.
+        Clears verified tunnel state for a join that stopped before installation. An interrupted join that reached
+        installation requires the original native Node UID and submits an asynchronous UID-bound Remove operation.
+        Clearing a successful join removes its history only. Returns the steps taken.
       parameters:
         - {name: name, in: path, required: true, schema: {type: string}}
       requestBody:
@@ -459,7 +458,7 @@ paths:
                 machine_gone: {type: boolean, description: The machine is not there to be put back}
       responses:
         '200': {description: "steps: what was done"}
-        '409': {description: The join runs}
+        '409': {description: The join is running or the original Node UID could not be verified}
         '502': {description: "A step failed; steps: what was done before it"}
   /api/v1/station/machines:
     get:
@@ -821,10 +820,8 @@ paths:
       tags: [Station]
       summary: Delete a site node record (administrator only)
       description: >-
-        The record (the node's NetworkEnrollment) is deleted when its node was removed (spec.retired), when another
-        Node reports under its name (status.node.state Conflict), or when its node does not report (is not Bound) and
-        RLark has no Node of the name. A node that comes back registers again with its next report, as a new machine.
-        A record that is gone already answers 200: the request can be made again.
+        The record is deleted when retired, otherwise eligible for record cleanup, or in a conflict other than NodeUIDChanged.
+        A NodeUIDChanged conflict must use the UID-bound conflict cleanup endpoint.
       parameters:
         - {name: name, in: path, required: true, schema: {type: string}}
         - {name: cluster_id, in: query, required: true, schema: {type: string}}
@@ -833,6 +830,24 @@ paths:
         '400': {description: Cluster ID required}
         '404': {description: Cluster not found}
         '409': {description: The node is in the cluster (remove it first), or the record changed while it was being deleted}
+        '502': {description: Management Kubernetes API unavailable}
+  /api/v1/station/stations/{name}/conflict:
+    delete:
+      tags: [Station]
+      summary: Clear the selected stale enrollment after a Node UID conflict
+      description: >-
+        Removes only the original conflicting NetworkEnrollment. No Node or NodeOperation is changed.
+        Repeat calls succeed if the record is gone and return 409 if a replacement record exists.
+      parameters:
+        - {name: name, in: path, required: true, schema: {type: string}}
+        - {name: cluster_id, in: query, required: true, schema: {type: string}}
+        - {name: record_uid, in: query, required: true, schema: {type: string}}
+      responses:
+        '200': {description: The original enrollment is gone}
+        '400': {description: Cluster ID or record UID required}
+        '403': {description: Administrator role required}
+        '404': {description: Cluster not found}
+        '409': {description: The enrollment or its identity-conflict state changed}
         '502': {description: Management Kubernetes API unavailable}
   /api/v1/station/stations/{name}/running-images:
     get:

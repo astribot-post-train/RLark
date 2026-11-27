@@ -8,10 +8,14 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -19,7 +23,9 @@ import (
 	"github.com/gin-gonic/gin"
 	clientset "github.com/rlinf/rlark/api/kubeclients/clientset/versioned/fake"
 	rlarkv1alpha1 "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
+	"github.com/rlinf/rlark/apps/rlark/astribot/nodessh"
 	"github.com/rlinf/rlark/apps/rlark/astribot/provisioning"
+	"github.com/rlinf/rlark/apps/rlark/astribot/provisioning/ownership"
 	"github.com/rlinf/rlark/apps/rlark/astribot/release"
 	"github.com/rlinf/rlark/apps/rlark/astribot/stationmember"
 	corev1 "k8s.io/api/core/v1"
@@ -30,6 +36,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
 	kubefake "k8s.io/client-go/kubernetes/fake"
+	ktesting "k8s.io/client-go/testing"
 )
 
 // fakeMachine answers each script by the first line of it that a test names.
@@ -199,10 +206,12 @@ func TestBundleStreamsStationAPIsInstallerAndChecksWhatTheMachineHolds(t *testin
 }
 
 func TestDeclareAddsTheSiteItsNamesAndTheHubKeepingTheRest(t *testing.T) {
-	g := provisionGateway(t, provisionTestNetwork(map[string]interface{}{"clusterID": "rlark-baidu-gpu", "nodeName": "bd-gpu-1", "config": "{}"}))
+	fixture := provisionTestNetwork(map[string]interface{}{"clusterID": "rlark-baidu-gpu", "nodeName": "bd-gpu-1", "config": "{}"})
+	fixture.SetUID("network-uid")
+	g := provisionGateway(t, fixture)
 	run := &provisionRun{g: g}
 	p := &rlarkv1alpha1.ClusterProvision{
-		ObjectMeta: metav1.ObjectMeta{Name: "rlark-baidu-gpu"},
+		ObjectMeta: metav1.ObjectMeta{Name: "rlark-baidu-gpu", UID: "provision-uid"},
 		Spec:       rlarkv1alpha1.ClusterProvisionSpec{Site: "baidu", Machine: rlarkv1alpha1.ClusterProvisionMachine{Address: "1.2.3.4", Port: 8023, User: "root", TunnelEndpoint: "1.2.3.4:8100"}},
 		Status: rlarkv1alpha1.ClusterProvisionStatus{Facts: rlarkv1alpha1.ClusterProvisionFacts{
 			NodeName: "bd-gpu-1", PrivateAddress: "192.168.0.10", PublicKey: "KEY", Routes: []string{"10.200.0.0/16"},
@@ -439,21 +448,31 @@ func base64Std(text string) string { return base64.StdEncoding.EncodeToString([]
 // out of the SiteNetwork keeping every other, and deletes the record; the name can then be made again.
 func TestAMakingThatStoppedIsClearedAndItsNameMadeAgain(t *testing.T) {
 	network := provisionTestNetwork()
+	network.SetUID("original-network")
+	network.SetAnnotations(map[string]string{siteProvisionAnnotation("rlark-baidu-gpu"): siteProvisionReceipt("provision", "original-network", "cp.rlark-baidu-gpu.rlark.internal", "gpu-1", "10.254.240.6", "key", "baidu")})
 	spec := network.Object["spec"].(map[string]interface{})
 	spec["sites"] = append(spec["sites"].([]interface{}), map[string]interface{}{"name": "baidu", "clusters": []interface{}{"rlark-baidu-gpu"}})
 	spec["names"] = append(spec["names"].([]interface{}), map[string]interface{}{"name": "cp.rlark-baidu-gpu.rlark.internal", "address": "10.254.240.6"})
 	spec["nodes"] = append(spec["nodes"].([]interface{}), map[string]interface{}{"clusterID": "rlark-baidu-gpu", "nodeName": "gpu-1", "role": "Hub", "address": "10.254.240.6", "publicKey": "key"})
 	stopped := &rlarkv1alpha1.ClusterProvision{
-		ObjectMeta: metav1.ObjectMeta{Name: "rlark-baidu-gpu"},
+		ObjectMeta: metav1.ObjectMeta{Name: "rlark-baidu-gpu", UID: "provision", Annotations: map[string]string{provisionClusterReceipt: "original-cluster"}},
 		Spec:       rlarkv1alpha1.ClusterProvisionSpec{Site: "baidu", Machine: rlarkv1alpha1.ClusterProvisionMachine{Address: "1.2.3.4", Port: 22, User: "root"}},
 		Status: rlarkv1alpha1.ClusterProvisionStatus{Phase: rlarkv1alpha1.ClusterProvisionFailed, Stage: stageAgent, HostKey: "SHA256:first",
-			Facts: rlarkv1alpha1.ClusterProvisionFacts{NodeName: "gpu-1", TunnelAddress: "10.254.240.6"},
+			Facts: rlarkv1alpha1.ClusterProvisionFacts{NodeName: "gpu-1", TunnelAddress: "10.254.240.6", PublicKey: "key"},
 			Stages: []rlarkv1alpha1.ClusterProvisionStage{{Name: stagePrecheck, State: rlarkv1alpha1.ClusterProvisionStageDone}, {Name: stageBundle, State: rlarkv1alpha1.ClusterProvisionStageDone},
-				{Name: stageAgent, State: rlarkv1alpha1.ClusterProvisionStageFailed}}},
+				{Name: stageControlPlane, State: rlarkv1alpha1.ClusterProvisionStageDone}, {Name: stageAgent, State: rlarkv1alpha1.ClusterProvisionStageFailed}}},
 	}
-	g := provisionGateway(t, network, stopped, &rlarkv1alpha1.Cluster{ObjectMeta: metav1.ObjectMeta{Name: "rlark-baidu-gpu"}})
+	g := provisionGateway(t, network, stopped, &rlarkv1alpha1.Cluster{ObjectMeta: metav1.ObjectMeta{Name: "rlark-baidu-gpu", UID: "original-cluster", Annotations: map[string]string{ownership.ProvisionUID: "provision"}}})
 	ctx := context.Background()
-	_, _ = g.rawClient.CoreV1().Secrets(stationMemberCredentialNamespace).Create(ctx, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: stationmember.SecretName("rlark-baidu-gpu"), Namespace: stationMemberCredentialNamespace}}, metav1.CreateOptions{})
+	secrets := g.rawClient.CoreV1().Secrets(stationMemberCredentialNamespace)
+	credential := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: stationmember.SecretName("rlark-baidu-gpu"), Namespace: stationMemberCredentialNamespace,
+		UID: "original-credential", ResourceVersion: "1", Annotations: map[string]string{ownership.ProvisionUID: "provision"}}}
+	if _, err := secrets.Create(ctx, credential, metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := ownership.WriteCredential(ctx, secrets, credential, "provision"); err != nil {
+		t.Fatal(err)
+	}
 	for _, object := range []*unstructured.Unstructured{
 		{Object: map[string]interface{}{"apiVersion": "station.rlark.io/v1alpha1", "kind": "NetworkEnrollment", "metadata": map[string]interface{}{"name": "gpu-1", "namespace": "rlark-baidu-gpu"},
 			"spec": map[string]interface{}{"nodeUID": "earlier"}}},
@@ -482,7 +501,7 @@ func TestAMakingThatStoppedIsClearedAndItsNameMadeAgain(t *testing.T) {
 		t.Fatalf("clearing a making that reached the machine, without its password = %d, want 400", code)
 	}
 	code, out := provisionCall(t, g, http.MethodPost, "/cluster-provisions/rlark-baidu-gpu/clear", "", `{"password":"p"}`)
-	if code != http.StatusOK || len(out["steps"].([]interface{})) != 6 {
+	if code != http.StatusOK || len(out["steps"].([]interface{})) != 5 {
 		t.Fatalf("clear = %d %v", code, out)
 	}
 	if shown != "SHA256:first" || len(machine.ran) != 1 || !machine.closed {
@@ -494,11 +513,11 @@ func TestAMakingThatStoppedIsClearedAndItsNameMadeAgain(t *testing.T) {
 	if _, err := g.rawClient.CoreV1().Secrets(stationMemberCredentialNamespace).Get(ctx, stationmember.SecretName("rlark-baidu-gpu"), metav1.GetOptions{}); !apierrors.IsNotFound(err) {
 		t.Fatalf("Station's member credential: %v", err)
 	}
-	if left, _ := g.stationClient.Resource(networkEnrollmentGVR).Namespace("rlark-baidu-gpu").List(ctx, metav1.ListOptions{}); len(left.Items) != 0 {
-		t.Fatalf("the cluster's site node records must go: %d", len(left.Items))
+	if left, _ := g.stationClient.Resource(networkEnrollmentGVR).Namespace("rlark-baidu-gpu").List(ctx, metav1.ListOptions{}); len(left.Items) != 1 {
+		t.Fatalf("the cluster's site node records must stay without provenance: %d", len(left.Items))
 	}
-	if left, _ := g.stationClient.Resource(nodeAdmissionGVR).Namespace("rlark-baidu-gpu").List(ctx, metav1.ListOptions{}); len(left.Items) != 0 {
-		t.Fatalf("the cluster's admissions must go: %d", len(left.Items))
+	if left, _ := g.stationClient.Resource(nodeAdmissionGVR).Namespace("rlark-baidu-gpu").List(ctx, metav1.ListOptions{}); len(left.Items) != 1 {
+		t.Fatalf("the cluster's admissions must stay without provenance: %d", len(left.Items))
 	}
 	if _, err := g.stationClient.Resource(nodeAdmissionGVR).Namespace("rlark-local-dev-gpu").Get(ctx, "s1u-01-x86", metav1.GetOptions{}); err != nil {
 		t.Fatalf("another cluster's admission must stay: %v", err)
@@ -517,7 +536,7 @@ func TestAMakingThatStoppedIsClearedAndItsNameMadeAgain(t *testing.T) {
 
 // A cluster that was made and is listed is not cleared from under it; a machine that is gone is not logged in to.
 func TestClearingLeavesAListedClusterAndAMachineThatIsGone(t *testing.T) {
-	made := &rlarkv1alpha1.ClusterProvision{ObjectMeta: metav1.ObjectMeta{Name: "rlark-baidu-gpu"}, Spec: rlarkv1alpha1.ClusterProvisionSpec{Site: "baidu"},
+	made := &rlarkv1alpha1.ClusterProvision{ObjectMeta: metav1.ObjectMeta{Name: "rlark-baidu-gpu", UID: "legacy-provision"}, Spec: rlarkv1alpha1.ClusterProvisionSpec{Site: "baidu"},
 		Status: rlarkv1alpha1.ClusterProvisionStatus{Phase: rlarkv1alpha1.ClusterProvisionSucceeded, Stages: []rlarkv1alpha1.ClusterProvisionStage{{Name: stageBundle, State: rlarkv1alpha1.ClusterProvisionStageDone}}}}
 	g := provisionGateway(t, provisionTestNetwork(), made, &rlarkv1alpha1.Cluster{ObjectMeta: metav1.ObjectMeta{Name: "rlark-baidu-gpu"}})
 	g.provisionDial = func(context.Context, rlarkv1alpha1.ClusterProvisionMachine, []byte, string) (provisioning.Machine, string, error) {
@@ -541,5 +560,136 @@ func TestRetryRejectsUnknownProvisioningStage(t *testing.T) {
 	})
 	if code, out := provisionCall(t, g, http.MethodPost, "/cluster-provisions/"+name+"/retry", name, `{"password":"fixture"}`); code != http.StatusConflict {
 		t.Fatalf("retry = %d %v", code, out)
+	}
+}
+
+func TestClearClusterRejectsReplacementAndLegacyRecord(t *testing.T) {
+	const name = "rlark-baidu-gpu"
+	for _, receipt := range []string{"original", ""} {
+		t.Run("receipt="+receipt, func(t *testing.T) {
+			p := &rlarkv1alpha1.ClusterProvision{
+				ObjectMeta: metav1.ObjectMeta{Name: name, UID: "attempt", Annotations: map[string]string{provisionClusterReceipt: receipt}},
+				Status:     rlarkv1alpha1.ClusterProvisionStatus{Phase: rlarkv1alpha1.ClusterProvisionFailed},
+			}
+			// Even copied ownership annotations cannot turn a replacement into the original.
+			cluster := &rlarkv1alpha1.Cluster{ObjectMeta: metav1.ObjectMeta{Name: name, UID: "replacement", Annotations: map[string]string{ownership.ProvisionUID: "attempt"}}}
+			g := provisionGateway(t, provisionTestNetwork(), p, cluster)
+			code, out := provisionCall(t, g, http.MethodPost, "/cluster-provisions/"+name+"/clear", name, `{"machine_gone":true}`)
+			if code != http.StatusConflict {
+				t.Fatalf("clear=%d %v", code, out)
+			}
+			for _, action := range g.kubeClient.(*clientset.Clientset).Actions() {
+				if action.GetVerb() == "delete" {
+					t.Fatalf("cleanup attempted a delete: %v", action)
+				}
+			}
+		})
+	}
+}
+
+func TestClearClusterKeepsReplacementCredentialAfterOriginalClusterIsGone(t *testing.T) {
+	const name = "rlark-baidu-gpu"
+	p := &rlarkv1alpha1.ClusterProvision{ObjectMeta: metav1.ObjectMeta{Name: name, UID: "attempt", Annotations: map[string]string{provisionClusterReceipt: "original"}}}
+	g := provisionGateway(t, provisionTestNetwork(), p)
+	ctx := context.Background()
+	secrets := g.rawClient.CoreV1().Secrets(stationMemberCredentialNamespace)
+	secret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{
+		Name: stationmember.SecretName(name), Namespace: stationMemberCredentialNamespace, UID: "old-secret",
+		Annotations: map[string]string{ownership.ProvisionUID: "attempt"},
+	}}
+	if _, err := secrets.Create(ctx, secret, metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := ownership.WriteCredential(ctx, secrets, secret, "attempt"); err != nil {
+		t.Fatal(err)
+	}
+	claimed, err := secrets.Get(ctx, secret.Name, metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := secrets.Delete(ctx, secret.Name, metav1.DeleteOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	claimed.UID = "replacement-secret"
+	if _, err := secrets.Create(ctx, claimed, metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	code, out := provisionCall(t, g, http.MethodPost, "/cluster-provisions/"+name+"/clear", name, `{"machine_gone":true}`)
+	if code != http.StatusOK {
+		t.Fatalf("clear=%d %v", code, out)
+	}
+	if current, err := secrets.Get(ctx, secret.Name, metav1.GetOptions{}); err != nil || current.UID != "replacement-secret" {
+		t.Fatalf("replacement credential changed: %v, %v", current, err)
+	}
+}
+
+func TestClearClusterSendsOriginalUIDAsDeletePrecondition(t *testing.T) {
+	const name = "rlark-baidu-gpu"
+	p := &rlarkv1alpha1.ClusterProvision{ObjectMeta: metav1.ObjectMeta{Name: name, UID: "attempt",
+		Annotations: map[string]string{provisionClusterReceipt: "original"}}}
+	cluster := &rlarkv1alpha1.Cluster{ObjectMeta: metav1.ObjectMeta{Name: name, UID: "original",
+		Annotations: map[string]string{ownership.ProvisionUID: "attempt"}}}
+	g := provisionGateway(t, provisionTestNetwork(), p, cluster)
+	kube := g.kubeClient.(*clientset.Clientset)
+	attempted := false
+	kube.PrependReactor("delete", "clusters", func(action ktesting.Action) (bool, runtime.Object, error) {
+		attempted = true
+		options := action.(ktesting.DeleteAction).GetDeleteOptions()
+		if options.Preconditions == nil || options.Preconditions.UID == nil || *options.Preconditions.UID != "original" {
+			t.Fatalf("unfenced delete: %#v", options)
+		}
+		return true, nil, apierrors.NewConflict(rlarkv1alpha1.Resource("clusters"), name, fmt.Errorf("UID precondition failed after replacement"))
+	})
+	code, out := provisionCall(t, g, http.MethodPost, "/cluster-provisions/"+name+"/clear", name, `{"machine_gone":true}`)
+	if !attempted || code != http.StatusConflict {
+		t.Fatalf("clear = %d %v, delete attempted = %v", code, out, attempted)
+	}
+	if _, err := kube.RlinfV1alpha1().ClusterProvisions().Get(context.Background(), name, metav1.GetOptions{}); err != nil {
+		t.Fatalf("provision record must remain on UID conflict: %v", err)
+	}
+}
+
+func TestReserveProvisionClusterPersistsOriginalUIDBeforeAgentRegistration(t *testing.T) {
+	const name = "rlark-baidu-gpu"
+	ctx := context.Background()
+	p := &rlarkv1alpha1.ClusterProvision{ObjectMeta: metav1.ObjectMeta{Name: name, UID: "attempt"}}
+	g := provisionGateway(t, provisionTestNetwork(), p)
+	g.kubeClient.(*clientset.Clientset).PrependReactor("create", "clusters", func(action ktesting.Action) (bool, runtime.Object, error) {
+		cluster := action.(ktesting.CreateAction).GetObject().(*rlarkv1alpha1.Cluster)
+		cluster.UID = "assigned-cluster"
+		return false, nil, nil
+	})
+	uid, err := g.reserveProvisionCluster(ctx, p)
+	if err != nil || uid != "assigned-cluster" {
+		t.Fatalf("reserve = %s, %v", uid, err)
+	}
+	written, err := g.kubeClient.RlinfV1alpha1().ClusterProvisions().Get(ctx, name, metav1.GetOptions{})
+	if err != nil || written.Annotations[provisionClusterReceipt] != string(uid) {
+		t.Fatalf("missing original UID receipt: %v, %v", written, err)
+	}
+	if got, err := g.reserveProvisionCluster(ctx, written); err != nil || got != uid {
+		t.Fatalf("retry changed the binding: %s, %v", got, err)
+	}
+}
+
+func TestHostRollbackRejectsReplacementOrMissingNativeClusterUID(t *testing.T) {
+	marker := filepath.Join(t.TempDir(), "provision")
+	if err := os.WriteFile(marker+".cluster", []byte("native-original\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, uid := range []string{"native-original", "native-replacement", ""} {
+		t.Run("uid="+uid, func(t *testing.T) {
+			// Run the exact rollback guard with just the Kubernetes read substituted.
+			script := "set -eu\nmarker=" + nodessh.Quote(marker) + "\nnative_cluster_uid() { printf '%s' " +
+				nodessh.Quote(uid) + "; }\n" + strings.TrimPrefix(verifyProvisionHostCluster, readHostClusterUID) + "\necho permitted\n"
+			out, err := exec.Command("sh", "-c", script).CombinedOutput()
+			if uid == "native-original" {
+				if err != nil || strings.TrimSpace(string(out)) != "permitted" {
+					t.Fatalf("original UID rejected: %s %v", out, err)
+				}
+			} else if err == nil || strings.Contains(string(out), "permitted") {
+				t.Fatalf("guard accepted %q: %s %v", uid, out, err)
+			}
+		})
 	}
 }

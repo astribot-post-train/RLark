@@ -1,12 +1,15 @@
 package gateway
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"github.com/rlinf/rlark/apps/rlark/astribot/stations"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
@@ -29,6 +32,10 @@ func (g *Gateway) handleDeleteStation(c *gin.Context) {
 	}
 	if err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": "Station API request failed"})
+		return
+	}
+	if stations.HasNodeUIDConflict(record) {
+		c.JSON(http.StatusConflict, gin.H{"error": "use the UID-bound action to clear this conflicting enrollment"})
 		return
 	}
 	retired, _, _ := unstructured.NestedBool(record.Object, "spec", "retired")
@@ -56,4 +63,29 @@ func (g *Gateway) handleDeleteStation(c *gin.Context) {
 	}
 	log.FromContext(ctx).WithName("audit").Info("site node", "action", "delete", "actor", c.GetString(authSubjectKey), "cluster", clusterID, "node", name)
 	c.Status(http.StatusOK)
+}
+
+// handleForgetConflictingStation clears only the selected enrollment instance.
+func (g *Gateway) handleForgetConflictingStation(c *gin.Context) {
+	clusterID, namespace, ok := g.clusterNamespace(c)
+	if !ok {
+		return
+	}
+	uid := c.Query("record_uid")
+	if uid == "" || len(uid) > 128 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "record_uid is required"})
+		return
+	}
+	ctx, name := c.Request.Context(), c.Param("name")
+	resource := g.stationClient.Resource(networkEnrollmentGVR).Namespace(namespace)
+	err := stations.ForgetConflictingEnrollment(ctx, resource, name, types.UID(uid))
+	switch {
+	case errors.Is(err, stations.ErrEnrollmentChanged):
+		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+	case err != nil:
+		c.JSON(http.StatusBadGateway, gin.H{"error": "Station API request failed"})
+	default:
+		log.FromContext(ctx).WithName("audit").Info("site node", "action", "forget-conflict", "actor", c.GetString(authSubjectKey), "cluster", clusterID, "node", name, "recordUID", uid)
+		c.Status(http.StatusOK)
+	}
 }

@@ -146,7 +146,22 @@ JOIN
 kubeadm join --config "$B"/join.yaml > "$B"/join.log 2>&1 || { tail -20 "$B"/join.log >&2; kubeadm reset -f --cri-socket unix://$SOCKET >/dev/null 2>&1; fail "kubeadm join"; }
 stamp "joined $JOIN_API_SERVER as $NODE_NAME"
 tries=0
-until kubectl --kubeconfig /etc/kubernetes/kubelet.conf get node "$NODE_NAME" -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null | grep -q True; do
+boot_id=$(cat /proc/sys/kernel/random/boot_id 2>/dev/null || true)
+while :; do
+  # Obtain readiness, boot identity and UID from the same Node read. The
+  # original installer is the only process that can attest what it joined.
+  observation=$(kubectl --kubeconfig /etc/kubernetes/kubelet.conf get node "$NODE_NAME" \
+    -o jsonpath='{.metadata.uid}{" "}{.status.nodeInfo.bootID}{" "}{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || true)
+  case "$observation" in
+    *" $boot_id True")
+      uid=${observation%% *}
+      if [ -n "$boot_id" ] && [ -n "$uid" ]; then
+        printf 'RLARK_JOIN_NODE_UID %s %s\n' "$NODE_NAME" "$uid"
+      fi
+      break
+      ;;
+    *"  True") break ;;
+  esac
   tries=$((tries + 1))
   [ $tries -lt 90 ] || { node_install "$SETTINGS" "not Ready 3 min after its join" || true; fail "the node is registered but not Ready after 3 min: kubectl describe node $NODE_NAME"; }
   sleep 2
