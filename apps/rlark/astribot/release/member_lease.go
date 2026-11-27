@@ -140,7 +140,7 @@ func addMemberLeaseRules(role *rbacv1.Role) {
 	for _, rule := range rules {
 		if !slices.ContainsFunc(role.Rules, func(current rbacv1.PolicyRule) bool {
 			return slices.Equal(current.APIGroups, rule.APIGroups) && slices.Equal(current.Resources, rule.Resources) &&
-				slices.Equal(current.ResourceNames, rule.ResourceNames) && slices.Equal(current.Verbs, rule.Verbs)
+				slices.Equal(current.ResourceNames, rule.ResourceNames) && !slices.ContainsFunc(rule.Verbs, func(verb string) bool { return !slices.Contains(current.Verbs, verb) })
 		}) {
 			role.Rules = append(role.Rules, rule)
 		}

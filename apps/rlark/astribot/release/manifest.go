@@ -202,6 +202,7 @@ func (e Environment) Desired(r Release, clusters map[string][]string) State {
 	state := State{
 		ControlPlane:      map[string]string{},
 		StationAPI:        images["station-api"],
+		StockExecutor:     images["rlark-upgrade"],
 		StationController: images["station-controller"],
 		Installer:         images["installer-"+e.Name],
 		Clusters:          map[string]ClusterState{},

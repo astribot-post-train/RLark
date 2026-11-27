@@ -52,6 +52,7 @@ const releaseMemberRBAC = "astribot/release/member-rbac.yaml"
 // recordedFiles are the tree's files the record of the release a site runs carries as they are (CurrentRelease), by
 // the key they have there: what a cluster made after the release is given (the Gateway's image has no tree).
 var recordedFiles = map[string]string{
+
 	"astribot/station/deploy/member-rbac.yaml":                "member-rbac.yaml",
 	"astribot/station/deploy/node-operation-member-rbac.yaml": "node-operation-member-rbac.yaml",
 	"astribot/station/deploy/station-agent.yaml":              "station-agent.yaml",
@@ -90,7 +91,8 @@ type Tree struct {
 	// Compose is the control plane's compose file (astribot/release/control-plane/rlark.compose.yaml).
 	Compose string
 	// Environments are the names of the tree's environments (astribot/release/environments/<name>.yaml).
-	Environments []string
+	Environments          []string
+	stockUpgradeBootstrap bool
 }
 
 // Pinned are images no build of a tree makes (component -> image by digest) and values of the catalog's Addons that
@@ -140,6 +142,10 @@ func ReadTree(file string) (Tree, error) {
 		catalog := matches(catalogFiles) || matches(extensionCatalogFiles)
 		definitions, memberDefinitions := slices.ContainsFunc(definitionFiles, matches), slices.ContainsFunc(memberDefinitionFiles, matches)
 		recorded, isRecorded := recordedFiles[name]
+		if name == stockMemberRBACPath {
+			tree.stockUpgradeBootstrap = true
+			continue
+		}
 		if !catalog && !definitions && !memberDefinitions && !isRecorded && name != pinnedFile && name != composeFile {
 			continue
 		}

@@ -73,10 +73,24 @@ func (g *Service) authorizeLegacyTunnel(ctx context.Context, machine provisionin
 	if j.UID == "" || j.Status.Facts.PublicKey == "" || j.Status.HostKey == "" || g.hooks.ProxyKubeRequest == nil {
 		return "", errors.New("historical tunnel has no verified host key or tunnel identity")
 	}
-	out, err := machine.Run(ctx, "set -eu\nmarker="+joinTunnelHostMarker+"\n"+joinHostIdentity(j)+lockHostMarker+detachedJoinHost+workerJoinIdentity+priorTunnelMarker+
-		`printf '%s\n' "${marker_sha%% *}"; cat `+legacyTunnelConfig, nil, nil)
+	out, err := machine.Run(ctx, "set -eu\nmarker="+joinTunnelHostMarker+"\n"+joinHostIdentity(j)+lockHostMarker+detachedJoinHost+readLegacyWorkerIdentity+priorTunnelMarker+
+		`if [ ! -e "$marker.identity" ] && { [ -e /etc/kubernetes/kubelet.conf ] || [ -e /etc/kubernetes/bootstrap-kubelet.conf ]; }; then
+  worker=$(legacy_worker_identity)
+  printf 'worker=%s\n' "$worker"
+else
+`+workerJoinIdentity+`
+fi
+printf '%s\n' "${marker_sha%% *}"; cat `+legacyTunnelConfig, nil, nil)
 	if err != nil {
 		return "", err
+	}
+	worker := ""
+	if first, rest, _ := strings.Cut(out, "\n"); strings.HasPrefix(first, "worker=") {
+		worker = strings.TrimPrefix(first, "worker=")
+		if err := g.verifyLegacyWorkerIdentity(ctx, j, worker); err != nil {
+			return "", err
+		}
+		out = rest
 	}
 	markerDigest, document, ok := strings.Cut(out, "\n")
 	if !ok || len(markerDigest) != 64 {
@@ -94,7 +108,7 @@ func (g *Service) authorizeLegacyTunnel(ctx context.Context, machine provisionin
 	// Machine.Run captures complete lines and can normalize the final newline.
 	// Check the hash in the same shell representation used for the read.
 	sum := sha256.Sum256([]byte(strings.TrimRight(document, "\n")))
-	return markerDigest + "/" + fmt.Sprintf("%x", sum), nil
+	return markerDigest + "/" + fmt.Sprintf("%x", sum) + ":" + worker, nil
 }
 
 func (g *Service) confirmNativeNodeAbsent(ctx context.Context, j *rlark.NodeJoin) error {
@@ -118,8 +132,9 @@ func (g *Service) confirmNativeNodeAbsent(ctx context.Context, j *rlark.NodeJoin
 }
 
 func claimDetachedTunnel(j *rlark.NodeJoin, digest string) string {
-	markerDigest, documentDigest, _ := strings.Cut(digest, "/")
-	return "set -eu\nmarker=" + joinTunnelHostMarker + "\n" + joinHostIdentity(j) + lockHostMarker + detachedJoinHost + workerJoinIdentity + priorTunnelMarker + `
+	markerDigest, documentProof, _ := strings.Cut(digest, "/")
+	documentDigest, worker, _ := strings.Cut(documentProof, ":")
+	return "set -eu\nmarker=" + joinTunnelHostMarker + "\n" + joinHostIdentity(j) + lockHostMarker + detachedJoinHost + legacyWorkerCheck(worker) + priorTunnelMarker + `
 [ "${marker_sha%% *}" = ` + nodessh.Quote(markerDigest) + ` ] ||
   { echo 'historical tunnel owner changed while verifying its identity' >&2; exit 1; }
 current=$(cat ` + legacyTunnelConfig + `)

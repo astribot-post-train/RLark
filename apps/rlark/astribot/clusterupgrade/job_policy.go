@@ -109,3 +109,9 @@ func ValidateClusterOnly(ctx context.Context, kube client.Reader) error {
 	}
 	return nil
 }
+
+// ValidateExecutorImage requires a canonical digest-pinned executor reference.
+func ValidateExecutorImage(image string) error {
+	_, err := pinnedImage(image)
+	return err
+}

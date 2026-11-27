@@ -3,6 +3,7 @@ package workflow
 import (
 	"context"
 	"fmt"
+	"maps"
 	"net/http"
 	"slices"
 	"strings"
@@ -12,9 +13,7 @@ import (
 	"github.com/rlinf/rlark/apps/rlark/astribot/nodessh"
 	"github.com/rlinf/rlark/apps/rlark/astribot/provisioning"
 	"github.com/rlinf/rlark/apps/rlark/astribot/provisioning/ownership"
-	"github.com/rlinf/rlark/apps/rlark/astribot/release"
 	"github.com/rlinf/rlark/apps/rlark/astribot/stationidentity"
-	"github.com/rlinf/rlark/apps/rlark/astribot/stationmember"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -129,12 +128,21 @@ func (g *Service) HandleClearClusterProvision(c *gin.Context) {
 func (g *Service) clearProvision(ctx context.Context, p *rlarkv1alpha1.ClusterProvision, password []byte, clusterUID types.UID) ([]string, error) {
 	var steps []string
 	facts := p.Status.Facts
+	if p.Annotations[provisionClusterReceipt] == "" {
+		if err := g.requireLegacyProvisionReceipts(ctx, p); err != nil {
+			return steps, err
+		}
+	}
 	if len(password) > 0 && p.UID != "" && p.Status.HostKey != "" {
 		machine, _, err := g.provisionDial(ctx, p.Spec.Machine, password, p.Status.HostKey)
 		if err != nil {
 			return steps, fmt.Errorf("log in to %s@%s: %w", p.Spec.Machine.User, p.Spec.Machine.Address, err)
 		}
-		out, err := machine.Run(ctx, "owner="+nodessh.Quote(string(p.UID))+"\n"+clearMachineScript, nil, nil)
+		script := "owner=" + nodessh.Quote(string(p.UID)) + "\n" + clearMachineScript
+		if native := p.Annotations[legacyNativeClusterUID]; native != "" {
+			script = claimLegacyProvisionHost(p.UID, types.UID(native)) + "\nflock -u 8\n" + script
+		}
+		out, err := machine.Run(ctx, script, nil, nil)
 		_ = machine.Close()
 		if err != nil {
 			return steps, fmt.Errorf("put the machine back: %w", err)
@@ -143,13 +151,9 @@ func (g *Service) clearProvision(ctx context.Context, p *rlarkv1alpha1.ClusterPr
 	} else {
 		steps = append(steps, "机器 "+p.Spec.Machine.Address+" 没动（没给密码或已不在）：它要再用，先在机器上撤掉旧控制面")
 	}
-	credentials := []struct{ namespace, name string }{
-		{stationMemberCredentialNamespace, stationmember.SecretName(p.Name)},
-		{stationOperationCredentialNamespace, stationmember.SecretName(p.Name)},
-		{release.CredentialNamespace, release.CredentialName(p.Name)},
-		{g.namespace, "rlark-agent-cert-" + provisionAgentID(p.Name)},
-	}
-	for _, credential := range credentials {
+	credentials := g.provisionCredentials(p.Name)
+	for _, kind := range slices.Sorted(maps.Keys(credentials)) {
+		credential := credentials[kind]
 		namespace, name := credential.namespace, credential.name
 		client := g.rawClient.CoreV1().Secrets(namespace)
 		secret, err := client.Get(ctx, name, metav1.GetOptions{})

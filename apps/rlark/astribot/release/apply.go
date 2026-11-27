@@ -178,6 +178,16 @@ func (r *Run) changes(ctx context.Context, stage string, current State) ([]Chang
 			changes = append(changes, member...)
 		}
 		return changes, nil
+	case stockUpgradeStage:
+		var changes []Change
+		for _, name := range slices.Sorted(maps.Keys(r.Site.MemberDefinitions)) {
+			member, err := r.stockChanges(ctx, name)
+			if err != nil {
+				return nil, err
+			}
+			changes = append(changes, member...)
+		}
+		return changes, nil
 	case "gateway", "server", "console":
 		desired, err := r.planeDesired(ctx, current)
 		if err != nil {
@@ -465,6 +475,13 @@ func (r *Run) act(ctx context.Context, stage string, current State) error {
 		for _, cluster := range slices.Sorted(maps.Keys(site.MemberDefinitions)) {
 			if err := applyDefinitions(ctx, site.MemberDefinitions[cluster], r.Tree.MemberDefinitions, cluster, func(ctx context.Context) error { return r.checkMemberLease(ctx, cluster) }); err != nil {
 				return err
+			}
+		}
+		return nil
+	case stockUpgradeStage:
+		for _, cluster := range slices.Sorted(maps.Keys(site.MemberDefinitions)) {
+			if err := r.initializeStockMember(ctx, cluster); err != nil {
+				return fmt.Errorf("cluster %s: initialize stock upgrade: %w", cluster, err)
 			}
 		}
 		return nil

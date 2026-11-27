@@ -27,6 +27,7 @@ type State struct {
 	StationAPI         string            `json:"stationAPI"`
 	// Installer is the artifact of the installer Station API serves and its controller sends.
 	Installer         string                  `json:"installer"`
+	StockExecutor     string                  `json:"stockExecutor,omitempty"`
 	StationController string                  `json:"stationController"`
 	Clusters          map[string]ClusterState `json:"clusters"`
 	// AddonsAfter is Addon -> the Addons it is written after.

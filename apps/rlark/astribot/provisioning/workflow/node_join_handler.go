@@ -618,7 +618,7 @@ func (g *Service) clearUnredeemedJoin(ctx context.Context, j *rlarkv1alpha1.Node
 			}
 			out, err = machine.Run(ctx, "reset_worker=yes\n"+clearHost, nil, nil)
 		}
-		if err != nil && strings.Contains(out, "host has no matching ownership record") {
+		if err != nil && (strings.Contains(out, "host has no matching ownership record") || strings.Contains(out, "no matching SSH join identity")) {
 			digest, proofErr := g.authorizeLegacyTunnel(ctx, machine, j)
 			if proofErr == nil {
 				// The cleanup script already takes the lock. Release the

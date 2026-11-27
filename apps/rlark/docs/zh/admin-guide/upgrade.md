@@ -174,4 +174,4 @@ control-plane-address: https://new-server:8443
 
 ## 使用 Astribot 发布锁的标准升级
 
-对已显式启用标准升级、且已有 Astribot 发布 Lease 的成员集群，在本地设置可信策略 `rlark-system/rlark-agent-upgrade-policy`。将 `mode` 设为 `stock`，将 `executorImage` 设为支持锁的 `rlark-upgrade` 镜像摘要。切换前先结束旧版无锁升级 Job。应用 `astribot/release/member-upgrade-stock.yaml`。若 `rlark-system/rlark-state` 不存在，则创建同名空 ConfigMap。已有回滚状态应保留。若发布工具还未建立共享 Lease，先创建它。提交标准升级时使用同一执行器摘要。独立 Job 在升级、健康检查、回滚和写入 `rlark-state` 期间持锁。并发发布或升级将报告持有者。既没有发布 Lease 也没有本地策略的标准成员沿用上游路径。
+对显式声明 `rlark.io/upgrade-driver: stock` 的标准成员，兼容的 Astribot 发布会自动准备共享 Lease，并在集群 Agent 完成滚动后初始化可信本地策略。发布包需提供按摘要固定的 `rlark-upgrade` 镜像。`stock-upgrades` 阶段安装执行器 RBAC，仅在 `rlark-state` 缺失时创建，保留已有回滚状态。初始化或更换执行器摘要前，旧升级 Job 必须结束。兼容的手工策略保留已有摘要。发起标准升级时使用该策略的镜像摘要。独立 Job 在升级、健康检查、回滚和写入状态期间持锁，并发操作会报告持有者。已显式启用标准升级且既无发布 Lease 也无本地策略的成员沿用上游执行路径。

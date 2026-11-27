@@ -125,3 +125,45 @@ func TestResidualWorkerRequiresMatchingJoinIdentityAndResets(t *testing.T) {
 		})
 	}
 }
+
+func TestHistoricalWorkerRequiresOriginalMemberAndNode(t *testing.T) {
+	const server = "https://member-api:6443"
+	const config = `{"metadata":{"name":"cluster-info","namespace":"kube-public"},"data":{"kubeconfig":"apiVersion: v1\nkind: Config\nclusters:\n- name: member\n  cluster:\n    server: https://member-api:6443\n    certificate-authority-data: Y2E=\n"}}`
+	correct := fmt.Sprintf("box/%x", sha256.Sum256([]byte(server+"\nca")))
+	for _, test := range []struct {
+		name, proof  string
+		nativeStatus int
+		want         bool
+	}{
+		{"original worker", correct, 404, true},
+		{"same-name replacement", correct, 200, false},
+		{"another cluster", fmt.Sprintf("box/%x", sha256.Sum256([]byte("https://replacement:6443\nca"))), 404, false},
+		{"another node", "other/" + strings.Split(correct, "/")[1], 404, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			j := &rlark.NodeJoin{ObjectMeta: metav1.ObjectMeta{UID: "new-attempt"}, Spec: rlark.NodeJoinSpec{ClusterID: "cluster-a", NodeName: "box"}, Status: rlark.NodeJoinStatus{
+				HostKey: "SHA256:pinned", Facts: rlark.NodeJoinFacts{PublicKey: "original-key"},
+			}}
+			box := &joinBox{answer: func(string) (string, error) {
+				return fmt.Sprintf("worker=%s\n%x\n%s\n", test.proof, sha256.Sum256(nil), `{"publicKey":"original-key"}`), nil
+			}}
+			g := &Service{hooks: Hooks{ProxyKubeRequest: func(_ context.Context, method, agent, path string, _ []byte) (*http.Response, error) {
+				if method != http.MethodGet || agent != "cluster-a" {
+					t.Fatalf("unexpected native request: %s %s", method, agent)
+				}
+				switch path {
+				case "api/v1/namespaces/kube-public/configmaps/cluster-info":
+					return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(config))}, nil
+				case "api/v1/nodes/box":
+					return &http.Response{StatusCode: test.nativeStatus, Body: io.NopCloser(strings.NewReader(`{"reason":"NotFound","details":{"kind":"nodes","name":"box"}}`))}, nil
+				default:
+					return nil, fmt.Errorf("unexpected node lookup %s", path)
+				}
+			}}}
+			proof, err := g.authorizeLegacyTunnel(t.Context(), box, j)
+			if (err == nil) != test.want || (test.want && !strings.Contains(proof, correct)) {
+				t.Fatalf("proof = %q, %v", proof, err)
+			}
+		})
+	}
+}

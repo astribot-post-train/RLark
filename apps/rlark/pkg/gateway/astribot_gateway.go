@@ -184,6 +184,7 @@ func (g *Gateway) registerAstribotRoutes(api *gin.RouterGroup) {
 		clusterProvisions.GET("/:name", g.provisioningWorkflow.HandleGetClusterProvision)
 		clusterProvisions.POST("/:name/retry", g.provisioningWorkflow.HandleRetryClusterProvision)
 		clusterProvisions.POST("/:name/clear", g.provisioningWorkflow.HandleClearClusterProvision)
+		clusterProvisions.POST("/:name/migrate-ownership", g.provisioningWorkflow.HandleMigrateClusterProvision)
 	}
 	adminAPI.GET("/station/machines", g.handleListMachines)
 	adminAPI.POST("/station/machines/admit", g.handleAdmitMachines)

@@ -220,6 +220,34 @@ paths:
         '202': {description: Going on}
         '400': {description: The stage logs in to the machine and no password was given}
         '409': {description: The making runs, or has finished}
+  /api/v1/cluster-provisions/{name}/migrate-ownership:
+    post:
+      tags: [Clusters]
+      summary: Record independently verified historical provisioning ownership (administrator only)
+      description: Records the reviewed identities. Original resources can be cleared later using the normal endpoint.
+      parameters:
+        - {name: name, in: path, required: true, schema: {type: string}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [provision_uid, evidence]
+              properties:
+                provision_uid: {type: string}
+                evidence: {type: string, maxLength: 256, description: Reference to the audit record or backup establishing original ownership}
+                native_cluster_uid: {type: string, description: Original kube-system namespace UID for a verified historical control-plane host}
+                cluster: {$ref: '#/components/schemas/ReviewedProvisionObject'}
+                site_network: {$ref: '#/components/schemas/ReviewedProvisionObject'}
+                credentials:
+                  type: object
+                  description: 'Use station-read, station-operations, release, or agent-certificate.'
+                  additionalProperties: {$ref: '#/components/schemas/ReviewedProvisionObject'}
+      responses:
+        '200': {description: Receipts recorded}
+        '400': {description: Invalid migration request}
+        '409': {description: An independently reviewed identity changed or conflicts with an existing receipt}
   /api/v1/cluster-provisions/{name}/clear:
     post:
       tags: [Clusters]
@@ -1597,6 +1625,13 @@ paths:
 
 components:
   schemas:
+    ReviewedProvisionObject:
+      type: object
+      required: [uid, resource_version]
+      properties:
+        uid: {type: string}
+        resource_version: {type: string}
+
     RobotBodySample:
       type: object
       required: [id, state]

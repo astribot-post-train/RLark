@@ -58,3 +58,15 @@ func UnbindCredential(secret *corev1.Secret) {
 	delete(secret.Annotations, ProvisionUID)
 	delete(secret.Annotations, credentialUID)
 }
+
+// MarkReviewedCredential binds an explicitly verified historical Secret instance.
+func MarkReviewedCredential(secret *corev1.Secret, owner types.UID) error {
+	if secret.UID == "" || owner == "" || secret.DeletionTimestamp != nil ||
+		(secret.Annotations[ProvisionUID] != "" && secret.Annotations[ProvisionUID] != string(owner)) ||
+		(secret.Annotations[credentialUID] != "" && secret.Annotations[credentialUID] != string(secret.UID)) {
+		return fmt.Errorf("credential already belongs to a different resource instance")
+	}
+	metav1.SetMetaDataAnnotation(&secret.ObjectMeta, ProvisionUID, string(owner))
+	metav1.SetMetaDataAnnotation(&secret.ObjectMeta, credentialUID, string(secret.UID))
+	return nil
+}
