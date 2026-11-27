@@ -97,11 +97,11 @@ func (e *NodeLifecycleExecutor) Execute(ctx context.Context, op *stationv1alpha1
 		if op.Spec.NodeUID == "" {
 			op.Spec.NodeUID = string(node.UID)
 		}
-		if err := e.RemovalReady(ctx, op); err != nil {
-			return false, "", fmt.Errorf("verify removal prerequisites: %w", err)
-		}
 		if string(node.UID) != op.Spec.NodeUID || node.DeletionTimestamp != nil {
 			return false, "", ErrNodeIdentityChanged
+		}
+		if err := e.RemovalReady(ctx, op); err != nil {
+			return false, "", fmt.Errorf("verify removal prerequisites: %w", err)
 		}
 		if _, found := node.Labels["node-role.kubernetes.io/control-plane"]; found {
 			return false, "", fmt.Errorf("%w: control-plane node", ErrNodeDrainBlocked)
@@ -158,8 +158,17 @@ func (e *NodeLifecycleExecutor) Execute(ctx context.Context, op *stationv1alpha1
 			if err := e.Management.Get(ctx, client.ObjectKeyFromObject(listed), listed); apierrors.IsNotFound(err) {
 				// The node's record goes last: nothing of the node is left to report under it.
 				if stage == "VerifyRemoval" {
-					enrollment := &stationv1alpha1.NetworkEnrollment{ObjectMeta: metav1.ObjectMeta{Namespace: op.Namespace, Name: op.Spec.NodeName}}
-					if err := e.Management.Delete(ctx, enrollment); err != nil && !apierrors.IsNotFound(err) {
+					enrollment := &stationv1alpha1.NetworkEnrollment{}
+					key := client.ObjectKey{Namespace: op.Namespace, Name: op.Spec.NodeName}
+					if err := e.Management.Get(ctx, key, enrollment); apierrors.IsNotFound(err) {
+						return true, op.Spec.NodeUID, nil
+					} else if err != nil {
+						return false, "", fmt.Errorf("read the node's NetworkEnrollment: %w", err)
+					}
+					if op.Spec.NodeUID != "" && enrollment.Spec.NodeUID != op.Spec.NodeUID {
+						return false, "", ErrNodeIdentityChanged
+					}
+					if err := e.Management.Delete(ctx, enrollment, client.Preconditions{UID: &enrollment.UID, ResourceVersion: &enrollment.ResourceVersion}); err != nil && !apierrors.IsNotFound(err) {
 						return false, "", fmt.Errorf("delete the node's NetworkEnrollment: %w", err)
 					}
 				}
@@ -167,8 +176,15 @@ func (e *NodeLifecycleExecutor) Execute(ctx context.Context, op *stationv1alpha1
 			} else if err != nil {
 				return false, "", fmt.Errorf("read the management plane's Node: %w", err)
 			}
+			if op.Spec.NodeUID != "" {
+				nativeUID, _, _ := unstructured.NestedString(listed.Object, "status", "kubernetesNodeUID")
+				if nativeUID != op.Spec.NodeUID {
+					return false, "", ErrNodeIdentityChanged
+				}
+			}
 			if stage == "DeleteNode" && listed.GetDeletionTimestamp() == nil {
-				if err := e.Management.Delete(ctx, listed); err != nil && !apierrors.IsNotFound(err) {
+				uid, version := listed.GetUID(), listed.GetResourceVersion()
+				if err := e.Management.Delete(ctx, listed, client.Preconditions{UID: &uid, ResourceVersion: &version}); err != nil && !apierrors.IsNotFound(err) {
 					return false, "", fmt.Errorf("delete the management plane's Node: %w", err)
 				}
 			}

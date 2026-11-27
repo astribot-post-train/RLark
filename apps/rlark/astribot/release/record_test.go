@@ -30,7 +30,7 @@ func writeTar(t *testing.T, commit string, files map[string]string) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	writer := tar.NewWriter(f)
 	if commit != "" {
 		// What git archive writes first: the commit, in a pax global header.
@@ -60,11 +60,11 @@ func TestReadTree(t *testing.T) {
 		"astribot/station/deploy/node-operation-member-rbac.yaml": "apiVersion: v1\nkind: ServiceAccount\nmetadata:\n  name: station-node-operator\n  namespace: station-system\n---\n" +
 			"apiVersion: rbac.authorization.k8s.io/v1\nkind: Role\nmetadata:\n  name: station-node-reset\n  namespace: rlark-system\n",
 		"README.md": "not a definition",
-		"apps/rlark/pkg/addons/catalog/s1u-robot/addon.yaml":     "name: s1u-robot\nversion: v1.4.0\n",
-		"apps/rlark/pkg/addons/catalog/site-registry/addon.yaml": "name: site-registry\nversion: v0.2.1\n",
-		"astribot/release/environments/live.yaml":                "name: live\n",
-		"astribot/release/environments/live.registry-ca.crt":     "a CA\n",
-		"apps/rlark/pkg/addons/catalog/nvidia-gpu/addon.yaml":    "name: nvidia-gpu\nversion: v0.1.2\n",
+		"apps/rlark/astribot/addoncatalog/catalog/s1u-robot/addon.yaml":     "name: s1u-robot\nversion: v1.4.0\n",
+		"apps/rlark/astribot/addoncatalog/catalog/site-registry/addon.yaml": "name: site-registry\nversion: v0.2.1\n",
+		"astribot/release/environments/live.yaml":                           "name: live\n",
+		"astribot/release/environments/live.registry-ca.crt":                "a CA\n",
+		"apps/rlark/pkg/addons/catalog/nvidia-gpu/addon.yaml":               "name: nvidia-gpu\nversion: v0.1.2\n",
 		"astribot/release/pinned.yaml": "images:\n  cluster-check: registry.rlark.internal:5443/mirror/ubuntu@sha256:45e9\n  relay: registry.rlark.internal:5443/rlark/agent@sha256:0734\n" +
 			"addons:\n  site-registry: {values: {relayImage: \"{{images.relay}}\"}}\n  nvidia-gpu: {values: {toolkitImage: \"{{images.cluster-check}}\"}}\n",
 	}

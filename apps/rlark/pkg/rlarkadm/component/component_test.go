@@ -538,3 +538,24 @@ func mapsEqual(got, want map[string]string) bool {
 	}
 	return true
 }
+
+func TestStockUpgradeKeepsIndependentNodeAgent(t *testing.T) {
+	cfg := &types.DeployConfig{Plane: types.PlaneData, Kubernetes: &types.KubernetesEnv{AgentImage: "stock-agent"}}
+	var stockAgent, stockNode bool
+	for _, c := range StockDataPlaneComponents(cfg) {
+		switch c.Name {
+		case constants.ComponentAgent:
+			stockAgent = c.Port == 8081
+		case constants.ComponentAgentNode:
+			stockNode = c.WorkloadKind == "DaemonSet" && c.ImageFn(cfg) == cfg.Kubernetes.AgentImage
+		}
+	}
+	if !stockAgent || !stockNode {
+		t.Fatalf("standard profile omitted an upstream Agent workload: cluster=%t node=%t", stockAgent, stockNode)
+	}
+	for _, c := range ComponentsForPlane(cfg) {
+		if c.Name == constants.ComponentAgentNode {
+			t.Fatal("the Astribot install profile began managing the independent stock node Agent")
+		}
+	}
+}

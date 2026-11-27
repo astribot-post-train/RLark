@@ -13,6 +13,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"sigs.k8s.io/yaml"
@@ -94,10 +95,14 @@ type Site struct {
 // The management plane's objects, as far as the command reads them.
 type (
 	managedCluster struct {
+		Metadata struct {
+			UID types.UID `json:"uid"`
+		} `json:"metadata"`
 		Spec struct {
 			AgentNamespace string `json:"agentNamespace"`
 			NodeAgents     struct {
-				Image string `json:"image"`
+				Image   string `json:"image"`
+				Enabled bool   `json:"enabled"`
 			} `json:"nodeAgents"`
 		} `json:"spec"`
 	}
@@ -224,6 +229,8 @@ func (s *Site) Read(ctx context.Context) (State, error) {
 			return State{}, err
 		}
 		current.NodeAgent = cluster.Spec.NodeAgents.Image
+		current.clusterUID = cluster.Metadata.UID
+		current.nodeAgentsEnabled = cluster.Spec.NodeAgents.Enabled
 		installed, err := s.addons(ctx, cluster.Spec.AgentNamespace)
 		if err != nil {
 			return State{}, err
@@ -272,10 +279,10 @@ func ownerOf(pod corev1.Pod) string {
 }
 
 func agreeing(read, image string) string {
-	switch {
-	case read == "":
+	switch read {
+	case "":
 		return image
-	case read == image:
+	case image:
 		return read
 	}
 	return read + " | " + image

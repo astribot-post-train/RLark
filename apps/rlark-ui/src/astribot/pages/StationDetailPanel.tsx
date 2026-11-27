@@ -1,3 +1,4 @@
+import { stationHasNodeUIDConflict } from "../lib/nodeRemoval";
 import { type KeyboardEvent } from "react";
 import { AlertTriangle, ChevronDown, Fingerprint, KeyRound, ListFilter, Power } from "lucide-react";
 import type { ClusterSummary } from "../../types";
@@ -59,6 +60,7 @@ export function StationDetailPanel({
   const retired = phase === "Retired";
   const robot = isRobotNode(labels) && !retired;
   const controlPlane = isControlPlaneLabels(labels);
+  const uidConflict = stationHasNodeUIDConflict(station);
   const deleteReason = stationDeleteReason(station, hasNode, zh);
   const admissionFor = admissionLabels(admission, zh);
   const networkState = stationNetworkState(station);
@@ -105,7 +107,7 @@ export function StationDetailPanel({
           <button type="button" className="secondary-button" onClick={onRefresh}>{zh ? "重新检测" : "Re-check"}</button>
           <button type="button" className="secondary-button" disabled={reissueDisabled} aria-describedby={reissueReason ? `${detailsID}-reissue-reason` : undefined} onClick={onReissue}>{admissionPending === "reissue" ? (zh ? "重发中…" : "Reissuing…") : (zh ? "重发入网码" : "Reissue code")}</button>
           <button type="button" className="secondary-button" disabled={revokeDisabled} aria-describedby={revokeReason ? `${detailsID}-revoke-reason` : undefined} onClick={onRevoke}>{admissionPending === "revoke" ? (zh ? "作废中…" : "Revoking…") : (zh ? "作废入网码" : "Revoke code")}</button>
-          <button type="button" className="secondary-button danger" disabled={deleteDisabled} aria-describedby={deleteReason ? deleteReasonID : undefined} onClick={onDelete}>{deleting ? (zh ? "删除中…" : "Deleting…") : (zh ? "删除记录" : "Delete record")}</button>
+          <button type="button" className="secondary-button danger" disabled={deleteDisabled} aria-describedby={deleteReason ? deleteReasonID : undefined} onClick={onDelete}>{deleting ? (zh ? "删除中…" : "Deleting…") : (uidConflict ? (zh ? "清除旧登记" : "Clear stale enrollment") : (zh ? "删除记录" : "Delete record"))}</button>
           {onDismiss && <button type="button" className="secondary-button station-detail-dismiss" onClick={onDismiss} aria-label={zh ? "关闭详情" : "Close details"} title={zh ? "关闭详情" : "Close details"}>×</button>}
         </div>
         {reissueReason && <small id={`${detailsID}-reissue-reason`} className="station-detail-reason">{reissueReason}</small>}

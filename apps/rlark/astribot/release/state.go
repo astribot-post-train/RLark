@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"k8s.io/apimachinery/pkg/types"
 	"maps"
 	"reflect"
 	"slices"
@@ -26,6 +27,7 @@ type State struct {
 	StationAPI         string            `json:"stationAPI"`
 	// Installer is the artifact of the installer Station API serves and its controller sends.
 	Installer         string                  `json:"installer"`
+	StockExecutor     string                  `json:"stockExecutor,omitempty"`
 	StationController string                  `json:"stationController"`
 	Clusters          map[string]ClusterState `json:"clusters"`
 	// AddonsAfter is Addon -> the Addons it is written after.
@@ -42,7 +44,10 @@ type ComposeFile struct {
 }
 
 type ClusterState struct {
-	Agent string `json:"agent"`
+	// Live snapshot identity and mode, excluded from release records.
+	clusterUID        types.UID
+	nodeAgentsEnabled bool
+	Agent             string `json:"agent"`
 	// AgentDeployment is the name of the cluster agent's Deployment, as the site has it (read, not stated).
 	AgentDeployment  string `json:"agentDeployment,omitempty"`
 	Tools            string `json:"tools"`
@@ -57,13 +62,17 @@ type ClusterState struct {
 
 // Change is one thing a stage changes: what, from what, to what.
 type Change struct {
-	Stage string
-	What  string
-	From  string
-	To    string
+	Stage          string
+	What           string
+	From           string
+	To             string
+	DeferredReason string
 }
 
 func (c Change) String() string {
+	if c.DeferredReason != "" {
+		return fmt.Sprintf("%-16s %s: deferred (%s)", c.Stage, c.What, c.DeferredReason)
+	}
 	return fmt.Sprintf("%-16s %s: %s -> %s", c.Stage, c.What, short(c.From), short(c.To))
 }
 

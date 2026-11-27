@@ -4,7 +4,9 @@ package kubernetes
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"reflect"
+	"time"
 
 	"github.com/rlinf/rlark/apps/rlark/pkg/log"
 	"github.com/rlinf/rlark/apps/rlark/pkg/rlarkadm/component"
@@ -27,6 +29,7 @@ type Upgrader struct {
 	clientset  *kubernetes.Clientset
 	kubeconfig string
 	summary    *types.UpgradeSummary
+	components func(*types.DeployConfig) []types.Component
 }
 
 // New creates a new Kubernetes Upgrader.
@@ -35,6 +38,28 @@ type Upgrader struct {
 // path is meaningless), fall back to the in-cluster config so the Pod's
 // ServiceAccount is used.
 func New(cfg *types.DeployConfig) (*Upgrader, error) {
+	return newUpgrader(cfg, component.ComponentsForPlane)
+}
+
+func NewStockDataPlane(cfg *types.DeployConfig, check func(context.Context) error) (*Upgrader, error) {
+	if cfg.Plane != types.PlaneData || cfg.Kubernetes == nil {
+		return nil, fmt.Errorf("stock upgrade requires a Kubernetes data-plane DeployConfig")
+	}
+	if check == nil {
+		return newUpgrader(cfg, component.StockDataPlaneComponents)
+	}
+	config, err := rest.InClusterConfig()
+	if err != nil {
+		return nil, fmt.Errorf("load locked member kubeconfig: %w", err)
+	}
+	config.Timeout = 15 * time.Second
+	config.Wrap(func(next http.RoundTripper) http.RoundTripper {
+		return upgradeWriteTransport{next: next, check: check}
+	})
+	return newUpgraderForConfig(config, "", component.StockDataPlaneComponents)
+}
+
+func newUpgrader(cfg *types.DeployConfig, components func(*types.DeployConfig) []types.Component) (*Upgrader, error) {
 	kubeconfig := cfg.Kubernetes.Kubeconfig
 	if kubeconfig == "" {
 		kubeconfig = clientcmd.NewDefaultClientConfigLoadingRules().GetDefaultFilename()
@@ -50,6 +75,26 @@ func New(cfg *types.DeployConfig) (*Upgrader, error) {
 		}
 	}
 
+	return newUpgraderForConfig(restConfig, kubeconfig, components)
+}
+
+type upgradeWriteTransport struct {
+	next  http.RoundTripper
+	check func(context.Context) error
+}
+
+func (t upgradeWriteTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	switch req.Method {
+	case http.MethodGet, http.MethodHead:
+	default:
+		if err := t.check(req.Context()); err != nil {
+			return nil, fmt.Errorf("stock upgrade write fenced: %w", err)
+		}
+	}
+	return t.next.RoundTrip(req)
+}
+
+func newUpgraderForConfig(restConfig *rest.Config, kubeconfig string, components func(*types.DeployConfig) []types.Component) (*Upgrader, error) {
 	clientset, err := kubernetes.NewForConfig(restConfig)
 	if err != nil {
 		return nil, fmt.Errorf("create clientset: %w", err)
@@ -58,6 +103,7 @@ func New(cfg *types.DeployConfig) (*Upgrader, error) {
 	return &Upgrader{
 		clientset:  clientset,
 		kubeconfig: kubeconfig,
+		components: components,
 	}, nil
 }
 
@@ -80,7 +126,7 @@ func (u *Upgrader) preCheck(ctx context.Context, cfg *types.DeployConfig, skipHe
 	}
 
 	// Check all components exist and are healthy
-	for _, c := range component.ComponentsForPlane(cfg) {
+	for _, c := range u.components(cfg) {
 		if err := u.checkComponentExists(ctx, &c); err != nil {
 			return err
 		}
@@ -169,7 +215,7 @@ func (u *Upgrader) Upgrade(ctx context.Context, cfg *types.DeployConfig) error {
 	ctx = runtime.WithClientset(ctx, u.clientset)
 	ctx = runtime.WithKubeconfig(ctx, u.kubeconfig)
 
-	components := component.ComponentsForPlane(cfg)
+	components := u.components(cfg)
 	for _, c := range components {
 		logger.Info("upgrading component", "name", c.Name)
 
@@ -574,7 +620,7 @@ func (u *Upgrader) buildSummary(ctx context.Context, cfg *types.DeployConfig) *t
 		Namespace: constants.Namespace,
 	}
 
-	for _, c := range component.ComponentsForPlane(cfg) {
+	for _, c := range u.components(cfg) {
 		summary.Components = append(summary.Components, types.ComponentStatus{
 			Name:    c.Name,
 			Healthy: true,

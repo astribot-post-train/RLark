@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"github.com/rlinf/rlark/apps/rlark/astribot/stations"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -21,7 +22,7 @@ import (
 
 func TestARobotsDesiredPowerIsSetInOnePlaceAndRecordedWithItsActor(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	node := &rlarkv1alpha1.Node{ObjectMeta: metav1.ObjectMeta{Namespace: "rlark-robot", Name: "s1u-03-x86", Labels: map[string]string{robotPowerLabel: "ready.1794700000"}}}
+	node := &rlarkv1alpha1.Node{ObjectMeta: metav1.ObjectMeta{Namespace: "rlark-robot", Name: "s1u-03-x86", Labels: map[string]string{stations.RobotPowerLabel: "ready.1794700000"}}}
 	var patches [][]byte
 	g := &Gateway{accessors: map[string]*resourceAccessor{"nodes": {
 		get: func(context.Context, string, string, metav1.GetOptions) (any, error) { return node, nil },
@@ -45,7 +46,7 @@ func TestARobotsDesiredPowerIsSetInOnePlaceAndRecordedWithItsActor(t *testing.T)
 		return recorder.Code, recorder.Body.String()
 	}
 
-	if status, body := call(g.handleSetRobotPower, http.MethodPut, `{"desired":"off"}`); status != http.StatusOK || len(patches) != 1 {
+	if status, body := call(g.robotControlRoutes().SetPower, http.MethodPut, `{"desired":"off"}`); status != http.StatusOK || len(patches) != 1 {
 		t.Fatalf("set: %d %s, %d patches", status, body, len(patches))
 	}
 	var written struct {
@@ -55,8 +56,8 @@ func TestARobotsDesiredPowerIsSetInOnePlaceAndRecordedWithItsActor(t *testing.T)
 	}
 	_ = json.Unmarshal(patches[0], &written)
 	var record map[string]string
-	_ = json.Unmarshal([]byte(written.Metadata.Annotations[robotPowerSetAnnotation]), &record)
-	if value := written.Metadata.Labels[robotPowerLabel]; !strings.HasPrefix(value, "off.") || value == "off." || record["desired"] != "off" || record["by"] != "alice" || record["at"] == "" {
+	_ = json.Unmarshal([]byte(written.Metadata.Annotations[stations.RobotPowerSetAnnotation]), &record)
+	if value := written.Metadata.Labels[stations.RobotPowerLabel]; !strings.HasPrefix(value, "off.") || value == "off." || record["desired"] != "off" || record["by"] != "alice" || record["at"] == "" {
 		t.Fatalf("the label and who set it: %s", patches[0])
 	}
 	entries := logged.FilterMessage("robot power").All()
@@ -67,7 +68,7 @@ func TestARobotsDesiredPowerIsSetInOnePlaceAndRecordedWithItsActor(t *testing.T)
 	if fields["actor"] != "alice" || fields["node"] != "s1u-03-x86" || fields["namespace"] != "rlark-robot" || fields["desired"] != "off" || fields["was"] != "ready.1794700000" || fields["set"] != true {
 		t.Fatalf("the audit line: %+v", fields)
 	}
-	if status, _ := call(g.handleSetRobotPower, http.MethodPut, `{"desired":"on"}`); status != http.StatusBadRequest || len(patches) != 1 {
+	if status, _ := call(g.robotControlRoutes().SetPower, http.MethodPut, `{"desired":"on"}`); status != http.StatusBadRequest || len(patches) != 1 {
 		t.Fatalf("a state that is none: %d", status)
 	}
 
@@ -82,7 +83,7 @@ func TestARobotsDesiredPowerIsSetInOnePlaceAndRecordedWithItsActor(t *testing.T)
 	}
 	replaced := node.DeepCopy()
 	for _, value := range []string{"off.2", ""} {
-		replaced.Labels = map[string]string{robotPowerLabel: value}
+		replaced.Labels = map[string]string{stations.RobotPowerLabel: value}
 		if value == "" {
 			replaced.Labels = nil
 		}

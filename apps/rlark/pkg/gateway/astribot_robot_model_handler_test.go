@@ -9,6 +9,8 @@ import (
 	"github.com/gin-gonic/gin"
 	clientset "github.com/rlinf/rlark/api/kubeclients/clientset/versioned/fake"
 	rlarkv1alpha1 "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
+	"github.com/rlinf/rlark/apps/rlark/astribot/provisioning/workflow"
+	"github.com/rlinf/rlark/apps/rlark/astribot/stations"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -22,18 +24,21 @@ func TestRobotModelListCountsReferencesAndDeleteBlocksThenAllows(t *testing.T) {
 	class := &unstructured.Unstructured{Object: map[string]interface{}{"apiVersion": "station.rlark.io/v1alpha1", "kind": "NodeClass", "metadata": map[string]interface{}{"name": "s1u"}, "spec": map[string]interface{}{"model": "s1u"}}}
 	node := &unstructured.Unstructured{Object: map[string]interface{}{"apiVersion": "rlinf.io/v1alpha1", "kind": "Node", "metadata": map[string]interface{}{"name": "robot-01", "namespace": "agent-a", "labels": map[string]interface{}{"rlark.io/robot-model": "s1u"}}}}
 	admission := &unstructured.Unstructured{Object: map[string]interface{}{"apiVersion": "station.rlark.io/v1alpha1", "kind": "NodeAdmission", "metadata": map[string]interface{}{"name": "robot-01", "namespace": "agent-a"}, "spec": map[string]interface{}{"machine": map[string]interface{}{"category": "Robot", "model": "s1u"}}}}
-	listKinds := map[schema.GroupVersionResource]string{robotModelGVR: "RobotModelList", nodeClassGVR: "NodeClassList", siteNodeGVR: "NodeList", networkEnrollmentGVR: "NetworkEnrollmentList", machineGVR: "MachineList", nodeAdmissionGVR: "NodeAdmissionList"}
+	listKinds := map[schema.GroupVersionResource]string{stations.RobotModelsResource: "RobotModelList", nodeClassGVR: "NodeClassList", siteNodeGVR: "NodeList", networkEnrollmentGVR: "NetworkEnrollmentList", machineGVR: "MachineList", nodeAdmissionGVR: "NodeAdmissionList"}
 	station := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), listKinds, model, class, node, admission)
-	joins := clientset.NewSimpleClientset(&rlarkv1alpha1.NodeJoin{ObjectMeta: metav1.ObjectMeta{Name: "cluster-a.robot-01", Annotations: map[string]string{nodeJoinModelAnnotation: "s1u"}}})
+	joins := clientset.NewSimpleClientset(&rlarkv1alpha1.NodeJoin{ObjectMeta: metav1.ObjectMeta{Name: "cluster-a.robot-01", Annotations: map[string]string{workflow.NodeJoinModelAnnotation: "s1u"}}})
 	gateway := &Gateway{kubeClient: joins, astribotState: astribotState{stationClient: station}}
 
+	router := gin.New()
+	gateway.registerRobotModelRoutes(router.Group("/api/v1"))
 	listResponse := httptest.NewRecorder()
-	listContext, _ := gin.CreateTestContext(listResponse)
-	listContext.Request = httptest.NewRequest(http.MethodGet, "/api/v1/station/robot-models", nil)
-	gateway.handleListRobotModels(listContext)
+	router.ServeHTTP(listResponse, httptest.NewRequest(http.MethodGet, "/api/v1/station/robot-models", nil))
 	var listed struct {
-		Items []robotModelView `json:"items"`
+		Items []struct {
+			References struct{ NodeClasses, Nodes, NodeAdmissions, NodeJoins int }
+		}
 	}
+
 	if err := json.Unmarshal(listResponse.Body.Bytes(), &listed); err != nil {
 		t.Fatal(err)
 	}
@@ -43,10 +48,7 @@ func TestRobotModelListCountsReferencesAndDeleteBlocksThenAllows(t *testing.T) {
 
 	delete := func() *httptest.ResponseRecorder {
 		response := httptest.NewRecorder()
-		ctx, _ := gin.CreateTestContext(response)
-		ctx.Request = httptest.NewRequest(http.MethodDelete, "/api/v1/station/robot-models/s1u", nil)
-		ctx.Params = gin.Params{{Key: "name", Value: "s1u"}}
-		gateway.handleDeleteRobotModel(ctx)
+		router.ServeHTTP(response, httptest.NewRequest(http.MethodDelete, "/api/v1/station/robot-models/s1u", nil))
 		return response
 	}
 	if response := delete(); response.Code != http.StatusConflict {

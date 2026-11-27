@@ -6,20 +6,20 @@ import (
 	stderrors "errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"sort"
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/rlinf/rlark/apps/rlark/pkg/apis"
+	"github.com/rlinf/rlark/apps/rlark/pkg/distribution"
+	"github.com/rlinf/rlark/apps/rlark/pkg/tenant"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/client-go/kubernetes"
 	"sigs.k8s.io/yaml"
-
-	"github.com/rlinf/rlark/apps/rlark/pkg/apis"
-	"github.com/rlinf/rlark/apps/rlark/pkg/distribution"
-	"github.com/rlinf/rlark/apps/rlark/pkg/tenant"
 )
 
 // A job secret is a set of key/value pairs created in RLark and delivered, as
@@ -258,4 +258,21 @@ func readJobSecret(declaration *v1.Secret) (jobSecretRequest, error) {
 		return jobSecretRequest{}, fmt.Errorf("the delivery of %s holds no secret: %v", declaration.Name, err)
 	}
 	return jobSecretRequest{Name: stored.Name, Description: stored.Description, Clusters: stored.Clusters, Data: delivered[0].StringData}, nil
+}
+
+// distributeJobSecret delivers one of RLark's secret objects to one more cluster, its values as they are.
+func (g *Gateway) distributeJobSecret(ctx context.Context, name, cluster string) error {
+	current, err := g.rawClient.CoreV1().Secrets(g.managementNamespace()).Get(ctx, jobSecretReplicationName(name), metav1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("RLark's secret object %s: %w", name, err)
+	}
+	stored, err := readJobSecret(current)
+	if err != nil {
+		return fmt.Errorf("RLark's secret object %s: %w", name, err)
+	}
+	if slices.Contains(stored.Clusters, cluster) {
+		return nil
+	}
+	stored.Clusters = append(stored.Clusters, cluster)
+	return putJobSecret(ctx, g.rawClient, g.managementNamespace(), current.Annotations[tenant.CreatedByAnnotation], stored, true)
 }

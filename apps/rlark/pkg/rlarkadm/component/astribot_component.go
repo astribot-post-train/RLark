@@ -11,6 +11,18 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 )
 
+// Capture the upstream profile before Astribot replaces selected descriptors.
+var stockComponents = slices.Clone(components)
+
+// StockDataPlaneComponents retains the separate cluster and node Agent
+// workloads for the explicitly opted-in stock installer.
+func StockDataPlaneComponents(cfg *types.DeployConfig) []types.Component {
+	if cfg.Plane != types.PlaneData || cfg.Kubernetes == nil {
+		return nil
+	}
+	return componentsForPlane(cfg, stockComponents)
+}
+
 // The site's components are the official ones (component.go, as upstream has it) with these differences:
 // no node agent DaemonSet (the node agents are the Cluster's declaration, spec.nodeAgents, which the cluster
 // agent keeps as its DaemonSet); the cluster agent on its own ports with a readiness probe; and each

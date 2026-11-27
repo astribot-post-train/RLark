@@ -15,10 +15,9 @@ import (
 	"testing"
 	"time"
 
-	"k8s.io/client-go/rest"
-	"k8s.io/client-go/tools/clientcmd"
-
+	"github.com/rlinf/rlark/apps/rlark/pkg/addons"
 	appsv1 "k8s.io/api/apps/v1"
+	coordinationv1 "k8s.io/api/coordination/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -31,9 +30,10 @@ import (
 	dynamicfake "k8s.io/client-go/dynamic/fake"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/fake"
+	"k8s.io/client-go/rest"
 	k8stesting "k8s.io/client-go/testing"
-
-	"github.com/rlinf/rlark/apps/rlark/pkg/addons"
+	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/utils/ptr"
 )
 
 const (
@@ -103,10 +103,13 @@ func newFakeSite(t *testing.T) *fakeSite {
 	var objects []runtime.Object
 	objects = append(objects, object("station.rlark.io/v1alpha1", "SiteNetwork", "station-system", "default", map[string]any{"status": map[string]any{"members": int64(2)}}))
 	for _, cluster := range []string{"lab", "office"} {
-		objects = append(objects, object("rlinf.io/v1alpha1", "Cluster", "", cluster, map[string]any{
+		clusterObject := object("rlinf.io/v1alpha1", "Cluster", "", cluster, map[string]any{
 			"spec":   map[string]any{"agentNamespace": cluster, "nodeAgents": map[string]any{"enabled": true, "image": oldRLark, "nodeSelector": map[string]any{"rlark.io/enabled": "true"}}},
 			"status": map[string]any{"phase": "Online"},
-		}))
+		})
+		clusterObject.SetUID(types.UID(cluster + "-uid"))
+		clusterObject.SetResourceVersion("1")
+		objects = append(objects, clusterObject)
 		objects = append(objects, object("rlinf.io/v1alpha1", "Node", cluster, cluster+"-1", map[string]any{"status": map[string]any{"phase": "Online"}}))
 	}
 	objects = append(objects,
@@ -116,7 +119,9 @@ func newFakeSite(t *testing.T) *fakeSite {
 	s.reactors()
 
 	for _, cluster := range []string{"lab", "office"} {
-		member := fake.NewClientset()
+		member := fake.NewClientset(&coordinationv1.Lease{
+			ObjectMeta: metav1.ObjectMeta{Namespace: "rlark-system", Name: "rlark-agent-upgrade"},
+		})
 		s.members[cluster] = member
 		definitions := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
 		// A server-side apply makes the object, or makes it what it states.
@@ -631,7 +636,10 @@ func TestApplyWaitsForAGatewayThatIsStarting(t *testing.T) {
 	_, environment, release := writeFiles(t)
 	desired := environment.Desired(release, testClusters)
 	var out bytes.Buffer
-	if err := newRun(t, s, environment, desired, &out).Apply(context.Background()); err != nil {
+	run := newRun(t, s, environment, desired, &out)
+	// Exercise both retries even when coverage tests in other packages are busy.
+	run.Timeout = 2 * time.Second
+	if err := run.Apply(context.Background()); err != nil {
 		t.Fatalf("%v\n%s", err, out.String())
 	}
 }
@@ -669,11 +677,6 @@ func TestApplyGivesStationContainersTheReleasesName(t *testing.T) {
 	if plan, err := run.Plan(context.Background(), mustRead(t, run.Site)); err != nil || len(plan) != 0 {
 		t.Errorf("after the run: %v %v", plan, err)
 	}
-}
-
-func withStation(cluster ClusterState, agent, wireguard string) ClusterState {
-	cluster.StationAgent, cluster.StationWireguard = agent, wireguard
-	return cluster
 }
 
 func mustRead(t *testing.T, site *Site) State {
@@ -794,6 +797,35 @@ func TestOneRunAtATime(t *testing.T) {
 	}
 	if len(s.writes) != 0 {
 		t.Errorf("wrote while another held the site: %v", s.writes)
+	}
+}
+
+func TestMemberLeaseConflictStopsBeforeReleaseWrites(t *testing.T) {
+	s := newFakeSite(t)
+	_, environment, release := writeFiles(t)
+	desired := environment.Desired(release, testClusters)
+	ctx := t.Context()
+	office := s.members["office"].CoordinationV1().Leases("rlark-system")
+	lease, err := office.Get(ctx, "rlark-agent-upgrade", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	lease.Spec.HolderIdentity = ptr.To("upgrade-job/office")
+	lease.Spec.RenewTime = ptr.To(metav1.NowMicro())
+	lease.Spec.LeaseDurationSeconds = ptr.To(int32(300))
+	if _, err := office.Update(ctx, lease, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	if err := newRun(t, s, environment, desired, &out).Apply(ctx); err == nil || !strings.Contains(err.Error(), "upgrade-job/office") {
+		t.Fatalf("did not refuse the conflicting release: %v", err)
+	}
+	if len(s.writes) != 0 {
+		t.Fatalf("wrote before holding all targets: %v", s.writes)
+	}
+	lab, err := s.members["lab"].CoordinationV1().Leases("rlark-system").Get(ctx, "rlark-agent-upgrade", metav1.GetOptions{})
+	if err != nil || lab.Spec.HolderIdentity != nil {
+		t.Fatalf("partial acquisition was not cleared: %v, %v", lab, err)
 	}
 }
 
@@ -934,11 +966,13 @@ func TestNodesOutOfServiceHoldNoRolloutUp(t *testing.T) {
 		&appsv1.DaemonSet{ObjectMeta: metav1.ObjectMeta{Namespace: agentNamespace, Name: nodeAgentDaemon}, Spec: appsv1.DaemonSetSpec{Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": nodeAgentDaemon}}}},
 	)
 	pod := func(node, image string, ready corev1.ConditionStatus) {
-		member.CoreV1().Pods(agentNamespace).Create(context.Background(), &corev1.Pod{
+		if _, err := member.CoreV1().Pods(agentNamespace).Create(context.Background(), &corev1.Pod{
 			ObjectMeta: metav1.ObjectMeta{Namespace: agentNamespace, Name: "agent-" + node, Labels: map[string]string{"app": nodeAgentDaemon}},
 			Spec:       corev1.PodSpec{NodeName: node, Containers: []corev1.Container{{Name: "agent", Image: image}}},
 			Status:     corev1.PodStatus{Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: ready}}},
-		}, metav1.CreateOptions{})
+		}, metav1.CreateOptions{}); err != nil {
+			t.Fatal(err)
+		}
 	}
 	pod("serving", newRLark, corev1.ConditionTrue)
 	pod("cordoned", newRLark, corev1.ConditionFalse) // ContainerCreating on a node whose network is broken
@@ -1122,7 +1156,7 @@ func TestTheReleaseReachesAMemberByItsCredential(t *testing.T) {
 	// The token the cluster fills in for the ServiceAccount.
 	s.create(s.members["lab"], &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Namespace: "rlark-system", Name: "rlark-release-token"},
 		Data: map[string][]byte{"token": []byte("the-token"), "ca.crt": []byte("the-ca")}})
-	if err := IssueMemberCredential(context.Background(), s.members["lab"], s.memberDefinitions["lab"], s.mcore, "lab", server, serverName, rbac); err != nil {
+	if err := IssueMemberCredential(context.Background(), s.members["lab"], s.memberDefinitions["lab"], s.mcore, "lab", server, serverName, rbac, ""); err != nil {
 		t.Fatal(err)
 	}
 	if !slices.Contains(s.writes, "lab definition clusterroles rlark-release") || !slices.Contains(s.writes, "lab definition secrets rlark-release-token") {
@@ -1140,18 +1174,18 @@ func TestTheReleaseReachesAMemberByItsCredential(t *testing.T) {
 		t.Errorf("the credential: %+v %+v", api, config.AuthInfos)
 	}
 	// Issued again (a token replaced): the same Secret, updated.
-	if err := IssueMemberCredential(context.Background(), s.members["lab"], s.memberDefinitions["lab"], s.mcore, "lab", server, serverName, rbac); err != nil {
+	if err := IssueMemberCredential(context.Background(), s.members["lab"], s.memberDefinitions["lab"], s.mcore, "lab", server, serverName, rbac, ""); err != nil {
 		t.Fatal(err)
 	}
 
 	if _, err := MemberConfigs(context.Background(), s.management, s.mcore); err == nil || !strings.Contains(err.Error(), "cluster office has no credential of the release") {
 		t.Errorf("a cluster without its credential: %v", err)
 	}
-	if err := IssueMemberCredential(context.Background(), s.members["lab"], s.memberDefinitions["lab"], s.mcore, "office", "https://10.11.14.128:6443", "", rbac); err != nil {
+	if err := IssueMemberCredential(context.Background(), s.members["lab"], s.memberDefinitions["lab"], s.mcore, "office", "https://10.11.14.128:6443", "", rbac, ""); err != nil {
 		t.Fatal(err)
 	}
 	configs, err := MemberConfigs(context.Background(), s.management, s.mcore)
-	if err != nil || len(configs) != 2 || configs["lab"].Host != server || configs["lab"].TLSClientConfig.ServerName != "cp.lab.rlark.internal" || configs["lab"].BearerToken != "the-token" {
+	if err != nil || len(configs) != 2 || configs["lab"].Host != server || configs["lab"].ServerName != "cp.lab.rlark.internal" || configs["lab"].BearerToken != "the-token" {
 		t.Errorf("%+v %v", configs, err)
 	}
 }
@@ -1436,5 +1470,24 @@ func TestARetiredNamespaceGoesWithTheStationAgents(t *testing.T) {
 	}
 	if _, err := s.members["office"].CoreV1().Namespaces().Get(ctx, "rlark-station-system", metav1.GetOptions{}); !apierrors.IsNotFound(err) {
 		t.Fatalf("still there: %v", err)
+	}
+}
+
+func TestSiteLeaseRenewalRetriesUntilOwnershipChanges(t *testing.T) {
+	var attempts int
+	transient := errors.New("API temporarily unavailable")
+	err := renewSiteLease(t.Context(), time.Now(), time.Second, time.Millisecond, func(context.Context) error {
+		attempts++
+		switch attempts {
+		case 1:
+			return transient
+		case 2:
+			return nil
+		default:
+			return errSiteLeaseReplaced
+		}
+	})
+	if attempts != 3 || !errors.Is(err, errSiteLeaseReplaced) {
+		t.Fatalf("renewal attempts: %d, error: %v", attempts, err)
 	}
 }

@@ -7,11 +7,13 @@ import (
 	"net/url"
 	"time"
 
+	"github.com/rlinf/rlark/apps/rlark/astribot/provisioning/ownership"
 	authenticationv1 "k8s.io/api/authentication/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
@@ -44,12 +46,12 @@ func CredentialName(cluster string) string { return "release-" + cluster }
 // whoever administers the cluster; then the token as a kubeconfig whose server is server, verified as serverName
 // (ReachedAs: the address the site's names give the API's name, and that name), kept in the management plane. The
 // Gateway does it for a cluster it makes; rlarkctl release credential for one it did not.
-func IssueMemberCredential(ctx context.Context, member kubernetes.Interface, memberDefinitions dynamic.Interface, management kubernetes.Interface, cluster, server, serverName string, rbac []byte) error {
+func IssueMemberCredential(ctx context.Context, member kubernetes.Interface, memberDefinitions dynamic.Interface, management kubernetes.Interface, cluster, server, serverName string, rbac []byte, provisionUID types.UID) error {
 	definitions, err := ParseDefinitions(releaseMemberRBAC, rbac)
 	if err != nil {
 		return err
 	}
-	if err := applyDefinitions(ctx, memberDefinitions, definitions, cluster); err != nil {
+	if err := applyDefinitions(ctx, memberDefinitions, definitions, cluster, nil); err != nil {
 		return err
 	}
 	var token *corev1.Secret
@@ -81,6 +83,9 @@ func IssueMemberCredential(ctx context.Context, member kubernetes.Interface, mem
 		Data:       map[string][]byte{credentialKey: kubeconfig},
 	}
 	secrets := management.CoreV1().Secrets(CredentialNamespace)
+	if provisionUID != "" {
+		return ownership.WriteCredential(ctx, secrets, secret, provisionUID)
+	}
 	_, err = secrets.Create(ctx, secret, metav1.CreateOptions{})
 	if apierrors.IsAlreadyExists(err) {
 		_, err = secrets.Update(ctx, secret, metav1.UpdateOptions{})
@@ -133,7 +138,7 @@ func ReachedAs(ctx context.Context, management dynamic.Interface, administrator 
 	if err != nil {
 		return "", "", err
 	}
-	name := administrator.TLSClientConfig.ServerName
+	name := administrator.ServerName
 	if name == "" {
 		name = api.Hostname()
 	}
@@ -152,7 +157,7 @@ func ReachedAs(ctx context.Context, management dynamic.Interface, administrator 
 			return "https://" + net.JoinHostPort(address, port), name, nil
 		}
 	}
-	return administrator.Host, administrator.TLSClientConfig.ServerName, nil
+	return administrator.Host, administrator.ServerName, nil
 }
 
 // MemberConfigs are the clusters of the management plane, each as its credential reaches it.

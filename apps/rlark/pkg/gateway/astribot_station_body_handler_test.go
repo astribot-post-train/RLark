@@ -9,6 +9,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
+
+	"github.com/rlinf/rlark/apps/rlark/astribot/stations"
 )
 
 func TestStationBodyState(t *testing.T) {
@@ -39,7 +41,7 @@ func TestStationBodyState(t *testing.T) {
 				case "apis/apps/v1/namespaces/rlark-system/daemonsets/s1u-robot":
 					_, _ = w.Write([]byte(`{"metadata":{"name":"s1u-robot","namespace":"rlark-system","uid":"addon-uid"}}`))
 				case "api/v1/namespaces/rlark-system/pods":
-					if r.URL.Query().Get("labelSelector") != robotAddonSelector || r.URL.Query().Get("fieldSelector") != "spec.nodeName=test-node" {
+					if r.URL.Query().Get("labelSelector") != stations.RobotAddonSelector || r.URL.Query().Get("fieldSelector") != "spec.nodeName=test-node" {
 						t.Errorf("unbounded Pod query: %s", r.URL.RawQuery)
 					}
 					_, _ = w.Write([]byte(`{"items":[` + tc.pod + `]}`))

@@ -17,6 +17,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
+	"github.com/rlinf/rlark/apps/rlark/astribot/clusterupgrade"
+	"github.com/rlinf/rlark/apps/rlark/astribot/nodeagent"
+
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -58,6 +62,8 @@ type Run struct {
 	// checks of every later stage, which compare with the baseline taken before the run, take an Addon at that
 	// version as the run made it (going back, addons is the first stage, and the agents' stages come after it).
 	addonVersions map[string]string
+	memberGuards  map[string]*clusterupgrade.Guard
+	stockDeferred map[string]string
 }
 
 type installed struct{ file, sum string }
@@ -173,6 +179,16 @@ func (r *Run) changes(ctx context.Context, stage string, current State) ([]Chang
 			changes = append(changes, member...)
 		}
 		return changes, nil
+	case stockUpgradeStage:
+		var changes []Change
+		for _, name := range slices.Sorted(maps.Keys(r.Site.MemberDefinitions)) {
+			member, err := r.stockChanges(ctx, name)
+			if err != nil {
+				return nil, err
+			}
+			changes = append(changes, member...)
+		}
+		return changes, nil
 	case "gateway", "server", "console":
 		desired, err := r.planeDesired(ctx, current)
 		if err != nil {
@@ -249,9 +265,41 @@ func (r *Run) Apply(ctx context.Context) error {
 	if r.DryRun {
 		return nil
 	}
-	if len(plan) == 0 {
-		r.log.printf("the site runs release %s as stated; nothing to do", r.Name)
-		return r.record(ctx, current)
+	ctx, release, err := r.hold(ctx)
+	if err != nil {
+		return err
+	}
+	defer release()
+	if len(plan) != 0 {
+		ctx, releaseMembers, err := r.holdMembers(ctx)
+		if err != nil {
+			return err
+		}
+		defer releaseMembers()
+		// Use the lease-scoped context for every subsequent read and write.
+		return r.applyLocked(ctx)
+	}
+	current, err = r.Site.Read(ctx)
+	if err != nil {
+		return err
+	}
+	lockedPlan, err := r.Plan(ctx, current)
+	if err != nil {
+		return err
+	}
+	if len(lockedPlan) > 0 {
+		return fmt.Errorf("site changed while acquiring the release lock; rerun to review the new plan")
+	}
+	r.log.printf("the site runs release %s as stated; nothing to do", r.Name)
+	return r.record(ctx, current)
+}
+
+func (r *Run) applyLocked(ctx context.Context) error {
+	r.stockDeferred = map[string]string{}
+	defer func() { r.stockDeferred = nil }()
+	current, err := r.Site.Read(ctx)
+	if err != nil {
+		return err
 	}
 
 	stamp := time.Now().UTC().Format("20060102-150405")
@@ -270,15 +318,9 @@ func (r *Run) Apply(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	defer record.Close()
+	defer func() { _ = record.Close() }()
 	r.log.record = bufio.NewWriter(record)
 	r.log.printf("the state before is recorded in %s", before)
-
-	release, err := r.hold(ctx)
-	if err != nil {
-		return err
-	}
-	defer release()
 
 	baseline, err := Read(ctx, r.Site.Management, time.Now())
 	if err != nil {
@@ -302,7 +344,14 @@ func (r *Run) Apply(ctx context.Context) error {
 			return stopped
 		}
 	}
-	r.log.printf("release %s: every stage done", r.Name)
+	if len(r.stockDeferred) > 0 {
+		r.log.printf("release %s: stock upgrade configuration deferred on %d member(s)", r.Name, len(r.stockDeferred))
+		for _, name := range slices.Sorted(maps.Keys(r.stockDeferred)) {
+			r.log.printf("  %s: %s", name, r.stockDeferred[name])
+		}
+	} else {
+		r.log.printf("release %s: every stage done", r.Name)
+	}
 	return r.record(ctx, current)
 }
 
@@ -333,6 +382,13 @@ func (r *Run) stage(ctx context.Context, stage Stage, baseline Snapshot) error {
 	if err != nil {
 		return err
 	}
+	changes = slices.DeleteFunc(changes, func(change Change) bool {
+		if change.DeferredReason == "" {
+			return false
+		}
+		r.log.printf("%s", change)
+		return true
+	})
 	if stage.Name != "prewarm" && len(changes) == 0 {
 		// As stated is not yet done: a run that stopped here left what it wrote, which may not have come up.
 		reading, err := r.settled(ctx, stage, baseline)
@@ -396,7 +452,7 @@ func (r *Run) stage(ctx context.Context, stage Stage, baseline Snapshot) error {
 			unexpected = append(unexpected, owner)
 		}
 	}
-	r.log.printf("%s: done in %s; Pods made anew: %s", stage.Name, time.Now().Sub(started).Round(time.Second), strings.Join(append(made, "none")[:max(len(made), 1)], " "))
+	r.log.printf("%s: done in %s; Pods made anew: %s", stage.Name, time.Since(started).Round(time.Second), strings.Join(append(made, "none")[:max(len(made), 1)], " "))
 	if len(unexpected) > 0 {
 		return errors.New("Pods were made anew that this stage does not replace: " + strings.Join(unexpected, ", "))
 	}
@@ -430,23 +486,43 @@ func (r *Run) act(ctx context.Context, stage string, current State) error {
 			}
 		}
 	case "crds-rbac":
-		if err := applyDefinitions(ctx, site.Management, r.Tree.Definitions, ""); err != nil {
+		if err := applyDefinitions(ctx, site.Management, r.Tree.Definitions, "", nil); err != nil {
 			return err
 		}
 		for _, cluster := range slices.Sorted(maps.Keys(site.MemberDefinitions)) {
-			if err := applyDefinitions(ctx, site.MemberDefinitions[cluster], r.Tree.MemberDefinitions, cluster); err != nil {
+			if err := applyDefinitions(ctx, site.MemberDefinitions[cluster], r.Tree.MemberDefinitions, cluster, func(ctx context.Context) error { return r.checkMemberLease(ctx, cluster) }); err != nil {
 				return err
+			}
+		}
+		return nil
+	case stockUpgradeStage:
+		for _, cluster := range slices.Sorted(maps.Keys(site.MemberDefinitions)) {
+			if r.stockDeferred[cluster] != "" {
+				continue
+			}
+			if err := r.initializeStockMember(ctx, cluster); err != nil {
+				var busy *stockDeferredError
+				if errors.As(err, &busy) {
+					r.log.printf("%s", r.deferStockMember(cluster, busy.Error()))
+					continue
+				}
+				return fmt.Errorf("cluster %s: initialize stock upgrade: %w", cluster, err)
 			}
 		}
 		return nil
 	case "gateway":
 		return r.setPlane(ctx, current, "rlark-gateway")
 	case "station-api":
-		member, pullSecret := site.Members[site.Environment.Station.Cluster], site.Environment.Station.PullSecret
+		cluster := site.Environment.Station.Cluster
+		member, pullSecret := site.Members[cluster], site.Environment.Station.PullSecret
+		check := func(ctx context.Context) error { return r.checkMemberLease(ctx, cluster) }
 		if desired.Installer == "" || current.Installer == desired.Installer {
-			return setDeployment(ctx, member, stationNamespace, stationAPI, desired.StationAPI, pullSecret)
+			return setDeployment(ctx, member, stationNamespace, stationAPI, desired.StationAPI, pullSecret, check)
 		}
 		// The installer first, then both Deployments read it: Station API with its new image, the controller as it is.
+		if err := check(ctx); err != nil {
+			return err
+		}
 		file, sum, err := site.Installer.Put(ctx, desired.Installer)
 		if err != nil {
 			return fmt.Errorf("lay down the installer %s: %w", short(desired.Installer), err)
@@ -467,6 +543,9 @@ func (r *Run) act(ctx context.Context, stage string, current State) error {
 				}
 			}
 			deployment.Spec.Template.Spec.ImagePullSecrets = []corev1.LocalObjectReference{{Name: pullSecret}}
+			if err := check(ctx); err != nil {
+				return err
+			}
 			if _, err := member.AppsV1().Deployments(stationNamespace).Update(ctx, deployment, metav1.UpdateOptions{}); err != nil {
 				return err
 			}
@@ -479,11 +558,14 @@ func (r *Run) act(ctx context.Context, stage string, current State) error {
 		container := &deployment.Spec.Template.Spec.Containers[0]
 		container.Image = desired.StationController
 		deployment.Spec.Template.Spec.ImagePullSecrets = []corev1.LocalObjectReference{{Name: site.Environment.Station.PullSecret}}
+		if err := r.checkMemberLease(ctx, site.Environment.Station.Cluster); err != nil {
+			return err
+		}
 		_, err = site.Members[site.Environment.Station.Cluster].AppsV1().Deployments(stationNamespace).Update(ctx, deployment, metav1.UpdateOptions{})
 		return err
 	case "cluster-agents":
 		for _, name := range slices.Sorted(maps.Keys(desired.Clusters)) {
-			deployment, err := setAgent(ctx, site.Members[name], desired.Clusters[name])
+			deployment, err := setAgent(ctx, site.Members[name], desired.Clusters[name], func(ctx context.Context) error { return r.checkMemberLease(ctx, name) })
 			if err != nil {
 				return fmt.Errorf("cluster %s: %w", name, err)
 			}
@@ -496,25 +578,7 @@ func (r *Run) act(ctx context.Context, stage string, current State) error {
 		}
 	case "node-agents":
 		for _, name := range slices.Sorted(maps.Keys(desired.Clusters)) {
-			if current.Clusters[name].NodeAgent == desired.Clusters[name].NodeAgent {
-				continue
-			}
-			// The Cluster's declaration of its node agents (spec.nodeAgents, as the Gateway's PUT writes it): what the
-			// release does not change (the selector, the rollout) stays as it is.
-			if err := r.retryWrite(ctx, func() error {
-				clusters := site.Management.Resource(clusterGVR)
-				object, err := clusters.Get(ctx, name, metav1.GetOptions{})
-				if err != nil {
-					return err
-				}
-				declared, _, _ := unstructured.NestedMap(object.Object, "spec", "nodeAgents")
-				declared["enabled"], declared["image"] = true, desired.Clusters[name].NodeAgent
-				if err := unstructured.SetNestedMap(object.Object, declared, "spec", "nodeAgents"); err != nil {
-					return err
-				}
-				_, err = clusters.Update(ctx, object, metav1.UpdateOptions{})
-				return err
-			}); err != nil {
+			if err := r.setNodeAgentImage(ctx, name, current.Clusters[name], desired.Clusters[name].NodeAgent); err != nil {
 				return err
 			}
 		}
@@ -526,6 +590,9 @@ func (r *Run) act(ctx context.Context, stage string, current State) error {
 					return fmt.Errorf("cluster %s: %w", name, err)
 				}
 				for _, namespace := range retired {
+					if err := r.checkMemberLease(ctx, name); err != nil {
+						return err
+					}
 					if err := site.Members[name].CoreV1().Namespaces().Delete(ctx, namespace, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
 						return fmt.Errorf("cluster %s: namespace %s: %w", name, namespace, err)
 					}
@@ -536,6 +603,9 @@ func (r *Run) act(ctx context.Context, stage string, current State) error {
 				if err := r.retryWrite(ctx, func() error {
 					has, made, err := r.stationDaemonSet(ctx, name, daemonSet)
 					if err != nil || has == nil {
+						return err
+					}
+					if err := r.checkMemberLease(ctx, name); err != nil {
 						return err
 					}
 					_, err = site.Members[name].AppsV1().DaemonSets(stationNamespace).Update(ctx, made, metav1.UpdateOptions{})
@@ -557,7 +627,12 @@ func (r *Run) act(ctx context.Context, stage string, current State) error {
 				if installed && was.Version == want.Version && maps.Equal(was.Values, want.Values) {
 					continue
 				}
-				if err := r.retryWrite(ctx, func() error { return site.PutAddon(ctx, cluster, name, want, !installed) }); err != nil {
+				if err := r.retryWrite(ctx, func() error {
+					if err := r.checkMemberLease(ctx, cluster); err != nil {
+						return err
+					}
+					return site.PutAddon(ctx, cluster, name, want, !installed)
+				}); err != nil {
 					return err
 				}
 				if was.Version != want.Version {
@@ -594,6 +669,59 @@ func addonOrder(installed map[string]AddonState, desired State) []string {
 	return ordered
 }
 
+func (r *Run) setNodeAgentImage(ctx context.Context, name string, current ClusterState, target string) error {
+	if current.NodeAgent == target {
+		return nil
+	}
+	guard := r.memberGuards[name]
+	if guard == nil {
+		return fmt.Errorf("missing member release lease for %s", name)
+	}
+	clusters := r.Site.Management.Resource(clusterGVR)
+	if current.nodeAgentsEnabled && current.NodeAgent != "" {
+		change := nodeagent.ImageChange{Cluster: name, UID: current.clusterUID, From: current.NodeAgent, To: target}
+		return r.retryWrite(ctx, func() error {
+			return nodeagent.ChangeDeclaredImage(ctx, clusters, change, guard.Check)
+		})
+	}
+
+	// Preserve release bootstrap for clusters without an enabled declaration.
+	// An image-only upgrade never takes this path.
+	return r.retryWrite(ctx, func() error {
+		object, err := clusters.Get(ctx, name, metav1.GetOptions{})
+		if err != nil {
+			return err
+		}
+		declared, _, err := unstructured.NestedMap(object.Object, "spec", "nodeAgents")
+		if err != nil {
+			return err
+		}
+		image, _ := declared["image"].(string)
+		enabled, _ := declared["enabled"].(bool)
+		if object.GetUID() != current.clusterUID || object.GetDeletionTimestamp() != nil {
+			return fmt.Errorf("cluster %s: %w", name, nodeagent.ErrImageDeclarationChanged)
+		}
+		if enabled && image == target {
+			return guard.Check(ctx)
+		}
+		if image != current.NodeAgent || enabled != current.nodeAgentsEnabled {
+			return fmt.Errorf("cluster %s: %w", name, nodeagent.ErrImageDeclarationChanged)
+		}
+		if declared == nil {
+			declared = map[string]any{}
+		}
+		declared["enabled"], declared["image"] = true, target
+		if err := unstructured.SetNestedMap(object.Object, declared, "spec", "nodeAgents"); err != nil {
+			return err
+		}
+		if err := guard.Check(ctx); err != nil {
+			return err
+		}
+		_, err = clusters.Update(ctx, object, metav1.UpdateOptions{})
+		return err
+	})
+}
+
 // retryWrite writes until the management plane takes it: a write that conflicts with another (the object
 // changed meanwhile) or meets the plane busy or unreachable is asked again until the stage's time is up; one it
 // refuses (ErrRefused, forbidden, invalid, absent) is not.
@@ -603,7 +731,7 @@ func (r *Run) retryWrite(ctx context.Context, write func() error) error {
 		switch {
 		case err == nil:
 			return "", nil
-		case errors.Is(err, ErrRefused), apierrors.IsForbidden(err), apierrors.IsInvalid(err), apierrors.IsNotFound(err),
+		case errors.Is(err, ErrRefused), errors.Is(err, nodeagent.ErrImageDeclarationChanged), apierrors.IsForbidden(err), apierrors.IsInvalid(err), apierrors.IsNotFound(err),
 			apierrors.IsBadRequest(err), apierrors.IsUnauthorized(err), apierrors.IsAlreadyExists(err):
 			return "", err
 		}
@@ -654,7 +782,9 @@ func (r *Run) settled(ctx context.Context, stage Stage, baseline Snapshot) (stri
 			return "", err
 		}
 		for _, change := range changes {
-			left = append(left, "still "+change.String())
+			if change.DeferredReason == "" {
+				left = append(left, "still "+change.String())
+			}
 		}
 	}
 	switch stage.Name {
@@ -778,7 +908,7 @@ func outOfService(node corev1.Node) string {
 
 // setDeployment gives one of Station's Deployments its image, which it pulls with the site registry's account as
 // Station's DaemonSets do: the node it runs on need not have had the image pulled for it.
-func setDeployment(ctx context.Context, member kubernetes.Interface, namespace, name, image, pullSecret string) error {
+func setDeployment(ctx context.Context, member kubernetes.Interface, namespace, name, image, pullSecret string, check func(context.Context) error) error {
 	deployment, err := member.AppsV1().Deployments(namespace).Get(ctx, name, metav1.GetOptions{})
 	if err != nil {
 		return err
@@ -787,6 +917,9 @@ func setDeployment(ctx context.Context, member kubernetes.Interface, namespace, 
 		deployment.Spec.Template.Spec.Containers[i].Image = image
 	}
 	deployment.Spec.Template.Spec.ImagePullSecrets = []corev1.LocalObjectReference{{Name: pullSecret}}
+	if err := check(ctx); err != nil {
+		return err
+	}
 	_, err = member.AppsV1().Deployments(namespace).Update(ctx, deployment, metav1.UpdateOptions{})
 	return err
 }
@@ -797,7 +930,7 @@ const agentReadyPort = 10382
 // setAgent gives the cluster agent its image, the tools it hands to Tasks and its readiness probe. The agent is one
 // Pod on its node's network: the one before goes before the next comes, or the two want the same ports. It returns
 // the agent's Deployment's name.
-func setAgent(ctx context.Context, member kubernetes.Interface, want ClusterState) (string, error) {
+func setAgent(ctx context.Context, member kubernetes.Interface, want ClusterState, check func(context.Context) error) (string, error) {
 	deployment, at, err := clusterAgent(ctx, member)
 	if err != nil {
 		return "", err
@@ -818,6 +951,9 @@ func setAgent(ctx context.Context, member kubernetes.Interface, want ClusterStat
 	}
 	if deployment.Spec.Template.Spec.HostNetwork {
 		deployment.Spec.Strategy = appsv1.DeploymentStrategy{Type: appsv1.RecreateDeploymentStrategyType}
+	}
+	if err := check(ctx); err != nil {
+		return "", err
 	}
 	_, err = member.AppsV1().Deployments(agentNamespace).Update(ctx, deployment, metav1.UpdateOptions{})
 	return deployment.Name, err
@@ -1010,17 +1146,17 @@ const (
 // hold takes the site's release lease for the run and renews it while the
 // run goes on: two people never change one site at once. A lease nobody
 // renewed for its duration is taken over.
-func (r *Run) hold(ctx context.Context) (func(), error) {
+func (r *Run) hold(ctx context.Context) (context.Context, func(), error) {
 	leases := r.Site.Management.Resource(leaseGVR).Namespace(leaseNamespace)
 	me, _ := os.Hostname()
 	if account, err := user.Current(); err == nil {
 		me = account.Username + "@" + me
 	}
-	holder := fmt.Sprintf("%s %s", me, r.Name)
-	write := func() error {
+	holder := fmt.Sprintf("%s %s %s", me, r.Name, uuid.NewString())
+	write := func(ctx context.Context, renewing bool) error {
 		now := time.Now().UTC().Format("2006-01-02T15:04:05.000000Z07:00")
 		current, err := leases.Get(ctx, leaseName, metav1.GetOptions{})
-		if apierrors.IsNotFound(err) {
+		if apierrors.IsNotFound(err) && !renewing {
 			lease := &unstructured.Unstructured{Object: map[string]any{
 				"apiVersion": "coordination.k8s.io/v1", "kind": "Lease",
 				"metadata": map[string]any{"name": leaseName, "namespace": leaseNamespace},
@@ -1034,9 +1170,12 @@ func (r *Run) hold(ctx context.Context) (func(), error) {
 		}
 		other, _, _ := unstructured.NestedString(current.Object, "spec", "holderIdentity")
 		renewed, _, _ := unstructured.NestedString(current.Object, "spec", "renewTime")
+		if renewing && other != holder {
+			return fmt.Errorf("%w: %q", errSiteLeaseReplaced, other)
+		}
 		if other != "" && other != holder {
 			at, _ := time.Parse(time.RFC3339Nano, renewed)
-			if time.Now().Sub(at) < leaseSeconds*time.Second {
+			if time.Since(at) < leaseSeconds*time.Second {
 				return fmt.Errorf("the site's release is held by %q (renewed %s); one run at a time", other, renewed)
 			}
 		}
@@ -1049,33 +1188,67 @@ func (r *Run) hold(ctx context.Context) (func(), error) {
 		_, err = leases.Update(ctx, current, metav1.UpdateOptions{})
 		return err
 	}
-	if err := write(); err != nil {
-		return nil, err
+	started := time.Now()
+	if err := write(ctx, false); err != nil {
+		return ctx, nil, err
 	}
-	renewing, stop := context.WithCancel(ctx)
+	renewing, stop := context.WithCancelCause(ctx)
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		for {
-			select {
-			case <-renewing.Done():
-				return
-			case <-time.After(leaseSeconds * time.Second / 5):
-				if err := write(); err != nil {
-					r.log.printf("the release lease was not renewed: %v", err)
-				}
-			}
+		if err := renewSiteLease(renewing, started, leaseSeconds*time.Second, 5*time.Second, func(call context.Context) error {
+			return write(call, true)
+		}); err != nil {
+			stop(err)
 		}
 	}()
-	return func() {
-		stop()
+
+	return renewing, func() {
+		stop(context.Canceled)
 		<-done
-		current, err := leases.Get(context.WithoutCancel(ctx), leaseName, metav1.GetOptions{})
+		cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+		defer cancel()
+		current, err := leases.Get(cleanup, leaseName, metav1.GetOptions{})
 		if err != nil {
 			return
 		}
 		if other, _, _ := unstructured.NestedString(current.Object, "spec", "holderIdentity"); other == holder {
-			_ = leases.Delete(context.WithoutCancel(ctx), leaseName, metav1.DeleteOptions{})
+			_ = leases.Delete(cleanup, leaseName, metav1.DeleteOptions{Preconditions: &metav1.Preconditions{
+				UID: ptr.To(current.GetUID()), ResourceVersion: ptr.To(current.GetResourceVersion()),
+			}})
 		}
 	}, nil
+}
+
+var errSiteLeaseReplaced = errors.New("site release lease was taken by another holder")
+
+// renewSiteLease retries bounded API failures while the last confirmed renewal
+// is still valid. Loss of the observed holder fences the release immediately.
+func renewSiteLease(ctx context.Context, started time.Time, duration, retryDelay time.Duration, renew func(context.Context) error) error {
+	expires := started.Add(duration)
+	timer := time.NewTimer(max(0, time.Until(started.Add(duration/5))))
+	defer timer.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-timer.C:
+		}
+		at := time.Now()
+		if !at.Before(expires) {
+			return errors.New("the site release lease expired")
+		}
+		call, cancel := context.WithTimeout(ctx, min(10*time.Second, time.Until(expires)))
+		err := renew(call)
+		cancel()
+		if err == nil {
+			expires = at.Add(duration)
+			timer.Reset(max(0, time.Until(at.Add(duration/5))))
+			continue
+		}
+		if errors.Is(err, errSiteLeaseReplaced) || apierrors.IsNotFound(err) || time.Until(expires) <= 0 {
+			return fmt.Errorf("the site release lease was not renewed: %w", err)
+		}
+		timer.Reset(min(retryDelay, time.Until(expires)))
+	}
 }

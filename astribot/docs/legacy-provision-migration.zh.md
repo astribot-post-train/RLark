@@ -1,0 +1,21 @@
+# 迁移历史 SSH 主机和开集群记录
+
+## 复用历史工作节点
+
+在原主机重新发起 SSH 入网。Gateway 会核对固定的 SSH 指纹和 WireGuard 公钥。如果历史工作节点的标记没有保存集群和节点名，Gateway 会读取原安装日志目录中的节点名，并将主机保存的 API 地址和 CA 指纹与目标成员集群的原生信息核对。成员 API 必须确认该名称的原生 Node 已不存在。主机持锁重新核对证据后，才会重置工作节点安装或变更隧道归属。
+
+如果安装仍在运行、主机是控制面、已有同名节点、API 地址或 CA 不一致，或者缺少证据，自动恢复会停止。请保留旧记录，核实归属后再重试。
+
+## 核对并记录历史开集群归属
+
+管理员在控制台打开 **新建集群**，从 **新建历史** 选择记录，再点 **核对历史归属**。该操作面向历史记录。控制台自动读取当前 Cluster、SiteNetwork 和相关凭据元数据，为候选显示状态，并在可用时显示 UID 和创建时间。请对照原安装记录、审计或备份，只勾选能确认归属的候选，填写证据引用并确认。当前仍有同名 Cluster 时，除非原归属已记录，否则须同时核对该集群。SiteNetwork 已部分清理时，剩余条目与原开集群记录一致即可选中。
+
+如需核对历史控制面，展开 **核对原控制面主机**，输入 SSH 口令并点 **读取主机身份**。Gateway 使用已记录的主机指纹连接，以只读方式取得原生 `kube-system` UID。请对照原集群证据并单独确认该 UID。读取完成后控制台清除口令。主机或原生 API 不可用时，仍可核对管理面资源。
+
+UID 和资源版本由控制台提交。资源变化时，重新加载候选并核对。确认只写归属元数据，并审计证据引用。主机安装、Secret 数据和独立节点记录保持原样。确认后按原流程清理。
+
+管理员 API 提供 `GET /api/v1/cluster-provisions/{name}/migration-candidates`、`POST /api/v1/cluster-provisions/{name}/migration-candidates/host` 和 `POST /api/v1/cluster-provisions/{name}/migrate-ownership`。原程序化确认接口继续支持。原始归属无法核实时，保留相应记录。
+
+恢复 SSH Node UID 时会重试临时网络和上游服务错误。若成员实际返回不同的 UID，仍立即拒绝。
+
+SiteNetwork 仍有声明但无法验证回执时，清理返回 HTTP 409 并保留开集群记录。清理已核实归属且未兑换的 SSH Admission 时，先将入网码作废，再把原 Admission 的 UID 和资源版本记入 SSH 入网记录，最后执行删除。SiteNetwork 暂时不可用时，可以在同一条 SSH 记录上重试清理。原 Admission 已删除时，用回执续做。如果 Admission 消失但缺少回执，或出现同名替换，清理返回 HTTP 409，保留 SSH 入网记录和 Hub 声明。已作废的入网码不能兑换或重发。仅凭命名空间匹配，不能批量删除历史 NetworkEnrollment 或 NodeAdmission。

@@ -100,8 +100,6 @@ var controllerManagerRules = []rbacv1.PolicyRule{
 	{APIGroups: []string{""}, Resources: []string{"namespaces"}, Verbs: read},
 	{APIGroups: []string{"coordination.k8s.io"}, Resources: []string{"leases"}, Verbs: rw},
 	{APIGroups: []string{"", "events.k8s.io"}, Resources: []string{"events"}, Verbs: []string{"create", "patch"}},
-	// Upgrade jobs: the new agent's preflight reads clusterupgradejobs (11-26 15:1x, 403 without this rule).
-	{APIGroups: []string{"rlinf.io"}, Resources: []string{"upgradejobs", "clusterupgradejobs"}, Verbs: read},
 }
 
 // The release command's permissions (apps/rlark/astribot/release): the definitions of a release's tree (CRDs and

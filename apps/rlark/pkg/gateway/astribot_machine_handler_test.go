@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"github.com/rlinf/rlark/apps/rlark/astribot/stations"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -57,6 +58,8 @@ func TestMachinesAreListedAndAdmittedEachForItself(t *testing.T) {
 	// lab-05 was seen again since it was read last: it is read anew before it can be admitted.
 	unread := handlerMachine("lab-05", "Discovered", "", "1794925031001")
 	unstructured.RemoveNestedField(unread.Object, "status", "inspectedAt")
+	const scanID = "d3feca83-fccd-435d-b270-82f6072f27c7"
+	_ = unstructured.SetNestedField(unread.Object, scanID, "status", "entry", "discoveryScanID")
 	client := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), map[schema.GroupVersionResource]string{
 		stationClusterGVR: "ClusterList", nodeAdmissionGVR: "NodeAdmissionList", machineGVR: "MachineList", nodeClassGVR: "NodeClassList", nodeOperationGVR: "NodeOperationList",
 	}, stationHandlerCluster("cluster-a", "agent-a"), class, earlier, blockedJoin, spentJoin,
@@ -66,27 +69,27 @@ func TestMachinesAreListedAndAdmittedEachForItself(t *testing.T) {
 
 	status, body := nodeAdmissionCall(t, g.handleListMachines, "GET", "/api/v1/station/machines?phase=Discovered", "", "")
 	var listed struct {
-		Items   []machine               `json:"items"`
-		Classes map[string]machineClass `json:"classes"`
+		Items   []stations.Machine               `json:"items"`
+		Classes map[string]stations.MachineClass `json:"classes"`
 	}
 	_ = json.Unmarshal(body, &listed)
-	if status != 200 || len(listed.Items) != 3 || listed.Items[0].Name != "lab-05" || listed.Items[0].Admissible || listed.Items[1].Name != "lab-02" || listed.Items[1].Admissible ||
+	if status != 200 || len(listed.Items) != 3 || listed.Items[0].Name != "lab-05" || listed.Items[0].DiscoveryScanID != scanID || listed.Items[0].Admissible || listed.Items[1].Name != "lab-02" || listed.Items[1].Admissible ||
 		!listed.Items[2].Admissible || listed.Items[2].Serial != "1794925030610" || listed.Items[2].NodeHostKeyFingerprint != "SHA256:x86" ||
 		listed.Classes["s1u"].Labels["rlark.io/robot-body"] != "s1u" {
 		t.Fatalf("list %d: %s", status, body)
 	}
-	// An admitted machine is listed with where its join stands.
+	// An admitted stations.Machine is listed with where its join stands.
 	status, body = nodeAdmissionCall(t, g.handleListMachines, "GET", "/api/v1/station/machines?phase=Admitted", "", "")
 	_ = json.Unmarshal(body, &listed)
 	if status != 200 || len(listed.Items) != 1 || listed.Items[0].AdmitClusterID != "cluster-a" || listed.Items[0].Join == nil ||
-		*listed.Items[0].Join != (machineJoin{Phase: "Blocked", Stage: "Preflight"}) {
+		*listed.Items[0].Join != (stations.MachineJoin{Phase: "Blocked", Stage: "Preflight"}) {
 		t.Fatalf("an admitted machine's join %d: %s", status, body)
 	}
 
 	status, body = nodeAdmissionCall(t, g.handleAdmitMachines, "POST", "/api/v1/station/machines/admit", "",
 		`{"cluster_id":"cluster-a","machines":["lab-01","lab-02","lab-03","lab-04","lab-99"],"labels":{"rlark.io/robot-body":"s1u_observer"}}`)
 	var answer struct {
-		Machines []admittedMachine `json:"machines"`
+		Machines []stations.MachineAdmissionResult `json:"machines"`
 	}
 	_ = json.Unmarshal(body, &answer)
 	admitted := ""

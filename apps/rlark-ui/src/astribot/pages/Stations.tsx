@@ -4,7 +4,7 @@ import { AlertTriangle, Boxes, Check, ChevronDown, KeyRound, ListFilter, Server 
 import { ApiError } from "../../api";
 import { clustersApi, nodesApi } from "../../backend";
 import { machinesApi, nodeAdmissionsApi, selfHealApi, siteNodesApi, stationsApi, type NodeOperation, type StationItem, type StationSummary } from "../api";
-import { stationDeletable, stationsOfPhase } from "../lib/nodeRemoval";
+import { stationDeletable, stationHasNodeUIDConflict, stationsOfPhase } from "../lib/nodeRemoval";
 import { PageToolbar, RefreshOverlay } from "../../components/shared";
 import { useAutoRefresh } from "../../hooks";
 import type { Copy } from "../../i18n";
@@ -400,13 +400,18 @@ export function StationsPage({ copy: c, onJoin, onModels }: { copy: Copy; onJoin
     const itemCluster = clusterForStation(clusters, item.metadata.namespace);
     const key = keyOf(item);
     const hasNode = `${item.metadata.namespace}/${item.metadata.name}` in nodesByKey;
-    if (deletePending || !itemCluster || !stationDeletable(item, hasNode) || !window.confirm(zh
+    const uidConflict = stationHasNodeUIDConflict(item);
+    if (deletePending || !itemCluster || !stationDeletable(item, hasNode) || !window.confirm(uidConflict ? (zh ? `清除 ${item.metadata.name} 的旧场站登记？同名新节点会保留。` : `Clear the old enrollment for ${item.metadata.name}? The replacement Node will be preserved.`) : zh
       ? `删除场站节点记录 ${item.metadata.name}（节点 UID ${item.spec.nodeUID.slice(0, 8)}）？删除后不能恢复；这个名字的节点如果还在上报，会按新机器重新登记。`
       : `Delete the site node record ${item.metadata.name} (Node UID ${item.spec.nodeUID.slice(0, 8)})? It cannot be brought back; a node of the name that still reports registers again as a new machine.`)) return;
     setDeletePending(key);
     setError("");
     try {
-      await selfHealApi.deleteStation(item.metadata.name, itemCluster.id);
+      if (uidConflict && item.metadata.uid) {
+        await selfHealApi.forgetConflictingStation(item.metadata.name, itemCluster.id, item.metadata.uid);
+      } else if (!uidConflict) {
+        await selfHealApi.deleteStation(item.metadata.name, itemCluster.id);
+      }
       await load();
     } catch (reason) {
       setError((reason as Error).message);

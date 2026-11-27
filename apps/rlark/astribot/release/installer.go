@@ -89,7 +89,7 @@ func (b *StationBootstrap) unpack(ctx context.Context, repository, digest string
 	if err != nil {
 		return "", "", err
 	}
-	defer body.Close()
+	defer func() { _ = body.Close() }()
 	var layer io.Reader = bufio.NewReader(body)
 	if magic, _ := layer.(*bufio.Reader).Peek(2); bytes.Equal(magic, []byte{0x1f, 0x8b}) {
 		if layer, err = gzip.NewReader(layer); err != nil {
@@ -117,7 +117,7 @@ func (b *StationBootstrap) unpack(ctx context.Context, repository, digest string
 		if err != nil {
 			return "", "", err
 		}
-		defer os.Remove(temporary.Name())
+		defer func() { _ = os.Remove(temporary.Name()) }()
 		hash := sha256.New()
 		_, err = io.Copy(io.MultiWriter(temporary, hash), archive)
 		if closed := temporary.Close(); err == nil {
@@ -152,9 +152,9 @@ func (b *StationBootstrap) Served(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("Station API serves the installer with %s", response.Status)
+		return "", fmt.Errorf("station API serves the installer with %s", response.Status)
 	}
 	hash := sha256.New()
 	if _, err := io.Copy(hash, response.Body); err != nil {
@@ -168,7 +168,7 @@ func fileSum(path string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	hash := sha256.New()
 	if _, err := io.Copy(hash, file); err != nil {
 		return "", err

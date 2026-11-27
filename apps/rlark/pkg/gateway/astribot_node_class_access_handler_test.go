@@ -3,6 +3,7 @@ package gateway
 import (
 	"context"
 	"encoding/json"
+	"github.com/rlinf/rlark/apps/rlark/astribot/stations"
 	"strings"
 	"testing"
 
@@ -46,11 +47,11 @@ func TestTheNodePasswordsOfAClassAreEnteredAndNeverAnswered(t *testing.T) {
 	if status != 200 || !access.Entry.Configured || access.Node.Configured || access.Node.Secret != "orin-access" || access.Node.Key != "x86_password" || access.Sudo != nil {
 		t.Fatalf("before anything is entered: %d %s", status, body)
 	}
-	// The list says the same of the class, and the machine cannot be admitted.
+	// The list says the same of the class, and the stations.Machine cannot be admitted.
 	status, body = nodeAdmissionCall(t, g.handleListMachines, "GET", "/api/v1/station/machines", "", "")
 	var listed struct {
-		Items   []machine               `json:"items"`
-		Classes map[string]machineClass `json:"classes"`
+		Items   []stations.Machine               `json:"items"`
+		Classes map[string]stations.MachineClass `json:"classes"`
 	}
 	_ = json.Unmarshal(body, &listed)
 	if status != 200 || listed.Items[0].Admissible || listed.Classes["s1u"].Access == nil || listed.Classes["s1u"].Access.Node.Configured {

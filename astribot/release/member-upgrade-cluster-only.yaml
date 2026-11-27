@@ -1,0 +1,61 @@
+# Isolated Astribot test members with no node Agents. Provision the member
+# upgrade Lease separately and create rlark-agent-upgrade-policy only after
+# verifying membership, the Agent Deployment name and the executor digest.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: rlark-upgrade
+  namespace: rlark-system
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: rlark-agent-upgrade-checkpoint
+  namespace: rlark-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: rlark-upgrade
+  namespace: rlark-system
+rules:
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    resourceNames: ["rlark-agent-upgrade"]
+    verbs: ["get", "update"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: ["rlark-agent-upgrade-policy", "rlark-agent-upgrade-checkpoint"]
+    verbs: ["get"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: ["rlark-agent-upgrade-checkpoint"]
+    verbs: ["update"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get"]
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["get"]
+  - apiGroups: ["apps"]
+    resources: ["deployments", "daemonsets"]
+    verbs: ["get", "list"]
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    # Must match the verified Deployment name in the member policy.
+    resourceNames: ["rlark-agent"]
+    verbs: ["update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: rlark-upgrade
+  namespace: rlark-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: rlark-upgrade
+subjects:
+  - kind: ServiceAccount
+    name: rlark-upgrade
+    namespace: rlark-system

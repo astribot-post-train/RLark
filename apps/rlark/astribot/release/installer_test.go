@@ -116,8 +116,8 @@ func TestStationBootstrapLaysDownTheArtifactsBundle(t *testing.T) {
 		_ = archive.WriteHeader(&tar.Header{Name: name, Mode: 0o600, Size: int64(len(content)), Typeflag: tar.TypeReg})
 		_, _ = archive.Write([]byte(content))
 	}
-	archive.Close()
-	compressed.Close()
+	_ = archive.Close()
+	_ = compressed.Close()
 	layerDigest := fmt.Sprintf("sha256:%x", sha256.Sum256(layer.Bytes()))
 	manifest := fmt.Sprintf(`{"schemaVersion":2,"layers":[{"digest":%q}]}`, layerDigest)
 	manifestDigest := fmt.Sprintf("sha256:%x", sha256.Sum256([]byte(manifest)))

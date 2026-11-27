@@ -1,0 +1,73 @@
+.provision-migration-entry {
+  margin-block: 1rem;
+}
+
+.provision-migration-dialog {
+  box-sizing: border-box;
+  width: min(42rem, calc(100% - 2rem));
+  max-height: calc(100dvh - 2rem);
+  padding: 1.25rem;
+  color: inherit;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 0.75rem;
+}
+
+.provision-migration-dialog::backdrop {
+  background: rgb(0 0 0 / 50%);
+}
+
+.provision-migration-dialog form,
+.provision-migration-dialog fieldset,
+.provision-migration-dialog details {
+  display: grid;
+  gap: 0.75rem;
+  min-width: 0;
+}
+
+.provision-migration-dialog header,
+.provision-migration-dialog footer,
+.provision-migration-dialog li label {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.provision-migration-dialog h3,
+.provision-migration-dialog p,
+.provision-migration-dialog fieldset {
+  margin: 0;
+}
+
+.provision-migration-dialog code {
+  overflow-wrap: anywhere;
+}
+
+.provision-migration-candidates {
+  display: grid;
+  gap: 0.75rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.provision-migration-candidates li {
+  padding-block: 0.5rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.provision-migration-candidates label span:first-of-type {
+  flex: 1;
+}
+
+.provision-migration-candidates label code,
+.provision-migration-dialog input:not([type="checkbox"]) {
+  display: block;
+  width: 100%;
+}
+
+.provision-migration-status {
+  font-size: 0.8rem;
+  text-align: right;
+}

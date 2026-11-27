@@ -7,15 +7,17 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	clientset "github.com/rlinf/rlark/api/kubeclients/clientset/versioned/fake"
-	rlarkv1alpha1 "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
 	"io"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	clientset "github.com/rlinf/rlark/api/kubeclients/clientset/versioned/fake"
+	rlarkv1alpha1 "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
+	"github.com/rlinf/rlark/apps/rlark/astribot/stationidentity"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -43,7 +45,8 @@ func (f *fakeStationBootstrap) Open(_ context.Context, path string) (io.ReadClos
 }
 
 func (f *fakeStationBootstrap) BundleDigest(context.Context) (string, error) {
-	return sha256Hex(fakeInstaller), nil
+	digest := sha256.Sum256([]byte(fakeInstaller))
+	return hex.EncodeToString(digest[:]), nil
 }
 
 // fakeInstaller is what the fake Station API serves as the installer.
@@ -99,11 +102,11 @@ func TestIssueNodeAdmissionStoresOnlyTheHashAndAnswersTheCommandOnce(t *testing.
 	if status != 201 {
 		t.Fatalf("status %d: %s", status, body)
 	}
-	var issued issuedNodeAdmission
+	var issued stationidentity.IssuedAdmission
 	if err := json.Unmarshal(body, &issued); err != nil {
 		t.Fatal(err)
 	}
-	if len(issued.Code) != joinCodeLength || strings.Trim(issued.Code, "abcdefghijklmnopqrstuvwxyz0123456789") != "" {
+	if len(issued.Code) != stationidentity.JoinCodeLength || strings.Trim(issued.Code, "abcdefghijklmnopqrstuvwxyz0123456789") != "" {
 		t.Fatalf("code %q", issued.Code)
 	}
 	want := `c=$(mktemp) && curl --connect-timeout 15 -fsSk https://10.11.14.128:18443/v1/bootstrap/ca -o $c && echo "cadigest  $c" | sha256sum -c - && curl -fsS --cacert $c https://10.11.14.128:18443/b/` + issued.Code + ` | sudo sh`
@@ -142,7 +145,7 @@ func TestIssueNodeAdmissionBehindADeviceLetsTheMachineOutFirst(t *testing.T) {
 	g, bootstrap := nodeAdmissionGateway()
 	status, body := nodeAdmissionCall(t, g.handleIssueNodeAdmission, "POST", "/api/v1/station/node-admissions", "",
 		`{"cluster_id":"cluster-a","node_name":"s1u-10-x86","site":"farm","node_class":"s1u"}`)
-	var issued issuedNodeAdmission
+	var issued stationidentity.IssuedAdmission
 	_ = json.Unmarshal(body, &issued)
 	if status != 201 || !strings.HasPrefix(issued.Command, `ssh -t nvidia@192.168.0.11 'f=$(mktemp) c=$(mktemp) && `) ||
 		!strings.Contains(issued.Command, `/b/`+issued.Code+`/uplink -o $f && echo "uplinkdigest  $f" | sha256sum -c - && sudo sh $f' && c=$(mktemp)`) {
@@ -196,7 +199,7 @@ func TestNewCodeForAnAdmittedNodeOpensItAgain(t *testing.T) {
 	}
 	// Reissue keeps what the admission declares and clears the redemption.
 	status, body = nodeAdmissionCall(t, g.handleReissueNodeAdmission, "POST", "/api/v1/station/node-admissions/s1u-01-x86/reissue?cluster_id=cluster-a", "s1u-01-x86", "")
-	var issued issuedNodeAdmission
+	var issued stationidentity.IssuedAdmission
 	_ = json.Unmarshal(body, &issued)
 	if status != 200 || issued.Admission.State != "Pending" || issued.Admission.IssuedBy != "alice" || issued.Admission.Address != "10.254.240.9" || issued.Admission.Labels["old"] != "label" || issued.Admission.PublicKey != "" {
 		t.Fatalf("reissue %d: %s", status, body)
@@ -253,7 +256,7 @@ func TestIssueNodeAdmissionForADeclaredKeyRedeemsThroughTheTunnel(t *testing.T) 
 	for node, address := range map[string]string{"gpu-2": "10.254.240.1:18443", "gpu-3": "10.11.14.128:18443"} {
 		status, body := nodeAdmissionCall(t, g.handleIssueNodeAdmission, "POST", "/api/v1/station/node-admissions", "",
 			`{"cluster_id":"cluster-a","node_name":"`+node+`"}`)
-		var issued issuedNodeAdmission
+		var issued stationidentity.IssuedAdmission
 		if err := json.Unmarshal(body, &issued); status != 201 || err != nil {
 			t.Fatalf("status %d: %s", status, body)
 		}
@@ -268,7 +271,7 @@ func TestIssueServerNodeAdmissionWithoutNodeClass(t *testing.T) {
 	g, bootstrap := nodeAdmissionGateway()
 	status, body := nodeAdmissionCall(t, g.handleIssueNodeAdmission, "POST", "/api/v1/station/node-admissions", "",
 		`{"cluster_id":"cluster-a","node_name":"office-server-01","machine":{"category":"Server"}}`)
-	var issued issuedNodeAdmission
+	var issued stationidentity.IssuedAdmission
 	if status != 201 || json.Unmarshal(body, &issued) != nil ||
 		!strings.HasPrefix(issued.Command, "c=$(mktemp)") || issued.Admission.State != "Pending" ||
 		strings.Join(bootstrap.paths, ",") != "/v1/bootstrap/ca" {
@@ -301,25 +304,25 @@ func TestListNodeAdmissionsPaginatesAndUsesIndexedJoin(t *testing.T) {
 	}
 	g, _ := nodeAdmissionGateway(makeAdmission("node-old", "2026-11-01T00:00:00Z"), makeAdmission("node-new", "2026-11-02T00:00:00Z"))
 	g.kubeClient = clientset.NewSimpleClientset(
-		&rlarkv1alpha1.NodeJoin{ObjectMeta: metav1.ObjectMeta{Name: "join-new", Labels: map[string]string{nodeJoinClusterLabel: "cluster-a"}}, Spec: rlarkv1alpha1.NodeJoinSpec{ClusterID: "cluster-a", NodeName: "node-new"}, Status: rlarkv1alpha1.NodeJoinStatus{Phase: rlarkv1alpha1.ClusterProvisionRunning, Stage: "configure"}},
+		&rlarkv1alpha1.NodeJoin{ObjectMeta: metav1.ObjectMeta{Name: "join-new", Labels: map[string]string{"rlark.io/cluster": "cluster-a"}}, Spec: rlarkv1alpha1.NodeJoinSpec{ClusterID: "cluster-a", NodeName: "node-new"}, Status: rlarkv1alpha1.NodeJoinStatus{Phase: rlarkv1alpha1.ClusterProvisionRunning, Stage: "configure"}},
 	)
 	call := func(path string) (int, []byte) {
 		return nodeAdmissionCall(t, g.handleListNodeAdmissions, "GET", path, "", "")
 	}
 	status, body := call("/api/v1/station/node-admissions?cluster_id=cluster-a&limit=1")
 	var first struct {
-		Items    []nodeAdmission `json:"items"`
-		Continue string          `json:"continue"`
-		Total    int             `json:"totalMatched"`
+		Items    []stationidentity.Admission `json:"items"`
+		Continue string                      `json:"continue"`
+		Total    int                         `json:"totalMatched"`
 	}
 	if err := json.Unmarshal(body, &first); status != 200 || err != nil || len(first.Items) != 1 || first.Items[0].NodeName != "node-new" || first.Items[0].JoinPhase != string(rlarkv1alpha1.ClusterProvisionRunning) || first.Items[0].JoinStage != "configure" || first.Continue != "1" || first.Total != 2 {
 		t.Fatalf("page one status=%d body=%s decoded=%+v", status, body, first)
 	}
 	status, body = call("/api/v1/station/node-admissions?cluster_id=cluster-a&limit=1&continue=" + first.Continue)
 	var second struct {
-		Items    []nodeAdmission `json:"items"`
-		Continue string          `json:"continue"`
-		Total    int             `json:"totalMatched"`
+		Items    []stationidentity.Admission `json:"items"`
+		Continue string                      `json:"continue"`
+		Total    int                         `json:"totalMatched"`
 	}
 	if err := json.Unmarshal(body, &second); status != 200 || err != nil || len(second.Items) != 1 || second.Items[0].NodeName != "node-old" || second.Continue != "" || second.Total != 2 {
 		t.Fatalf("page two status=%d body=%s decoded=%+v", status, body, second)
@@ -341,5 +344,52 @@ func BenchmarkListNodeAdmissionsJoin(b *testing.B) {
 		for _, node := range admissions {
 			_ = byNode[node]
 		}
+	}
+}
+
+func TestWorkflowRoutesAndAdmissionProjectionUseGatewayAuthorization(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	g, _ := nodeAdmissionGateway()
+	g.jwtSigningKey = []byte(strings.Repeat("k", 32))
+	g.setupProvisioningWorkflow()
+	router := gin.New()
+	g.RegisterRoutes(router)
+
+	code, body := nodeAdmissionCall(t, g.handleIssueNodeAdmission, "POST", "/station/node-admissions", "", `{"cluster_id":"cluster-a","node_name":"arm-1","ttl_seconds":600}`)
+	if code != http.StatusCreated {
+		t.Fatalf("issue admission: %d %s", code, body)
+	}
+	_, err := g.kubeClient.RlinfV1alpha1().NodeJoins().Create(context.Background(), &rlarkv1alpha1.NodeJoin{
+		ObjectMeta: metav1.ObjectMeta{Name: "cluster-a.arm-1", Labels: map[string]string{"rlark.io/cluster": "cluster-a"}},
+		Spec:       rlarkv1alpha1.NodeJoinSpec{ClusterID: "cluster-a", NodeName: "arm-1"},
+		Status:     rlarkv1alpha1.NodeJoinStatus{Phase: rlarkv1alpha1.ClusterProvisionSucceeded, Stage: "gpu"},
+	}, metav1.CreateOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, test := range []struct {
+		path, body string
+	}{
+		{"/api/v1/cluster-provisions", `"success":true`},
+		{"/api/v1/station/node-joins?cluster_id=cluster-a", `"nodeName":"arm-1"`},
+		{"/api/v1/station/node-admissions?cluster_id=cluster-a", `"join_phase":"Succeeded"`},
+	} {
+		t.Run(test.path, func(t *testing.T) {
+			for _, role := range []string{"user", "admin"} {
+				token, _, err := g.issueJWT(role, role)
+				if err != nil {
+					t.Fatal(err)
+				}
+				request := httptest.NewRequest(http.MethodGet, test.path, nil)
+				request.Header.Set("Authorization", "Bearer "+token)
+				response := httptest.NewRecorder()
+				router.ServeHTTP(response, request)
+				if role == "user" && response.Code != http.StatusForbidden ||
+					role == "admin" && (response.Code != http.StatusOK || !strings.Contains(response.Body.String(), test.body)) {
+					t.Fatalf("%s response: %d %s", role, response.Code, response.Body.String())
+				}
+			}
+		})
 	}
 }

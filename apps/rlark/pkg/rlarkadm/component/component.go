@@ -954,11 +954,15 @@ func rlarkImage(cfg *types.DeployConfig) string {
 
 // ComponentsForPlane returns the components for the given plane.
 func ComponentsForPlane(cfg *types.DeployConfig) []types.Component {
+	return componentsForPlane(cfg, components)
+}
+
+func componentsForPlane(cfg *types.DeployConfig, available []types.Component) []types.Component {
 	logger := log.GetLogger()
 	var result []types.Component
 	var topos []utils.Topo
-	for i := range components {
-		c := &components[i]
+	for i := range available {
+		c := &available[i]
 		if c.Plane != cfg.Plane {
 			continue
 		}

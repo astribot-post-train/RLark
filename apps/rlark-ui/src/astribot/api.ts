@@ -1,3 +1,4 @@
+import type { MigrationConfirmation, MigrationPreview } from "./lib/provisionMigration.js";
 // The console's requests to the Gateway routes this fork adds. backend.ts keeps RLark's own.
 import { ApiError, request, requestJson, withQuery } from "../api.js";
 import { nodesApi } from "../backend.js";
@@ -26,7 +27,7 @@ export interface StationListQuery extends Record<string, string | boolean | unde
 
 // A site node: the NetworkEnrollment of the node its name is, as GET /api/v1/station/stations lists it.
 export interface StationItem {
-  metadata: { name: string; namespace: string };
+  metadata: { name: string; namespace: string; uid?: string };
   spec: {
     nodeUID: string;
     // The node was removed: the record stays until it is deleted or the node is admitted again.
@@ -119,6 +120,37 @@ export const clusterProvisionsApi = {
     return response.data ?? [];
   },
   // The new cluster's name, left empty, is rlark-<site>-<clusterType>.
+  async migrationCandidates(name: string, signal: AbortSignal) {
+    const response = await requestJson<{ data: MigrationPreview }>(
+      `/api/v1/cluster-provisions/${encodeURIComponent(name)}/migration-candidates`,
+      { signal },
+    );
+    return response.data;
+  },
+  async readMigrationHost(
+    name: string,
+    preview: MigrationPreview,
+    password: string,
+  ) {
+    const response = await requestJson<{ data: { uid: string } }>(
+      `/api/v1/cluster-provisions/${encodeURIComponent(name)}/migration-candidates/host`,
+      {
+        method: "POST",
+        body: {
+          provision_uid: preview.provision_uid,
+          provision_resource_version: preview.provision_resource_version,
+          password,
+        },
+      },
+    );
+    return response.data.uid;
+  },
+  migrateOwnership(name: string, confirmation: MigrationConfirmation) {
+    return requestJson<{ success: boolean }>(
+      `/api/v1/cluster-provisions/${encodeURIComponent(name)}/migrate-ownership`,
+      { method: "POST", body: confirmation },
+    );
+  },
   async create(form: NewClusterForm & { clusterType: ClusterType }) {
     const response = await requestJson<{ data: ClusterProvision }>("/api/v1/cluster-provisions", {
       method: "POST",
@@ -454,6 +486,15 @@ export const selfHealApi = {
   },
   // Deletes the record of a removed node, of a node in Conflict, or of a name no node reports under and RLark has
   // no Node of.
+  forgetConflictingStation(name: string, clusterID: string, recordUID: string) {
+    return request(
+      withQuery(`/api/v1/station/stations/${encodeURIComponent(name)}/conflict`, {
+        cluster_id: clusterID,
+        record_uid: recordUID,
+      }),
+      { method: "DELETE" },
+    );
+  },
   deleteStation(name: string, clusterID: string) {
     return request(withQuery(`/api/v1/station/stations/${encodeURIComponent(name)}`, { cluster_id: clusterID }), { method: "DELETE" });
   },

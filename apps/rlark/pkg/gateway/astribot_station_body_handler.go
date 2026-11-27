@@ -8,17 +8,15 @@ import (
 	"net/http"
 	"net/url"
 	"slices"
-	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/util/validation"
 
-	"github.com/rlinf/rlark/apps/rlark/pkg/apis"
+	"github.com/rlinf/rlark/apps/rlark/astribot/stations"
 )
 
 //go:embed astribot_s1u_capabilities.json
@@ -73,34 +71,15 @@ func (g *Gateway) handleStationBodyState(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 4*time.Second)
 	defer cancel()
 	c.Request = c.Request.WithContext(ctx)
-	_, namespace, ok := g.clusterNamespace(c)
+	observation := g.stationObservation()
+	agentID, ok := observation.ResolveStation(c, name, uid, func(error) {
+		respondError(c, http.StatusBadGateway, CodeUpstreamUnavailable, "Could not verify cluster ownership")
+	})
 	if !ok {
 		return
 	}
-	agentID, prefixed := strings.CutPrefix(namespace, apis.RLarkAgentNamespacePrefix)
-	if !prefixed || len(validation.IsDNS1123Label(agentID)) > 0 {
-		respondError(c, http.StatusConflict, CodeResourceConflict, "Cluster namespace does not identify a Kubernetes agent")
-		return
-	}
-	if !g.verifyStationNamespaceOwner(c, clusterID, namespace, func(error) {
-		respondError(c, http.StatusBadGateway, CodeUpstreamUnavailable, "Could not verify cluster ownership")
-	}) {
-		return
-	}
-	record, err := g.stationClient.Resource(networkEnrollmentGVR).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
-	if err != nil {
-		respondKubeError(c, "Could not read site node record", err)
-		return
-	}
-	boundUID, _, _ := unstructured.NestedString(record.Object, "spec", "nodeUID")
-	recordCluster, _, _ := unstructured.NestedString(record.Object, "spec", "clusterID")
-	retired, _, _ := unstructured.NestedBool(record.Object, "spec", "retired")
-	if retired || boundUID != uid || recordCluster != clusterID {
-		respondError(c, http.StatusConflict, CodeResourceConflict, "Site node record no longer matches this node instance")
-		return
-	}
 	var node corev1.Node
-	if status, err := g.readStationImageObject(ctx, agentID, "/api/v1/nodes/"+url.PathEscape(name), &node); err != nil {
+	if status, err := observation.ReadMemberObject(ctx, agentID, "/api/v1/nodes/"+url.PathEscape(name), &node); err != nil {
 		if status == http.StatusNotFound {
 			respondError(c, http.StatusNotFound, CodeResourceNotFound, "Node is absent from the member cluster")
 		} else {
@@ -130,8 +109,8 @@ func (g *Gateway) handleStationBodyState(c *gin.Context) {
 	// Only the installed model Addon may act as the source of body state.
 	const daemonSet = "s1u-robot"
 	var addon appsv1.DaemonSet
-	addonPath := "/apis/apps/v1/namespaces/" + robotAddonNamespace + "/daemonsets/" + daemonSet
-	if status, err := g.readStationImageObject(ctx, agentID, addonPath, &addon); err != nil {
+	addonPath := "/apis/apps/v1/namespaces/" + stations.RobotAddonNamespace + "/daemonsets/" + daemonSet
+	if status, err := observation.ReadMemberObject(ctx, agentID, addonPath, &addon); err != nil {
 		if status == http.StatusNotFound {
 			unavailable()
 		} else {
@@ -139,22 +118,22 @@ func (g *Gateway) handleStationBodyState(c *gin.Context) {
 		}
 		return
 	}
-	if addon.Name != daemonSet || addon.Namespace != robotAddonNamespace || addon.UID == "" {
+	if addon.Name != daemonSet || addon.Namespace != stations.RobotAddonNamespace || addon.UID == "" {
 		upstreamError()
 		return
 	}
 
-	podsPath := "/api/v1/namespaces/" + robotAddonNamespace + "/pods"
-	query := url.Values{"labelSelector": {robotAddonSelector}, "fieldSelector": {"spec.nodeName=" + name}}
+	podsPath := "/api/v1/namespaces/" + stations.RobotAddonNamespace + "/pods"
+	query := url.Values{"labelSelector": {stations.RobotAddonSelector}, "fieldSelector": {"spec.nodeName=" + name}}
 	var pods corev1.PodList
-	if _, err := g.readStationImageObject(ctx, agentID, podsPath+"?"+query.Encode(), &pods); err != nil {
+	if _, err := observation.ReadMemberObject(ctx, agentID, podsPath+"?"+query.Encode(), &pods); err != nil {
 		upstreamError()
 		return
 	}
 	owned := func(pod corev1.Pod) bool {
 		owner := metav1.GetControllerOf(&pod)
 		return owner != nil && owner.Kind == "DaemonSet" && owner.Name == daemonSet && owner.UID == addon.UID &&
-			pod.Namespace == robotAddonNamespace && pod.Spec.NodeName == name && pod.DeletionTimestamp == nil &&
+			pod.Namespace == stations.RobotAddonNamespace && pod.Spec.NodeName == name && pod.DeletionTimestamp == nil &&
 			pod.Status.Phase == corev1.PodRunning
 	}
 	active := slices.IndexFunc(pods.Items, owned)
@@ -164,7 +143,7 @@ func (g *Gateway) handleStationBodyState(c *gin.Context) {
 	}
 	pod := pods.Items[active]
 	response, err := g.proxyKubeRequest(ctx, http.MethodGet, agentID,
-		podsPath+"/"+url.PathEscape(pod.Name)+":"+robotCameraPort+"/proxy/body-state", nil)
+		podsPath+"/"+url.PathEscape(pod.Name)+":"+stations.RobotCameraPort+"/proxy/body-state", nil)
 	if err != nil {
 		respondError(c, http.StatusBadGateway, CodeUpstreamUnavailable, "Body observer is unavailable")
 		return
