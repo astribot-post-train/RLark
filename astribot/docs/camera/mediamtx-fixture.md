@@ -25,7 +25,7 @@ The current fixture path is `demo-agent/demo-node/front`, corresponding to `{age
 
 Anonymous access is disabled. The synthetic publisher has `publish` permission only for the configured path, and the RTSP transport is TCP-only. The dedicated `whep-reader` account has `read` permission only for that path. The dedicated `media-controller` account has the `api` permission and no `read` or `publish` permission. All passwords in this fixture are test-only literals and must not be reused outside this isolated environment.
 
-WHEP `POST` requires the dedicated Basic read credential. The smoke test verifies anonymous, wrong, publisher, and Control API credentials receive HTTP `401`. It sends the same read credential on WHEP `DELETE` and verifies deletion succeeds. In MediaMTX v1.21.4, `Location` contains a UUID session secret while the `ID` response header contains a different UUID used by the Control API. The session-specific `DELETE` handler accepts the Location secret without rechecking Basic authentication. The smoke test records this native behavior explicitly. Treat the `Location` value as a bearer capability, keep WHEP private, and send the read credential on both methods at the Gateway boundary.
+WHEP `POST` requires the dedicated Basic read credential. The smoke test verifies anonymous, wrong, publisher, and Control API credentials receive HTTP `401`. It sends the same dedicated Basic read credential on both WHEP `POST` and authenticated `DELETE` and verifies deletion succeeds. In MediaMTX v1.21.4, `Location` contains a UUID session secret while the `ID` response header contains a different UUID used by the Control API. The session-specific `DELETE` handler accepts the Location secret without rechecking Basic authentication, so both authenticated and unauthenticated `DELETE` return HTTP `200` while the session exists. The smoke test records this native behavior explicitly. Treat the UUID in `Location` as sensitive bearer material: anyone who obtains it can delete that session. Keep WHEP private, avoid logging or disclosing the `Location` value, and send the read credential on both methods at the Gateway boundary.
 
 The Control API smoke test verifies Basic authentication, rejects reader and publisher credentials, and exercises `GET /v3/webrtc/sessions/list`, `POST /v3/webrtc/sessions/kick/{id}`, then another list request. The API bind address is only on the dedicated control bridge and has no host port mapping. The fixture's API account can invoke the API surface supported by MediaMTX, so only a trusted Gateway should receive it.
 
@@ -36,7 +36,7 @@ The intended Gateway configuration names for the Control API are `RLARK_CAMERA_W
 ## Recorded v1.21.4 contract
 
 - The WHEP response is HTTP `201` with an SDP answer, `Location`, and `ID` headers.
-- The `Location` suffix is a UUID secret and differs from the `ID` session UUID.
+- The `Location` suffix is sensitive UUID bearer material and differs from the `ID` session UUID. Protect it from logs and disclosure.
 - WHEP `POST` authorization uses MediaMTX's `read` permission. WHEP `DELETE` uses the UUID secret in its Location path and does not perform a new Basic authentication check.
 - The Control API provides `GET /v3/webrtc/sessions/list` and `POST /v3/webrtc/sessions/kick/{id}`. A kick removes the selected WebRTC session and leaves the RTSP publisher path available.
 - The fixture is protocol/deployment smoke coverage. It does not establish browser ICE connectivity, production authorization, Gateway recovery behavior, or physical device compatibility.

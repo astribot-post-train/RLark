@@ -25,7 +25,7 @@ Smoke 脚本只启动夹具服务，并在退出时删除其容器和具名卷�
 
 夹具禁用匿名访问。合成发布器只对配置路径拥有 `publish` 权限，且 RTSP 仅启用 TCP。独立 `whep-reader` 账号只对该路径拥有 `read` 权限。独立 `media-controller` 账号只拥有 `api` 权限，没有 `read` 或 `publish` 权限。夹具中的密码是测试专用明文，不得在该隔离环境以外复用。
 
-WHEP `POST` 需要专用 Basic read 凭证。Smoke 测试确认匿名、错误、发布器和 Control API 凭证均收到 HTTP `401`。测试在 WHEP `DELETE` 请求中也发送同一 read 凭证并确认删除成功。MediaMTX v1.21.4 的 `Location` 中包含一个 UUID session secret，而 `ID` 响应头包含另一个供 Control API 使用的 UUID。该版本针对会话的 `DELETE` handler 使用 Location 中的 secret，不会重新检查 Basic 认证。Smoke 测试会显式记录这一上游行为。应将 `Location` 视为 bearer capability，保持 WHEP 私有，并由 Gateway 在两个方法上都发送 read 凭证。
+WHEP `POST` 需要专用 Basic read 凭证。Smoke 测试确认匿名、错误、发布器和 Control API 凭证均收到 HTTP `401`，并在 WHEP `POST` 和带认证的 `DELETE` 上都发送同一专用 Basic read 凭证且确认删除成功。MediaMTX v1.21.4 的 `Location` 中包含一个 UUID session secret，而 `ID` 响应头包含另一个供 Control API 使用的 UUID。该版本针对会话的 `DELETE` handler 使用 Location 中的 secret，不会重新检查 Basic 认证，因此会话存在时，带认证和未带认证的 `DELETE` 都会返回 HTTP `200`。Smoke 测试会显式记录这一上游行为。必须将 `Location` 中的 UUID 视为敏感 bearer 凭证材料：获得该值的任何人都能删除对应会话。应保持 WHEP 私有，避免记录日志或泄露 `Location` 值，并由 Gateway 在两个方法上都发送 read 凭证。
 
 Control API smoke 测试验证 Basic 认证、拒绝 reader 和 publisher 凭证，并依次执行 `GET /v3/webrtc/sessions/list`、`POST /v3/webrtc/sessions/kick/{id}` 和再次 list。API 仅绑定到专用 control 网桥，没有宿主机端口映射。夹具 API 账号可调用 MediaMTX 所支持的 API，因此只能交给受信任的 Gateway。
 
@@ -36,7 +36,7 @@ Gateway 预期的 Control API 配置项为 `RLARK_CAMERA_WHEP_CONTROL_ORIGIN`、
 ## v1.21.4 契约记录
 
 - WHEP 响应为 HTTP `201`，包含 SDP answer、`Location` 和 `ID` 响应头。
-- `Location` 末尾是 UUID secret，与 `ID` session UUID 不同。
+- `Location` 末尾是敏感 UUID bearer 凭证材料，与 `ID` session UUID 不同。应避免将其写入日志或泄露。
 - WHEP `POST` 使用 MediaMTX 的 `read` 权限进行授权。WHEP `DELETE` 使用 Location 路径中的 UUID secret，不会重新执行 Basic 认证。
 - Control API 提供 `GET /v3/webrtc/sessions/list` 和 `POST /v3/webrtc/sessions/kick/{id}`。kick 会移除指定 WebRTC 会话，并保留 RTSP 发布器路径。
 - 该夹具覆盖协议与部署 smoke，不证明浏览器 ICE 连通性、生产授权、Gateway 恢复行为或实体设备兼容性。
