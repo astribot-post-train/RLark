@@ -263,7 +263,20 @@ export function stationsOfPhase(
 
 // A record an administrator may delete: its node was removed, another Node reports under its name, or its node
 // does not report and RLark has no Node of the name (hasNode).
+export function stationHasNodeUIDConflict(item: StationItem): boolean {
+  return (
+    item.status?.node?.state === "Conflict" &&
+    item.status.node.conditions?.some(
+      (condition) =>
+        condition.type === "IdentityMatched" &&
+        condition.status === "False" &&
+        condition.reason === "NodeUIDChanged",
+    ) === true
+  );
+}
+
 export function stationDeletable(item: StationItem, hasNode: boolean): boolean {
+  if (stationHasNodeUIDConflict(item)) return Boolean(item.metadata.uid);
   const state = item.status?.node?.state;
   return (
     item.spec.retired === true ||

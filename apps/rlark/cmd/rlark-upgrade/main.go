@@ -81,6 +81,12 @@ func main() {
 		}
 	}
 
+	os.Exit(runStock(ctx, mode))
+}
+
+// A separate call lets the Lease cleanup run before main exits.
+func runStock(ctx context.Context, mode string) int {
+	logger := log.GetLogger()
 	// Load configuration
 	config := &upgrade.Config{
 		StockDataPlane:      mode == clusterupgrade.DriverStock,
@@ -93,7 +99,41 @@ func main() {
 
 	if config.DeployConfigPath == "" {
 		logger.Error(fmt.Errorf("DEPLOY_CONFIG is required"), "invalid config")
-		os.Exit(ExitPrecheckFailed)
+		return ExitPrecheckFailed
+	}
+
+	var saveStockState func() error
+	if mode == clusterupgrade.DriverStock && os.Getenv("RLARK_UPGRADE_STOCK_LOCK") == "1" {
+		stock, err := clusterupgrade.HoldStockInCluster(ctx, clusterupgrade.ExecutorIdentity{
+			ChildUID: os.Getenv("RLARK_UPGRADE_JOB_UID"), PodName: os.Getenv("POD_NAME"), PodUID: os.Getenv("POD_UID"),
+		})
+		if err != nil {
+			logger.Error(err, "acquire stock upgrade lease")
+			clusterupgrade.WriteJobDiagnostic(err)
+			return ExitPrecheckFailed
+		}
+		defer stock.Release()
+		ctx = stock.Context
+		baseline, err := stock.ReadState(ctx)
+		if err != nil {
+			logger.Error(err, "read locked stock rollback state")
+			return ExitPrecheckFailed
+		}
+		applied, err := os.ReadFile(config.DeployConfigPath)
+		if err != nil {
+			logger.Error(err, "read locked stock deploy config")
+			return ExitPrecheckFailed
+		}
+		effective := string(applied)
+		if os.Getenv("RLARK_UPGRADE_STOCK_CONFIG_FROM_STATE") == "1" {
+			effective = baseline.Data["deploy-config"]
+			config.StockDeployConfig = &effective
+		}
+		rollbackConfig := baseline.Data["deploy-config"]
+		config.StockRollbackConfig = &rollbackConfig
+		config.AutoRollback = config.AutoRollback && baseline.Data["image"] != "" && rollbackConfig != ""
+		config.CheckStockWrite = stock.Check
+		saveStockState = func() error { return stock.SaveState(ctx, baseline, effective) }
 	}
 
 	logger.Info("loaded config",
@@ -106,14 +146,19 @@ func main() {
 	upgrader, err := upgrade.NewUpgrader(config)
 	if err != nil {
 		logger.Error(err, "create upgrader")
-		os.Exit(ExitPrecheckFailed)
+		return ExitPrecheckFailed
 	}
 
 	// Perform upgrade (includes multi-stage health check)
 	err = upgrader.Upgrade(ctx)
+	if err == nil && saveStockState != nil {
+		if stateErr := saveStockState(); stateErr != nil {
+			err = fmt.Errorf("persist locked stock upgrade state: %w", stateErr)
+		}
+	}
 	if err == nil {
 		logger.Info("upgrade completed successfully")
-		os.Exit(ExitSuccess)
+		return ExitSuccess
 	}
 
 	logger.Error(err, "upgrade failed")
@@ -121,7 +166,7 @@ func main() {
 	// Handle rollback
 	if !config.AutoRollback {
 		logger.Info("auto-rollback disabled, exiting")
-		os.Exit(ExitUpgradeFailed)
+		return ExitUpgradeFailed
 	}
 
 	logger.Info("starting automatic rollback")
@@ -129,9 +174,9 @@ func main() {
 	rollbackErr := upgrader.Rollback(ctx)
 	if rollbackErr != nil {
 		logger.Error(rollbackErr, "rollback failed")
-		os.Exit(ExitRollbackFailed)
+		return ExitRollbackFailed
 	}
 
 	logger.Info("rollback completed successfully")
-	os.Exit(ExitRolledBack)
+	return ExitRolledBack
 }

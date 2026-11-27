@@ -34,8 +34,8 @@ func Rollback(cfg *types.DeployConfig) error {
 
 // UpgradeStockDataPlane applies the standard Kubernetes component profile.
 // It is selected by explicitly opted-in stock batch children.
-func UpgradeStockDataPlane(ctx context.Context, cfg *types.DeployConfig, rollback bool) error {
-	u, err := k8supgrade.NewStockDataPlane(cfg)
+func UpgradeStockDataPlane(ctx context.Context, cfg *types.DeployConfig, rollback bool, check func(context.Context) error) error {
+	u, err := k8supgrade.NewStockDataPlane(cfg, check)
 	if err != nil {
 		return err
 	}

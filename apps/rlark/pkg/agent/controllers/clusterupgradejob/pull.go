@@ -45,8 +45,11 @@ func (r *pullReconciler) newDriver(ctx context.Context, job *rlarkv1alpha1.Clust
 	if job.Status.Phase == rlarkv1alpha1.ClusterUpgradeJobUpgrading {
 		// A running Job already selected its mode. Read its outcome even
 		// when the member's policy was changed or temporarily unavailable.
-		if job.Status.JobName == imageOnlyJobName(job) {
+		switch job.Status.JobName {
+		case imageOnlyJobName(job):
 			driver.policy = &clusterupgrade.JobPolicy{}
+		case clusterupgrade.LockedStockJobName(string(job.UID)):
+			driver.policy = &clusterupgrade.JobPolicy{Mode: clusterupgrade.DriverStock}
 		}
 		return driver, nil
 	}
@@ -54,7 +57,7 @@ func (r *pullReconciler) newDriver(ctx context.Context, job *rlarkv1alpha1.Clust
 	if err != nil {
 		return nil, err
 	}
-	if policy == nil {
+	if policy == nil || policy.Mode == clusterupgrade.DriverStock {
 		var cluster rlarkv1alpha1.Cluster
 		if err := r.c.ManagementClient.Get(ctx, client.ObjectKey{Name: r.c.ManagementNamespace}, &cluster); err != nil {
 			return nil, fmt.Errorf("verify stock upgrade eligibility: %w", err)
@@ -160,7 +163,7 @@ func (r *pullRun) startUpgrade(ctx context.Context, job *rlarkv1alpha1.ClusterUp
 	}
 
 	effectiveJob := job
-	if stock && currentImage == "" && job.Spec.AutoRollback {
+	if stock && !r.driver.OwnsStockState() && currentImage == "" && job.Spec.AutoRollback {
 		r.log.Info("first upgrade, disabling auto rollback")
 		jobCopy := job.DeepCopy()
 		jobCopy.Spec.AutoRollback = false
@@ -233,7 +236,8 @@ func (r *pullRun) handleJobNotFound(ctx context.Context, job *rlarkv1alpha1.Clus
 		stateImage = state.Image
 	}
 
-	if stateImage == observed && observed != "" {
+	lockedStock := r.driver.OwnsStockState()
+	if stateImage == observed && observed != "" && (!lockedStock || state.AttemptUID == string(job.UID)) {
 		r.log.Info("state image matches spec target, upgrade succeeded", "image", stateImage)
 		return r.handleUpgradeSuccess(ctx, job)
 	}
@@ -247,7 +251,7 @@ func (r *pullRun) handleJobNotFound(ctx context.Context, job *rlarkv1alpha1.Clus
 func (r *pullRun) handleUpgradeSuccess(ctx context.Context, job *rlarkv1alpha1.ClusterUpgradeJob) (ctrl.Result, error) {
 	r.log.Info("upgrade succeeded", "name", job.Name)
 
-	if !r.driver.SnapshotsLiveState() {
+	if !r.driver.SnapshotsLiveState() && !r.driver.OwnsStockState() {
 		if err := r.driver.StateStore().Save(ctx, &ClusterState{
 			Image:        job.Spec.Image,
 			DeployConfig: job.Spec.ConfigPatch,

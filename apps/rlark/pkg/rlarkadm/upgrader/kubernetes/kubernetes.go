@@ -4,7 +4,9 @@ package kubernetes
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"reflect"
+	"time"
 
 	"github.com/rlinf/rlark/apps/rlark/pkg/log"
 	"github.com/rlinf/rlark/apps/rlark/pkg/rlarkadm/component"
@@ -39,11 +41,22 @@ func New(cfg *types.DeployConfig) (*Upgrader, error) {
 	return newUpgrader(cfg, component.ComponentsForPlane)
 }
 
-func NewStockDataPlane(cfg *types.DeployConfig) (*Upgrader, error) {
+func NewStockDataPlane(cfg *types.DeployConfig, check func(context.Context) error) (*Upgrader, error) {
 	if cfg.Plane != types.PlaneData || cfg.Kubernetes == nil {
 		return nil, fmt.Errorf("stock upgrade requires a Kubernetes data-plane DeployConfig")
 	}
-	return newUpgrader(cfg, component.StockDataPlaneComponents)
+	if check == nil {
+		return newUpgrader(cfg, component.StockDataPlaneComponents)
+	}
+	config, err := rest.InClusterConfig()
+	if err != nil {
+		return nil, fmt.Errorf("load locked member kubeconfig: %w", err)
+	}
+	config.Timeout = 15 * time.Second
+	config.Wrap(func(next http.RoundTripper) http.RoundTripper {
+		return upgradeWriteTransport{next: next, check: check}
+	})
+	return newUpgraderForConfig(config, "", component.StockDataPlaneComponents)
 }
 
 func newUpgrader(cfg *types.DeployConfig, components func(*types.DeployConfig) []types.Component) (*Upgrader, error) {
@@ -62,6 +75,26 @@ func newUpgrader(cfg *types.DeployConfig, components func(*types.DeployConfig) [
 		}
 	}
 
+	return newUpgraderForConfig(restConfig, kubeconfig, components)
+}
+
+type upgradeWriteTransport struct {
+	next  http.RoundTripper
+	check func(context.Context) error
+}
+
+func (t upgradeWriteTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	switch req.Method {
+	case http.MethodGet, http.MethodHead:
+	default:
+		if err := t.check(req.Context()); err != nil {
+			return nil, fmt.Errorf("stock upgrade write fenced: %w", err)
+		}
+	}
+	return t.next.RoundTrip(req)
+}
+
+func newUpgraderForConfig(restConfig *rest.Config, kubeconfig string, components func(*types.DeployConfig) []types.Component) (*Upgrader, error) {
 	clientset, err := kubernetes.NewForConfig(restConfig)
 	if err != nil {
 		return nil, fmt.Errorf("create clientset: %w", err)

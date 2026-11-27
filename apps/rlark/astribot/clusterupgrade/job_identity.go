@@ -22,11 +22,17 @@ var ErrUnverifiedExecutor = errors.New("upgrade executor identity could not be v
 // JobName is unique for one management ClusterUpgradeJob UID.
 func JobName(childUID string) string { return "upgrade-attempt-" + childUID }
 
+func LockedStockJobName(childUID string) string { return "stock-upgrade-attempt-" + childUID }
+
 type ExecutorIdentity struct {
 	ChildUID, ChildName, PodName, PodUID string
 }
 
 func readExecutor(ctx context.Context, member kubernetes.Interface, identity ExecutorIdentity) (*corev1.Pod, error) {
+	return readOwnedExecutor(ctx, member, identity, JobName(identity.ChildUID), JobServiceAccount)
+}
+
+func readOwnedExecutor(ctx context.Context, member kubernetes.Interface, identity ExecutorIdentity, name, account string) (*corev1.Pod, error) {
 	if identity.ChildUID == "" || identity.PodName == "" || identity.PodUID == "" {
 		return nil, ErrUnverifiedExecutor
 	}
@@ -35,8 +41,8 @@ func readExecutor(ctx context.Context, member kubernetes.Interface, identity Exe
 		return nil, err
 	}
 	owner := metav1.GetControllerOf(pod)
-	if pod.DeletionTimestamp != nil || string(pod.UID) != identity.PodUID || pod.Spec.ServiceAccountName != JobServiceAccount ||
-		owner == nil || owner.Kind != "Job" || owner.APIVersion != batchv1.SchemeGroupVersion.String() || owner.Name != JobName(identity.ChildUID) {
+	if pod.DeletionTimestamp != nil || string(pod.UID) != identity.PodUID || pod.Spec.ServiceAccountName != account ||
+		owner == nil || owner.Kind != "Job" || owner.APIVersion != batchv1.SchemeGroupVersion.String() || owner.Name != name {
 		return nil, ErrUnverifiedExecutor
 	}
 	job, err := member.BatchV1().Jobs(Namespace).Get(ctx, owner.Name, metav1.GetOptions{})

@@ -7,7 +7,7 @@ import {
   formatRelativeTime,
   stationUptime,
 } from "./stationDisplay.js";
-import { stationDeletable } from "./nodeRemoval.js";
+import { stationDeletable, stationHasNodeUIDConflict } from "./nodeRemoval.js";
 
 const conditionNames: Record<string, [string, string]> = {
   Observed: ["已观测", "Observed"],
@@ -79,6 +79,10 @@ export function stationDeleteReason(
   zh: boolean,
 ): string {
   if (stationDeletable(item, hasNode)) return "";
+  if (stationHasNodeUIDConflict(item))
+    return zh
+      ? "缺少登记 UID，请刷新后重试。"
+      : "Refresh to obtain the enrollment UID.";
   if (hasNode)
     return zh
       ? "集群中仍有同名 Node，需先完成节点移除后才能删除记录。"

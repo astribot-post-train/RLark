@@ -57,3 +57,20 @@ func ConfigureExecutor(job *batchv1.Job, policy JobPolicy, childUID, childName, 
 		corev1.EnvVar{Name: "RLARK_UPGRADE_CHILD_NAME", Value: childName},
 	)
 }
+
+// ConfigureLockedStock keeps the upstream Pod policy and stock ServiceAccount.
+// Only the locally pinned executor can be trusted to honor the lock.
+func ConfigureLockedStock(job *batchv1.Job, childUID string, useStateConfig bool) {
+	metav1.SetMetaDataLabel(&job.ObjectMeta, ChildUIDLabel, childUID)
+	container := &job.Spec.Template.Spec.Containers[0]
+	container.Env = append(container.Env,
+		corev1.EnvVar{Name: "RLARK_UPGRADE_MODE", Value: DriverStock},
+		corev1.EnvVar{Name: "RLARK_UPGRADE_STOCK_LOCK", Value: "1"},
+		corev1.EnvVar{Name: "RLARK_UPGRADE_JOB_UID", Value: childUID},
+		corev1.EnvVar{Name: "POD_NAME", ValueFrom: &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.name"}}},
+		corev1.EnvVar{Name: "POD_UID", ValueFrom: &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.uid"}}},
+	)
+	if useStateConfig {
+		container.Env = append(container.Env, corev1.EnvVar{Name: "RLARK_UPGRADE_STOCK_CONFIG_FROM_STATE", Value: "1"})
+	}
+}

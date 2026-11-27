@@ -171,3 +171,7 @@ control-plane-address: https://new-server:8443
 ### Q: What if multiple clusters fail simultaneously?
 
 Each cluster executes upgrade and rollback independently. Failed clusters will decide whether to rollback based on configuration. Check the detail page for specific status of each cluster.
+
+## Standard upgrades with the Astribot release lock
+
+For an explicitly opted-in standard member with the Astribot release Lease, provision the trusted local policy `rlark-system/rlark-agent-upgrade-policy` with `mode: stock` and `executorImage` set to the digest of the lock-aware `rlark-upgrade` image. Finish any older unlocked upgrade Jobs before switching. Apply `astribot/release/member-upgrade-stock.yaml`. If `rlark-state` is absent, create an empty ConfigMap with that name in `rlark-system`. Preserve any existing rollback state. Create the shared Lease if the release tool has not already created it. Submit a stock upgrade with the same executor digest. The independent Job holds the Lease during upgrade, health checks, rollback and recording `rlark-state`. A concurrent release or upgrade reports the holder. Standard members without a release Lease or local policy retain the upstream path.

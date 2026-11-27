@@ -854,10 +854,8 @@ paths:
       tags: [Station]
       summary: Delete a site node record (administrator only)
       description: >-
-        The record (the node's NetworkEnrollment) is deleted when its node was removed (spec.retired), when another
-        Node reports under its name (status.node.state Conflict), or when its node does not report (is not Bound) and
-        RLark has no Node of the name. A node that comes back registers again with its next report, as a new machine.
-        A record that is gone already answers 200: the request can be made again.
+        The record is deleted when retired, otherwise eligible for record cleanup, or in a conflict other than NodeUIDChanged.
+        A NodeUIDChanged conflict must use the UID-bound conflict cleanup endpoint.
       parameters:
         - {name: name, in: path, required: true, schema: {type: string}}
         - {name: cluster_id, in: query, required: true, schema: {type: string}}
@@ -866,6 +864,24 @@ paths:
         '400': {description: Cluster ID required}
         '404': {description: Cluster not found}
         '409': {description: The node is in the cluster (remove it first), or the record changed while it was being deleted}
+        '502': {description: Management Kubernetes API unavailable}
+  /api/v1/station/stations/{name}/conflict:
+    delete:
+      tags: [Station]
+      summary: Clear the selected stale enrollment after a Node UID conflict
+      description: >-
+        Removes only the original conflicting NetworkEnrollment. No Node or NodeOperation is changed.
+        Repeat calls succeed if the record is gone and return 409 if a replacement record exists.
+      parameters:
+        - {name: name, in: path, required: true, schema: {type: string}}
+        - {name: cluster_id, in: query, required: true, schema: {type: string}}
+        - {name: record_uid, in: query, required: true, schema: {type: string}}
+      responses:
+        '200': {description: The original enrollment is gone}
+        '400': {description: Cluster ID or record UID required}
+        '403': {description: Administrator role required}
+        '404': {description: Cluster not found}
+        '409': {description: The enrollment or its identity-conflict state changed}
         '502': {description: Management Kubernetes API unavailable}
   /api/v1/station/stations/{name}/running-images:
     get:

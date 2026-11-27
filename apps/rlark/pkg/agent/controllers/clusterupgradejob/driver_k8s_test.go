@@ -299,3 +299,49 @@ func TestImageJobWaitsForReplacementAfterFailedPod(t *testing.T) {
 		t.Fatalf("terminal Job condition not reflected: %+v %v", result, err)
 	}
 }
+
+func TestLockedStockKeepsUpstreamPolicyAndBindsJobIdentity(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := batchv1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	if err := corev1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	kube := fake.NewClientBuilder().WithScheme(scheme).Build()
+	driver := NewK8sDriver(kube, "stock")
+	const config = "apiVersion: rlark.io/v1alpha1\nkind: DeployConfig\nplane: data\ncontrol-plane-address: https://fixture.invalid:8443\nkubernetes:\n  agent-image: rlark-stock\n  image: rlark-stock\n"
+	const image = "registry.example/stock@sha256:1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
+	driver.policy = &clusterupgrade.JobPolicy{Mode: clusterupgrade.DriverStock, ExecutorImage: image}
+	child := &rlarkv1alpha1.ClusterUpgradeJob{
+		ObjectMeta: metav1.ObjectMeta{Name: "replaceable-name", UID: "original-uid"},
+		Spec:       rlarkv1alpha1.ClusterUpgradeJobSpec{Image: image, AutoRollback: true, TimeoutSeconds: 120},
+	}
+	if driver.SnapshotsLiveState() || !driver.OwnsStockState() {
+		t.Fatal("locked stock must retain the upstream state model")
+	}
+	configRef, err := driver.PrepareConfig(t.Context(), child, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	name, err := driver.StartUpgrade(t.Context(), child, "previous", configRef)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var job batchv1.Job
+	if err := kube.Get(t.Context(), client.ObjectKey{Namespace: StateStoreNamespace, Name: name}, &job); err != nil {
+		t.Fatal(err)
+	}
+	if !driver.ownsAttempt(child, &job) || job.Spec.PodFailurePolicy != nil || *job.Spec.BackoffLimit != 0 ||
+		*job.Spec.ActiveDeadlineSeconds != 240 || job.Spec.Template.Spec.ServiceAccountName != clusterupgrade.StockJobServiceAccount {
+		t.Fatalf("invalid stock Job: %+v", job.Spec)
+	}
+	flags := map[string]string{}
+	for _, env := range job.Spec.Template.Spec.Containers[0].Env {
+		flags[env.Name] = env.Value
+	}
+	if flags["RLARK_UPGRADE_STOCK_LOCK"] != "1" || flags["RLARK_UPGRADE_STOCK_CONFIG_FROM_STATE"] != "1" ||
+		flags["RLARK_UPGRADE_JOB_UID"] != string(child.UID) {
+		t.Fatalf("missing stock lease fencing and fresh state selection: %v", flags)
+	}
+}

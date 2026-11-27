@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { podsToStop, removalStagesDone, stationDeletable, stationsOfPhase, verifiedNodeUID } from "../../dist/test/astribot/lib/nodeRemoval.js";
+import { podsToStop, removalStagesDone, stationDeletable, stationHasNodeUIDConflict, stationsOfPhase, verifiedNodeUID } from "../../dist/test/astribot/lib/nodeRemoval.js";
 
 const station = (namespace, name, nodeUID, retired, state) => ({ metadata: { name, namespace }, spec: { nodeUID, retired }, status: { node: { state } } });
 
@@ -33,4 +33,13 @@ test("removed nodes are left out of the list unless asked for, and a record no n
   assert.deepEqual(stationsOfPhase(items, "Retired").map((item) => item.metadata.name), ["removed"]);
   assert.deepEqual(items.map((item) => stationDeletable(item, true)), [false, false, true, true]);
   assert.deepEqual(items.map((item) => stationDeletable(item, false)), [false, true, true, true]);
+});
+
+test("a Node UID conflict requires the original enrollment UID", () => {
+  const record = station("office", "box", "old-node", false, "Conflict");
+  record.status.node.conditions = [{ type: "IdentityMatched", reason: "NodeUIDChanged", status: "False" }];
+  assert.equal(stationHasNodeUIDConflict(record), true);
+  assert.equal(stationDeletable(record, true), false);
+  record.metadata.uid = "old-enrollment";
+  assert.equal(stationDeletable(record, true), true);
 });

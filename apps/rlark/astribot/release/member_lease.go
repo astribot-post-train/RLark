@@ -60,7 +60,9 @@ func (r *Run) holdMembers(ctx context.Context) (context.Context, func(), error) 
 			return ctx, nil, fmt.Errorf("cluster %s: prepare member release lease: %w", name, err)
 		}
 		leases := member.CoordinationV1().Leases(clusterupgrade.Namespace)
-		guard, held, err := clusterupgrade.Acquire(work, leases, "rlarkctl-release/"+runID, runID, nil)
+		guard, held, err := clusterupgrade.Acquire(work, leases, "rlarkctl-release/"+runID, runID, func(ctx context.Context, holder, executor string) (bool, error) {
+			return clusterupgrade.PreviousUpgradeExecutorExited(ctx, member, holder, executor)
+		})
 		if err != nil {
 			release()
 			return ctx, nil, fmt.Errorf("cluster %s: %w", name, err)

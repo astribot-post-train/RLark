@@ -2,6 +2,7 @@
 package upgrade
 
 import (
+	"context"
 	"time"
 )
 
@@ -9,6 +10,13 @@ import (
 type Config struct {
 	// StockDataPlane selects the upstream workload topology for stock batch jobs.
 	StockDataPlane bool
+	// CheckStockWrite fences the locked stock installer and forces its client
+	// to use the same in-cluster API as the member Lease.
+	CheckStockWrite func(context.Context) error
+	// StockRollbackConfig is an authoritative snapshot read under the Lease.
+	StockRollbackConfig *string
+	// StockDeployConfig uses the authoritative stored config for a no-patch request.
+	StockDeployConfig *string
 
 	// DeployConfigPath is the path to the deploy config file
 	DeployConfigPath string

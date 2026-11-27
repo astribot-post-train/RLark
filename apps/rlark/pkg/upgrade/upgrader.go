@@ -56,7 +56,13 @@ func NewUpgrader(config *Config) (*Upgrader, error) {
 	logger := log.GetLogger()
 
 	// Load deploy config
-	deployConfig, err := rlarkadm.LoadDeployConfig(config.DeployConfigPath)
+	var deployConfig *types.DeployConfig
+	var err error
+	if config.StockDeployConfig != nil {
+		deployConfig, err = types.ParseDeployConfig([]byte(*config.StockDeployConfig))
+	} else {
+		deployConfig, err = rlarkadm.LoadDeployConfig(config.DeployConfigPath)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("load deploy config: %w", err)
 	}
@@ -75,12 +81,29 @@ func NewUpgrader(config *Config) (*Upgrader, error) {
 	}
 
 	// Load rollback config
-	rollbackConfig, err := rlarkadm.LoadDeployConfig(config.RollbackConfigPath)
-	if err != nil {
-		// Rollback config is optional, use deploy config as fallback
-		logger.Info("rollback config not found, using deploy config as fallback")
-		rollbackConfig = deployConfig
-	} else if rollbackConfig.Kubernetes != nil {
+	var rollbackConfig *types.DeployConfig
+	if config.StockRollbackConfig != nil {
+		if *config.StockRollbackConfig != "" {
+			rollbackConfig, err = types.ParseDeployConfig([]byte(*config.StockRollbackConfig))
+			if err != nil {
+				return nil, fmt.Errorf("parse locked stock rollback config: %w", err)
+			}
+			if rollbackConfig.Plane != types.PlaneData || rollbackConfig.Kubernetes == nil {
+				return nil, fmt.Errorf("locked stock rollback requires a Kubernetes data-plane DeployConfig")
+			}
+			if err := rollbackConfig.ValidateForUpgrade(); err != nil {
+				return nil, fmt.Errorf("validate locked stock rollback config: %w", err)
+			}
+		}
+	} else {
+		rollbackConfig, err = rlarkadm.LoadDeployConfig(config.RollbackConfigPath)
+		if err != nil {
+			// Rollback config is optional for the upstream installer.
+			logger.Info("rollback config not found, using deploy config as fallback")
+			rollbackConfig = deployConfig
+		}
+	}
+	if rollbackConfig != nil && rollbackConfig.Kubernetes != nil {
 		rollbackConfig.Kubernetes.Kubeconfig = ""
 	}
 
@@ -149,7 +172,7 @@ func (u *Upgrader) precheck(ctx context.Context) error {
 // doUpgrade performs the actual upgrade (rlarkadm built-in)
 func (u *Upgrader) doUpgrade(ctx context.Context) error {
 	if u.config.StockDataPlane {
-		return rlarkadm.UpgradeStockDataPlane(ctx, u.deployConfig, false)
+		return rlarkadm.UpgradeStockDataPlane(ctx, u.deployConfig, false, u.config.CheckStockWrite)
 	}
 	return rlarkadm.Upgrade(u.deployConfig)
 }
@@ -212,8 +235,11 @@ func (u *Upgrader) deepHealthCheck(ctx context.Context) error {
 
 // doRollback performs the actual rollback (rlarkadm built-in)
 func (u *Upgrader) doRollback(ctx context.Context) error {
+	if u.rollbackConfig == nil {
+		return fmt.Errorf("no verified rollback configuration")
+	}
 	if u.config.StockDataPlane {
-		return rlarkadm.UpgradeStockDataPlane(ctx, u.rollbackConfig, true)
+		return rlarkadm.UpgradeStockDataPlane(ctx, u.rollbackConfig, true, u.config.CheckStockWrite)
 	}
 	return rlarkadm.Rollback(u.rollbackConfig)
 }

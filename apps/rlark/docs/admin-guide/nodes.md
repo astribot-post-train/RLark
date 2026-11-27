@@ -160,6 +160,8 @@ The administrator console's **Site Nodes** page is a bounded content column (148
 
 Clearing an interrupted SSH join that reached installation uses the original native Kubernetes Node UID. A join without an original UID returns HTTP 409 and keeps the record. A node created later under the same name is protected at each removal stage. A successful SSH join can be cleared as history without removing its node.
 
+When a record shows `NodeUIDChanged`, open **Site Nodes**, select the conflicted record and choose **Clear stale enrollment**. This administrator action removes the selected NetworkEnrollment by its own UID. The replacement Kubernetes Node, its workloads, and admission records are preserved. A removal request by name alone is rejected while this conflict is present. If the enrollment changed or was recreated after loading the page, refresh and check the new record before retrying.
+
 ## Removing a Node
 
 Removing a node takes it out of its cluster and returns the machine to a state where it can join again. It is not the same as cordoning the node, and it is not the same as deleting a site-node record.

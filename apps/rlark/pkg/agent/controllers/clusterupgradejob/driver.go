@@ -20,6 +20,8 @@ type UpgradeDriver interface {
 
 	// SnapshotsLiveState reports whether the Job captures its own rollback baseline.
 	SnapshotsLiveState() bool
+	// OwnsStockState reports whether the stock executor writes rlark-state under the member lock.
+	OwnsStockState() bool
 
 	// VerifyMissingJobSuccess checks durable evidence for an attempt that captured live state.
 	VerifyMissingJobSuccess(context.Context, *rlarkv1alpha1.ClusterUpgradeJob) (bool, error)
@@ -71,6 +73,7 @@ const (
 
 // ClusterState represents the current version and config of a data-plane cluster.
 type ClusterState struct {
+	AttemptUID string
 	// Image is the currently deployed rlark-upgrade image tag.
 	Image string
 	// DeployConfig is the full deploy-config YAML captured at last upgrade time.

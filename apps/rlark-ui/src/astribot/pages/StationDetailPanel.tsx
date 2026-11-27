@@ -15,6 +15,7 @@ import { NodeCameras } from "../components/NodeCameras";
 import { NodeLinks } from "../components/NodeLinks";
 import { RobotPoseButton } from "../components/RobotControls";
 import { cameraCells, publishedCameras, type CameraView } from "../lib/cameras";
+import { stationHasNodeUIDConflict } from "../lib/nodeRemoval";
 import {
   admissionLabels,
   conditionView,
@@ -105,6 +106,7 @@ export function StationDetailPanel({
   const retired = phase === "Retired";
   const robot = isRobotNode(labels) && !retired;
   const controlPlane = isControlPlaneLabels(labels);
+  const uidConflict = stationHasNodeUIDConflict(station);
   const deleteReason = stationDeleteReason(station, hasNode, zh);
   const admissionFor = admissionLabels(admission, zh);
   const networkState = stationNetworkState(station);
@@ -242,9 +244,13 @@ export function StationDetailPanel({
                 ? zh
                   ? "删除中…"
                   : "Deleting…"
-                : zh
-                  ? "删除记录"
-                  : "Delete record"}
+                : uidConflict
+                  ? zh
+                    ? "清除旧登记"
+                    : "Clear stale enrollment"
+                  : zh
+                    ? "删除记录"
+                    : "Delete record"}
             </button>
             {onDismiss && (
               <button

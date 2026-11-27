@@ -45,7 +45,13 @@ func (d *K8sDriver) StateStore() StateStore {
 	return d.stateStore
 }
 
-func (d *K8sDriver) SnapshotsLiveState() bool { return d.policy != nil }
+func (d *K8sDriver) SnapshotsLiveState() bool {
+	return d.policy != nil && !d.OwnsStockState()
+}
+
+func (d *K8sDriver) OwnsStockState() bool {
+	return d.policy != nil && d.policy.Mode == clusterupgrade.DriverStock
+}
 
 func (d *K8sDriver) VerifyMissingJobSuccess(ctx context.Context, job *rlarkv1alpha1.ClusterUpgradeJob) (bool, error) {
 	var object corev1.ConfigMap
@@ -99,7 +105,19 @@ func ownsImageOnlyJob(child *rlarkv1alpha1.ClusterUpgradeJob, job *batchv1.Job) 
 		job.Spec.Template.Spec.ServiceAccountName == clusterupgrade.JobServiceAccount
 }
 
+func (d *K8sDriver) ownsAttempt(child *rlarkv1alpha1.ClusterUpgradeJob, job *batchv1.Job) bool {
+	if d.policy.Mode == clusterupgrade.DriverStock {
+		return child.UID != "" && job.Name == d.attemptName(child) &&
+			job.Labels[clusterupgrade.ChildUIDLabel] == string(child.UID) &&
+			job.Spec.Template.Spec.ServiceAccountName == clusterupgrade.StockJobServiceAccount
+	}
+	return ownsImageOnlyJob(child, job)
+}
+
 func (d *K8sDriver) attemptName(job *rlarkv1alpha1.ClusterUpgradeJob) string {
+	if d.policy != nil && d.policy.Mode == clusterupgrade.DriverStock {
+		return clusterupgrade.LockedStockJobName(string(job.UID))
+	}
 	if d.policy != nil {
 		return imageOnlyJobName(job)
 	}
@@ -247,12 +265,17 @@ func (d *K8sDriver) StartUpgrade(ctx context.Context, job *rlarkv1alpha1.Cluster
 		},
 	}
 
-	if d.policy != nil {
+	if d.SnapshotsLiveState() {
 		k8sJob.Spec.Template.Spec.Volumes = volumes[:1]
 		k8sJob.Spec.Template.Spec.Containers[0].VolumeMounts = volumeMounts[:1]
 		clusterupgrade.ConfigureExecutor(k8sJob, *d.policy, string(job.UID), job.Name, d.managementCluster)
 	}
 
+	if d.policy != nil && !d.SnapshotsLiveState() {
+		k8sJob.Spec.Template.Spec.Volumes = volumes[:1]
+		k8sJob.Spec.Template.Spec.Containers[0].VolumeMounts = volumeMounts[:1]
+		clusterupgrade.ConfigureLockedStock(k8sJob, string(job.UID), job.Spec.ConfigPatch == "")
+	}
 	if d.policy == nil {
 		executor := &k8sJob.Spec.Template.Spec.Containers[0]
 		executor.Env = append(executor.Env, corev1.EnvVar{Name: "RLARK_UPGRADE_MODE", Value: clusterupgrade.DriverStock})
@@ -267,7 +290,7 @@ func (d *K8sDriver) StartUpgrade(ctx context.Context, job *rlarkv1alpha1.Cluster
 				if err := d.client.Get(ctx, client.ObjectKeyFromObject(k8sJob), &existing); err != nil {
 					return "", err
 				}
-				if !ownsImageOnlyJob(job, &existing) {
+				if !d.ownsAttempt(job, &existing) {
 					return "", fmt.Errorf("existing upgrade job does not belong to this attempt")
 				}
 			}
@@ -295,7 +318,7 @@ func (d *K8sDriver) CheckJobResult(ctx context.Context, child *rlarkv1alpha1.Clu
 		return nil, err
 	}
 
-	if d.policy != nil && !ownsImageOnlyJob(child, &k8sJob) {
+	if d.policy != nil && !d.ownsAttempt(child, &k8sJob) {
 		return &JobResult{Status: JobStatusFailed, ExitCode: -1, Message: "the local upgrade Job does not belong to this attempt"}, nil
 	}
 
@@ -389,6 +412,7 @@ func (s *ConfigMapStateStore) Get(ctx context.Context) (*ClusterState, error) {
 		return nil, err // caller checks apierrors.IsNotFound
 	}
 	return &ClusterState{
+		AttemptUID:   cm.Data[clusterupgrade.StockAttemptKey],
 		Image:        cm.Data["image"],
 		DeployConfig: cm.Data["deploy-config"],
 	}, nil
@@ -428,6 +452,7 @@ func (s *ConfigMapStateStore) Save(ctx context.Context, state *ClusterState) err
 	if cm.Data == nil {
 		cm.Data = make(map[string]string)
 	}
+	delete(cm.Data, clusterupgrade.StockAttemptKey)
 	cm.Data["image"] = state.Image
 	if state.DeployConfig != "" {
 		cm.Data["deploy-config"] = state.DeployConfig

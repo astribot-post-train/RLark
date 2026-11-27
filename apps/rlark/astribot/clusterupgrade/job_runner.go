@@ -176,11 +176,17 @@ func executorExited(ctx context.Context, member kubernetes.Interface, previousHo
 	}
 	child, ok := strings.CutPrefix(previousHolder, "upgrade-job/")
 	owner := metav1.GetControllerOf(old)
-	if !ok || child == "" || owner == nil || owner.Name != JobName(child) || owner.Kind != "Job" ||
+	if !ok || child == "" || owner == nil || (owner.Name != JobName(child) && owner.Name != LockedStockJobName(child)) || owner.Kind != "Job" ||
 		owner.APIVersion != batchv1.SchemeGroupVersion.String() || (len(parts) == 3 && string(owner.UID) != parts[2]) {
 		return false, nil
 	}
 	return old.Status.Phase == corev1.PodSucceeded || old.Status.Phase == corev1.PodFailed, nil
+}
+
+// PreviousUpgradeExecutorExited allows a release to take over a terminal
+// executor after expiry. Missing or replaced Pods are not positive evidence.
+func PreviousUpgradeExecutorExited(ctx context.Context, member kubernetes.Interface, holder, executor string) (bool, error) {
+	return executorExited(ctx, member, holder, executor, "", "")
 }
 
 const BrokerTokenMount = "/var/run/rlark-upgrade/broker"

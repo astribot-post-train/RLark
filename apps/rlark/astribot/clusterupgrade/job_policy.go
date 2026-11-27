@@ -7,6 +7,7 @@ import (
 	"slices"
 
 	"github.com/rlinf/rlark/apps/rlark/astribot/nodeagent"
+	"github.com/rlinf/rlark/apps/rlark/pkg/rlarkadm/types"
 
 	appsv1 "k8s.io/api/apps/v1"
 	coordinationv1 "k8s.io/api/coordination/v1"
@@ -17,10 +18,11 @@ import (
 )
 
 const (
-	PolicyConfigMap   = "rlark-agent-upgrade-policy"
-	ClusterOnlyMode   = "astribot-cluster-only"
-	ManagedNodeMode   = "astribot-managed-node"
-	JobServiceAccount = "rlark-upgrade"
+	PolicyConfigMap        = "rlark-agent-upgrade-policy"
+	ClusterOnlyMode        = "astribot-cluster-only"
+	ManagedNodeMode        = "astribot-managed-node"
+	JobServiceAccount      = "rlark-upgrade"
+	StockJobServiceAccount = "rlark-agent"
 )
 
 // JobPolicy is provisioned by a member cluster administrator. UpgradeJob
@@ -53,7 +55,7 @@ func ResolveJobPolicy(ctx context.Context, kube client.Reader) (*JobPolicy, erro
 		return nil, fmt.Errorf("read member upgrade policy: %w", err)
 	}
 	mode := config.Data["mode"]
-	if (mode != ClusterOnlyMode && mode != ManagedNodeMode) || len(validation.IsDNS1123Subdomain(config.Data["deployment"])) != 0 {
+	if mode != DriverStock && ((mode != ClusterOnlyMode && mode != ManagedNodeMode) || len(validation.IsDNS1123Subdomain(config.Data["deployment"])) != 0) {
 		return nil, errors.New("invalid member upgrade mode or Deployment")
 	}
 	image, err := pinnedImage(config.Data["executorImage"])
@@ -73,6 +75,13 @@ func ResolveJobPolicy(ctx context.Context, kube client.Reader) (*JobPolicy, erro
 func (p JobPolicy) Validate(ctx context.Context, kube client.Reader, image, config string) error {
 	if image != p.ExecutorImage {
 		return errors.New("upgrade image does not match the trusted member upgrade executor")
+	}
+	if p.Mode == DriverStock {
+		parsed, err := types.ParseDeployConfig([]byte(config))
+		if err != nil || parsed.Plane != types.PlaneData || parsed.Kubernetes == nil {
+			return errors.New("locked stock upgrade requires a Kubernetes data-plane DeployConfig")
+		}
+		return parsed.ValidateForUpgrade()
 	}
 	if _, _, err := parseImagePlan(config, p.Mode == ManagedNodeMode); err != nil {
 		return err
