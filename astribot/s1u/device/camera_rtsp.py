@@ -1,6 +1,7 @@
 """Bounded H.264 publisher for the S1U camera Addon."""
 
 import os
+import re
 import select
 import subprocess
 import threading
@@ -28,6 +29,18 @@ def encoder_command(destination, fps):
         "-x264-params", "repeat-headers=1:scenecut=0",
         "-f", "rtsp", "-rtsp_transport", "tcp", destination,
     ]
+
+
+def publisher_path(destination_prefix, node):
+    """Validate the provisioned MediaMTX path against this Addon's node."""
+    target = urlsplit(destination_prefix)
+    prefix = target.path.rstrip("/")
+    agent, slash, named_node = prefix.lstrip("/").partition("/")
+    if (target.scheme not in ("rtsp", "rtsps") or not target.hostname or
+            target.query or target.fragment or not slash or named_node != node or
+            not re.fullmatch(r"[a-z0-9](?:[a-z0-9-]*[a-z0-9])?", agent)):
+        raise ValueError("invalid MediaMTX publisher prefix")
+    return prefix
 
 
 def publish(camera_frame, destination, fps, lease_active):
@@ -76,58 +89,75 @@ def publish(camera_frame, destination, fps, lease_active):
             time.sleep(max(0, 1 / fps - (time.monotonic() - began)))
         return "lease_expired"
     finally:
-        process.stdin.close()
         try:
-            process.terminate()
-        except ProcessLookupError:
-            pass
-        try:
-            process.wait(timeout=1)
-        except subprocess.TimeoutExpired:
+            process.stdin.close()
+        finally:
             try:
-                process.kill()
+                process.terminate()
             except ProcessLookupError:
                 pass
-            process.wait()
+            try:
+                process.wait(timeout=1)
+            except subprocess.TimeoutExpired:
+                try:
+                    process.kill()
+                except ProcessLookupError:
+                    pass
+                process.wait()
 
 
 class SourceLease:
     """Keep at most one publisher active on this robot."""
 
-    def __init__(self, frame, destination_prefix, fps=8):
+    def __init__(self, frame, destination_prefix, node, fps=8):
         self.frame = frame
         self.destination_prefix = destination_prefix.rstrip("/")
+        self.path = publisher_path(self.destination_prefix, node)
         self.fps = fps
         self.lock = threading.Lock()
         self.view = None
-        self.deadline = 0
+        self.readers = {}
 
-    def renew(self, view):
+    def prune(self, now):
+        expired = [reader for reader, deadline in self.readers.items() if deadline <= now]
+        for reader in expired:
+            del self.readers[reader]
+
+    def renew(self, view, reader):
         with self.lock:
-            if self.view is not None:
-                # Once the deadline passes, wait until the previous child
-                # has actually exited before allowing a new lease.
-                if self.view != view or self.deadline <= time.monotonic():
-                    return False
-                self.deadline = time.monotonic() + 20
-                return True
-            self.view = view
-            self.deadline = time.monotonic() + 20
-            threading.Thread(target=self.run, args=(view,), daemon=True).start()
+            now = time.monotonic()
+            self.prune(now)
+            if self.view not in (None, view) or (reader not in self.readers and len(self.readers) >= 20):
+                return False
+            self.readers[reader] = now + 20
+            if self.view is None:
+                self.view = view
+                threading.Thread(target=self.run, args=(view,), daemon=True).start()
             return True
+
+    def release(self, view, reader):
+        with self.lock:
+            if self.view == view:
+                self.readers.pop(reader, None)
 
     def run(self, view):
         def active():
             with self.lock:
-                return time.monotonic() < self.deadline
+                self.prune(time.monotonic())
+                return bool(self.readers)
 
-        try:
-            publish(lambda: self.frame(view), self.destination_prefix + "/" + view, self.fps, active)
-        except (OSError, ValueError):
-            # The existing JPEG service remains available if the optional
-            # encoder is missing or the configured destination is invalid.
-            pass
-        finally:
+        while True:
             with self.lock:
-                self.view = None
-                self.deadline = 0
+                self.prune(time.monotonic())
+                if not self.readers:
+                    self.view = None
+                    return
+            try:
+                result = publish(lambda: self.frame(view), self.destination_prefix + "/" + view, self.fps, active)
+            except (OSError, ValueError):
+                result = "encoder_unavailable"
+            if result != "lease_expired":
+                # Fixed result labels only. FFmpeg diagnostics may expose
+                # the authenticated RTSP URL.
+                print("Camera H.264 publisher %s: %s" % (view, result), flush=True)
+                time.sleep(1)

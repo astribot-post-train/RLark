@@ -52,6 +52,7 @@ type cameraMediaControl struct {
 type cameraWHEPSession struct {
 	mu                         sync.Mutex
 	owner, namespace, node     string
+	quotaSubject               string
 	agent, pod, view, upstream string
 	expires                    time.Time
 	closing                    bool
@@ -222,22 +223,32 @@ func (g *Gateway) cameraWHEPSource(c *gin.Context) (string, string, bool) {
 	return g.runningRobotAddon(c)
 }
 
-func (g *Gateway) renewCameraSource(ctx context.Context, agent, pod, view string) bool {
+func (g *Gateway) changeCameraSource(ctx context.Context, method, id string, session *cameraWHEPSession) bool {
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
-	path := fmt.Sprintf("/api/v1/namespaces/%s/pods/%s:%s/proxy/cameras/%s/h264-lease",
-		robotAddonNamespace, pod, robotCameraPort, view)
+	path := fmt.Sprintf("/api/v1/namespaces/%s/pods/%s:%s/proxy/cameras/%s/h264-lease/%s",
+		robotAddonNamespace, session.pod, robotCameraPort, session.view, id)
 	client := &http.Client{
 		Transport:     g.serverTransport,
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}
-	response, err := g.proxyKubeRequestUsing(ctx, client, http.MethodPut, agent, path, nil,
-		map[string]string{"X-RLark-Camera-Source-Key": g.cameraMedia.key})
+	response, err := g.proxyKubeRequestUsing(ctx, client, method, session.agent, path, nil, map[string]string{
+		"X-RLark-Camera-Source-Key":  g.cameraMedia.key,
+		"X-RLark-Camera-Source-Path": session.streamPath(),
+	})
 	if err != nil {
 		return false
 	}
 	_ = response.Body.Close()
 	return response.StatusCode == http.StatusNoContent
+}
+
+func (s *cameraWHEPSession) streamPath() string {
+	return "/" + s.agent + "/" + s.node + "/" + s.view
+}
+
+func cameraWHEPOwner(c *gin.Context) string {
+	return c.GetString(authSubjectKey) + "\x00" + cameraStreamOwner(c)
 }
 
 func (g *Gateway) openCameraWHEP(c *gin.Context) {
@@ -260,24 +271,31 @@ func (g *Gateway) openCameraWHEP(c *gin.Context) {
 	if !ok {
 		return
 	}
-	owner := cameraStreamOwner(c)
-	if !m.limiter.acquire(owner, 20, 4) {
+	quotaSubject := c.GetString(authSubjectKey)
+	if !m.limiter.acquire(quotaSubject, 20, 4) {
 		c.Status(http.StatusTooManyRequests)
 		return
+	}
+	id := uuid.NewString()
+	session := &cameraWHEPSession{
+		owner: cameraWHEPOwner(c), quotaSubject: quotaSubject,
+		namespace: c.Query("namespace"), node: c.Param("name"), view: c.Param("camera"),
+		agent: agent, pod: pod,
 	}
 	handedOver := false
 	defer func() {
 		if !handedOver {
-			m.limiter.release(owner)
+			// The PUT may have reached the robot even when its response did not.
+			g.changeCameraSource(context.WithoutCancel(c.Request.Context()), http.MethodDelete, id, session)
+			m.limiter.release(quotaSubject)
 		}
 	}()
 	ctx := c.Request.Context()
-	node, view := c.Param("name"), c.Param("camera")
-	if !g.renewCameraSource(ctx, agent, pod, view) {
+	if !g.changeCameraSource(ctx, http.MethodPut, id, session) {
 		c.Status(http.StatusServiceUnavailable)
 		return
 	}
-	path := "/" + agent + "/" + node + "/" + view + "/whep"
+	path := session.streamPath() + "/whep"
 	// The lease starts the publisher asynchronously. A missing stream may
 	// become ready during the initial GOP without requiring a second offer.
 	connect, cancel := context.WithTimeout(ctx, 5*time.Second)
@@ -310,16 +328,13 @@ func (g *Gateway) openCameraWHEP(c *gin.Context) {
 		c.Status(http.StatusBadGateway)
 		return
 	}
-	id := uuid.NewString()
-	session := &cameraWHEPSession{
-		owner: owner, namespace: c.Query("namespace"), node: node, view: view,
-		agent: agent, pod: pod, upstream: upstream, expires: time.Now().Add(cameraWHEPLease),
-	}
+	session.upstream = upstream
+	session.expires = time.Now().Add(cameraWHEPLease)
 	m.mu.Lock()
 	m.sessions[id] = session
 	m.mu.Unlock()
 	handedOver = true
-	go m.reap(id, session)
+	go g.reapCameraWHEP(id, session)
 
 	answer, err := io.ReadAll(io.LimitReader(result.Body, cameraSDPLimit+1))
 	answerType, _, _ := mime.ParseMediaType(result.Header.Get("Content-Type"))
@@ -344,7 +359,7 @@ func (g *Gateway) updateCameraWHEP(c *gin.Context) {
 	m.mu.Lock()
 	session := m.sessions[c.Param("session")]
 	m.mu.Unlock()
-	if session == nil || session.owner != cameraStreamOwner(c) || session.namespace != c.Query("namespace") ||
+	if session == nil || session.owner != cameraWHEPOwner(c) || session.namespace != c.Query("namespace") ||
 		session.node != c.Param("name") || session.view != c.Param("camera") {
 		c.Status(http.StatusNotFound)
 		return
@@ -365,7 +380,9 @@ func (g *Gateway) updateCameraWHEP(c *gin.Context) {
 		session.closing = true
 		return
 	}
-	if session.agent != agent || session.pod != pod || !g.renewCameraSource(c.Request.Context(), agent, pod, session.view) {
+	leaseContext, cancel := context.WithDeadline(c.Request.Context(), session.expires)
+	defer cancel()
+	if session.agent != agent || session.pod != pod || !g.changeCameraSource(leaseContext, http.MethodPut, c.Param("session"), session) {
 		session.closing = true
 		c.Status(http.StatusServiceUnavailable)
 		return
@@ -379,9 +396,11 @@ func (g *Gateway) updateCameraWHEP(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 }
 
-func (m *cameraWHEP) reap(id string, session *cameraWHEPSession) {
+func (g *Gateway) reapCameraWHEP(id string, session *cameraWHEPSession) {
+	m := g.cameraMedia
 	tick := time.NewTicker(2 * time.Second)
 	defer tick.Stop()
+	sourceReleased := false
 	for range tick.C {
 		session.mu.Lock()
 		session.closing = session.closing || !time.Now().Before(session.expires)
@@ -389,6 +408,9 @@ func (m *cameraWHEP) reap(id string, session *cameraWHEPSession) {
 		session.mu.Unlock()
 		if !closing {
 			continue
+		}
+		if !sourceReleased {
+			sourceReleased = g.changeCameraSource(context.Background(), http.MethodDelete, id, session)
 		}
 		result, err := m.request(context.Background(), http.MethodDelete, session.upstream, nil)
 		if err != nil {
@@ -400,7 +422,7 @@ func (m *cameraWHEP) reap(id string, session *cameraWHEPSession) {
 			m.mu.Lock()
 			delete(m.sessions, id)
 			m.mu.Unlock()
-			m.limiter.release(session.owner)
+			m.limiter.release(session.quotaSubject)
 			return
 		}
 	}

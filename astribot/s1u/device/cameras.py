@@ -481,7 +481,13 @@ def handler(cameras, recovery, wall=time.time, body_state=None, source_lease=Non
             pass
 
         def do_PUT(self):
-            match = re.fullmatch(r"/cameras/([a-z_]+)/h264-lease", self.path)
+            self.change_source_lease()
+
+        def do_DELETE(self):
+            self.change_source_lease()
+
+        def change_source_lease(self):
+            match = re.fullmatch(r"/cameras/([a-z_]+)/h264-lease/([a-f0-9-]{36})", self.path)
             if source_lease is None or not source_key or not match or match[1] not in cameras.views:
                 return self.refuse(404, "Not found")
             supplied = self.headers.get("X-RLark-Camera-Source-Key", "").encode()
@@ -489,7 +495,16 @@ def handler(cameras, recovery, wall=time.time, body_state=None, source_lease=Non
                 return self.refuse(403, "Forbidden")
             if self.headers.get("Transfer-Encoding") or self.headers.get("Content-Length", "0") != "0":
                 return self.refuse(400, "Unexpected request body")
-            if not source_lease.renew(match[1]):
+            view, raw_id = match.groups()
+            try:
+                reader = str(uuid.UUID(raw_id))
+            except ValueError:
+                return self.refuse(400, "Invalid reader lease")
+            if self.headers.get("X-RLark-Camera-Source-Path") != source_lease.path + "/" + view:
+                return self.refuse(409, "Publisher path does not match this robot")
+            if self.command == "DELETE":
+                source_lease.release(view, reader)
+            elif not source_lease.renew(view, reader):
                 return self.refuse(409, "A different camera publisher is active or stopping")
             self.answer(204, "text/plain", b"")
 
@@ -660,7 +675,12 @@ def main():
     observer = None
     rtsp_target = os.environ.get("S1U_CAMERA_RTSP_PREFIX", "")
     source_key = os.environ.get("S1U_CAMERA_SOURCE_KEY", "")
-    source_lease = SourceLease(cameras.publisher_frame, rtsp_target) if rtsp_target and len(source_key.encode()) >= 32 else None
+    source_lease = None
+    if rtsp_target and len(source_key.encode()) >= 32:
+        try:
+            source_lease = SourceLease(cameras.publisher_frame, rtsp_target, node)
+        except ValueError:
+            print("Camera H.264 publisher disabled: invalid RTSP path", flush=True)
     server = ThreadingHTTPServer((os.environ["S1U_NODE_ADDRESS"], PORT),
                                  handler(cameras, recovery, body_state=lambda: observer() if observer else None,
                                          source_lease=source_lease, source_key=source_key))

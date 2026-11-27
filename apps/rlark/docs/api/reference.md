@@ -18,9 +18,13 @@ The optional Gateway integration returns an SDP answer and a same-origin
 `Location` on HTTP 201. Send a PUT to that URL every six seconds while viewing,
 and a DELETE to request teardown. A lease expires after 14 seconds without renewal.
 The Gateway revalidates the Node's cluster and the publisher on renewal and
-retains the quota slot until MediaMTX confirms removal. The pilot is disabled by
-default. It uses one 480p software-encoded source per robot and holds up to four
-readers per principal and 20 readers per Gateway. One Gateway owns a dedicated
+retains the quota slot until MediaMTX confirms removal. It releases the source
+lease when opening fails or playback ends. A source is stopped when its last
+reader leaves, and the robot expires any unrenewed source lease after 20 seconds.
+The pilot is disabled by default. The opted-in robot validates its publisher
+path against the Gateway's agent, node and camera path. It uses one 480p
+software-encoded source per robot and holds up to four readers per authenticated
+Gateway subject and 20 readers per Gateway. One Gateway owns a dedicated
 MediaMTX instance. After a Gateway restart, the private Control API disconnects
 previous WebRTC sessions and verifies the session list is empty before playback
 reopens. JPEG service remains available while reconciliation runs.
