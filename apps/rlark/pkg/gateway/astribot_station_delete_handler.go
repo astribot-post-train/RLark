@@ -14,10 +14,9 @@ import (
 )
 
 // handleDeleteStation answers DELETE /api/v1/station/stations/:name?cluster_id=: the site node's record (its
-// NetworkEnrollment) is deleted when its node was removed (retired), when another Node reports under the name
-// (Conflict), or when the node does not report (is not Bound) and RLark has no Node of the name. It is deleted as it
-// was read: one that changed meanwhile answers 409. A record that is gone already is deleted: the request can be
-// made again.
+// NetworkEnrollment) can be deleted when retired, when it has a conflict other than NodeUIDChanged,
+// or when it is not bound and RLark has no Node of that name. Changes to the record during deletion return 409.
+// Repeating a request for a record that is already absent succeeds.
 func (g *Gateway) handleDeleteStation(c *gin.Context) {
 	clusterID, namespace, ok := g.clusterNamespace(c)
 	if !ok {
