@@ -77,6 +77,12 @@ func askStationAPI(url string, ca []byte, key wgtypes.Key, path string, request 
 	for range 2 {
 		body, _ := json.Marshal(request)
 		response, err := client.Post(strings.TrimRight(api.URL, "/")+path, "application/json", bytes.NewReader(body))
+		askedAPI.Lock()
+		askedAPI.url = api.URL
+		if err == nil {
+			askedAPI.reached = time.Now()
+		}
+		askedAPI.Unlock()
 		if err != nil {
 			return 0, nil, fmt.Errorf("Station API is not reached: %v", err)
 		}

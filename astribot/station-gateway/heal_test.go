@@ -72,3 +72,21 @@ func TestLinkKeepsTheLastActions(t *testing.T) {
 		t.Fatalf("actions %+v", l.Actions)
 	}
 }
+
+// Station API unanswered is said once and once again when it answers; a node
+// that does not ask says nothing.
+func TestLinkHearsStationAPI(t *testing.T) {
+	started := time.Unix(1_800_000_000, 0)
+	var l link
+	l.heard(false, time.Time{}, started.Add(time.Hour), started)
+	if len(l.Actions) != 0 {
+		t.Fatalf("not asked: %+v", l)
+	}
+	l.heard(true, time.Time{}, started.Add(time.Minute), started)
+	l.heard(true, time.Time{}, started.Add(4*time.Minute), started)
+	l.heard(true, time.Time{}, started.Add(5*time.Minute), started)
+	l.heard(true, started.Add(6*time.Minute), started.Add(6*time.Minute), started)
+	if len(l.Actions) != 2 || l.RLarkLost || l.RLark != started.Add(6*time.Minute).Unix() || l.Actions[1].Result != "Station API answers again" {
+		t.Fatalf("heard: %+v", l)
+	}
+}

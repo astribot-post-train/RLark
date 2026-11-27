@@ -105,13 +105,13 @@
 
 ### 断网自愈
 
-节点自己发现并恢复断掉的隧道，不靠集群（断了集群也够不着它）。`station-gateway`（`heal.go`）每轮看它拨的对端：全部 3 分钟没有握手就算断网（只断一个 hub 不算），然后每次断网按级别各做一次：
+节点自己主动找 RLark，不等 RLark 发现它掉线（断了集群也够不着它）。`station-gateway`（`heal.go`）每 30 s 向 Station API 要一次自己的文档（心跳），每轮看通往 Station API 的那个对端的握手（没有 `station-api.json` 的节点看它拨的全部对端）：3 分钟没有握手就算断网（不在去 RLark 路上的 hub 断了不算）。隧道通着而 Station API 3 分钟没应答，是控制面的事：记一条、不动手，否则控制面一重启全站机器人都会跟着重启。断网时每次断网按级别各做一次：
 
 1. 上联：本机到 hub 的路由所在网卡没了 IPv4 地址或根本没有路由时，经管它的网络管理器重新拉起（`nmcli device up`，否则 `networkctl reconfigure`，否则网卡 down/up），租约和静态地址、路由随之回来。网卡地址和路由都在时不动（GPU 节点的训练网卡就在这种情况里）；机器在用（`/run/rlark/in-use` 下有文件）时也不动。
 2. 1 分钟后仍断：删掉自己建的 WireGuard 设备，同一轮按文档重建（新套接字、新端口、所有会话重来）。
 3. 再 2 分钟仍断：请求重启。网关自己不重启机器，只写进 `link.json`；由管这台机器重启的人来做：机器人是 `s1u-robot` 的 tuner（下一节）。没有这样的组件的机器不重启。重启后仍断的，下一次请求等 15 分钟，之后每次翻倍，最长 4 小时；连续通 30 分钟后清零。
 
-状态在主机 `/var/lib/station/wg/link.json`（随重启保留）：`state`（up / down）、`since`、`uplink`、本次断网做过的级别、`restart`（`{id, at, why}`）、最近 10 条动作（时间都是 Unix 秒）。机器人上 tuner 把它原样发到节点注解 `rlark.io/link`，网络恢复后在控制台和 Dashboard 的节点上看得到。
+状态在主机 `/var/lib/station/wg/link.json`（随重启保留）：`state`（up / down）、`since`、`rlark`（Station API 最后一次应答）和 `rlarkLost`、`uplink`、本次断网做过的级别、`restart`（`{id, at, why}`）、最近 10 条动作（时间都是 Unix 秒）。机器人上 tuner 把它原样发到节点注解 `rlark.io/link`，网络恢复后在控制台和 Dashboard 的节点上看得到。
 
 机器人的重启（`node_tuner.py` 的 `relink`）不需要 API server，也不等使用者：断网时没有 Run 够得着机器人。仍是一次整机重启的维护：持有维护租约，电源容器停驱动、手臂缓落、`S1U_DRIVER_STOP_SECONDS` 后下电，然后厂商的整机重启（先 Orin，再 x86），所以 Orin 卡住或掉线也一起重启。另一个维护占着机器人时不做；`LOWER_SECONDS` 内没降下来并重启的放弃，等网关下一次请求。比本次开机早的请求视为已做。
 
