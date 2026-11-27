@@ -56,9 +56,9 @@ func (s *BootstrapClient) get(ctx context.Context, path string, timeout time.Dur
 		return nil, err
 	}
 	if resp.StatusCode != http.StatusOK {
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		// The path may hold a code: it stays out of the error.
-		return nil, fmt.Errorf("Station API answered %d", resp.StatusCode)
+		return nil, fmt.Errorf("station API answered %d", resp.StatusCode)
 	}
 	return resp, nil
 }
@@ -69,7 +69,7 @@ func (s *BootstrapClient) Digest(ctx context.Context, path string) (string, erro
 	if err != nil {
 		return "", err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	digest := sha256.New()
 	if _, err := io.Copy(digest, io.LimitReader(resp.Body, 1<<20)); err != nil {
 		return "", err
@@ -94,7 +94,7 @@ func (s *BootstrapClient) BundleDigest(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	data, err := io.ReadAll(io.LimitReader(resp.Body, 256))
 	if err != nil {
 		return "", err

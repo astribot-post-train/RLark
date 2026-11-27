@@ -61,7 +61,7 @@ func TestHandleSendWritesPacketAndStopsOnCancel(t *testing.T) {
 
 	cancel()
 	select {
-	case <-done:
+	case <-done: //nolint:errcheck // The primary result was already chosen.
 	case <-time.After(time.Second):
 		t.Fatal("handleSend did not stop after cancellation")
 	}

@@ -116,7 +116,7 @@ func ReadTree(file string) (Tree, error) {
 	if err != nil {
 		return Tree{}, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	tree := Tree{AddonVersions: map[string]string{}, Files: map[string]string{}}
 	reader := tar.NewReader(f)
 	for {

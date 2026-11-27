@@ -153,7 +153,7 @@ func (r *pullReconciler) rolledDaemonSetWaitingOn(ctx context.Context, ds *appsv
 		switch outdated := pod.Labels["pod-template-generation"] != ds.Annotations[appsv1.DeprecatedTemplateGeneration]; {
 		case !podReady(&pod):
 			waiting = append(waiting, fmt.Sprintf("%s (%s)", pod.Spec.NodeName, podWaitReason(&pod, node)))
-		case outdated && !(policy.WhenIdle && !rollout.Idle(node)):
+		case outdated && (!policy.WhenIdle || rollout.Idle(node)):
 			waiting = append(waiting, fmt.Sprintf("%s (to be updated)", pod.Spec.NodeName))
 		}
 	}

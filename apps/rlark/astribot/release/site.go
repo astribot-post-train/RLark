@@ -279,10 +279,10 @@ func ownerOf(pod corev1.Pod) string {
 }
 
 func agreeing(read, image string) string {
-	switch {
-	case read == "":
+	switch read {
+	case "":
 		return image
-	case read == image:
+	case image:
 		return read
 	}
 	return read + " | " + image

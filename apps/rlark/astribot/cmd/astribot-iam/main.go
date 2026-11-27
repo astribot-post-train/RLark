@@ -43,7 +43,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("open IAM database: %v", err)
 	}
-	defer database.Close()
+	defer func() { _ = database.Close() }()
 	store := iam.NewPostgresStore(database.DB)
 	if err := store.MigrateAndBootstrap(ctx); err != nil {
 		log.Fatalf("initialize IAM database: %v", err)

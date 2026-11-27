@@ -98,7 +98,7 @@ func (r *RegistryClient) do(ctx context.Context, method, target string, body io.
 		return nil, err
 	}
 	if response.StatusCode != want {
-		response.Body.Close()
+		_ = response.Body.Close()
 		return response, fmt.Errorf("registry %s: %s %s: %s", r.Registry, method, request.URL.Path, response.Status)
 	}
 	return response, nil
@@ -109,7 +109,7 @@ func (r *RegistryClient) has(ctx context.Context, path string) (bool, error) {
 	response, err := r.do(ctx, http.MethodHead, path, nil, 0, http.StatusOK, "Accept", manifestTypes)
 	switch {
 	case err == nil:
-		response.Body.Close()
+		_ = response.Body.Close()
 		return true, nil
 	case response != nil && response.StatusCode == http.StatusNotFound:
 		return false, nil
@@ -124,7 +124,7 @@ func (r *RegistryClient) manifest(ctx context.Context, repository, reference str
 	if err != nil {
 		return nil, "", err
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	data, err := io.ReadAll(response.Body)
 	if digest := digestOf(data); err == nil && strings.HasPrefix(reference, "sha256:") && digest != reference {
 		err = fmt.Errorf("%s@%s: the registry answered a manifest of %s", repository, reference, digest)
@@ -146,7 +146,7 @@ func (r *RegistryClient) blob(ctx context.Context, repository, digest string) (i
 func (r *RegistryClient) putManifest(ctx context.Context, repository, reference, mediaType string, data []byte) error {
 	response, err := r.do(ctx, http.MethodPut, "/v2/"+repository+"/manifests/"+reference, bytes.NewReader(data), int64(len(data)), http.StatusCreated, "Content-Type", mediaType)
 	if err == nil {
-		response.Body.Close()
+		_ = response.Body.Close()
 	}
 	return err
 }
@@ -157,7 +157,7 @@ func (r *RegistryClient) startUpload(ctx context.Context, repository string) (st
 	if err != nil {
 		return "", err
 	}
-	response.Body.Close()
+	_ = response.Body.Close()
 	return r.resolve(response.Header.Get("Location")), nil
 }
 
@@ -182,7 +182,7 @@ func (r *RegistryClient) finish(ctx context.Context, location, digest string, bo
 	target.RawQuery = query.Encode()
 	response, err := r.do(ctx, http.MethodPut, target.String(), body, size, http.StatusCreated, "Content-Type", "application/octet-stream")
 	if err == nil {
-		response.Body.Close()
+		_ = response.Body.Close()
 	}
 	return err
 }
@@ -257,7 +257,7 @@ func (r *RegistryClient) sendBlob(ctx context.Context, target *RegistryClient, f
 	if err != nil {
 		return err
 	}
-	defer source.Close()
+	defer func() { _ = source.Close() }()
 	location, err := target.startUpload(ctx, to)
 	if err != nil {
 		return err
@@ -290,7 +290,7 @@ func (r *RegistryClient) pushBlob(ctx context.Context, repository string, data [
 		response, err := r.do(ctx, http.MethodPatch, location, bytes.NewReader(data[start:end]), int64(end-start), http.StatusAccepted,
 			"Content-Type", "application/octet-stream", "Content-Range", fmt.Sprintf("%d-%d", start, end-1))
 		if err == nil {
-			response.Body.Close()
+			_ = response.Body.Close()
 			location, start, failures = r.resolve(response.Header.Get("Location")), end, 0
 			continue
 		}
@@ -303,7 +303,7 @@ func (r *RegistryClient) pushBlob(ctx context.Context, repository string, data [
 		if err != nil {
 			return "", err
 		}
-		state.Body.Close()
+		_ = state.Body.Close()
 		_, last, _ := strings.Cut(state.Header.Get("Range"), "-")
 		have, _ := strconv.Atoi(last)
 		location, start = r.resolve(state.Header.Get("Location")), 0

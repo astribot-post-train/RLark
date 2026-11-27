@@ -213,7 +213,7 @@ its server where the administrator reaches the API: at the address the SiteNetwo
 			if err := release.IssueMemberCredential(cmd.Context(), member, memberDynamic, managementCore, cluster, server, serverName, []byte(tree.Files["release-member-rbac.yaml"]), ""); err != nil {
 				return err
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "cluster %s: the release's credential is %s/%s, its server %s (verified as %q)\n", cluster, release.CredentialNamespace, release.CredentialName(cluster), server, serverName)
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "cluster %s: the release's credential is %s/%s, its server %s (verified as %q)\n", cluster, release.CredentialNamespace, release.CredentialName(cluster), server, serverName)
 			return nil
 		},
 	}
@@ -483,7 +483,7 @@ ends. No administrator's kubeconfig is kept on the machine for it.`,
 			if err != nil {
 				return err
 			}
-			defer os.Remove(file.Name())
+			defer func() { _ = os.Remove(file.Name()) }()
 			if _, err := file.Write(kubeconfig); err != nil {
 				return err
 			}

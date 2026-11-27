@@ -107,7 +107,7 @@ func registryBrowseResponse(c *gin.Context, response *http.Response, err error) 
 		return false
 	}
 	if response.StatusCode != http.StatusOK {
-		response.Body.Close()
+		_ = response.Body.Close()
 		message := "registry request failed or operation is unsupported"
 		if response.StatusCode == http.StatusUnauthorized || response.StatusCode == http.StatusForbidden {
 			message = "registry authentication or permission denied; token authentication is not supported"
@@ -140,7 +140,7 @@ func (g *Gateway) handleRegistryRepositories(c *gin.Context) {
 	if !registryBrowseResponse(c, response, err) {
 		return
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	var data struct {
 		Repositories *[]string `json:"repositories"`
 	}
@@ -192,13 +192,13 @@ func listRegistryTags(c *gin.Context, browser *registryBrowser, credential store
 	response, err := browser.request(c.Request.Context(), credential, http.MethodGet, "/v2/"+repository+"/tags/list", query)
 	// A repository the catalog lists whose images were only pushed by digest has no tags: the registry answers 404.
 	if err == nil && response.StatusCode == http.StatusNotFound {
-		response.Body.Close()
+		_ = response.Body.Close()
 		return []string{}, "", true
 	}
 	if !registryBrowseResponse(c, response, err) {
 		return nil, "", false
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	var data struct {
 		Tags json.RawMessage `json:"tags"`
 	}
@@ -241,7 +241,7 @@ func (g *Gateway) handleRegistryManifest(c *gin.Context) {
 	if !registryBrowseResponse(c, response, err) {
 		return
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	digest := response.Header.Get("Docker-Content-Digest")
 	if !registry.ValidDigest(digest) {
 		respondError(c, http.StatusBadGateway, CodeUpstreamUnavailable, "registry did not return a supported manifest digest")

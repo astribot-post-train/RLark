@@ -676,11 +676,6 @@ func TestApplyGivesStationContainersTheReleasesName(t *testing.T) {
 	}
 }
 
-func withStation(cluster ClusterState, agent, wireguard string) ClusterState {
-	cluster.StationAgent, cluster.StationWireguard = agent, wireguard
-	return cluster
-}
-
 func mustRead(t *testing.T, site *Site) State {
 	state, err := site.Read(context.Background())
 	if err != nil {
@@ -968,11 +963,13 @@ func TestNodesOutOfServiceHoldNoRolloutUp(t *testing.T) {
 		&appsv1.DaemonSet{ObjectMeta: metav1.ObjectMeta{Namespace: agentNamespace, Name: nodeAgentDaemon}, Spec: appsv1.DaemonSetSpec{Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": nodeAgentDaemon}}}},
 	)
 	pod := func(node, image string, ready corev1.ConditionStatus) {
-		member.CoreV1().Pods(agentNamespace).Create(context.Background(), &corev1.Pod{
+		if _, err := member.CoreV1().Pods(agentNamespace).Create(context.Background(), &corev1.Pod{
 			ObjectMeta: metav1.ObjectMeta{Namespace: agentNamespace, Name: "agent-" + node, Labels: map[string]string{"app": nodeAgentDaemon}},
 			Spec:       corev1.PodSpec{NodeName: node, Containers: []corev1.Container{{Name: "agent", Image: image}}},
 			Status:     corev1.PodStatus{Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: ready}}},
-		}, metav1.CreateOptions{})
+		}, metav1.CreateOptions{}); err != nil {
+			t.Fatal(err)
+		}
 	}
 	pod("serving", newRLark, corev1.ConditionTrue)
 	pod("cordoned", newRLark, corev1.ConditionFalse) // ContainerCreating on a node whose network is broken
@@ -1185,7 +1182,7 @@ func TestTheReleaseReachesAMemberByItsCredential(t *testing.T) {
 		t.Fatal(err)
 	}
 	configs, err := MemberConfigs(context.Background(), s.management, s.mcore)
-	if err != nil || len(configs) != 2 || configs["lab"].Host != server || configs["lab"].TLSClientConfig.ServerName != "cp.lab.rlark.internal" || configs["lab"].BearerToken != "the-token" {
+	if err != nil || len(configs) != 2 || configs["lab"].Host != server || configs["lab"].ServerName != "cp.lab.rlark.internal" || configs["lab"].BearerToken != "the-token" {
 		t.Errorf("%+v %v", configs, err)
 	}
 }

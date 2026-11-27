@@ -123,7 +123,7 @@ func indexPlatforms(manifests []registryDescriptor) ([]string, *registryDescript
 			continue
 		}
 		platforms = append(platforms, platformName(entry.Platform.OS, entry.Platform.Architecture, entry.Platform.Variant))
-		if chosen == nil || (entry.Platform.OS == "linux" && entry.Platform.Architecture == "amd64" && !(chosen.Platform.OS == "linux" && chosen.Platform.Architecture == "amd64")) {
+		if chosen == nil || (entry.Platform.OS == "linux" && entry.Platform.Architecture == "amd64" && (chosen.Platform.OS != "linux" || chosen.Platform.Architecture != "amd64")) {
 			chosen = entry
 		}
 	}
@@ -153,7 +153,7 @@ func imageInfoFromManifest(ctx context.Context, read Read, repository string, ma
 	if err != nil {
 		return ImageInfo{}, fmt.Errorf("fetch image config: %w", err)
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode != http.StatusOK {
 		return ImageInfo{}, errRegistryImageUnavailable
 	}
@@ -184,7 +184,7 @@ func FetchManifest(ctx context.Context, read Read, repository, reference, expect
 	if err != nil {
 		return nil, "", "", fmt.Errorf("fetch manifest: %w", err)
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode != http.StatusOK {
 		return nil, "", "", errRegistryImageUnavailable
 	}

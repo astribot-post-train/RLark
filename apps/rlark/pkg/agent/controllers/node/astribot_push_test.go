@@ -91,7 +91,8 @@ func TestReconcileKeepsTheDisplayNameOfTheManagementNode(t *testing.T) {
 	).Build()
 	// A report must preserve management-owned Spec and record the local cordon in Status.
 	known := managementNode("node-a", rlarkv1alpha1.NodeOnline)
-	known.Spec = rlarkv1alpha1.NodeSpec{DisplayName: "百度GPU-1", AgentType: rlarkv1alpha1.AgentTypeDocker}
+	// Keep legacy AgentType coverage until the compatibility field is removed.
+	known.Spec = rlarkv1alpha1.NodeSpec{DisplayName: "百度GPU-1", AgentType: rlarkv1alpha1.AgentTypeDocker} //nolint:staticcheck
 	management := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(&rlarkv1alpha1.Node{}).WithObjects(known).Build()
 	r := &pushNodeReconciler{c: &Controller{Controller: base.Controller{
 		LocalKubeClient: local, ManagementClient: management, ManagementNamespace: "cluster-a", AgentType: string(rlarkv1alpha1.AgentTypeKubernetes),

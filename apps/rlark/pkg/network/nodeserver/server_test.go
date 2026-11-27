@@ -69,7 +69,7 @@ func TestDrainConnectionsWaitsForActiveConnection(t *testing.T) {
 	}()
 
 	select {
-	case <-done:
+	case <-done: //nolint:errcheck // Wait for the test connection handler to stop.
 		t.Fatal("drain returned while connection was active")
 	case <-time.After(20 * time.Millisecond):
 	}
@@ -157,7 +157,7 @@ func TestRunStopsListeningAndDrainsConnection(t *testing.T) {
 	cancel()
 
 	select {
-	case <-done:
+	case <-done: //nolint:errcheck // Wait for the test connection handler to stop.
 		t.Fatal("server returned before active connection drained")
 	case <-time.After(20 * time.Millisecond):
 	}

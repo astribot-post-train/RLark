@@ -18,7 +18,7 @@ func TestRelayClosesASilentTunnelAndPassesALiveOne(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer target.Close()
+	defer func() { _ = target.Close() }()
 	go func() {
 		for {
 			conn, err := target.Accept()
@@ -28,15 +28,15 @@ func TestRelayClosesASilentTunnelAndPassesALiveOne(t *testing.T) {
 			go func() {
 				line, _ := bufio.NewReader(conn).ReadString('\n')
 				if line == "silent\n" {
-					conn.Write([]byte("partial"))
+					_, _ = conn.Write([]byte("partial"))
 					time.Sleep(time.Minute)
 					return
 				}
 				for i := 0; i < 5; i++ {
-					conn.Write([]byte("chunk"))
+					_, _ = conn.Write([]byte("chunk"))
 					time.Sleep(300 * time.Millisecond)
 				}
-				conn.Close()
+				_ = conn.Close()
 			}()
 		}
 	}()
@@ -47,22 +47,22 @@ func TestRelayClosesASilentTunnelAndPassesALiveOne(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go Serve(ctx, proxy, 1*time.Second, nil)
+	go func() { _ = Serve(ctx, proxy, 1*time.Second, nil) }()
 
 	through := func(first string) (string, time.Duration) {
 		conn, err := net.Dial("tcp", proxy.Addr().String())
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer conn.Close()
-		conn.Write([]byte("CONNECT " + target.Addr().String() + " HTTP/1.1\r\nHost: " + target.Addr().String() + "\r\n\r\n"))
+		defer func() { _ = conn.Close() }()
+		_, _ = conn.Write([]byte("CONNECT " + target.Addr().String() + " HTTP/1.1\r\nHost: " + target.Addr().String() + "\r\n\r\n"))
 		reader := bufio.NewReader(conn)
 		response, err := http.ReadResponse(reader, nil)
 		if err != nil || response.StatusCode != http.StatusOK {
 			t.Fatalf("CONNECT: %v %v", response, err)
 		}
 		start := time.Now()
-		conn.Write([]byte(first))
+		_, _ = conn.Write([]byte(first))
 		body, _ := io.ReadAll(reader)
 		return string(body), time.Since(start)
 	}
@@ -95,21 +95,21 @@ func TestRelayRefusesATargetThatIsNotAllowed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer target.Close()
+	defer func() { _ = target.Close() }()
 	proxy, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go Serve(ctx, proxy, time.Second, allow)
+	go func() { _ = Serve(ctx, proxy, time.Second, allow) }()
 	status := func(host string) int {
 		conn, err := net.Dial("tcp", proxy.Addr().String())
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer conn.Close()
-		conn.Write([]byte("CONNECT " + host + " HTTP/1.1\r\nHost: " + host + "\r\n\r\n"))
+		defer func() { _ = conn.Close() }()
+		_, _ = conn.Write([]byte("CONNECT " + host + " HTTP/1.1\r\nHost: " + host + "\r\n\r\n"))
 		response, err := http.ReadResponse(bufio.NewReader(conn), nil)
 		if err != nil {
 			t.Fatal(err)

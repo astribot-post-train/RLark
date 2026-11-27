@@ -29,7 +29,7 @@ func (s *PostgresStore) MigrateAndBootstrap(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("begin IAM migration transaction: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	if _, err = tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(731942816)`); err != nil {
 		return fmt.Errorf("lock IAM migrations: %w", err)
 	}
@@ -108,7 +108,7 @@ func (s *PostgresStore) ListUsers(ctx context.Context) ([]User, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	users := []User{}
 	for rows.Next() {
 		u, err := scanUser(rows)
@@ -131,7 +131,7 @@ func (s *PostgresStore) UpdateUser(ctx context.Context, u User) error {
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	res, err := tx.ExecContext(ctx, `UPDATE astribot_iam_users SET display_name=?,role=?,disabled=?,updated_at=now() WHERE id=?`, u.DisplayName, u.Role, u.Disabled, u.ID)
 	if err != nil {
 		return err
@@ -163,7 +163,7 @@ func (s *PostgresStore) SetPassword(ctx context.Context, id, hash string) error 
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	res, err := tx.ExecContext(ctx, `UPDATE astribot_iam_users SET password_hash=?,updated_at=now() WHERE id=?`, hash, id)
 	if err != nil {
 		return err
@@ -212,7 +212,7 @@ func (s *PostgresStore) ListSessions(ctx context.Context, userID, currentID stri
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	out := []SessionView{}
 	for rows.Next() {
 		var v SessionView
@@ -249,7 +249,7 @@ func (s *PostgresStore) ListAudit(ctx context.Context, actor, action, result str
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	out := []AuditEvent{}
 	for rows.Next() {
 		var e AuditEvent

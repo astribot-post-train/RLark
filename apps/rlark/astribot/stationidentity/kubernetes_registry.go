@@ -133,10 +133,10 @@ func secureMemberRESTConfig(kubeconfig []byte) (*rest.Config, error) {
 	if err != nil || serverURL.Scheme != "https" || serverURL.Host == "" {
 		return nil, errors.New("member API server must use HTTPS")
 	}
-	if config.TLSClientConfig.Insecure || config.ExecProvider != nil || config.AuthProvider != nil {
+	if config.Insecure || config.ExecProvider != nil || config.AuthProvider != nil {
 		return nil, errors.New("insecure TLS and external credential plugins are unsupported")
 	}
-	if config.TLSClientConfig.CAFile != "" || config.TLSClientConfig.CertFile != "" || config.TLSClientConfig.KeyFile != "" {
+	if config.CAFile != "" || config.CertFile != "" || config.KeyFile != "" {
 		return nil, errors.New("file-path TLS credentials are unsupported; embed data in the management Secret")
 	}
 	config.Timeout = 10 * time.Second

@@ -95,7 +95,7 @@ func (c Compose) Hashes(ctx context.Context, compose ComposeFile, images map[str
 	if err != nil {
 		return nil, err
 	}
-	defer os.RemoveAll(dir)
+	defer func() { _ = os.RemoveAll(dir) }()
 	file, env := filepath.Join(dir, "compose.yaml"), filepath.Join(dir, "env")
 	if err := os.WriteFile(file, []byte(compose.File), 0o600); err != nil {
 		return nil, err

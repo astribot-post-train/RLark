@@ -18,12 +18,14 @@ func TestANodeServiceIsReachedOnItsSocket(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	go http.Serve(listener, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		body, _ := io.ReadAll(r.Body)
-		w.WriteHeader(http.StatusConflict)
-		_, _ = w.Write([]byte(r.Method + " " + r.URL.Path + " " + r.Header.Get("X-Remote-User") + " " + string(body)))
-	}))
-	defer listener.Close()
+	go func() {
+		_ = http.Serve(listener, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			body, _ := io.ReadAll(r.Body)
+			w.WriteHeader(http.StatusConflict)
+			_, _ = w.Write([]byte(r.Method + " " + r.URL.Path + " " + r.Header.Get("X-Remote-User") + " " + string(body)))
+		}))
+	}()
+	defer func() { _ = listener.Close() }()
 
 	router := gin.New()
 	registerServiceRoutes(router, directory)
@@ -36,7 +38,7 @@ func TestANodeServiceIsReachedOnItsSocket(t *testing.T) {
 		t.Fatal(err)
 	}
 	body, _ := io.ReadAll(response.Body)
-	response.Body.Close()
+	_ = response.Body.Close()
 	if response.StatusCode != http.StatusConflict || string(body) != `POST /pose alice {"action":"hold"}` {
 		t.Fatalf("%d %s", response.StatusCode, body)
 	}
@@ -44,7 +46,7 @@ func TestANodeServiceIsReachedOnItsSocket(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	response.Body.Close()
+	_ = response.Body.Close()
 	if response.StatusCode != http.StatusBadGateway {
 		t.Fatalf("a service the node does not run: %d", response.StatusCode)
 	}

@@ -66,7 +66,7 @@ type Registration struct {
 // the member's API. Done again, it changes nothing that is as it should be.
 func Register(ctx context.Context, m *Member, management kubernetes.Interface, r Registration) error {
 	if err := m.Apply(ctx, r.Manifests.MemberRBAC); err != nil {
-		return fmt.Errorf("Station's member RBAC: %w", err)
+		return fmt.Errorf("station's member RBAC: %w", err)
 	}
 	caSecret, _ := json.Marshal(&corev1.Secret{
 		TypeMeta:   metav1.TypeMeta{APIVersion: "v1", Kind: "Secret"},
@@ -84,7 +84,7 @@ func Register(ctx context.Context, m *Member, management kubernetes.Interface, r
 		"REPLACE_IMAGE_PULL_SECRET", r.PullSecret,
 	).Replace(r.Manifests.StationAgent)
 	if err := m.Apply(ctx, manifest); err != nil {
-		return fmt.Errorf("Station's agents: %w", err)
+		return fmt.Errorf("station's agents: %w", err)
 	}
 
 	reader, err := m.Token(ctx, Namespace, "station-api-reader", "station-api-reader-token")
@@ -111,7 +111,7 @@ func Register(ctx context.Context, m *Member, management kubernetes.Interface, r
 		return fmt.Errorf("store Station's member credential: %w", err)
 	}
 	if err := m.Apply(ctx, r.Manifests.OperationRBAC); err != nil {
-		return fmt.Errorf("Station's node operation RBAC: %w", err)
+		return fmt.Errorf("station's node operation RBAC: %w", err)
 	}
 	operator, err := m.Token(ctx, Namespace, "station-node-operator", "station-node-operator-token")
 	if err != nil {

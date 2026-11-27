@@ -54,7 +54,7 @@ func (g *Gateway) imagePullSecretsOf(ctx context.Context, clusterID string) ([]r
 			return nil, fmt.Errorf("decode image registry %s: %w", id, err)
 		}
 		selection := credential.ClusterSelection
-		if selection.Mode != clusterSelectionAll && !(selection.Mode == clusterSelectionSelected && slices.Contains(selection.Clusters, clusterID)) {
+		if selection.Mode != clusterSelectionAll && (selection.Mode != clusterSelectionSelected || !slices.Contains(selection.Clusters, clusterID)) {
 			continue
 		}
 		config, err := buildDockerConfigJSON(credential.Registry, credential.Username, credential.Password)

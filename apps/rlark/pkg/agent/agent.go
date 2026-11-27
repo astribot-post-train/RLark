@@ -66,7 +66,7 @@ func (a *Agent) init(ctx context.Context) error {
 	var err error
 	a.config.AgentType = strings.ToLower(a.config.AgentType)
 	a.config.Execution.Image = a.config.Image
-	if err := a.config.AstribotConfig.Apply(); err != nil {
+	if err := a.config.Apply(); err != nil {
 		return err
 	}
 	if err := a.config.Validate(); err != nil {

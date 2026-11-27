@@ -148,7 +148,7 @@ func TestAgentEnrollsWhenItsReportIsRefused(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	free.Close()
+	_ = free.Close()
 	agent, err := newAgent(AgentConfig{
 		APIURL: server.URL, ClusterID: "cluster-a", TokenFile: "token", CAFile: "ca", Interval: 30 * time.Second, RequestLimit: 2 * time.Second,
 		ProbeAddress: free.Addr().String(), NetworkIdentityFile: "identity", NetworkConfigFile: filepath.Join(t.TempDir(), "config.json"),

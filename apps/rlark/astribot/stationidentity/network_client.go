@@ -36,13 +36,13 @@ type NetworkClient struct {
 }
 
 // ErrNetworkCredentialRejected indicates that Station API rejected the credential.
-var ErrNetworkCredentialRejected = errors.New("Station network service credential rejected")
+var ErrNetworkCredentialRejected = errors.New("station network service credential rejected")
 
 // NewNetworkClient creates a Station API client that rereads its credential for each request.
 func NewNetworkClient(address, caFile, credentialFile string) (*NetworkClient, error) {
 	u, err := url.Parse(address)
 	if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || (u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.Fragment != "" || credentialFile == "" {
-		return nil, errors.New("Station API HTTPS origin and credential file are required")
+		return nil, errors.New("station API HTTPS origin and credential file are required")
 	}
 	client, err := newStationHTTPClient(caFile)
 	if err != nil {
@@ -81,12 +81,12 @@ func (s *NetworkClient) Read(ctx context.Context, cluster, node string) (NodeNet
 	if err != nil {
 		return result, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
 		return result, ErrNetworkCredentialRejected
 	}
 	if resp.StatusCode != http.StatusOK {
-		return result, errors.New("Station network query failed")
+		return result, errors.New("station network query failed")
 	}
 	dec := json.NewDecoder(io.LimitReader(resp.Body, 16385))
 	dec.DisallowUnknownFields()

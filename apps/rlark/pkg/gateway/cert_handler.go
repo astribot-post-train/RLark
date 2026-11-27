@@ -68,6 +68,7 @@ func (g *Gateway) handleSignAgentCert(c *gin.Context) {
 	})
 }
 
+//nolint:unused // Astribot uses the Server-backed path; keep the upstream handler for updates.
 func (g *Gateway) storeAgentCertSecret(ctx context.Context, clusterID string, caCert, agentCert, agentKey []byte) error {
 	if g.rawClient == nil {
 		return fmt.Errorf("raw kubernetes client not initialized")
@@ -226,6 +227,7 @@ func (g *Gateway) signCertViaServer(clusterID string) (certPEM, keyPEM string, e
 	return signResp.CertPEM, signResp.KeyPEM, nil
 }
 
+//nolint:unused // Astribot uses the Server-backed path; keep the upstream handler for updates.
 func (g *Gateway) handleRevokeCertificate(c *gin.Context) {
 	if g.dbClient == nil {
 		respondError(c, http.StatusInternalServerError, CodeNotConfigured, "revocation not supported: database not configured")

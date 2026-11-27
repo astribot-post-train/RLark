@@ -50,7 +50,7 @@ func (a *Agent) Enroll(ctx context.Context) (string, error) {
 		return "pending", nil
 	}
 	if status != http.StatusOK {
-		return "", fmt.Errorf("Station API rejected network enrollment with HTTP %d", status)
+		return "", fmt.Errorf("station API rejected network enrollment with HTTP %d", status)
 	}
 	var answer NetworkEnrollmentAnswer
 	if err := json.Unmarshal(data, &answer); err != nil {
@@ -69,7 +69,7 @@ func (a *Agent) Enroll(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer os.Remove(file.Name())
+	defer func() { _ = os.Remove(file.Name()) }()
 	if err = file.Chmod(0644); err == nil {
 		_, err = file.Write(answer.Config)
 	}
@@ -97,7 +97,7 @@ func (a *Agent) localAddress() string {
 	if err != nil {
 		return ""
 	}
-	defer connection.Close()
+	defer func() { _ = connection.Close() }()
 	return connection.LocalAddr().(*net.UDPAddr).IP.String()
 }
 

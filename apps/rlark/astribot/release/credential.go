@@ -138,7 +138,7 @@ func ReachedAs(ctx context.Context, management dynamic.Interface, administrator 
 	if err != nil {
 		return "", "", err
 	}
-	name := administrator.TLSClientConfig.ServerName
+	name := administrator.ServerName
 	if name == "" {
 		name = api.Hostname()
 	}
@@ -157,7 +157,7 @@ func ReachedAs(ctx context.Context, management dynamic.Interface, administrator 
 			return "https://" + net.JoinHostPort(address, port), name, nil
 		}
 	}
-	return administrator.Host, administrator.TLSClientConfig.ServerName, nil
+	return administrator.Host, administrator.ServerName, nil
 }
 
 // MemberConfigs are the clusters of the management plane, each as its credential reaches it.

@@ -136,7 +136,7 @@ func dialSSHConn(ctx context.Context, conn net.Conn, target, user, hostKey, host
 	}
 	connection, channels, requests, err := ssh.NewClientConn(conn, target, config)
 	if err != nil {
-		conn.Close()
+		_ = conn.Close()
 		if errors.Is(err, errHostKeyChanged) {
 			return nil, "", &Error{HostKeyChanged, fmt.Errorf("%s shows the host key %s, not %s", target, shown, hostKey)}
 		}
@@ -175,19 +175,14 @@ func isNetworkFailure(err error) bool {
 }
 
 func readLineLimited(reader *bufio.Reader, limit int) (string, error) {
-	var line strings.Builder
-	for line.Len() <= limit {
-		part, err := reader.ReadString('\n')
-		line.WriteString(part)
-		if err != nil {
-			return line.String(), err
-		}
-		if line.Len() > limit {
-			return "", errors.New("relay response exceeded its limit")
-		}
-		return line.String(), nil
+	line, err := reader.ReadString('\n')
+	if err != nil {
+		return line, err
 	}
-	return "", errors.New("relay response exceeded its limit")
+	if len(line) > limit {
+		return "", errors.New("relay response exceeded its limit")
+	}
+	return line, nil
 }
 
 // Run runs a command and answers what it printed, both streams.
@@ -196,7 +191,7 @@ func Run(client *ssh.Client, command string, stdin io.Reader) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer session.Close()
+	defer func() { _ = session.Close() }()
 	session.Stdin = stdin
 	output, err := session.CombinedOutput(command)
 	return string(output), err
@@ -253,7 +248,7 @@ func Follow(client *ssh.Client, command string, stdin io.Reader, line func(strin
 	if err != nil {
 		return err
 	}
-	defer session.Close()
+	defer func() { _ = session.Close() }()
 	session.Stdin = stdin
 	stdout, err := session.StdoutPipe()
 	if err != nil {

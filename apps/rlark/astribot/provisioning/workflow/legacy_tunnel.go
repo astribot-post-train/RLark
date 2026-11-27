@@ -60,7 +60,7 @@ func (g *Service) authorizeLegacyTunnel(ctx context.Context, machine provisionin
 	if err != nil {
 		return "", fmt.Errorf("verify historical Node absence: %w", err)
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode != http.StatusNotFound {
 		return "", fmt.Errorf("member API did not confirm that Node %s is absent (HTTP %d)", j.Spec.NodeName, response.StatusCode)
 	}

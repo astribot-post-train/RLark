@@ -58,7 +58,7 @@ func InterfaceAddress(name string) (string, error) {
 
 // Serve relays CONNECT tunnels accepted on ln, to the targets of allow, until ctx ends.
 func Serve(ctx context.Context, ln net.Listener, idle time.Duration, allow []string) error {
-	go func() { <-ctx.Done(); ln.Close() }()
+	go func() { <-ctx.Done(); _ = ln.Close() }()
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
@@ -72,27 +72,27 @@ func Serve(ctx context.Context, ln net.Listener, idle time.Duration, allow []str
 }
 
 func relay(ctx context.Context, client net.Conn, idle time.Duration, allow []string) {
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 	reader := bufio.NewReader(client)
 	request, err := http.ReadRequest(reader)
 	if err != nil {
 		return
 	}
 	if request.Method != http.MethodConnect {
-		io.WriteString(client, "HTTP/1.1 405 Method Not Allowed\r\nConnection: close\r\n\r\n")
+		_, _ = io.WriteString(client, "HTTP/1.1 405 Method Not Allowed\r\nConnection: close\r\n\r\n")
 		return
 	}
 	if !Allowed(allow, request.Host) {
 		rlarklog.GetLogger().Info("refusing a target that is not allowed", "target", request.Host)
-		io.WriteString(client, "HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n")
+		_, _ = io.WriteString(client, "HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n")
 		return
 	}
 	upstream, err := (&net.Dialer{Timeout: idle}).DialContext(ctx, "tcp", request.Host)
 	if err != nil {
-		io.WriteString(client, "HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\n\r\n")
+		_, _ = io.WriteString(client, "HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\n\r\n")
 		return
 	}
-	defer upstream.Close()
+	defer func() { _ = upstream.Close() }()
 	if _, err := io.WriteString(client, "HTTP/1.1 200 Connection Established\r\n\r\n"); err != nil {
 		return
 	}

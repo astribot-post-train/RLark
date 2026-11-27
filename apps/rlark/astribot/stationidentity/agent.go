@@ -65,7 +65,7 @@ func NewAgent(config AgentConfig) (*Agent, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer self.Close()
+	defer func() { _ = self.Close() }()
 	sum := sha256.New()
 	if _, err := io.Copy(sum, self); err != nil {
 		return nil, err
@@ -93,7 +93,7 @@ func newAgent(config AgentConfig, read func(string) ([]byte, error), now func() 
 			roots = x509.NewCertPool()
 		}
 		if !roots.AppendCertsFromPEM(pem) {
-			return nil, errors.New("Station API CA bundle contains no certificate")
+			return nil, errors.New("station API CA bundle contains no certificate")
 		}
 		transport.TLSClientConfig.RootCAs = roots
 	}
@@ -101,7 +101,7 @@ func newAgent(config AgentConfig, read func(string) ([]byte, error), now func() 
 		Transport: transport,
 		Timeout:   config.RequestLimit,
 		CheckRedirect: func(*http.Request, []*http.Request) error {
-			return errors.New("Station API redirects are not allowed")
+			return errors.New("station API redirects are not allowed")
 		},
 	}
 	agent := &Agent{config: config, client: client, read: read, now: now, observe: collectSystemObservation}
@@ -127,7 +127,7 @@ func (a *Agent) Run(ctx context.Context) error {
 		return fmt.Errorf("listen for Station agent health probes: %w", err)
 	}
 	go func() { _ = probeServer.Serve(listener) }()
-	defer probeServer.Close()
+	defer func() { _ = probeServer.Close() }()
 	backoff, enrollment, reported := time.Second, "", ""
 	maxBackoff := min(a.config.Interval, 30*time.Second)
 	for {
@@ -192,7 +192,7 @@ func (a *Agent) Report(ctx context.Context) error {
 		return err
 	}
 	if status != http.StatusAccepted {
-		return fmt.Errorf("Station API rejected observation with HTTP %d", status)
+		return fmt.Errorf("station API rejected observation with HTTP %d", status)
 	}
 	a.mu.Lock()
 	a.lastSuccessfulReport = a.now().UTC()
@@ -210,7 +210,7 @@ func readWireguardSnapshot(path string, now time.Time) (json.RawMessage, *Gatewa
 	if err != nil {
 		return nil, nil
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	data, err := io.ReadAll(io.LimitReader(f, wireguardObservationBytes+1))
 	if err != nil || len(data) > wireguardObservationBytes {
 		return nil, nil
@@ -308,7 +308,7 @@ func (a *Agent) send(ctx context.Context, path string, body []byte) (int, []byte
 	if err != nil {
 		return 0, nil, fmt.Errorf("send to Station API: %w", err)
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	data, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
 	return response.StatusCode, data, err
 }

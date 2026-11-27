@@ -124,7 +124,7 @@ curl --connect-timeout 5 -sk -o /dev/null -w 'code=%{http_code}\n' https://` + a
 		}
 		// The longest the evidence allows, whatever it says: the wait does not hold its stage Running.
 		if now.Sub(since) > stationidentity.PropagationLongest+tunnelAnswerWithin {
-			return describeTimings(facts.Timings), fmt.Errorf("Station API %s 经隧道 %s 内没有应答：%s", address, stationidentity.PropagationLongest+tunnelAnswerWithin, message)
+			return describeTimings(facts.Timings), fmt.Errorf("station API %s 经隧道 %s 内没有应答：%s", address, stationidentity.PropagationLongest+tunnelAnswerWithin, message)
 		}
 		say(message)
 		time.Sleep(joinWaitStep)

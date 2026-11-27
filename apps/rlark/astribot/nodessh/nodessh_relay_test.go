@@ -31,12 +31,12 @@ func relaySSHServer(t *testing.T, response string, expected string) (string, <-c
 	}
 	commands := make(chan string, 1)
 	go func() {
-		defer listener.Close()
+		defer func() { _ = listener.Close() }()
 		conn, err := listener.Accept()
 		if err != nil {
 			return
 		}
-		defer conn.Close()
+		defer func() { _ = conn.Close() }()
 		_ = conn.SetDeadline(time.Now().Add(3 * time.Second))
 		reader := bufio.NewReaderSize(conn, 1)
 		command, _ := reader.ReadString('\n')
@@ -60,7 +60,7 @@ func relaySSHServer(t *testing.T, response string, expected string) (string, <-c
 		if err != nil {
 			return
 		}
-		defer server.Close()
+		defer func() { _ = server.Close() }()
 		go ssh.DiscardRequests(requests)
 		for channel := range channels {
 			ch, reqs, err := channel.Accept()
@@ -68,7 +68,7 @@ func relaySSHServer(t *testing.T, response string, expected string) (string, <-c
 				continue
 			}
 			go ssh.DiscardRequests(reqs)
-			go ch.Close()
+			go func() { _ = ch.Close() }()
 		}
 	}()
 	return listener.Addr().String(), commands
@@ -80,7 +80,7 @@ func TestDialRelayAuthenticatesThenPerformsSSHWithoutForwardingCredentials(t *te
 	if failure != nil {
 		t.Fatal(failure)
 	}
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 	if shown == "" {
 		t.Fatal("SSH server host key was not recorded")
 	}
@@ -110,7 +110,7 @@ func TestDialRelayCancellationClosesThePendingHandshake(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer listener.Close()
+	defer func() { _ = listener.Close() }()
 	accepted := make(chan net.Conn, 1)
 	go func() {
 		conn, err := listener.Accept()
@@ -125,7 +125,7 @@ func TestDialRelayCancellationClosesThePendingHandshake(t *testing.T) {
 		result <- failure
 	}()
 	conn := <-accepted
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	cancel()
 	select {
 	case failure := <-result:

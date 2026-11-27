@@ -305,7 +305,7 @@ func (r *Run) applyLocked(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	defer record.Close()
+	defer func() { _ = record.Close() }()
 	r.log.record = bufio.NewWriter(record)
 	r.log.printf("the state before is recorded in %s", before)
 
@@ -425,7 +425,7 @@ func (r *Run) stage(ctx context.Context, stage Stage, baseline Snapshot) error {
 			unexpected = append(unexpected, owner)
 		}
 	}
-	r.log.printf("%s: done in %s; Pods made anew: %s", stage.Name, time.Now().Sub(started).Round(time.Second), strings.Join(append(made, "none")[:max(len(made), 1)], " "))
+	r.log.printf("%s: done in %s; Pods made anew: %s", stage.Name, time.Since(started).Round(time.Second), strings.Join(append(made, "none")[:max(len(made), 1)], " "))
 	if len(unexpected) > 0 {
 		return errors.New("Pods were made anew that this stage does not replace: " + strings.Join(unexpected, ", "))
 	}
@@ -1131,7 +1131,7 @@ func (r *Run) hold(ctx context.Context) (context.Context, func(), error) {
 		}
 		if other != "" && other != holder {
 			at, _ := time.Parse(time.RFC3339Nano, renewed)
-			if time.Now().Sub(at) < leaseSeconds*time.Second {
+			if time.Since(at) < leaseSeconds*time.Second {
 				return fmt.Errorf("the site's release is held by %q (renewed %s); one run at a time", other, renewed)
 			}
 		}

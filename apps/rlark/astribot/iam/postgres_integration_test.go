@@ -29,7 +29,7 @@ func TestPostgresMigrationBootstrapIdempotent(t *testing.T) {
 	if _, err := admin.ExecContext(ctx, `CREATE DATABASE `+databaseName); err != nil {
 		t.Fatalf("create isolated test database: %v", err)
 	}
-	defer admin.Close()
+	defer func() { _ = admin.Close() }()
 	defer func() { _, _ = adminSQL.ExecContext(context.Background(), `DROP DATABASE IF EXISTS `+databaseName) }()
 	parsed, err := url.Parse(adminDSN)
 	if err != nil {
@@ -38,7 +38,7 @@ func TestPostgresMigrationBootstrapIdempotent(t *testing.T) {
 	parsed.Path = "/" + databaseName
 	testDSN := parsed.String()
 	testDB, _ := openTestDB(t, testDSN)
-	defer testDB.Close()
+	defer func() { _ = testDB.Close() }()
 	store := NewPostgresStore(testDB)
 	if err := store.MigrateAndBootstrap(ctx); err != nil {
 		t.Fatalf("initial migration/bootstrap: %v", err)
@@ -118,7 +118,7 @@ func openTestDB(t *testing.T, dsn string) (*bun.DB, *sql.DB) {
 	t.Helper()
 	sqlDB := sql.OpenDB(pgdriver.NewConnector(pgdriver.WithDSN(dsn), pgdriver.WithTimeout(5*time.Second)))
 	if err := sqlDB.Ping(); err != nil {
-		sqlDB.Close()
+		_ = sqlDB.Close()
 		t.Fatalf("connect PostgreSQL: %v", err)
 	}
 	return bun.NewDB(sqlDB, pgdialect.New()), sqlDB

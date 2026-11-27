@@ -63,5 +63,5 @@ func (c *Config) SetupFlags(fs *pflag.FlagSet) {
 	fs.StringSliceVar(&c.SyncResources, "sync-resources", c.SyncResources, "Resources that query from persistence backend (jobs, tasks, workflows, nodes). Others query from KCP.")
 
 	c.KubeClientConfig.SetupFlags(fs)
-	c.AstribotConfig.setupFlags(fs)
+	c.setupFlags(fs)
 }

@@ -30,7 +30,7 @@ func writeTar(t *testing.T, commit string, files map[string]string) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	writer := tar.NewWriter(f)
 	if commit != "" {
 		// What git archive writes first: the commit, in a pax global header.

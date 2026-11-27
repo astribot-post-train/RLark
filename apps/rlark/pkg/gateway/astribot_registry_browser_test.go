@@ -134,7 +134,7 @@ func TestRegistryBrowserDoesNotFollowRedirect(t *testing.T) {
 	browser.client.Transport = &http.Transport{TLSClientConfig: &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12}}
 	response, err := browser.request(context.Background(), storedImageRegistryCredential{Registry: address, Username: "robot", Password: "secret"}, http.MethodGet, "/v2/_catalog", nil)
 	require.NoError(t, err)
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	require.Equal(t, http.StatusFound, response.StatusCode)
 	require.Zero(t, targetRequests.Load())
 }

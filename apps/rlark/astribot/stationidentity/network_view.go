@@ -158,7 +158,7 @@ func ValidateSiteDiscovery(discovery *DiscoverySettings) error {
 	if discovery == nil {
 		return nil
 	}
-	if discovery.Ranges == nil || len(discovery.Ranges) < 1 || len(discovery.Ranges) > 8 {
+	if len(discovery.Ranges) < 1 || len(discovery.Ranges) > 8 {
 		return fmt.Errorf("ranges must be 1 to 8 IPv4 prefixes of /22 or shorter")
 	}
 	seen := make(map[string]struct{}, len(discovery.Ranges))

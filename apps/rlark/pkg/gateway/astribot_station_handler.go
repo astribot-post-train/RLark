@@ -50,8 +50,8 @@ func (g *Gateway) handleListStations(c *gin.Context) {
 	var records *unstructured.UnstructuredList
 	var err error
 	if clusterID := c.Query("cluster_id"); clusterID != "" {
-		namespace, err := g.stationNamespace(c, clusterID)
-		if err != nil {
+		namespace, resolveErr := g.stationNamespace(c, clusterID)
+		if resolveErr != nil {
 			return
 		}
 		records, err = resource.Namespace(namespace).List(c.Request.Context(), options)

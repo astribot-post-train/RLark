@@ -18,7 +18,7 @@ func TestAgentReportsProbePortConflictBeforeReporting(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer listener.Close()
+	defer func() { _ = listener.Close() }()
 	config := AgentConfig{APIURL: "https://station-api", ClusterID: "cluster", TokenFile: "token", Interval: 30 * time.Second, RequestLimit: time.Second, ProbeAddress: listener.Addr().String()}
 	agent, err := newAgent(config, func(string) ([]byte, error) { return []byte("token"), nil }, time.Now)
 	if err != nil {

@@ -135,7 +135,7 @@ func (b *Bootstrap) script(w http.ResponseWriter, r *http.Request, code string) 
 		return
 	}
 	w.Header().Set("Content-Type", "text/x-shellscript")
-	fmt.Fprintf(w, `#!/bin/sh
+	_, _ = fmt.Fprintf(w, `#!/bin/sh
 # RLark node bootstrap. Unpacks the installer and runs it once. The machine
 # needs curl and tar; the installer brings everything else.
 set -eu
@@ -184,7 +184,7 @@ func (b *Bootstrap) BundleDigest() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	sum := sha256.New()
 	if _, err := io.Copy(sum, file); err != nil {
 		return "", err
@@ -264,7 +264,7 @@ func (b *Bootstrap) UplinkSetup(ctx context.Context, code string) (setup []byte,
 	if err != nil {
 		return nil, true, fmt.Errorf("open the addons directory: %w", err)
 	}
-	defer root.Close()
+	defer func() { _ = root.Close() }()
 	setup, err = root.ReadFile(filepath.Join(addon, path))
 	if err != nil {
 		return nil, true, fmt.Errorf("read the uplink setup %s of addon %s: %w", path, addon, err)
@@ -335,7 +335,7 @@ func validCode(code string) bool {
 		return false
 	}
 	for _, c := range code {
-		if !(c >= 'a' && c <= 'z' || c >= '0' && c <= '9') {
+		if (c < 'a' || c > 'z') && (c < '0' || c > '9') {
 			return false
 		}
 	}

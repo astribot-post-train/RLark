@@ -204,7 +204,7 @@ func TestLeafDocumentDoesNotReceiveRelayToken(t *testing.T) {
 	_ = unstructured.SetNestedField(leaf.Object, "office", "status", "site")
 	secret := &unstructured.Unstructured{Object: map[string]interface{}{"apiVersion": "v1", "kind": "Secret", "metadata": map[string]interface{}{"namespace": "default", "name": "station-relay-token-office"}, "data": map[string]interface{}{"token": base64.StdEncoding.EncodeToString([]byte(token))}}}
 	api, _ := testNetworkDocuments(t, &now, leaf, secret)
-	status, challenge := node.ask(api, "", "")
+	_, challenge := node.ask(api, "", "")
 	status, answer := node.ask(api, challenge.Challenge, node.prove(challenge))
 	if status != http.StatusOK || bytes.Contains(answer.Config, []byte(token)) {
 		t.Fatalf("Leaf received relay token: %s", answer.Config)

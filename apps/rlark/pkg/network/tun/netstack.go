@@ -163,7 +163,7 @@ func (ns *netstack) run(ctx context.Context, iface tunDevice) error {
 	_ = iface.Close()
 	ep.Close()
 	for completed < 2 {
-		<-errCh
+		<-errCh //nolint:errcheck // The primary result was already chosen.
 		completed++
 	}
 	return err

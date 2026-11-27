@@ -43,7 +43,7 @@ func (r *RegistryClient) Archive(ctx context.Context, w io.Writer, images []stri
 		if err != nil {
 			return err
 		}
-		defer body.Close()
+		defer func() { _ = body.Close() }()
 		sum := sha256.New()
 		if err := write("blobs/sha256/"+strings.TrimPrefix(digest, "sha256:"), size, io.TeeReader(body, sum)); err != nil {
 			return err
@@ -116,7 +116,7 @@ func (r *RegistryClient) Archive(ctx context.Context, w io.Writer, images []stri
 			}
 			var is struct{ OS, Architecture string }
 			err = json.NewDecoder(config).Decode(&is)
-			config.Close()
+			_ = config.Close()
 			if err != nil {
 				return nil, fmt.Errorf("%s: its config: %w", image, err)
 			}

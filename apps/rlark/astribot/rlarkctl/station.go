@@ -50,7 +50,7 @@ nothing that is as it should be.`,
 			if memberConfig.Host, r.APIName, err = release.ReachedAs(cmd.Context(), managementDynamic, memberConfig); err != nil {
 				return err
 			}
-			memberConfig.TLSClientConfig.ServerName = r.APIName
+			memberConfig.ServerName = r.APIName
 			if r.StationAPICA, err = os.ReadFile(caPath); err != nil {
 				return err
 			}
@@ -69,7 +69,7 @@ nothing that is as it should be.`,
 			if err := stationmember.Register(cmd.Context(), m, managementClient, r); err != nil {
 				return err
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "%s is a member of Station; its credentials are %s\n", r.Cluster, stationmember.SecretName(r.Cluster))
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s is a member of Station; its credentials are %s\n", r.Cluster, stationmember.SecretName(r.Cluster))
 			return nil
 		},
 	}

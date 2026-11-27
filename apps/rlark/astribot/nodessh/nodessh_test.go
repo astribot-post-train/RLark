@@ -28,7 +28,7 @@ func TestDialRefusesAChangedHostKeyBeforeThePassword(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer listener.Close()
+	defer func() { _ = listener.Close() }()
 	go func() {
 		for {
 			conn, err := listener.Accept()
@@ -56,12 +56,12 @@ func TestDialRefusesAChangedHostKeyBeforeThePassword(t *testing.T) {
 	if failure != nil || key != shown {
 		t.Fatalf("first login: %q %v", key, failure)
 	}
-	client.Close()
+	_ = client.Close()
 	client, _, failure = Dial(context.Background(), host, number, "ops", shown, []byte("pw"))
 	if failure != nil {
 		t.Fatal(failure)
 	}
-	client.Close()
+	_ = client.Close()
 	if tried.Load() != 2 {
 		t.Fatalf("password tried %d times", tried.Load())
 	}

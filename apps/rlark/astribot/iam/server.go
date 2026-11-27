@@ -641,7 +641,9 @@ func validUsername(v string) bool {
 		return false
 	}
 	for i, c := range v {
-		if !(c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || i > 0 && (c == '_' || c == '-')) {
+		isAlphanumeric := (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')
+		isSeparator := i > 0 && (c == '_' || c == '-')
+		if !isAlphanumeric && !isSeparator {
 			return false
 		}
 	}
@@ -674,7 +676,7 @@ func clientIP(r *http.Request) string {
 }
 func decodeJSON(w http.ResponseWriter, r *http.Request, dst any) error {
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
-	defer r.Body.Close()
+	defer func() { _ = r.Body.Close() }()
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(dst); err != nil {
