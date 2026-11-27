@@ -10,6 +10,16 @@
 
 下表用 `{name}` 表示路径参数；Router 源码中的 Gin 等价写法为 `:name`。Namespaced CRD 路由需要 `namespace` query 参数。
 
+## 场站相机播放试点
+
+管理员可向 `POST /api/v1/rlinf.io/v1alpha1/nodes/{name}/cameras/{camera}/whep?namespace={namespace}`
+提交 `application/sdp` offer。启用试点的 Gateway 返回 HTTP 201、SDP answer 和同源
+`Location`。播放时每 6 秒向此地址发送 PUT 续约，关闭时发送 DELETE 请求清理。
+14 秒未续约即过期。续约时 Gateway 重新确认节点所属集群和推流端，并在 MediaMTX
+确认清理前保留并发配额。试点默认关闭。每台机器人最多软件编码一路 480p 视频，
+每个调用身份最多 4 路观看会话，每个 Gateway 最多 20 路。正式启用前仍需补齐
+Gateway 重启后的会话恢复。
+
 ## CRD 资源
 
 | 资源 | 作用域 | 路由 |

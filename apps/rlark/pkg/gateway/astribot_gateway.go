@@ -32,6 +32,7 @@ type astribotState struct {
 	nodeJoins     stagedRuns
 	provisionDial provisionDialFunc
 	cameraStreams cameraStreamLimiter
+	cameraMedia   *cameraWHEP
 }
 
 // AstribotConfig is our part of the Gateway's configuration; Config embeds it. Every field is required.
@@ -66,6 +67,10 @@ func (g *Gateway) setupAstribot() {
 // initAstribot is init's part for our clients, right after the Kubernetes clients.
 func (g *Gateway) initAstribot(restConfig *rest.Config) error {
 	var err error
+	g.cameraMedia, err = newCameraWHEP()
+	if err != nil {
+		return err
+	}
 	g.stationClient, err = dynamic.NewForConfig(restConfig)
 	if err != nil {
 		return fmt.Errorf("create dynamic Kubernetes client: %w", err)

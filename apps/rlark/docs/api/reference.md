@@ -10,6 +10,19 @@ Authorization combines role with tenant scope. Workflow, Job, Task, and Pod rout
 
 Path parameters are written as `{name}` below; Gin uses the equivalent `:name` syntax in the router. Namespaced CRD routes require the `namespace` query parameter.
 
+## Station camera playback pilot
+
+An administrator can submit an `application/sdp` offer to
+`POST /api/v1/rlinf.io/v1alpha1/nodes/{name}/cameras/{camera}/whep?namespace={namespace}`.
+The optional Gateway integration returns an SDP answer and a same-origin
+`Location` on HTTP 201. Send a PUT to that URL every six seconds while viewing,
+and a DELETE to request teardown. A lease expires after 14 seconds without renewal.
+The Gateway revalidates the Node's cluster and the publisher on renewal and
+retains the quota slot until MediaMTX confirms removal. The pilot is disabled by
+default. It uses one 480p software-encoded source per robot and holds up to four
+readers per principal and 20 readers per Gateway. Session recovery across Gateway
+restarts requires further work before production enablement.
+
 ## CRD resources
 
 | Resource | Scope | Routes |

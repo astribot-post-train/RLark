@@ -53,6 +53,7 @@ cameras only) | stuck, annotation rlark.io/cameras the JSON of GET /cameras. A r
 this process (rospy does not subscribe again at a new master): kubelet starts it afresh, stuck cameras with it.
 """
 
+import hmac
 import json
 import os
 import re
@@ -74,6 +75,7 @@ import cv2
 import numpy
 
 import body_observer
+from camera_rtsp import SourceLease
 from power import in_use, vital
 
 # Each view by the vendor driver's name of its camera, in the wall's order.
@@ -176,6 +178,13 @@ class Cameras:
         with self.lock:
             raw = self.frames[view]["raw"]
             return (None, None) if raw is None else (jpeg_of(raw), self.age(view, self.clock()))
+
+    def publisher_frame(self, view):
+        with self.lock:
+            frame = self.frames[view]
+            raw = frame["raw"]
+            return (jpeg_of(raw) if raw is not None else None,
+                    self.age(view, self.clock()), frame["sequence"])
 
     def next(self, view, sequence):
         """(JPEG, age, sequence, capture timestamp) of the newest frame after ``sequence``; a camera that
@@ -460,7 +469,7 @@ def publish(said, published, patch):
     return key
 
 
-def handler(cameras, recovery, wall=time.time, body_state=None):
+def handler(cameras, recovery, wall=time.time, body_state=None, source_lease=None, source_key=""):
     open_streams = threading.Semaphore(STREAMS)
 
     class Handler(BaseHTTPRequestHandler):
@@ -470,6 +479,19 @@ def handler(cameras, recovery, wall=time.time, body_state=None):
 
         def log_message(self, *arguments):
             pass
+
+        def do_PUT(self):
+            match = re.fullmatch(r"/cameras/([a-z_]+)/h264-lease", self.path)
+            if source_lease is None or not source_key or not match or match[1] not in cameras.views:
+                return self.refuse(404, "Not found")
+            supplied = self.headers.get("X-RLark-Camera-Source-Key", "").encode()
+            if not hmac.compare_digest(supplied, source_key.encode()):
+                return self.refuse(403, "Forbidden")
+            if self.headers.get("Transfer-Encoding") or self.headers.get("Content-Length", "0") != "0":
+                return self.refuse(400, "Unexpected request body")
+            if not source_lease.renew(match[1]):
+                return self.refuse(409, "A different camera publisher is active or stopping")
+            self.answer(204, "text/plain", b"")
 
         def answer(self, status, kind, body, **headers):
             self.send_response(status)
@@ -636,8 +658,12 @@ def main():
     recovery = Recovery(cameras, restart, os.environ["S1U_CAMERA_DIRECTORY"], event)
     # The port first: with the robot's master down the cameras are absent, the service is not missing.
     observer = None
+    rtsp_target = os.environ.get("S1U_CAMERA_RTSP_PREFIX", "")
+    source_key = os.environ.get("S1U_CAMERA_SOURCE_KEY", "")
+    source_lease = SourceLease(cameras.publisher_frame, rtsp_target) if rtsp_target and len(source_key.encode()) >= 32 else None
     server = ThreadingHTTPServer((os.environ["S1U_NODE_ADDRESS"], PORT),
-                                 handler(cameras, recovery, body_state=lambda: observer() if observer else None))
+                                 handler(cameras, recovery, body_state=lambda: observer() if observer else None,
+                                         source_lease=source_lease, source_key=source_key))
     server.daemon_threads = True
     threading.Thread(target=server.serve_forever, daemon=True).start()
     vital(follow, cameras, recovery, node)

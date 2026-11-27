@@ -18,7 +18,10 @@ func (g *Gateway) proxyKubeRequest(ctx context.Context, method, agentID, kubePat
 // proxyKubeRequestWithHeaders is like proxyKubeRequest but allows the caller
 // to override headers (e.g. Content-Type for strategic merge patches).
 func (g *Gateway) proxyKubeRequestWithHeaders(ctx context.Context, method, agentID, kubePath string, body []byte, extraHeaders map[string]string) (*http.Response, error) {
-	httpClient := &http.Client{Transport: g.serverTransport}
+	return g.proxyKubeRequestUsing(ctx, &http.Client{Transport: g.serverTransport}, method, agentID, kubePath, body, extraHeaders)
+}
+
+func (g *Gateway) proxyKubeRequestUsing(ctx context.Context, httpClient *http.Client, method, agentID, kubePath string, body []byte, extraHeaders map[string]string) (*http.Response, error) {
 	url := fmt.Sprintf("%s/api/proxy/%s/api/kubernetes/%s",
 		strings.TrimSuffix(g.config.ServerAddress, "/"),
 		agentID,
