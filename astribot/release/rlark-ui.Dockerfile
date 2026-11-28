@@ -11,7 +11,7 @@ ENV VITE_STATION_WHEP=$VITE_STATION_WHEP VITE_STATION_WHEP_NODES=$VITE_STATION_W
 WORKDIR /src/apps/rlark-ui
 COPY apps/rlark-ui/ ./
 # A context may carry a host's node_modules or dist (the legacy builder ignores rlark-ui.Dockerfile.dockerignore).
-RUN rm -rf node_modules dist && npm ci --no-audit --no-fund --registry=${NPM_REGISTRY} && npm run build
+RUN --mount=type=cache,target=/root/.npm rm -rf node_modules dist && npm ci --no-audit --no-fund --registry=${NPM_REGISTRY} && npm run build
 
 # -- Runtime stage ---------------------------------------------------------
 FROM ${BASE_IMAGE}
