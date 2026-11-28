@@ -7,12 +7,12 @@ Astribot IAM（`astribot-iam`）是 RLark 控制台的身份层：人类账号�
 自 2026-11-25 起，控制台的 nginx（`astribot/release/rlark-ui.nginx.conf`）对页面请求询问 IAM 的 `/internal/admit`，对命中 `/api/` location 的请求询问 `/internal/authorize`，人们在 `/login` 登录：
 
 - `/login` 是控制台镜像里的静态页（`astribot/release/login.html`）。桌面端的登录页居中呈现，产品名称和机器人配图位于「登陆」表单左侧。窄屏上，品牌区位于表单上方。点击 **显示** 或 **隐藏** 可以核对密码。登录失败时，页面会显示本地化提示，并恢复 **登录** 按钮。没有会话时访问页面，得到 `302 /login?next=<原地址>`。从首页或直接打开 `/login` 登录时，管理员进入 `/admin`，其他角色进入 `/`。登录后保留具体页面的链接，其中 `/admin` 下的链接仅向管理员开放。`next` 读取的是查询串余下的全部内容，因此它必须是最后一个参数。打开 `/login` 也会清除浏览器里的 IAM 会话 cookie，包括 IAM 登出时未确认撤销的情况；这个页面从不缓存，所以再次访问时同样生效。
-- 由 `astribot/release/rlark-ui.Dockerfile` 构建的控制台镜像设置了 `VITE_IAM_PORTAL=1`，由此启用门户守卫（`apps/rlark-ui/src/astribot/iam/portal.ts`）。守卫会：
+- 控制台的生产构建（`vite build`，连真实后端）一律启用门户守卫（`apps/rlark-ui/src/astribot/iam/portal.ts`），不靠构建变量：曾有一次构建漏了变量，`/` 和 `/admin` 又出现了 RLark 原生登录页。守卫会：
   - 让每个标签页都以 cookie 的会话为准启动（`GET /api/iam/session`）：新标签页、书签，或还存着旧 token 的标签页，都不用重新输入密码；IAM 够不到时，已经持有 token 的标签页照常渲染；
   - 接管控制台自己的「退出登录」（每个页面右上角的头像菜单）：撤销会话（`POST /api/iam/logout`），回到 `/login`，同源的其它标签页也一并离开；
   - 在调用返回 401 时（会话过期，或因改密、重置、停用而失效）把控制台带到 `/login`；浏览器从前进/后退缓存恢复标签页时重新确认会话；
   - 从不显示 RLark 原生登录页。
-- 以其他方式构建的控制台（原生的 `apps/rlark-ui` 镜像）不设置该变量，保留原生登录。
+- 只有开发服务器（`npm run dev`）和模拟后端（`VITE_DATA_MODE=mock`）保留原生登录表单。官方的 `apps/rlark-ui/Dockerfile`（官方 `test/e2e` 用它配普通 nginx）构建出来的控制台同样走门户，没有 IAM 就进不去；我们不发布这个镜像。
 - 业务调用到达网关时带的是该角色的 service account token，由 nginx 注入；浏览器持有的 token 本身不授权任何操作。
 - `/api/iam/*` 直接转给 IAM。发布版 Nginx 对 `POST /api/v1/auth/login` 返回 HTTP 403 JSON，Gateway 也会在启用 `--disable-native-login` 时独立拒绝该请求。
 
