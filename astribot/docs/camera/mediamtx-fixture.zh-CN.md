@@ -36,6 +36,7 @@ Gateway 预期的 Control API 配置项为 `RLARK_CAMERA_WHEP_CONTROL_ORIGIN`、
 ## v1.21.4 契约记录
 
 - WHEP 响应为 HTTP `201`，包含 SDP answer、`Location` 和 `ID` 响应头。
+- 读取账号请求未配置的路径会被拒绝，且不会创建 WHEP 会话。MediaMTX 可能返回 HTTP `400`，并明确指出路径未配置。
 - `Location` 末尾是敏感 UUID bearer 凭证材料，与 `ID` session UUID 不同。应避免将其写入日志或泄露。
 - WHEP `POST` 使用 MediaMTX 的 `read` 权限进行授权。WHEP `DELETE` 使用 Location 路径中的 UUID secret，不会重新执行 Basic 认证。
 - Control API 提供 `GET /v3/webrtc/sessions/list` 和 `POST /v3/webrtc/sessions/kick/{id}`。kick 会移除指定 WebRTC 会话，并保留 RTSP 发布器路径。

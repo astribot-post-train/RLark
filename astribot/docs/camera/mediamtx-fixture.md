@@ -36,6 +36,7 @@ The intended Gateway configuration names for the Control API are `RLARK_CAMERA_W
 ## Recorded v1.21.4 contract
 
 - The WHEP response is HTTP `201` with an SDP answer, `Location`, and `ID` headers.
+- The reader request for an unconfigured path is denied without creating a WHEP session. MediaMTX can report HTTP `400` with an explicit unconfigured-path error.
 - The `Location` suffix is sensitive UUID bearer material and differs from the `ID` session UUID. Protect it from logs and disclosure.
 - WHEP `POST` authorization uses MediaMTX's `read` permission. WHEP `DELETE` uses the UUID secret in its Location path and does not perform a new Basic authentication check.
 - The Control API provides `GET /v3/webrtc/sessions/list` and `POST /v3/webrtc/sessions/kick/{id}`. A kick removes the selected WebRTC session and leaves the RTSP publisher path available.
