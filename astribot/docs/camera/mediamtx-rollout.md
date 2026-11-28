@@ -25,6 +25,8 @@ The render command reports only the output path. The ICE additional host must be
 
 ## Single-station switch
 
+S1U Addon v1.7.5 adds the optional RTSP publisher configuration. Upgrading the Addon without those values leaves the publisher disabled.
+
 1. Identify an idle or non-production S1U by an authorized inventory source. Record its exact Kubernetes node name, owning agent, Addon namespace, camera readiness, and approved station and browser networks. Confirm Gateway admin authorization for that station. The UI allowlist is not an authorization boundary.
 2. Provision the protected Gateway and MediaMTX JSON credential files and the non-secret Compose variables. Generate distinct random values for RTSP publisher, WHEP reader, Control API, and Gateway source-key roles. Set `RLARK_CAMERA_WHEP_NODES` to the exact pilot node used by the UI build. Configure the source CIDR, agent, node, ICE address, and RTSP bind address from approved network evidence, then render `/etc/rlark/mediamtx.yml` with the command above.
 3. Build a release with WHEP enabled only for that node. `VITE_STATION_WHEP_NODES` accepts exact comma-separated Kubernetes node names, and the release build rejects an enabled flag without a node list.

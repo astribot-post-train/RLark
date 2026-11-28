@@ -25,6 +25,8 @@ MediaMTX 只接受来自 `MEDIAMTX_STATION_SOURCE_CIDR` 的已认证 RTSP 发布
 
 ## 单站开关
 
+S1U Addon v1.7.5 新增可选的 RTSP 发布配置。升级时不设置这些参数，RTSP 发布仍关闭。
+
 1. 通过获授权的 inventory 数据源识别一台空闲或非生产 S1U。记录准确的 Kubernetes 节点名、所属 Agent、Addon 命名空间、相机就绪状态、批准的机器人与浏览器网络。确认 Gateway 对该站点具有 admin 授权。UI allowlist 不是授权边界。
 2. 配置 Gateway 和 MediaMTX 两份受保护的 JSON 凭据文件及非机密 Compose 变量。RTSP publisher、WHEP reader、Control API 和 Gateway source-key 使用不同的随机值。`RLARK_CAMERA_WHEP_NODES` 必须设置为 UI 构建使用的准确试点节点。根据已批准的网络证据配置源 CIDR、Agent、节点、ICE 地址和 RTSP 绑定地址，然后使用上述命令渲染 `/etc/rlark/mediamtx.yml`。
 3. 构建只为该节点启用 WHEP 的发布。`VITE_STATION_WHEP_NODES` 接收精确匹配的逗号分隔 Kubernetes 节点名，启用开关但未提供节点列表时发布构建会拒绝继续。

@@ -78,6 +78,8 @@ astribot/release/build.sh base <RLark 提交>                      # 安装器�
 
 - `s1u-robot` v1.7.4（发件箱；v1.7.3 这个版本号 11-26 14:55 已被一次没进仓库的构建发布到机器人集群，内容和 v1.7.2 相同，一个版本号只有一份内容，所以跳过）：多一个 `episodes` 容器（`deviceImage` 的 `/device/start --episodes`，Fleet 952cd5e9 起才有这个入口），所以 `deviceImage` 要换成那之后的 Fleet 镜像，同一次 `apply`；场站的 `fleet-episode-relay`（下一节）也在这次里装上，机器人的发件箱把 episode 发给它。Pod 的内存上限合计 5888 MiB，正好是节点规格给 Pod 的 6144 MiB 减去留给集群自己 Pod 的 256 MiB：`episodes` 的上限因此是 832 MiB（编码峰值 0.55 GiB）；再给它加内存要先提高节点规格的 `S1U_KUBERNETES_MEMORY_MIB`（每台机器人重启一次 kubelet）。
 
+- `s1u-robot` v1.7.5 使用新的不可变 Addon 包发布相机 RTSP 参数，默认关闭。现网站点的 `fleet-episode-relay` 保持经核对的现有镜像摘要，独立于机器人 `deviceImage`。
+
 ## 站点自己装的 Addon（`live.yaml` 的 `addons`）
 
 发布只更新一个集群里已经装了的 Addon。要由发布在某个集群里装上、并一直按站点的取值保持的 Addon，写在环境文件里：
