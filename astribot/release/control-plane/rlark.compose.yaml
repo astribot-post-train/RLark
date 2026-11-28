@@ -1,4 +1,4 @@
-# RLark 自己的控制面服务（server、controller-manager、gateway）和控制台 rlark-ui，从合并树同一个提交构建出的镜像起。
+# RLark 自己的控制面服务（server、controller-manager、gateway）、IAM 和控制台 rlark-ui，从合并树同一个提交构建出的镜像起。
 # kcp、数据库和仓库不在这里，发布不动它们。
 #
 # 每个组件用自己在 kcp 里的身份（kcp 每次启动都换管理员令牌，组件不能拿它的拷贝）：
@@ -15,8 +15,9 @@
 #   STATION_API_BOOTSTRAP_URL  入网的机器到 Station API 的地址（环境文件 station.bootstrapURL）
 #   ADDONS                     运行时加载的 Addon 目录（环境文件 addonCatalog；每个 Addon 一个子目录：addon.yaml 和它的清单，放进去 5 秒内生效）
 #   RLARK_SERVER_IMAGE、RLARK_CONTROLLER_MANAGER_IMAGE、RLARK_GATEWAY_IMAGE、RLARK_UI_IMAGE  各服务在跑的镜像
-# 发布在 gateway 一步写这两个文件，各服务在自己那一步（gateway 先于各集群 agent，server 在它们之后，console 最后）
-# 镜像或定义（docker compose config --hash）变了才 `up -d --no-deps <服务>`；退回时按运行前的记录写回原来的两个文件。
+#   camera-media 是默认关闭的 profile；媒体配置和 Gateway 凭据从独立的受保护文件只读挂载，不放进发布 env。
+# 发布前先渲染 MediaMTX 配置；各服务在自己那一步（gateway 先于各集群 agent，server 在它们之后，console 最后）
+# 镜像或 Compose 定义（`docker compose config --hash`）变了才 `up -d --no-deps <服务>`；受保护文件内容变更后，按运维文档显式重建对应服务。
 
 name: rlark
 
@@ -67,6 +68,11 @@ services:
     environment:
       SSL_CERT_FILE: /etc/rlark/registry-ca.crt
       RLARK_ADDON_CATALOG_DIR: /etc/rlark/addons
+      RLARK_CAMERA_WHEP_ORIGIN: ${RLARK_CAMERA_WHEP_ORIGIN:-}
+      RLARK_CAMERA_WHEP_CONTROL_ORIGIN: ${RLARK_CAMERA_WHEP_CONTROL_ORIGIN:-}
+      RLARK_CAMERA_WHEP_NODES: ${RLARK_CAMERA_WHEP_NODES:-}
+      RLARK_CAMERA_CREDENTIAL_FILE: /etc/rlark/kcp/camera-credentials.json
+    networks: [rlark, camera-media]
     command:
       - /usr/local/bin/gateway
       - --kubeconfig=/etc/rlark/kcp/kubeconfig
@@ -95,6 +101,25 @@ services:
         bind: {create_host_path: false}
       - ${ADDONS:?the environment's addonCatalog}:/etc/rlark/addons:ro
     depends_on: [rlark-server]
+
+  mediamtx:
+    image: bluenviron/mediamtx:1.21.4@sha256:c730bccdbc8739f8f0c13cefe9bea8b61926f599b88fa4d0d229baa91846c7bc
+    container_name: rlark-mediamtx
+    profiles: [camera-media]
+    restart: unless-stopped
+    cpus: 4.0
+    mem_limit: 8g
+    volumes:
+      - type: bind
+        source: ${MEDIAMTX_CONFIG_FILE:-/etc/rlark/mediamtx.yml}
+        target: /mediamtx.yml
+        read_only: true
+        bind: {create_host_path: false}
+    ports:
+      - "${MEDIAMTX_RTSP_BIND_ADDRESS:-127.0.0.1}:8554:8554/tcp"
+      - "${MEDIAMTX_ICE_BIND_ADDRESS:-127.0.0.1}:8189:8189/udp"
+      - "${MEDIAMTX_ICE_BIND_ADDRESS:-127.0.0.1}:8189:8189/tcp"
+    networks: [camera-media]
 
   astribot-iam:
     <<: *rlark
@@ -127,3 +152,5 @@ services:
 
 networks:
   rlark: {external: true, name: fleet-rlark-env_rlark-network}
+  camera-media:
+    internal: true

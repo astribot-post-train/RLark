@@ -47,6 +47,11 @@ func (r CameraRoutes) Register(nodes gin.IRouter, requireOperator gin.HandlerFun
 // wrist_right); a body has some of them.
 var robotCameraViews = []string{"head", "torso", "wrist_left", "wrist_right"}
 
+// IsRobotCameraView reports whether view names a single robot camera.
+func IsRobotCameraView(view string) bool {
+	return slices.Contains(robotCameraViews, view)
+}
+
 // robotCameraPath is the camera service's path of a request (with the one query it takes, fps), and whether it is
 // one of the robot's: /cameras, /cameras/<view>.jpg, /cameras/<view>/stream, /cameras/wall.jpg, /cameras/wall/stream.
 func robotCameraPath(c *gin.Context) (string, bool) {
@@ -56,13 +61,13 @@ func robotCameraPath(c *gin.Context) (string, bool) {
 	}
 	if !strings.HasSuffix(c.FullPath(), "/stream") {
 		view, image := strings.CutSuffix(camera, ".jpg")
-		return "/cameras/" + camera, image && (view == "wall" || slices.Contains(robotCameraViews, view))
+		return "/cameras/" + camera, image && (view == "wall" || IsRobotCameraView(view))
 	}
 	path := "/cameras/" + camera + "/stream"
 	if fps := c.Query("fps"); fps != "" {
 		path += "?" + url.Values{"fps": {fps}}.Encode()
 	}
-	return path, camera == "wall" || slices.Contains(robotCameraViews, camera)
+	return path, camera == "wall" || IsRobotCameraView(camera)
 }
 
 // cameras answers GET /api/v1/rlinf.io/v1alpha1/nodes/{name}/cameras[/…]: what the robot's camera
@@ -81,7 +86,7 @@ func (r CameraRoutes) cameras(c *gin.Context) {
 		}
 		defer release()
 	}
-	agent, pod, ok := r.runningRobotAddon(c)
+	agent, pod, ok := r.RunningRobotAddon(c)
 	if !ok {
 		return
 	}
@@ -136,8 +141,8 @@ func (r CameraRoutes) cameras(c *gin.Context) {
 	}
 }
 
-// runningRobotAddon looks up the authorized node and the standing robot Addon Pod on it.
-func (r CameraRoutes) runningRobotAddon(c *gin.Context) (string, string, bool) {
+// RunningRobotAddon looks up the authorized node and the standing robot Addon Pod on it.
+func (r CameraRoutes) RunningRobotAddon(c *gin.Context) (string, string, bool) {
 	ctx, name, namespace := c.Request.Context(), c.Param("name"), c.Query("namespace")
 	if !r.AuthorizeNode(c, namespace, name) {
 		return "", "", false
@@ -175,7 +180,7 @@ func (r CameraRoutes) runningRobotAddon(c *gin.Context) (string, string, bool) {
 
 // stationLogs reads the bounded tail of the standing Station container.
 func (r CameraRoutes) stationLogs(c *gin.Context) {
-	agent, pod, ok := r.runningRobotAddon(c)
+	agent, pod, ok := r.RunningRobotAddon(c)
 	if !ok {
 		return
 	}

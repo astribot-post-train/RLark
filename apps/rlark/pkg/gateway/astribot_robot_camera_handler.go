@@ -57,8 +57,8 @@ func cameraStreamOwner(c *gin.Context) string {
 	return c.ClientIP()
 }
 
-func (g *Gateway) registerStationCameraRoutes(nodes gin.IRouter) {
-	routes := stations.CameraRoutes{
+func (g *Gateway) stationCameraRoutes() stations.CameraRoutes {
+	return stations.CameraRoutes{
 		ReadMember:   g.readStationMember,
 		RespondError: respondStationError,
 		AuthorizeNode: func(c *gin.Context, namespace, name string) bool {
@@ -81,5 +81,11 @@ func (g *Gateway) registerStationCameraRoutes(nodes gin.IRouter) {
 			return func() { g.cameraStreams.release(owner) }, true
 		},
 	}
-	routes.Register(nodes, requireOperator())
+}
+
+func (g *Gateway) registerStationCameraRoutes(nodes gin.IRouter) {
+	g.stationCameraRoutes().Register(nodes, requireOperator())
+	nodes.POST("/:name/cameras/:camera/whep", requireAdmin(), g.openCameraWHEP)
+	nodes.PUT("/:name/cameras/:camera/whep/:session", requireAdmin(), g.updateCameraWHEP)
+	nodes.DELETE("/:name/cameras/:camera/whep/:session", requireAdmin(), g.updateCameraWHEP)
 }

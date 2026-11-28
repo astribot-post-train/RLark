@@ -125,7 +125,7 @@ func (g *Gateway) init(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("create raw Kubernetes client: %w", err)
 	}
-	if err := g.initAstribot(restConfig); err != nil {
+	if err := g.initAstribot(ctx, restConfig); err != nil {
 		return err
 	}
 	g.users = secretUserProvider{client: g.rawClient, namespace: g.managementNamespace()}

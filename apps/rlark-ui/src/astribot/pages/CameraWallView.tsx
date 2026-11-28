@@ -53,57 +53,98 @@ export function FleetPagination({
 }
 
 type WallFit = {
-  wallW: number;
-  pictureH: number;
-  gridH: number;
+  videoW: number;
+  gridW: number;
   fits: boolean;
 };
 
-// The scrollport is the stations page, not the window. 100dvh still counts the
-// top bar and the platform footer, which is how a wide 16:9 grid lost its
-// second row under the fold while a fixed picture cap left the wall narrow.
+// The scrollport is the stations page, not the window. The picture is a real
+// 16:9 box; leftover content width stays page background.
 function pageScrollport(wall: HTMLElement): HTMLElement {
   return wall.closest<HTMLElement>(".page-content") ?? document.documentElement;
+}
+
+// videoWidth = min(widthFit, heightFit * 16/9), with the grid centered on that width.
+export function wallFrameSize(input: {
+  contentWidth: number;
+  contentHeight: number;
+  padX: number;
+  headerH: number;
+  statusH: number;
+  gap: number;
+  columns: 2 | 3;
+}): { videoW: number; gridW: number } {
+  const { contentWidth, contentHeight, padX, headerH, statusH, gap, columns } =
+    input;
+  const rows = columns;
+  const widthFit = (contentWidth - padX - (columns - 1) * gap) / columns;
+  const heightFit =
+    (contentHeight - headerH - (rows - 1) * gap) / rows - statusH;
+  let videoW = Math.floor(
+    Math.min(widthFit, (Math.max(1, heightFit) * 16) / 9),
+  );
+  const innerW = contentWidth - padX;
+  const fitsFrame = (width: number) => {
+    const pictureH = (width * 9) / 16;
+    const gridH = rows * (pictureH + statusH) + (rows - 1) * gap;
+    const gridW = columns * width + (columns - 1) * gap;
+    return gridH <= contentHeight - headerH + 0.5 && gridW <= innerW + 0.5;
+  };
+  while (videoW > 1 && !fitsFrame(videoW)) videoW -= 1;
+  return {
+    videoW: Math.max(1, videoW),
+    gridW: columns * Math.max(1, videoW) + (columns - 1) * gap,
+  };
 }
 
 function measureWall(wall: HTMLElement, columns: 2 | 3): WallFit | null {
   const grid = wall.querySelector<HTMLElement>(".stations-wall-grid");
   if (!grid) return null;
   const scrollport = pageScrollport(wall);
-  const portRect = scrollport.getBoundingClientRect();
-  const gridRect = grid.getBoundingClientRect();
-  const gridTop = gridRect.top - portRect.top + scrollport.scrollTop;
   const frame = wall.closest<HTMLElement>(".stations-frame");
-  const frameStyle = frame ? getComputedStyle(frame) : undefined;
-  const frameGap = frameStyle ? Number.parseFloat(frameStyle.rowGap || frameStyle.gap) || 0 : 0;
-  const admission = frame?.querySelector<HTMLElement>(".stations-admission-section");
-  const admissionH = admission?.offsetHeight ?? 0;
-  const admissionMargin = admission ? Number.parseFloat(getComputedStyle(admission).marginTop) || 0 : 0;
-  const sample = grid.querySelector<HTMLElement>(".stations-wall-tile");
-  const picture = sample?.querySelector<HTMLElement>(".station-tile-main");
-  const extra = sample && picture ? Math.max(0, sample.offsetHeight - picture.offsetHeight) : 28;
-  const gridStyle = getComputedStyle(grid);
-  const gap = Number.parseFloat(gridStyle.columnGap || gridStyle.gap) || 8;
-  const host = wall.parentElement ?? wall;
+  const filters = frame?.querySelector<HTMLElement>(".stations-fleet-filters");
+  const footer = document.querySelector<HTMLElement>(".platform-footer");
+  const header = wall.querySelector<HTMLElement>(".stations-view-options");
+  if (!filters || !footer) return null;
+  const portRect = scrollport.getBoundingClientRect();
   const portStyle = getComputedStyle(scrollport);
+  const padLeft = Number.parseFloat(portStyle.paddingLeft) || 0;
+  const padRight = Number.parseFloat(portStyle.paddingRight) || 0;
   const padBottom = Number.parseFloat(portStyle.paddingBottom) || 0;
-  // Full content width. The picture stays 16:9 inside the cell (object-fit: contain).
-  // When that frame is shorter than the cell, the cell letterboxes instead of
-  // shrinking the whole wall into a centered strip or pushing the next row away.
-  const availableW = Math.max(1, host.clientWidth);
-  const naturalPicture = ((availableW - (columns - 1) * gap) / columns) * (9 / 16);
-  const naturalGrid = columns * (naturalPicture + extra) + (columns - 1) * gap;
-  const budget = scrollport.clientHeight - gridTop - padBottom - admissionH - admissionMargin - frameGap - 2;
+  const contentBottom = Math.min(
+    footer.getBoundingClientRect().top,
+    portRect.bottom,
+  );
+  const contentTop = Math.max(
+    filters.getBoundingClientRect().bottom,
+    wall.getBoundingClientRect().top,
+  );
+  const contentHeight = Math.max(0, contentBottom - contentTop - padBottom);
+  const contentWidth = scrollport.clientWidth;
+  const headerStyle = header ? getComputedStyle(header) : undefined;
+  const headerH = header
+    ? header.offsetHeight +
+      (Number.parseFloat(headerStyle?.marginTop || "") || 0) +
+      (Number.parseFloat(headerStyle?.marginBottom || "") || 0)
+    : 0;
+  const status = grid.querySelector<HTMLElement>(".stations-wall-tile footer");
+  const statusH = status?.offsetHeight || 22;
+  const gridStyle = getComputedStyle(grid);
+  const gap = Number.parseFloat(gridStyle.columnGap || gridStyle.gap) || 14;
+  const frameSize = wallFrameSize({
+    contentWidth,
+    contentHeight,
+    padX: padLeft + padRight,
+    headerH,
+    statusH,
+    gap,
+    columns,
+  });
   const minPicture = columns === 3 ? 72 : 88;
-  const minGrid = columns * (minPicture + extra) + (columns - 1) * gap;
-  const fits = budget >= minGrid;
-  const gridH = fits ? Math.min(naturalGrid, Math.max(minGrid, budget)) : minGrid;
-  const pictureH = (gridH - (columns - 1) * gap) / columns - extra;
   return {
-    wallW: Math.round(availableW),
-    pictureH: Math.max(1, Math.round(pictureH)),
-    gridH: Math.max(1, Math.round(gridH)),
-    fits,
+    videoW: frameSize.videoW,
+    gridW: frameSize.gridW,
+    fits: (frameSize.videoW * 9) / 16 >= minPicture,
   };
 }
 
@@ -196,11 +237,10 @@ export function CameraWallView({
       const next = measureWall(wall, columns);
       if (!next) return;
       setFit((current) =>
-        current
-        && current.wallW === next.wallW
-        && current.pictureH === next.pictureH
-        && current.gridH === next.gridH
-        && current.fits === next.fits
+        current &&
+        current.videoW === next.videoW &&
+        current.gridW === next.gridW &&
+        current.fits === next.fits
           ? current
           : next,
       );
@@ -225,6 +265,10 @@ export function CameraWallView({
       className="stations-wall"
       aria-label={zh ? "监控墙" : "Camera wall"}
       data-wall-fits={fit ? String(fit.fits) : undefined}
+      data-wall-video-w={fit?.videoW}
+      style={
+        fit ? { ["--wall-video" as string]: `${fit.videoW}px` } : undefined
+      }
     >
       <div className="stations-view-options">
         <div
@@ -275,9 +319,9 @@ export function CameraWallView({
       {items.length ? (
         <div
           className={`stations-wall-grid is-${columns}`}
-          data-wall-width={fit?.wallW}
-          data-wall-picture-h={fit?.pictureH}
-          style={fit ? { width: "100%", height: fit.gridH } : { width: "100%" }}
+          data-wall-video-w={fit?.videoW}
+          data-wall-grid-w={fit?.gridW}
+          style={fit ? { width: fit.gridW } : undefined}
         >
           {items
             .slice((currentPage - 1) * size, currentPage * size)

@@ -50,6 +50,22 @@ parameters:
     default: ""
     required: false
 
+  - name: cameraRTSPPrefix
+    displayName: 相机试点 RTSP 前缀
+    description: |
+      默认留空。为机器人集群设置 rtsp:// 或 rtsps:// 前缀，以该集群的 Agent 名和节点名结尾，例如 rtsp://media.internal:8554/robot-agent/$(NODE_NAME)。video 容器将相机视角附加到路径末尾。启用时同时指定 cameraSourceSecret。该 Secret 还须包含 rtsp-username 和 rtsp-password。
+    type: string
+    default: ""
+    required: false
+
+  - name: cameraSourceSecret
+    displayName: 相机试点源密钥 Secret
+    description: |
+      默认留空。填 rlark-system 命名空间下的 Secret 名称，其 source-key 必须至少 32 字节并与 Gateway 的 RLARK_CAMERA_SOURCE_KEY 相同。rtsp-username 和 rtsp-password 用于独立的 MediaMTX 发布账号。此参数只填 Secret 名称。
+    type: string
+    default: ""
+    required: false
+
   - name: rollout
     displayName: 分批执行
     description: |

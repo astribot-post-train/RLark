@@ -101,3 +101,8 @@ export function createCameraMediaScheduler(
 }
 
 export const cameraMediaScheduler = createCameraMediaScheduler();
+
+// Leave one of the Gateway's four per-viewer slots available during peer handover.
+export const cameraWhepScheduler = createCameraMediaScheduler({
+  maxLiveStreams: 3,
+});

@@ -10,6 +10,55 @@ Authorization combines role with tenant scope. Workflow, Job, Task, and Pod rout
 
 Path parameters are written as `{name}` below; Gin uses the equivalent `:name` syntax in the router. Namespaced CRD routes require the `namespace` query parameter.
 
+## Station camera playback pilot
+
+An administrator can submit an `application/sdp` offer to
+`POST /api/v1/rlinf.io/v1alpha1/nodes/{name}/cameras/{camera}/whep?namespace={namespace}`.
+The optional Gateway integration returns an SDP answer and a same-origin
+`Location` on HTTP 201. Send a PUT to that URL every six seconds while viewing,
+and a DELETE to request teardown. A lease expires after 14 seconds without renewal.
+The Gateway revalidates the Node's cluster and the publisher on renewal and
+retains the quota slot until MediaMTX confirms removal. It releases the source
+lease when opening fails or playback ends. A source is stopped when its last
+reader leaves, and the robot expires any unrenewed source lease after 20 seconds.
+The pilot is disabled by default. The opted-in robot validates its publisher
+path against the Gateway's agent, node and camera path. It uses one 480p
+software-encoded source per robot and holds up to four readers per authenticated
+Gateway subject and 20 readers per Gateway. One Gateway owns a dedicated
+MediaMTX instance. After a Gateway restart, the private Control API disconnects
+previous WebRTC sessions and verifies the session list is empty before playback
+reopens. JPEG service remains available while reconciliation runs.
+For each reader, the Gateway sends `PUT` to the robot's
+`/cameras/{camera}/h264-lease/{UUID}` endpoint to create or renew its source
+lease, and sends `DELETE` with the same UUID to release it. Both requests carry
+`X-RLark-Camera-Source-Key` and `X-RLark-Camera-Source-Path`, whose path is
+`/{agent}/{node}/{camera}`. The robot accepts only its configured agent and
+local `NODE_NAME` path.
+
+For a trial cluster, set both `cameraRTSPPrefix` and `cameraSourceSecret` in
+the `s1u-robot` Addon values (available from v1.7.4). For example, set the prefix to
+`rtsp://media.internal:8554/robot-agent/$(NODE_NAME)` and the Secret name to
+`s1u-camera-source`. Use the cluster's actual Agent name and its private RTSP
+or RTSPS endpoint. Kubernetes expands `$(NODE_NAME)` in
+`S1U_CAMERA_RTSP_PREFIX`, and the video container appends the camera view.
+In the robot cluster's `rlark-system` namespace, supply `source-key` in that
+Secret for `S1U_CAMERA_SOURCE_KEY`. The Gateway sends the matching
+`RLARK_CAMERA_SOURCE_KEY` (at least 32 bytes) to the Addon in
+`X-RLark-Camera-Source-Key`.
+
+To enable the Gateway for the trial, configure the private
+`RLARK_CAMERA_WHEP_ORIGIN` and `RLARK_CAMERA_WHEP_CONTROL_ORIGIN`. For the
+production Compose deployment, store `readerUser`, `readerPassword`,
+`controlUser`, `controlPassword`, and `sourceKey` in the protected
+`camera-credentials.json` file mounted in the Gateway identity directory.
+Gateway reads the credentials from that file without placing them in its
+environment. Keep reader and Control API usernames separate. The playback
+entry point returns HTTP 503 until startup reconciliation succeeds.
+
+Both Addon values default to empty. If either is omitted or the Secret key is
+missing or too short, the Addon continues to serve JPEG snapshots and streams
+and its H.264 lease endpoint returns HTTP 404.
+
 ## CRD resources
 
 | Resource | Scope | Routes |

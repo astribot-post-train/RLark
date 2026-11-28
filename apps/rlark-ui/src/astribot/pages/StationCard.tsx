@@ -6,13 +6,17 @@ import type { ClusterSummary } from "../../types";
 import { NodeName, type NodeRef } from "../components/NodeName";
 import { RobotPoseButton } from "../components/RobotControls";
 import type { RobotPowerRequest } from "../components/useRobotPower";
-import { cameraMediaScheduler } from "../lib/cameraMediaScheduler";
+import { cameraMediaScheduler, cameraWhepScheduler } from "../lib/cameraMediaScheduler";
 import { useCameraClock } from "../components/useCameraClock";
 import {
   CAMERA_FPS_OPTIONS, DEFAULT_CAMERA_FPS, cameraCells, cameraFramePath, cameraStreamPath, formatCameraMilliseconds,
   isCameraFps, publishedCameras, readCameraAge,
   type CameraCell, type CameraFps, type CameraView,
 } from "../lib/cameras";
+import {
+  cameraTransportPlan, phaseAfterWhepFailure, startScheduledStationWhepPreview, stationWhepEnabled, whepRetryBlocked,
+  type WhepUiPhase,
+} from "../lib/cameraWhep";
 import { readCameraFrames, sameCameraFrame } from "../lib/cameraStream";
 import { readRejoinObservation, subscribeRejoinObservation } from "../lib/robotRejoinTask";
 import { stationFacts } from "../lib/stationDrawer";
@@ -63,13 +67,28 @@ export function CameraWall({ cells, node, namespace, zh, online, expanded = fals
   const streamView = big?.frames && big.present !== false ? big.view : undefined;
   const [foreground, setForeground] = useState(!document.hidden);
   const [liveGranted, setLiveGranted] = useState(false);
+  const whepOn = stationWhepEnabled(node);
+  const [whepGranted, setWhepGranted] = useState(false);
+  const [whepPhase, setWhepPhase] = useState<WhepUiPhase>("off");
+  const whepVideo = useRef<HTMLVideoElement>(null);
+  const whepBlock = useRef<WhepUiPhase>("off");
   const leaseID = `${monitor ? "wall" : "card"}:${namespace}/${node}`;
   const previewActive = visible && foreground && !expanded && online;
   const wantsLive = previewActive && liveEnabled && streamView !== undefined;
-  const streaming = wantsLive && liveGranted;
+  // JPEG/MJPEG stays as it is when the flag is off. With WHEP on, MJPEG starts
+  // only after a technical failure and only when this scheduler grants a slot.
+  const whepQueued = whepOn && previewActive && streamView !== undefined && !whepGranted
+    && whepPhase !== "mjpeg" && !whepRetryBlocked(whepPhase);
+  const whepPlaying = whepGranted && whepPhase === "playing";
+  const whepTransport = whepOn
+    ? cameraTransportPlan({ whepEnabled: true, phase: whepQueued ? "rate-limited" : whepPhase, mjpegGranted: liveGranted })
+    : undefined;
+  const mjpegWanted = whepOn ? Boolean(wantsLive && whepTransport?.requestMjpeg) : wantsLive;
+  const streaming = mjpegWanted && liveGranted;
   const cameraClock = useCameraClock(node, namespace, streaming);
   const stripKey = monitor ? "" : small.filter((cell) => cell.frames).map((cell) => cell.view).join(",");
-  const snapshotKey = [!streaming && streamView, stripKey].filter(Boolean).join(",");
+  const snapshotMain = whepOn ? (whepTransport?.requestSnapshot ? streamView : undefined) : (!streaming && streamView);
+  const snapshotKey = [snapshotMain, stripKey].filter(Boolean).join(",");
 
   useEffect(() => {
     const visibility = () => setForeground(!document.hidden);
@@ -79,9 +98,49 @@ export function CameraWall({ cells, node, namespace, zh, online, expanded = fals
 
   useEffect(() => {
     if (!wantsLive) return;
+    if (whepOn && !cameraTransportPlan({ whepEnabled: true, phase: whepPhase, mjpegGranted: false }).requestMjpeg) return;
     const release = cameraMediaScheduler.acquire(leaseID, "card", setLiveGranted);
     return release;
-  }, [leaseID, wantsLive]);
+  }, [leaseID, wantsLive, whepOn, whepPhase]);
+
+  useEffect(() => {
+    whepBlock.current = "off";
+  }, [node, namespace, streamView]);
+
+  useEffect(() => {
+    if (!whepOn || !wantsLive) return;
+    return cameraWhepScheduler.acquire(leaseID, "card", setWhepGranted);
+  }, [leaseID, whepOn, wantsLive]);
+
+  // One peer connection for this preview. The flag gates the POST; cleanup
+  // DELETEs the same-origin session and closes the peer on every exit.
+  useEffect(() => {
+    if (!whepOn || !wantsLive || !whepGranted || !streamView) return;
+    if (whepRetryBlocked(whepBlock.current)) {
+      setWhepPhase(whepBlock.current);
+      return;
+    }
+    const video = whepVideo.current;
+    if (!video) return;
+    setWhepPhase("connecting");
+    const preview = startScheduledStationWhepPreview({
+      enabled: true,
+      streamPath: cameraStreamPath(node, namespace, streamView, fps),
+      namespace,
+      origin: window.location.origin,
+      request,
+      video,
+      onPlaying: () => setWhepPhase("playing"),
+      onFailure: (failure) => {
+        const phase = phaseAfterWhepFailure(failure);
+        if (phase === "unauthorized") whepBlock.current = phase;
+        setWhepPhase(phase);
+      },
+    });
+    return () => {
+      void preview.stop();
+    };
+  }, [whepOn, wantsLive, whepGranted, node, namespace, streamView, fps]);
 
   const pin = () => {
     for (const activeID of cameraMediaScheduler.getStats().activeIds) {
@@ -368,7 +427,10 @@ export function CameraWall({ cells, node, namespace, zh, online, expanded = fals
           {big.present === false
             ? <span aria-hidden="true">—</span>
             : <>
-              {streaming && hasLiveFrame ? null : frames[big.view] ? <img src={frames[big.view]?.url} alt="" /> : <Camera size={22} aria-hidden="true" />}
+              {whepOn && <video ref={whepVideo} autoPlay playsInline muted hidden={!whepPlaying} style={whepPlaying ? { display: "block", width: "100%", height: "100%", objectFit: "contain" } : undefined} />}
+              {whepPhase === "unauthorized"
+                ? <span className="status status-stopped"><i />{zh ? "无权查看" : "Not authorized"}</span>
+                : whepPlaying || (streaming && hasLiveFrame) ? null : frames[big.view] ? <img src={frames[big.view]?.url} alt="" /> : <Camera size={22} aria-hidden="true" />}
               <img ref={bigImage} alt="" hidden={!streaming || !hasLiveFrame} />
             </>}
         </span>
@@ -376,9 +438,10 @@ export function CameraWall({ cells, node, namespace, zh, online, expanded = fals
         <span className="station-camera-frame"><Camera size={22} aria-hidden="true" /></span>
       </div>}
       {overlayTop?.(metrics)}
-      {wantsLive && !liveGranted && <button type="button" className="station-camera-pin" onClick={pin}>
+      {(!whepOn || whepPhase === "mjpeg") && wantsLive && !liveGranted && <button type="button" className="station-camera-pin" onClick={pin}>
         {zh ? "抽帧预览 · 点击开流" : "Snapshots · Click for live"}
       </button>}
+      {whepOn && (whepQueued || whepPhase === "rate-limited") && previewActive && liveEnabled && <span className="station-camera-pin">{zh ? "抽帧预览" : "Snapshots"}</span>}
       {!liveEnabled && previewActive && <span className="station-camera-pin">{zh ? "抽帧预览" : "Snapshots"}</span>}
     </div>
     {!monitor && small.length > 0 && <div className="station-tile-strip" role="group" aria-label={zh ? "其余相机" : "Other cameras"}>

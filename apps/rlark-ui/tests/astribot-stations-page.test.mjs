@@ -540,6 +540,21 @@ test("only virtual rows mount and live connections use shared view budgets and d
   assert.match(dialog, /cameraMediaScheduler\.acquire\(.*"dialog", setLiveGranted\)/);
 });
 
+test("the camera wall centers a real 16:9 frame instead of letterboxing a full-width cell", async () => {
+  const wall = await readFile(new URL("../src/astribot/pages/CameraWallView.tsx", import.meta.url), "utf8");
+  assert.match(wall, /export function wallFrameSize/);
+  assert.match(wall, /const widthFit = \(contentWidth - padX - \(columns - 1\) \* gap\) \/ columns/);
+  assert.match(wall, /const heightFit\s*=\s*\(contentHeight - headerH - \(rows - 1\) \* gap\) \/ rows - statusH/);
+  assert.match(wall, /Math\.min\(widthFit,\s*(?:Math\.max\(1, heightFit\)\s*\*\s*16|\(Math\.max\(1, heightFit\)\s*\*\s*16\))\s*\/\s*9\s*,?\)/);
+  assert.match(wall, /columns \* Math\.max\(1, videoW\) \+ \(columns - 1\) \* gap/);
+  assert.match(cardsStyles, /\.stations-page \.stations-wall-tile \.station-tile-main \{[\s\S]*?aspect-ratio: 16 \/ 9;/);
+  assert.match(cardsStyles, /\.stations-wall-grid \{[\s\S]*?margin-inline: auto;/);
+  assert.match(cardsStyles, /\.stations-page \.stations-wall-tile \.station-camera-frame img \{[\s\S]*?object-fit: contain;/);
+  assert.match(cardsStyles, /\.stations-page \.stations-wall-tile \.station-camera\.is-missing \.station-camera-frame/);
+  assert.match(cardsStyles, /\.stations-page \.stations-wall-tile \.station-camera\.is-empty \.station-camera-frame/);
+  assert.doesNotMatch(cardsStyles, /\.stations-wall-grid \{[^}]*[^-]width:\s*100%/);
+});
+
 test("the batch drawer shows failed robots and forwards cancel, retry and dismiss", async () => {
   const batchPanel = await readFile(new URL("../src/astribot/components/BatchProgressPanel.tsx", import.meta.url), "utf8");
   assert.match(page, /onCoalescedRefresh:/);
