@@ -281,7 +281,14 @@ for (const [name, logoutResult] of [
       fetchOverride: (url, init) => url === "/api/iam/logout" ? logoutResult(url, init) : Promise.resolve(new Response(JSON.stringify(adminSession("admin", "session-token")), { status: 200 })),
     });
     await tab.portal.enter();
-    await tab.portal.signOut("/admin/iam");
+    // Node 22's AbortSignal.timeout timer is unref'd, so keep the test process
+    // alive until the real request timeout fires.
+    const keepAliveTimer = name === "timeout" ? setTimeout(() => {}, 6000) : undefined;
+    try {
+      await tab.portal.signOut("/admin/iam");
+    } finally {
+      if (keepAliveTimer !== undefined) clearTimeout(keepAliveTimer);
+    }
     assert.equal(tab.calls.find((call) => call.url === "/api/iam/logout").headers.Authorization, "Bearer session-token");
     assert.deepEqual(tab.navigations, ["/login?next=%2Fadmin%2Fiam"]);
     assert.equal(tab.store.getItem("rlark-auth-token"), null);
