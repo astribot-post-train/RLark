@@ -1828,57 +1828,66 @@
 }
 .stations-page button.station-camera-pin { cursor: pointer; }
 
-/* The wall uses the stations page content box, not 100dvh and not a fixed picture cap.
-   The grid takes the full content width and, when the viewport is tall enough for a
-   minimum cell, the remaining content height, so every row and its status line stay
-   on the first screen. The camera frame stays 16:9 inside the cell via object-fit. */
+/* The picture is the cell. Each video box is a real 16:9 rectangle, sized from the
+   content area (below the filters, above the footer) and centered. object-fit: contain
+   fills that box for a 16:9 frame, so the layout does not add side bars. Offline,
+   conflict, empty and error states use the same box. The name and status line match
+   the picture width and sit on its bottom edge. */
 .stations-page .stations-wall {
-  --wall-gap: 8px;
+  --wall-gap: 14px;
   width: 100%;
   max-width: none;
   min-width: 0;
+}
+.stations-page .stations-wall .stations-view-options {
+  margin: 0 0 6px;
+  min-height: 0;
 }
 .stations-page .stations-groups:has(.stations-wall) {
   min-width: 0;
   width: 100%;
   max-width: none;
+  background: transparent;
 }
 .stations-wall-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  grid-template-rows: repeat(2, minmax(0, 1fr));
-  gap: var(--wall-gap, 8px);
-  align-items: stretch;
-  width: 100%;
-  max-width: none;
+  grid-template-columns: repeat(2, var(--wall-video, minmax(0, 1fr)));
+  gap: var(--wall-gap, 14px);
+  align-items: start;
+  justify-content: center;
+  width: max-content;
+  max-width: 100%;
+  height: auto;
+  margin-inline: auto;
 }
 .stations-wall-grid.is-3 {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  grid-template-rows: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(3, var(--wall-video, minmax(0, 1fr)));
 }
 .stations-wall-tile {
   display: flex;
   flex-direction: column;
+  width: var(--wall-video, 100%);
   min-width: 0;
-  min-height: 0;
-  height: 100%;
+  height: auto;
   overflow: hidden;
-  border: 1px solid var(--line);
+  border: 0;
   border-radius: 9px;
   background: var(--panel);
+  box-shadow: inset 0 0 0 1px var(--line);
 }
-.stations-wall-tile[data-severity="3"] { border-color: var(--red); }
+.stations-wall-tile[data-severity="3"] { box-shadow: inset 0 0 0 1px var(--red); }
 .stations-page .stations-wall-tile .station-tile-media {
-  flex: 1 1 auto;
+  flex: 0 0 auto;
+  display: block;
+  width: 100%;
   min-height: 0;
-  display: flex;
 }
 .stations-page .stations-wall-tile .station-tile-main {
   position: relative;
-  flex: 1 1 auto;
+  flex: none;
   width: 100%;
-  height: 100%;
-  aspect-ratio: auto;
+  height: auto;
+  aspect-ratio: 16 / 9;
   min-height: 0;
   border-radius: 0;
   background: #101418;
@@ -1897,8 +1906,8 @@
 .stations-page .stations-wall-tile .station-camera.is-empty .station-camera-frame {
   position: absolute;
   inset: 0;
-  width: auto;
-  height: auto;
+  width: 100%;
+  height: 100%;
   aspect-ratio: auto;
   border-radius: 0;
   background: #101418;
@@ -1917,8 +1926,11 @@
   flex: 0 0 auto;
   align-items: center;
   gap: 8px;
-  padding: 5px 8px;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 2px 8px;
   font-size: 12px;
+  line-height: 16px;
   white-space: nowrap;
 }
 .stations-wall-tile footer strong { overflow: hidden; text-overflow: ellipsis; }

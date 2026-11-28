@@ -56,6 +56,8 @@ addons:
     # reach it at the hub's tunnel address (10.254.240.1:8030, the first data hop of Fleet's Runs). Its volume is 60 GB
     # of the machine's disk, of which the relay keeps 20 GB free (Fleet's configs/workers/site_relay.yaml).
     fleet-episode-relay:
+      # The relay runs the verified dd5e62b build independently of the robot device image.
+      image: registry.rlark.internal:5443/fleet/robot@sha256:9f948f819969b4a09b7593260f4a94f896a88e1b1391641c145940543488cbc7
       nodeSelector: kubernetes.io/hostname=cailiang
       volumeSize: 60G
       imagePullSecret: ir-8be41d25ef634987

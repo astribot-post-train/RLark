@@ -1677,6 +1677,56 @@ paths:
         '404': {description: No such Node, no s1u-robot Pod on it, a view the robot's body lacks, or no such camera}
         '502': {description: The cluster or the robot did not answer}
         '503': {description: The camera has sent no frame yet, or the API server does not reach the robot's Pod}
+  /api/v1/rlinf.io/v1alpha1/nodes/{name}/cameras/{camera}/whep:
+    post:
+      summary: Open an administrator-only pilot H.264 playback session
+      operationId: openRobotCameraWHEP
+      parameters:
+        - {in: path, name: name, required: true, schema: {type: string}}
+        - {in: path, name: camera, required: true, schema: {type: string, enum: [head, torso, wrist_left, wrist_right]}}
+        - {in: query, name: namespace, required: true, schema: {type: string}}
+      requestBody:
+        required: true
+        content:
+          application/sdp:
+            schema: {type: string}
+      responses:
+        '201':
+          description: SDP answer and a same-origin lease URL
+          headers:
+            Location:
+              schema: {type: string}
+          content:
+            application/sdp:
+              schema: {type: string}
+        '403': {description: Administrator access required}
+        '404': {description: Pilot disabled or camera resource unavailable}
+        '409': {description: The agent namespace does not have a unique cluster owner}
+        '429': {description: Concurrent WHEP reader limit reached}
+        '503': {description: Robot publisher unavailable}
+  /api/v1/rlinf.io/v1alpha1/nodes/{name}/cameras/{camera}/whep/{session}:
+    put:
+      summary: Renew the administrator's playback lease
+      operationId: renewRobotCameraWHEP
+      parameters: &cameraWHEPSessionParameters
+        - {in: path, name: name, required: true, schema: {type: string}}
+        - {in: path, name: camera, required: true, schema: {type: string}}
+        - {in: path, name: session, required: true, schema: {type: string}}
+        - {in: query, name: namespace, required: true, schema: {type: string}}
+      responses:
+        '204': {description: Lease renewed}
+        '403': {description: Administrator access required}
+        '404': {description: No matching session for this owner}
+        '410': {description: The lease expired or is closing}
+        '503': {description: Robot publisher unavailable}
+    delete:
+      summary: Request server-side teardown of the administrator's playback session
+      operationId: closeRobotCameraWHEP
+      parameters: *cameraWHEPSessionParameters
+      responses:
+        '202': {description: Session closing}
+        '403': {description: Administrator access required}
+        '404': {description: No matching session for this owner}
   /api/v1/rlinf.io/v1alpha1/nodes/{name}/cameras/{camera}/stream:
     get:
       tags: [Node]

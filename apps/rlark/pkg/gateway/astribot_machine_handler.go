@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"github.com/rlinf/rlark/apps/rlark/astribot/stations"
 	"net/http"
 	"sort"
 	"time"
@@ -17,6 +16,8 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/validation"
+
+	"github.com/rlinf/rlark/apps/rlark/astribot/stations"
 )
 
 var machineGVR = schema.GroupVersionResource{Group: "station.rlark.io", Version: "v1alpha1", Resource: "machines"}
@@ -89,7 +90,7 @@ func (g *Gateway) handleRejoinMachine(c *gin.Context) {
 			c.JSON(http.StatusConflict, gin.H{"code": "REJOIN_IN_PROGRESS", "error": "another rejoin request is active"})
 			return
 		}
-		if phase != "Joined" && !(phase == "Admitted" && (previousPhase == "Failed" || previousPhase == "Blocked")) {
+		if phase != "Joined" && (phase != "Admitted" || (previousPhase != "Failed" && previousPhase != "Blocked")) {
 			c.JSON(http.StatusConflict, gin.H{"code": "MACHINE_NOT_JOINED", "error": "machine is not in a retryable joined state"})
 			return
 		}

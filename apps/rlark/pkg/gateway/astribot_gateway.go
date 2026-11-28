@@ -7,13 +7,15 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
-	"github.com/rlinf/rlark/apps/rlark/astribot/provisioning/workflow"
-	"github.com/rlinf/rlark/apps/rlark/astribot/stationidentity"
-	"github.com/rlinf/rlark/apps/rlark/astribot/storageconfig"
 	"github.com/spf13/pflag"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/rest"
 	"k8s.io/utils/lru"
+
+	"github.com/rlinf/rlark/apps/rlark/astribot/provisioning/workflow"
+	"github.com/rlinf/rlark/apps/rlark/astribot/stationidentity"
+	"github.com/rlinf/rlark/apps/rlark/astribot/storageconfig"
+	"github.com/rlinf/rlark/apps/rlark/pkg/log"
 )
 
 // astribotState is what our part of the Gateway holds; Gateway embeds it.
@@ -31,6 +33,7 @@ type astribotState struct {
 
 	provisioningWorkflow *workflow.Service
 	cameraStreams        cameraStreamLimiter
+	cameraMedia          *cameraWHEP
 }
 
 // AstribotConfig is our part of the Gateway's configuration; Config embeds it. Every field is required.
@@ -62,8 +65,12 @@ func (g *Gateway) setupAstribot() {
 }
 
 // initAstribot is init's part for our clients, right after the Kubernetes clients.
-func (g *Gateway) initAstribot(restConfig *rest.Config) error {
+func (g *Gateway) initAstribot(ctx context.Context, restConfig *rest.Config) error {
 	var err error
+	g.cameraMedia, err = newCameraWHEP()
+	if err != nil {
+		log.FromContext(ctx).Error(err, "Camera WHEP disabled because its configuration is invalid")
+	}
 	g.stationClient, err = dynamic.NewForConfig(restConfig)
 	if err != nil {
 		return fmt.Errorf("create dynamic Kubernetes client: %w", err)
@@ -121,6 +128,9 @@ func (g *Gateway) startAstribot(ctx context.Context) error {
 		return err
 	}
 	go g.robotControlRoutes().SweepClaims(ctx)
+	if g.cameraMedia != nil {
+		go g.cameraMedia.reconcileStartup(ctx)
+	}
 	return nil
 }
 

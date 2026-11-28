@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { createCameraMediaScheduler } from "../dist/test/astribot/lib/cameraMediaScheduler.js";
+import { cameraMediaScheduler, cameraWhepScheduler, createCameraMediaScheduler } from "../dist/test/astribot/lib/cameraMediaScheduler.js";
+import { cameraTransportPlan } from "../dist/test/astribot/lib/cameraWhep.js";
 
 test("higher priorities preempt, and release wakes the highest priority FIFO waiter", () => {
   const scheduler = createCameraMediaScheduler({ maxLiveStreams: 1 });
@@ -50,4 +52,45 @@ test("reacquiring an ID grants the new lease and fences the old release", () => 
   assert.deepEqual(replacement, [true, false]);
   assert.deepEqual(scheduler.getStats().activeIds, ["waiter"]);
   assert.deepEqual(waiter, [true]);
+});
+
+test("WHEP has an independent three-preview limit", () => {
+  const whep = createCameraMediaScheduler({ maxLiveStreams: 3 });
+  const media = createCameraMediaScheduler({ maxLiveStreams: 3 });
+  const whepReleases = ["a", "b", "c", "d"].map((id) => whep.acquire(id, "card", () => {}));
+  const mediaReleases = ["a", "b", "c", "d"].map((id) => media.acquire(id, "card", () => {}));
+  assert.equal(whep.getStats().activeCount, 3);
+  assert.equal(whep.getStats().queuedCount, 1);
+  assert.equal(media.getStats().activeCount, 3);
+  whepReleases.forEach((release) => release());
+  mediaReleases.forEach((release) => release());
+  assert.equal(cameraWhepScheduler.getStats().maxLiveStreams, 3);
+  assert.equal(cameraMediaScheduler.getStats().maxLiveStreams, 3);
+});
+
+test("a dialog takes priority over cards and cancellation removes a queued WHEP preview", () => {
+  const scheduler = createCameraMediaScheduler({ maxLiveStreams: 3 });
+  const changes = new Map();
+  const releases = ["card-a", "card-b", "card-c"].map((id) => scheduler.acquire(id, "card", (active) => changes.set(id, active)));
+  scheduler.acquire("dialog", "dialog", (active) => changes.set("dialog", active));
+  assert.equal(changes.get("dialog"), true);
+  assert.equal(scheduler.getStats().activeIds.includes("dialog"), true);
+  assert.equal(scheduler.getStats().activeIds.includes("card-c"), false);
+  const cancel = scheduler.acquire("queued", "card", (active) => changes.set("queued", active));
+  cancel();
+  assert.equal(changes.has("queued"), false);
+  releases.forEach((release) => release());
+});
+
+test("a queued WHEP preview stays snapshot-only until its grant", async () => {
+  const queued = cameraTransportPlan({ whepEnabled: true, phase: "rate-limited", mjpegGranted: false });
+  assert.deepEqual(queued, { postWhep: false, requestSnapshot: true, requestMjpeg: false });
+  const granted = cameraTransportPlan({ whepEnabled: true, phase: "connecting", mjpegGranted: false });
+  assert.equal(granted.postWhep, true);
+
+  const card = await readFile(new URL("../src/astribot/pages/StationCard.tsx", import.meta.url), "utf8");
+  const dialog = await readFile(new URL("../src/astribot/pages/CameraPreviewDialog.tsx", import.meta.url), "utf8");
+  assert.match(card, /!whepGranted/);
+  assert.match(card, /!whepOn \|\| !wantsLive \|\| !whepGranted \|\| !streamView/);
+  assert.match(dialog, /!whepOn \|\| !foreground \|\| !whepGranted/);
 });

@@ -590,3 +590,57 @@ func TestPagesAreAdmittedAndTheAPIEndpointAuthorizesOnlyCalls(t *testing.T) {
 		t.Fatalf("the operator's call status=%d headers=%v", response.Code, response.Header())
 	}
 }
+
+func TestAuthorizeCameraWHEPOnlyForAdministrators(t *testing.T) {
+	store := newMemoryStore()
+	store.users["camera-operator"] = User{ID: "camera-operator", Username: "operator", Role: RoleOperator}
+	store.users["camera-viewer"] = User{ID: "camera-viewer", Username: "viewer", Role: RoleViewer}
+	for _, id := range []string{"u_admin", "camera-operator", "camera-viewer"} {
+		hash := tokenHash(id)
+		store.sessions[hash] = Session{ID: hash, UserID: id, ExpiresAt: time.Now().Add(time.Hour)}
+	}
+	handler := NewServer(store, time.Hour, false, map[Role]string{
+		RoleAdmin: "admin-token", RoleOperator: "operator-token", RoleViewer: "viewer-token",
+	}).Handler()
+	const camera = "/api/v1/rlinf.io/v1alpha1/nodes/s1u-01/cameras"
+	for _, action := range []struct{ method, path string }{
+		{http.MethodPost, camera + "/head/whep"},
+		{http.MethodPut, camera + "/head/whep/session"},
+		{http.MethodDelete, camera + "/head/whep/session"},
+		{http.MethodGet, camera + "/head.jpg"},
+	} {
+		for _, caller := range []struct{ id, user, upstream string }{
+			{"", "", ""},
+			{"u_admin", "admin", "admin-token"},
+			{"camera-operator", "operator", "operator-token"},
+			{"camera-viewer", "viewer", "viewer-token"},
+		} {
+			t.Run(action.method+" "+action.path+" "+caller.id, func(t *testing.T) {
+				request := httptest.NewRequest(http.MethodGet, "/internal/authorize", nil)
+				request.Header.Set("X-Original-Method", action.method)
+				request.Header.Set("X-Original-URI", action.path+"?namespace=rlark-robot")
+				request.Header.Set("X-IAM-User", "forged-user")
+				if caller.id != "" {
+					request.Header.Set("Authorization", "Bearer "+caller.id)
+				}
+				response := httptest.NewRecorder()
+				handler.ServeHTTP(response, request)
+
+				want := http.StatusOK
+				var wantUser, wantUpstream string
+				switch {
+				case caller.id == "":
+					want = http.StatusUnauthorized
+				case action.method != http.MethodGet && caller.id != "u_admin":
+					want = http.StatusForbidden
+				default:
+					wantUser, wantUpstream = caller.user, caller.upstream
+				}
+				if response.Code != want || response.Header().Get("X-IAM-User") != wantUser ||
+					response.Header().Get("X-IAM-Upstream") != wantUpstream {
+					t.Fatalf("authorization status=%d (want %d), headers=%v", response.Code, want, response.Header())
+				}
+			})
+		}
+	}
+}
