@@ -19,10 +19,15 @@ RUN --mount=type=cache,target=/root/go/pkg/mod --mount=type=cache,target=/root/.
 
 FROM ${NODE_IMAGE} AS console
 ARG NPM_REGISTRY=https://registry.npmjs.org/
-WORKDIR /src
+WORKDIR /src/apps/rlark-ui
 COPY apps/rlark-ui/package.json apps/rlark-ui/package-lock.json ./
 RUN --mount=type=cache,target=/root/.npm npm ci --no-audit --no-fund --registry=${NPM_REGISTRY}
 COPY apps/rlark-ui/ ./
+COPY astribot/release/login.html /src/astribot/release/login.html
+COPY astribot/release/rlark-ui.nginx.conf /src/astribot/release/rlark-ui.nginx.conf
+COPY astribot/release/rlark-ui.Dockerfile /src/astribot/release/rlark-ui.Dockerfile
+COPY apps/rlark/docs/user-guide/console.md /src/apps/rlark/docs/user-guide/console.md
+COPY apps/rlark/docs/zh/user-guide/console.md /src/apps/rlark/docs/zh/user-guide/console.md
 RUN npm test > /console-tests.log 2>&1 || { cat /console-tests.log; exit 1; }
 
 FROM scratch
