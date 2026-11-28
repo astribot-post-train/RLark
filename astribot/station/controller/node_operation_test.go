@@ -28,6 +28,20 @@ func (s *nodeExecutorStub) Execute(_ context.Context, _ *stationv1alpha1.NodeOpe
 	return s.done, s.uid, s.err
 }
 
+func TestRejoinUsesOnlyIdentityRecoveryStages(t *testing.T) {
+	rejoin := &stationv1alpha1.NodeOperation{Spec: stationv1alpha1.NodeOperationSpec{Action: "Join", RequestID: "rejoin-request-1"}}
+	stages, ok := operationStages(rejoin)
+	want := []string{"Preflight", "VerifyNode", "VerifyRLark"}
+	if !ok || strings.Join(stages, " ") != strings.Join(want, " ") {
+		t.Fatalf("rejoin stages=%v ok=%v want=%v", stages, ok, want)
+	}
+	ordinary := &stationv1alpha1.NodeOperation{Spec: stationv1alpha1.NodeOperationSpec{Action: "Join", RequestID: "machine-1"}}
+	stages, ok = operationStages(ordinary)
+	if !ok || strings.Join(stages, " ") != strings.Join(installerStages, " ") {
+		t.Fatalf("ordinary Join stage sequence changed: %v", stages)
+	}
+}
+
 func TestNodeOperationFailureIsTerminalUntilANewOperation(t *testing.T) {
 	ctx := context.Background()
 	scheme := runtime.NewScheme()
@@ -133,6 +147,7 @@ func TestNodeOperationFailureConditionsAreStableAndDoNotExposeInternalErrors(t *
 		{stage: "Drain", err: ErrNodeIdentityChanged, reason: "NodeIdentityChanged"},
 		{stage: "Drain", err: ErrNodeDrainBlocked, reason: "DrainBlocked"},
 		{stage: "Drain", err: ErrNodeStageUnavailable, reason: "PrerequisiteUnavailable"},
+		{stage: "Preflight", err: ErrRejoinStateUnavailable, reason: "RejoinStateUnavailable"},
 		{stage: "Drain", err: errors.New("remote output includes sensitive internal detail"), reason: "StageFailed"},
 		// A removal stage waits on the member API; a timeout there is an
 		// unreachable cluster, not an unexplained stage failure.

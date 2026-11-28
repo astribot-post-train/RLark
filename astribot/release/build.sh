@@ -12,6 +12,24 @@
 # stays in the build's directory either way.
 set -euo pipefail
 entry=${ENTRY:-cailiang_rlark}
+VITE_STATION_WHEP=${VITE_STATION_WHEP:-0}
+VITE_STATION_WHEP_NODES=${VITE_STATION_WHEP_NODES:-}
+valid_node_list() {
+  local node
+  local -a nodes
+  [[ -n $1 && $1 != ,* && $1 != *, && $1 != *,,* ]] || return 1
+  IFS=',' read -r -a nodes <<< "$1"
+  for node in "${nodes[@]}"; do
+    [[ $node =~ ^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$ ]] || return 1
+  done
+}
+[[ $VITE_STATION_WHEP == 0 || $VITE_STATION_WHEP == 1 ]] || { echo "VITE_STATION_WHEP must be 0 or 1" >&2; exit 1; }
+if [[ $VITE_STATION_WHEP == 1 ]]; then
+  valid_node_list "$VITE_STATION_WHEP_NODES" || {
+    echo "VITE_STATION_WHEP=1 requires comma-separated Kubernetes node names in VITE_STATION_WHEP_NODES" >&2
+    exit 1
+  }
+fi
 cd "$(dirname "$0")/../.."
 if [[ $1 == base ]]; then
   rlark=$(git rev-parse --verify "${2:?the RLark commit}^{commit}")
@@ -24,6 +42,7 @@ fi
 builds=/var/lib/rlark/release/builds work=/var/lib/rlark/release/builds/$name
 run+=("$work" "$rlark" ${fleet:+"$fleet"})
 limits=$(env | grep -E '^BUILD_(MEMORY|RESERVE|CPUS|PARALLELISM|WAIT)=[0-9]+$' | tr '\n' ' ' || true)
+limits+=" VITE_STATION_WHEP=$VITE_STATION_WHEP VITE_STATION_WHEP_NODES=$VITE_STATION_WHEP_NODES"
 remote="mkdir -p $builds && exec 9> $builds/lock && { flock -n 9 || { echo 'another build holds $builds/lock' >&2; exit 1; }; } && rm -rf $work && mkdir -p $work/rlark && cat > $work/rlark.tar && tar -C $work/rlark -xf $work/rlark.tar && exec env $limits $work/rlark/astribot/release/run.sh ${run[*]}"
 git archive "$rlark" | ssh -o ServerAliveInterval=30 "$entry" sudo bash -c "$(printf %q "$remote")"
 [[ $1 == base ]] && exit 0

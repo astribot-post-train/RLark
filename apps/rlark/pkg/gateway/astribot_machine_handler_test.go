@@ -3,6 +3,8 @@ package gateway
 import (
 	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -128,5 +130,149 @@ func TestMachinesAreListedAndAdmittedEachForItself(t *testing.T) {
 	}
 	if status, _ := nodeAdmissionCall(t, g.handleAdmitMachines, "POST", "/api/v1/station/machines/admit", "", `{"cluster_id":"cluster-a","machines":[]}`); status != 400 {
 		t.Fatalf("no machines: %d", status)
+	}
+}
+
+func TestMachineRejoinIsIdempotentAndPreservesExistingNodeAdmission(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	cluster := stationHandlerCluster("cluster-a", "agent-a")
+	machine := handlerMachine("lab-88", "Joined", "", "1794925030888")
+	_ = unstructured.SetNestedField(machine.Object, "cluster-a", "status", "clusterID")
+	_ = unstructured.SetNestedField(machine.Object, "s1u-07-x86", "status", "nodeName")
+	_ = unstructured.SetNestedField(machine.Object, "s1u", "spec", "admit", "model")
+	class := &unstructured.Unstructured{Object: map[string]any{"apiVersion": "station.rlark.io/v1alpha1", "kind": "NodeClass", "metadata": map[string]any{"name": "s1u"}, "spec": map[string]any{
+		"kind": "Robot", "model": "s1u", "access": map[string]any{"entry": map[string]any{"port": int64(22), "user": "orin"}, "node": map[string]any{"address": "192.168.0.10", "port": int64(22), "user": "robot"}},
+	}}}
+	admission := &unstructured.Unstructured{Object: map[string]any{"apiVersion": "station.rlark.io/v1alpha1", "kind": "NodeAdmission", "metadata": map[string]any{"name": "s1u-07-x86", "namespace": "agent-a"}, "spec": map[string]any{"clusterID": "cluster-a", "serial": "1794925030888", "nodeClass": "s1u", "machine": map[string]any{"category": "Robot", "model": "legacy-s1u"}}, "status": map[string]any{"phase": "Joined"}}}
+	model := &unstructured.Unstructured{Object: map[string]any{"apiVersion": "station.rlark.io/v1alpha1", "kind": "RobotModel", "metadata": map[string]any{"name": "s1u"}, "spec": map[string]any{"displayName": "S1U"}}}
+	client := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), map[schema.GroupVersionResource]string{
+		stationClusterGVR: "ClusterList", machineGVR: "MachineList", nodeAdmissionGVR: "NodeAdmissionList", nodeClassGVR: "NodeClassList", robotModelGVR: "RobotModelList", nodeOperationGVR: "NodeOperationList",
+	}, cluster, machine, admission, class, model)
+	g := &Gateway{astribotState: astribotState{stationClient: client}}
+	body := `{"cluster_id":"cluster-a","request_id":"retry-001","robot_model":"s1u"}`
+	status, modelMismatch := nodeAdmissionCall(t, g.handleRejoinMachine, "POST", "/api/v1/station/machines/lab-88/rejoin", "lab-88", `{"cluster_id":"cluster-a","request_id":"retry-model","robot_model":"other"}`)
+	if status != http.StatusConflict || !strings.Contains(string(modelMismatch), "ROBOT_MODEL_MISMATCH") {
+		t.Fatalf("model mismatch status=%d response=%s", status, modelMismatch)
+	}
+	status, response := nodeAdmissionCall(t, g.handleRejoinMachine, "POST", "/api/v1/station/machines/lab-88/rejoin", "lab-88", body)
+	if status != http.StatusAccepted || !strings.Contains(string(response), `"data"`) {
+		t.Fatalf("rejoin status=%d response=%s", status, response)
+	}
+	status, again := nodeAdmissionCall(t, g.handleRejoinMachine, "POST", "/api/v1/station/machines/lab-88/rejoin", "lab-88", body)
+	if status != http.StatusAccepted || !strings.Contains(string(again), rejoinOperationName("s1u-07-x86", "retry-001")) {
+		t.Fatalf("replay status=%d response=%s", status, again)
+	}
+	stored, err := client.Resource(nodeAdmissionGVR).Namespace("agent-a").Get(context.Background(), admission.GetName(), metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	serial, _, _ := unstructured.NestedString(stored.Object, "spec", "serial")
+	if serial != "1794925030888" {
+		t.Fatalf("rejoin changed NodeAdmission serial: %s", serial)
+	}
+	storedMachine, _ := client.Resource(machineGVR).Namespace(machineNamespace).Get(context.Background(), machine.GetName(), metav1.GetOptions{})
+	_ = unstructured.SetNestedField(storedMachine.Object, "Admitted", "status", "phase")
+	_ = unstructured.SetNestedField(storedMachine.Object, "retry-001", "status", "rejoinRequestID")
+	firstOperationName := rejoinOperationName("s1u-07-x86", "retry-001")
+	_ = unstructured.SetNestedField(storedMachine.Object, firstOperationName, "status", "operation")
+	if _, err := client.Resource(machineGVR).Namespace(machineNamespace).Update(context.Background(), storedMachine, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	active := &unstructured.Unstructured{Object: map[string]any{"apiVersion": "station.rlark.io/v1alpha1", "kind": "NodeOperation", "metadata": map[string]any{"name": firstOperationName, "namespace": "agent-a"}, "spec": map[string]any{"action": "Join", "nodeName": "s1u-07-x86", "clusterID": "cluster-a"}, "status": map[string]any{"phase": "Running"}}}
+	if _, err := client.Resource(nodeOperationGVR).Namespace("agent-a").Create(context.Background(), active, metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	status, again = nodeAdmissionCall(t, g.handleRejoinMachine, "POST", "/api/v1/station/machines/lab-88/rejoin", "lab-88", body)
+	if status != http.StatusAccepted || !strings.Contains(string(again), `"phase":"Running"`) {
+		t.Fatalf("replay while controller is running status=%d response=%s", status, again)
+	}
+	active, err = client.Resource(nodeOperationGVR).Namespace("agent-a").Get(context.Background(), firstOperationName, metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	active.Object["status"] = map[string]any{"phase": "Failed"}
+	if _, err := client.Resource(nodeOperationGVR).Namespace("agent-a").Update(context.Background(), active, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	status, retry := nodeAdmissionCall(t, g.handleRejoinMachine, "POST", "/api/v1/station/machines/lab-88/rejoin", "lab-88", `{"cluster_id":"cluster-a","request_id":"retry-002","robot_model":"s1u"}`)
+	if status != http.StatusAccepted || !strings.Contains(string(retry), "join-rejoin-") {
+		t.Fatalf("retry after failed Join status=%d response=%s", status, retry)
+	}
+	storedMachine, _ = client.Resource(machineGVR).Namespace(machineNamespace).Get(context.Background(), machine.GetName(), metav1.GetOptions{})
+	_ = unstructured.SetNestedField(storedMachine.Object, "retry-002", "status", "rejoinRequestID")
+	_ = unstructured.SetNestedField(storedMachine.Object, rejoinOperationName("s1u-07-x86", "retry-002"), "status", "operation")
+	if _, err := client.Resource(machineGVR).Namespace(machineNamespace).Update(context.Background(), storedMachine, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	active = &unstructured.Unstructured{Object: map[string]any{"apiVersion": "station.rlark.io/v1alpha1", "kind": "NodeOperation", "metadata": map[string]any{"name": rejoinOperationName("s1u-07-x86", "retry-002"), "namespace": "agent-a"}, "spec": map[string]any{"action": "Join", "nodeName": "s1u-07-x86", "clusterID": "cluster-a"}, "status": map[string]any{"phase": "Running"}}}
+	if _, err := client.Resource(nodeOperationGVR).Namespace("agent-a").Create(context.Background(), active, metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	status, conflict := nodeAdmissionCall(t, g.handleRejoinMachine, "POST", "/api/v1/station/machines/lab-88/rejoin", "lab-88", `{"cluster_id":"cluster-a","request_id":"retry-003","robot_model":"s1u"}`)
+	if status != http.StatusConflict || !strings.Contains(string(conflict), "REJOIN_IN_PROGRESS") {
+		t.Fatalf("active Join status=%d response=%s", status, conflict)
+	}
+}
+
+func TestMachineRejoinHTTPRoutesReturnAndPollTheCurrentOperation(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	cluster := stationHandlerCluster("cluster-a", "agent-a")
+	machine := handlerMachine("lab-88", "Joined", "", "1794925030888")
+	_ = unstructured.SetNestedField(machine.Object, "cluster-a", "status", "clusterID")
+	_ = unstructured.SetNestedField(machine.Object, "s1u-07-x86", "status", "nodeName")
+	_ = unstructured.SetNestedField(machine.Object, "s1u", "spec", "admit", "model")
+	class := &unstructured.Unstructured{Object: map[string]any{"apiVersion": "station.rlark.io/v1alpha1", "kind": "NodeClass", "metadata": map[string]any{"name": "s1u"}, "spec": map[string]any{
+		"kind": "Robot", "model": "s1u", "access": map[string]any{"entry": map[string]any{"port": int64(22), "user": "orin"}, "node": map[string]any{"address": "192.168.0.10", "port": int64(22), "user": "robot"}},
+	}}}
+	admission := &unstructured.Unstructured{Object: map[string]any{"apiVersion": "station.rlark.io/v1alpha1", "kind": "NodeAdmission", "metadata": map[string]any{"name": "s1u-07-x86", "namespace": "agent-a"}, "spec": map[string]any{"clusterID": "cluster-a", "serial": "1794925030888", "nodeClass": "s1u", "machine": map[string]any{"category": "Robot", "model": "s1u"}}, "status": map[string]any{"phase": "Joined"}}}
+	model := &unstructured.Unstructured{Object: map[string]any{"apiVersion": "station.rlark.io/v1alpha1", "kind": "RobotModel", "metadata": map[string]any{"name": "s1u"}, "spec": map[string]any{"displayName": "S1U"}}}
+	client := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), map[schema.GroupVersionResource]string{
+		stationClusterGVR: "ClusterList", machineGVR: "MachineList", nodeAdmissionGVR: "NodeAdmissionList", nodeClassGVR: "NodeClassList", robotModelGVR: "RobotModelList", nodeOperationGVR: "NodeOperationList",
+	}, cluster, machine, admission, class, model)
+	key := []byte(strings.Repeat("r", 32))
+	g := &Gateway{astribotState: astribotState{stationClient: client}, jwtSigningKey: key}
+	token, _, err := g.issueJWT("fixture-admin", "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	router := gin.New()
+	g.RegisterRoutes(router)
+	call := func(method, path, body string) *httptest.ResponseRecorder {
+		recorder := httptest.NewRecorder()
+		request := httptest.NewRequest(method, path, strings.NewReader(body))
+		request.Header.Set("Content-Type", "application/json")
+		request.Header.Set("Authorization", "Bearer "+token)
+		router.ServeHTTP(recorder, request)
+		return recorder
+	}
+	response := call(http.MethodPost, "/api/v1/station/machines/lab-88/rejoin", `{"cluster_id":"cluster-a","request_id":"retry-http-001"}`)
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("POST status=%d body=%s", response.Code, response.Body.String())
+	}
+	var accepted struct {
+		Data map[string]any `json:"data"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &accepted); err != nil {
+		t.Fatal(err)
+	}
+	name, _, _ := unstructured.NestedString(accepted.Data, "metadata", "name")
+	if name == "" || response.Header().Get("Location") != "/api/v1/station/node-operations/"+name+"?cluster_id=cluster-a" {
+		t.Fatalf("POST must return a pollable Location: headers=%v body=%s", response.Header(), response.Body.String())
+	}
+	operation := &unstructured.Unstructured{Object: accepted.Data}
+	operation.Object["metadata"].(map[string]any)["namespace"] = "agent-a"
+	operation.Object["status"] = map[string]any{"phase": "Failed", "stage": "Preflight", "conditions": []any{map[string]any{"type": "Progressing", "status": "False", "reason": "RejoinStateUnavailable", "message": "local WireGuard identity does not match NodeAdmission"}}}
+	if _, err := client.Resource(nodeOperationGVR).Namespace("agent-a").Create(t.Context(), operation, metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	pollPath := response.Header().Get("Location")
+	poll := call(http.MethodGet, pollPath, "")
+	var current map[string]any
+	if poll.Code != http.StatusOK || json.Unmarshal(poll.Body.Bytes(), &current) != nil || current["data"] != nil {
+		t.Fatalf("GET must return the raw NodeOperation: status=%d body=%s", poll.Code, poll.Body.String())
+	}
+	phase, _, _ := unstructured.NestedString(current, "status", "phase")
+	if phase != "Failed" || !strings.Contains(poll.Body.String(), "RejoinStateUnavailable") {
+		t.Fatalf("GET lost the terminal failure status: %s", poll.Body.String())
 	}
 }

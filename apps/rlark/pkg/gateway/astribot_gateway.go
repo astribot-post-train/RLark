@@ -11,6 +11,8 @@ import (
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/rest"
 	"k8s.io/utils/lru"
+
+	"github.com/rlinf/rlark/apps/rlark/pkg/log"
 )
 
 // astribotState is what our part of the Gateway holds; Gateway embeds it.
@@ -31,6 +33,8 @@ type astribotState struct {
 	provisions    stagedRuns
 	nodeJoins     stagedRuns
 	provisionDial provisionDialFunc
+	cameraStreams cameraStreamLimiter
+	cameraMedia   *cameraWHEP
 }
 
 // AstribotConfig is our part of the Gateway's configuration; Config embeds it. Every field is required.
@@ -59,11 +63,16 @@ func (c *AstribotConfig) setupFlags(fs *pflag.FlagSet) {
 func (g *Gateway) setupAstribot() {
 	g.registryImages = lru.New(registryImageCacheEntries)
 	g.provisionDial = dialProvisionMachine
+	g.cameraStreams = cameraStreamLimiter{perUser: make(map[string]int)}
 }
 
 // initAstribot is init's part for our clients, right after the Kubernetes clients.
-func (g *Gateway) initAstribot(restConfig *rest.Config) error {
+func (g *Gateway) initAstribot(ctx context.Context, restConfig *rest.Config) error {
 	var err error
+	g.cameraMedia, err = newCameraWHEP()
+	if err != nil {
+		log.FromContext(ctx).Error(err, "Camera WHEP disabled because its configuration is invalid")
+	}
 	g.stationClient, err = dynamic.NewForConfig(restConfig)
 	if err != nil {
 		return fmt.Errorf("create dynamic Kubernetes client: %w", err)
@@ -92,6 +101,9 @@ func (g *Gateway) startAstribot(ctx context.Context) error {
 		return err
 	}
 	go g.sweepRobotClaims(ctx)
+	if g.cameraMedia != nil {
+		go g.cameraMedia.reconcileStartup(ctx)
+	}
 	return nil
 }
 
@@ -120,8 +132,10 @@ func (g *Gateway) registerAstribotRoutes(api *gin.RouterGroup) {
 		station.GET("", g.handleListStations)
 		station.GET("/:name", g.handleGetStation)
 		station.GET("/:name/running-images", g.handleStationRunningImages)
+		station.GET("/:name/body-state", g.handleStationBodyState)
 		station.DELETE("/:name", g.handleDeleteStation)
 	}
+	adminAPI.GET("/station/summary", g.handleStationSummary)
 	stationNodeOperations := adminAPI.Group("/station/node-operations")
 	{
 		stationNodeOperations.POST("", g.handleCreateNodeOperation)
@@ -130,6 +144,8 @@ func (g *Gateway) registerAstribotRoutes(api *gin.RouterGroup) {
 	}
 	adminAPI.GET("/station/site-network", g.handleGetSiteNetwork)
 	adminAPI.PUT("/station/site-network/sites/:site/discovery", g.handleUpdateSiteDiscovery)
+	adminAPI.GET("/station/site-network/sites/:site/scan", g.handleDiscoveryScan)
+	adminAPI.POST("/station/site-network/sites/:site/scan", g.handleDiscoveryScan)
 	adminAPI.GET("/station/robot-models", g.handleListRobotModels)
 	adminAPI.DELETE("/station/robot-models/:name", g.handleDeleteRobotModel)
 	nodeAdmissions := adminAPI.Group("/station/node-admissions")
@@ -156,6 +172,7 @@ func (g *Gateway) registerAstribotRoutes(api *gin.RouterGroup) {
 		clusterProvisions.POST("/:name/clear", g.handleClearClusterProvision)
 	}
 	adminAPI.GET("/station/machines", g.handleListMachines)
+	adminAPI.POST("/station/machines/:name/rejoin", g.handleRejoinMachine)
 	adminAPI.POST("/station/machines/admit", g.handleAdmitMachines)
 	adminAPI.GET("/station/node-classes/:name/access", g.handleGetNodeClassAccess)
 	adminAPI.PUT("/station/node-classes/:name/access", g.handleSetNodeClassAccess)

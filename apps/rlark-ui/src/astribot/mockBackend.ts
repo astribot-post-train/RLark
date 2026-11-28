@@ -1,9 +1,10 @@
+import type { SiteDiscoveryScan } from "./api";
 // The mock console's answers to the Gateway routes this fork adds or changes. mockBackend.ts asks
 // astribotMockRoute first and adds the fields of our storages to the ones it saves.
 import type { CRDNode } from "../types.js";
 import { displayNameError } from "./lib/displayName.js";
 import type { StorageClass } from "./lib/storageClass.js";
-import { mockAdmissions, mockSiteNodes, mockStationCameraFrame, mockStationCameraReport, mockStations } from "./mockStations.js";
+import { mockAdmissions, mockSiteNodes, mockStationCameraFrame, mockStationCameraReport, mockStationClusterNames, mockStations } from "./mockStations.js";
 
 // The demo storages: RLark's two and an SMB share.
 export const mockStorageClasses: StorageClass[] = [
@@ -129,12 +130,75 @@ const mockSiteNetwork = {
     { clusterID: "rlark-ksyun-gpu", nodeName: "10-0-2-57", role: "Hub", site: "ksyun", address: "10.254.240.2" },
   ],
   nodeClasses: [{ name: "s1u", hasAccess: true, hasDiscovery: true, entryPort: 22, hostKeyFingerprints: ["SHA256:mock-factory-key"] }],
-  status: { observedGeneration: 11, members: 4, unreachable: [], conditions: [
+  status: { observedGeneration: 12, members: 4, unreachable: [], conditions: [
     { type: "Ready", status: "True", reason: "Computed", message: "" },
     { type: "FullyConnected", status: "True", reason: "AllPairsReachable", message: "" },
-    { type: "DiscoveryStale", status: "False", reason: "HubsReport", message: "" },
   ] },
 };
+
+const mockDiscoveryScans = new Map<string, SiteDiscoveryScan>();
+
+// The one restart request the demo's station Nodes remember, by node name.
+const mockRestartRequests = new Map<string, { requestID: string; startedAt: number }>();
+
+// Simulated rejoins for the offline robot s1u-02. Nothing here talks to a machine; the phase moves on a clock so the
+// card can show submit, progress, success and a refresh of the same task. The records stay in this tab, the way a
+// Gateway would still have them after a reload. They are never sent to a robot.
+const MOCK_REJOIN_KEY = "rlark.mock-rejoin-ops.v1";
+type MockRejoinOp = { name: string; clusterID: string; nodeName: string; requestID: string; startedAt: number; fail: boolean };
+
+function readMockRejoinOps(): Map<string, MockRejoinOp> {
+  const map = new Map<string, MockRejoinOp>();
+  if (typeof sessionStorage === "undefined") return map;
+  try {
+    const parsed = JSON.parse(sessionStorage.getItem(MOCK_REJOIN_KEY) ?? "[]") as unknown;
+    if (!Array.isArray(parsed)) return map;
+    for (const item of parsed) {
+      if (!item || typeof item !== "object") continue;
+      const op = item as Partial<MockRejoinOp>;
+      if (typeof op.name !== "string" || typeof op.requestID !== "string" || typeof op.clusterID !== "string" || typeof op.nodeName !== "string" || typeof op.startedAt !== "number") continue;
+      map.set(op.name, { name: op.name, clusterID: op.clusterID, nodeName: op.nodeName, requestID: op.requestID, startedAt: op.startedAt, fail: Boolean(op.fail) });
+    }
+  } catch {
+    // A broken demo record is ignored; the card then has nothing to restore.
+  }
+  return map;
+}
+
+function rememberMockRejoinOps() {
+  if (typeof sessionStorage === "undefined") return;
+  sessionStorage.setItem(MOCK_REJOIN_KEY, JSON.stringify([...mockRejoinOps.values()]));
+}
+
+const mockRejoinOps = readMockRejoinOps();
+
+function mockRejoinView(op: MockRejoinOp) {
+  const elapsed = Date.now() - op.startedAt;
+  let phase: "Pending" | "Running" | "Succeeded" | "Failed" = "Pending";
+  let stage = "";
+  const conditions: { type: string; status: string; reason?: string; message?: string }[] = [];
+  if (op.fail && elapsed >= 2000) {
+    phase = "Failed";
+    stage = "Preflight";
+    conditions.push({ type: "Failed", status: "False", reason: "EntryUnreachable", message: "mock: the entry device did not answer" });
+  } else if (elapsed >= 5500) {
+    phase = "Succeeded";
+    stage = "VerifyAddons";
+  } else if (elapsed >= 3500) {
+    phase = "Running";
+    stage = "Install";
+  } else if (elapsed >= 1500) {
+    phase = "Running";
+    stage = "Preflight";
+  }
+  return {
+    apiVersion: "station.rlark.io/v1alpha1",
+    kind: "NodeOperation",
+    metadata: { name: op.name, namespace: op.clusterID, creationTimestamp: new Date(op.startedAt).toISOString() },
+    spec: { action: "Join" as const, nodeName: op.nodeName, clusterID: op.clusterID, requestID: `rejoin-${op.requestID}` },
+    status: { phase, ...(stage ? { stage } : {}), ...(conditions.length ? { conditions } : {}) },
+  };
+}
 
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), {
@@ -155,6 +219,25 @@ export interface MockState {
 // The answer to a request on one of our routes; undefined for RLark's own.
 export async function astribotMockRoute(method: string, path: string, request: Request, state: MockState) {
   if (method === "GET" && path === "/api/v1/station/site-network") return json(mockSiteNetwork);
+  const scanRoute = path.match(/^\/api\/v1\/station\/site-network\/sites\/([^/]+)\/scan$/);
+  if (scanRoute && (method === "GET" || method === "POST")) {
+    const siteName = decodeURIComponent(scanRoute[1]);
+    const site = mockSiteNetwork.sites.find((item) => item.name === siteName);
+    if (!site) return json({ code: "RESOURCE_NOT_FOUND", message: "site not found" }, 404);
+    const current = mockDiscoveryScans.get(siteName);
+    if (current?.phase === "Running" && Date.now() - Date.parse(current.startedAt) > 2500) {
+      current.phase = "Succeeded";
+      current.completed = current.total;
+    }
+    if (method === "GET") return json(current ?? null);
+    const { id } = await request.json();
+    if (current && (current.id === id || current.phase === "Running")) return json(current, current.phase === "Running" ? 202 : 200);
+    if (!site.discovery?.enabled) return json({ code: "RESOURCE_CONFLICT", message: "Save scan settings first." }, 409);
+    const total = mockSiteNetwork.members.filter((member) => member.site === siteName && member.role === "Hub").length;
+    const scan: SiteDiscoveryScan = { id, startedAt: new Date().toISOString(), phase: "Running", total, completed: 0, failed: 0 };
+    mockDiscoveryScans.set(siteName, scan);
+    return json(scan, 202);
+  }
   const discoveryRoute = path.match(/^\/api\/v1\/station\/site-network\/sites\/([^/]+)\/discovery$/);
   if (method === "PUT" && discoveryRoute) {
     const body = await request.json();
@@ -165,10 +248,53 @@ export async function astribotMockRoute(method: string, path: string, request: R
     site.discovery = body.discovery;
     mockSiteNetwork.resourceVersion = `mock-rv-${Number(mockSiteNetwork.resourceVersion.split("-").at(-1)) + 1}`;
     mockSiteNetwork.generation += 1;
-    return json({ resourceVersion: mockSiteNetwork.resourceVersion, site });
+    mockSiteNetwork.status.observedGeneration = mockSiteNetwork.generation;
+    return json(mockSiteNetwork);
   }
   // The site-node page's fixtures: the same shapes the Gateway serves, so the real cards and detail render.
   const query = new URL(request.url).searchParams;
+  // The page also reads each station's management Node by name for its power and restart records. The demo has no
+  // such Node objects, so a station's own record answers as one: its bound UID, and one restart that moves from
+  // requested to done. A patch carries the resourceVersion of the read that passed the request check, so a 409 is
+  // reproduced for a second writer.
+  const stationNodeRoute = path.match(/^\/api\/v1\/rlinf\.io\/v1alpha1\/nodes\/([^/]+)$/);
+  const stationOfNode = stationNodeRoute ? mockStations.find((item) => item.metadata.name === decodeURIComponent(stationNodeRoute[1])) : undefined;
+  if (stationNodeRoute && stationOfNode) {
+    const name = stationOfNode.metadata.name;
+    const restart = mockRestartRequests.get(name);
+    const elapsed = restart ? Date.now() - restart.startedAt : 0;
+    const annotations: Record<string, string> = {};
+    if (restart && elapsed >= 20000) {
+      annotations["rlark.io/restart-request-state"] = JSON.stringify({ kind: "host", profile: restart.requestID, attempts: 1, was: "mock-kernel", at: restart.startedAt / 1000, done: new Date(restart.startedAt + 15000).toISOString() });
+      annotations["rlark.io/maintenance"] = JSON.stringify({ kind: "host", of: `request ${restart.requestID}`, state: "acting", why: "mock: rebooting the robot", since: restart.startedAt / 1000 });
+    } else if (restart && elapsed >= 5000) {
+      annotations["rlark.io/maintenance"] = JSON.stringify({ kind: "host", of: `request ${restart.requestID}`, state: "waiting", why: "mock: waiting for the robot to be idle", since: restart.startedAt / 1000 });
+    }
+    const node = {
+      apiVersion: "rlinf.io/v1alpha1",
+      kind: "Node",
+      metadata: {
+        name,
+        namespace: stationOfNode.metadata.namespace,
+        labels: restart ? { "rlark.io/restart-request": restart.requestID } : {},
+        annotations,
+        resourceVersion: restart ? `mock-${restart.startedAt}` : "mock-0",
+      },
+      spec: {},
+      status: { phase: "Running", kubernetesNodeUID: stationOfNode.spec.nodeUID },
+    };
+    if (method === "GET") return json(node);
+    if (method === "PATCH") {
+      const body = await request.json();
+      const resourceVersion = body?.metadata?.resourceVersion;
+      if (resourceVersion !== undefined && resourceVersion !== node.metadata.resourceVersion) {
+        return json({ code: "RESOURCE_CONFLICT", message: "The Node changed before this write." }, 409);
+      }
+      const requestID = body?.metadata?.labels?.["rlark.io/restart-request"];
+      if (requestID) mockRestartRequests.set(name, { requestID, startedAt: Date.now() });
+      return json(node);
+    }
+  }
   if (method === "GET" && path === "/api/v1/station/stations") return json({ items: mockStations });
   if (method === "GET" && path === "/api/v1/site-nodes") {
     const cluster = query.get("cluster_id");
@@ -178,7 +304,45 @@ export async function astribotMockRoute(method: string, path: string, request: R
     const cluster = query.get("cluster_id");
     return json({ items: mockAdmissions.filter((item) => !cluster || item.cluster_id === cluster) });
   }
-  if (method === "GET" && path === "/api/v1/station/node-operations") return json({ items: [] });
+  if (method === "GET" && path === "/api/v1/station/machines") {
+    return json({
+      items: [{
+        name: "machine-s1u-02", site: "shenzhen", node_class: "s1u", machine_type: "Robot", machine_model: "s1u", source: "mock",
+        phase: "Joined", cluster_id: mockStationClusterNames.robot, node_name: "s1u-02-x86", admissible: false, joining: false,
+      }],
+      classes: {},
+    });
+  }
+  const rejoinRoute = path.match(/^\/api\/v1\/station\/machines\/([^/]+)\/rejoin$/);
+  if (method === "POST" && rejoinRoute) {
+    const machineName = decodeURIComponent(rejoinRoute[1]);
+    if (machineName !== "machine-s1u-02") return json({ code: "MACHINE_NOT_FOUND", error: "machine not found" }, 404);
+    const body = await request.json() as { cluster_id?: string; request_id?: string };
+    const clusterID = body.cluster_id ?? "";
+    const requestID = body.request_id ?? "";
+    if (!requestID || clusterID !== mockStationClusterNames.robot) return json({ code: "MACHINE_NOT_JOINED", error: "machine is not joined to the requested cluster" }, 409);
+    const same = [...mockRejoinOps.values()].find((op) => op.requestID === requestID);
+    if (same) return json({ data: mockRejoinView(same) }, 202);
+    const active = [...mockRejoinOps.values()].find((op) => {
+      const phase = mockRejoinView(op).status.phase;
+      return phase !== "Succeeded" && phase !== "Failed";
+    });
+    if (active) return json({ code: "REJOIN_IN_PROGRESS", error: "another rejoin request is active" }, 409);
+    const op = { name: `join-rejoin-${requestID.slice(0, 24)}`, clusterID, nodeName: "s1u-02-x86", requestID, startedAt: Date.now(), fail: requestID.includes("fail") };
+    mockRejoinOps.set(op.name, op);
+    rememberMockRejoinOps();
+    return json({ data: mockRejoinView(op) }, 202);
+  }
+  if (method === "GET" && path === "/api/v1/station/node-operations") {
+    const cluster = query.get("cluster_id");
+    return json({ items: [...mockRejoinOps.values()].filter((op) => !cluster || op.clusterID === cluster).map(mockRejoinView) });
+  }
+  const rejoinOperation = path.match(/^\/api\/v1\/station\/node-operations\/([^/]+)$/);
+  if (method === "GET" && rejoinOperation) {
+    const op = mockRejoinOps.get(decodeURIComponent(rejoinOperation[1]));
+    if (!op || (query.get("cluster_id") && query.get("cluster_id") !== op.clusterID)) return json({ error: "node operation not found" }, 404);
+    return json(mockRejoinView(op));
+  }
   const cameraReport = path.match(/^\/api\/v1\/rlinf\.io\/v1alpha1\/nodes\/([^/]+)\/cameras$/);
   if (method === "GET" && cameraReport) return json(mockStationCameraReport(decodeURIComponent(cameraReport[1])));
   const cameraFrame = path.match(/^\/api\/v1\/rlinf\.io\/v1alpha1\/nodes\/[^/]+\/cameras\/([^/]+)\.jpg$/);

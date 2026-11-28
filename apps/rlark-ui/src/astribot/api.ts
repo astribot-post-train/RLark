@@ -1,9 +1,13 @@
 // The console's requests to the Gateway routes this fork adds. backend.ts keeps RLark's own.
 import { ApiError, request, requestJson, withQuery } from "../api.js";
+import { nodesApi } from "../backend.js";
 import type { AdmittedMachine, IssuedNodeAdmission, MachineList, NodeAdmission, NodeClassAccess, RobotPowerDesired, SiteNode } from "./lib/siteNodeDisplay.js";
 import type { NodeJoin } from "./lib/nodeJoin.js";
 import type { ClusterProvision, NewClusterForm } from "./lib/clusterProvision.js";
+import type { BodyCapabilities, StationBodyState } from "./lib/bodyCapabilities.js";
 import type { CRDNode } from "../types.js";
+import { RESTART_REQUEST_LABEL } from "./lib/nodeRestart.js";
+import { parseStationSummary } from "./lib/stationFleet.js";
 
 interface Condition {
   type: string;
@@ -15,6 +19,10 @@ interface Condition {
 
 // A page of a Station API list: continue asks for the next.
 type Page<T> = { items: T[]; continue?: string };
+export interface StationListQuery extends Record<string, string | boolean | undefined> {
+  cluster_id?: string; limit?: string; continue?: string; q?: string; phase?: string; model?: string;
+  zone?: string; powerState?: string; occupancy?: string; alertOnly?: boolean | string; sort?: string;
+}
 
 // A site node: the NetworkEnrollment of the node its name is, as GET /api/v1/station/stations lists it.
 export interface StationItem {
@@ -35,6 +43,34 @@ export interface StationItem {
       conditions?: Condition[];
     };
   };
+}
+
+export type StationSummaryPhase = "Bound" | "Offline" | "Conflict" | "Retired" | "Unknown";
+
+export interface StationClusterSummary {
+  clusterId: string;
+  namespace: string;
+  total: number;
+  robots: number;
+  bound: number;
+  offline: number;
+  conflict: number;
+  alerts: number;
+  driverReady: number;
+  cameraFault: number;
+}
+
+export interface StationSummary {
+  total: number;
+  robots: number;
+  otherNodes: number;
+  byPhase: Record<StationSummaryPhase, number>;
+  alerts: number;
+  driverReady: number;
+  cameraFault: number;
+  occupied: number;
+  clusters: StationClusterSummary[];
+  generatedAt?: string;
 }
 
 export interface StationRunningImage {
@@ -109,15 +145,29 @@ export const clusterProvisionsApi = {
 };
 
 export const stationsApi = {
-  list(query: Record<string, string | undefined> = {}, signal?: AbortSignal) {
-    return requestJson<Page<StationItem>>(withQuery("/api/v1/station/stations", query), { signal });
+  list(query: StationListQuery = {}, signal?: AbortSignal) {
+    const { powerState, alertOnly, ...rest } = query;
+    const normalized = Object.fromEntries(Object.entries(rest).map(([key, value]) => [key, value === undefined ? undefined : String(value)]));
+    return requestJson<Page<StationItem>>(withQuery("/api/v1/station/stations", {
+      ...normalized,
+      power_state: powerState,
+      alert_only: alertOnly === undefined ? undefined : String(alertOnly),
+    }), { signal });
+  },
+  async summary(clusterId?: string, signal?: AbortSignal): Promise<StationSummary | undefined> {
+    const response = await requestJson<unknown>(withQuery("/api/v1/station/summary", { cluster_id: clusterId }), { signal });
+    return parseStationSummary(response);
+  },
+  bodyState(name: string, clusterID: string, nodeUID: string, signal: AbortSignal) {
+    const path = `/api/v1/station/stations/${encodeURIComponent(name)}/body-state`;
+    return requestJson<StationBodyState>(withQuery(path, { cluster_id: clusterID, node_uid: nodeUID }), { signal });
   },
   runningImages(name: string, clusterID: string, nodeUID: string, signal?: AbortSignal) {
     const path = `/api/v1/station/stations/${encodeURIComponent(name)}/running-images`;
     return requestJson<{ items: StationRunningImage[] }>(withQuery(path, { cluster_id: clusterID, node_uid: nodeUID }), { signal });
   },
-  listNodeOperations(clusterID: string, signal?: AbortSignal) {
-    return requestJson<Page<NodeOperation>>(withQuery("/api/v1/station/node-operations", { cluster_id: clusterID, limit: 100 }), { signal });
+  listNodeOperations(clusterID: string, signal?: AbortSignal, pageToken?: string) {
+    return requestJson<Page<NodeOperation>>(withQuery("/api/v1/station/node-operations", { cluster_id: clusterID, limit: 100, continue: pageToken || undefined }), { signal });
   },
   getNodeOperation(name: string, clusterID: string, signal?: AbortSignal) {
     return requestJson<NodeOperation>(withQuery(`/api/v1/station/node-operations/${encodeURIComponent(name)}`, { cluster_id: clusterID }), { signal });
@@ -125,6 +175,19 @@ export const stationsApi = {
   // The desired power of a robot's Node, which its Addon converges on; the Gateway records who set it.
   setRobotPower(node: string, namespace: string, desired: RobotPowerDesired) {
     return request(withQuery(`/api/v1/rlinf.io/v1alpha1/nodes/${encodeURIComponent(node)}/robot-power`, { namespace }), { method: "PUT", body: { desired } });
+  },
+  // A whole-machine restart is a one-shot Node label, not a command: the robot's node tuner runs it once per value,
+  // under its node-profile, occupancy and emergency-stop guards, and reports the outcome in
+  // rlark.io/restart-request-state. Only this label is written; the claim holder's rlark.io/robot-restart annotation is
+  // never touched, and no Wake-on-LAN or shell path is involved. The resourceVersion of the read that passed the
+  // outstanding-request check makes the write conditional: a 409 means another request changed the Node first.
+  requestRestart(node: string, namespace: string, requestID: string, resourceVersion?: string) {
+    return nodesApi.patch(node, {
+      metadata: {
+        labels: { [RESTART_REQUEST_LABEL]: requestID },
+        ...(resourceVersion ? { resourceVersion } : {}),
+      },
+    }, namespace);
   },
   // Hold-to-move to a pose (初始姿势 is home; administrator or operator): hold about every 200 ms while the button is
   // held, stop when it is let go; the robot stops by itself 0.5 s after the last hold. A refusal is an ApiError of
@@ -198,7 +261,24 @@ export interface SiteNetworkDiscoveryInput {
   discovery: SiteNetworkDiscovery | null;
 }
 
+export interface SiteDiscoveryScan {
+  id: string;
+  startedAt: string;
+  phase: "Running" | "Succeeded" | "Failed" | "TimedOut";
+  total: number;
+  completed: number;
+  failed: number;
+}
+
+const discoveryScanPath = (site: string) => `/api/v1/station/site-network/sites/${encodeURIComponent(site)}/scan`;
+
 export const siteNetworkApi = {
+  getScan(site: string, signal?: AbortSignal) {
+    return requestJson<SiteDiscoveryScan | null>(discoveryScanPath(site), { signal });
+  },
+  startScan(site: string, id: string) {
+    return requestJson<SiteDiscoveryScan>(discoveryScanPath(site), { method: "POST", body: { id } });
+  },
   get(signal?: AbortSignal) {
     return requestJson<SiteNetworkView>("/api/v1/station/site-network", { signal });
   },
@@ -215,6 +295,7 @@ export interface RobotModelItem {
   displayName?: string;
   vendor?: string;
   description?: string;
+  capabilities?: BodyCapabilities;
   references: { nodeClasses: number; nodes: number; machines: number; nodeAdmissions: number; nodeJoins: number };
 }
 
@@ -332,6 +413,16 @@ export const machinesApi = {
       method: "POST",
       body: input,
     });
+  },
+  // One retry of a robot that already joined this cluster. The Gateway returns 202 and the NodeOperation to follow;
+  // the same request_id returns the same operation. No SSH password is sent.
+  async rejoin(name: string, input: { cluster_id: string; request_id: string; robot_model?: string }, signal?: AbortSignal) {
+    const response = await requestJson<{ data?: NodeOperation }>(
+      `/api/v1/station/machines/${encodeURIComponent(name)}/rejoin`,
+      { method: "POST", body: input, signal },
+    );
+    if (!response.data?.metadata?.name) throw new ApiError(502, "rejoin response has no operation", response);
+    return response.data;
   },
   // The node's passwords of a NodeClass: written, never read back.
   setClassAccess(nodeClass: string, input: { node_password: string; sudo_password?: string }) {

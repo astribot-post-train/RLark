@@ -195,6 +195,28 @@ spec:
             - {name: S1U_NODE_PROFILE, value: /s1u/tuner/node_profile.env}
             - {name: S1U_BODIES, value: /s1u/tuner/bodies.json}
             - {name: S1U_CAMERA_DIRECTORY, value: /camera}
+            {{- if and .Values.cameraRTSPPrefix .Values.cameraSourceSecret }}
+            - name: S1U_CAMERA_RTSP_PREFIX
+              value: {{ printf "%q" .Values.cameraRTSPPrefix }}
+            - name: S1U_CAMERA_SOURCE_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ printf "%q" .Values.cameraSourceSecret }}
+                  key: source-key
+                  optional: true
+            - name: S1U_CAMERA_RTSP_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ printf "%q" .Values.cameraSourceSecret }}
+                  key: rtsp-username
+                  optional: true
+            - name: S1U_CAMERA_RTSP_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ printf "%q" .Values.cameraSourceSecret }}
+                  key: rtsp-password
+                  optional: true
+            {{- end }}
           # Ready once it answers, whatever the cameras are: their state is the Node's label.
           readinessProbe:
             httpGet: {path: /cameras, port: 18891}

@@ -12,14 +12,6 @@ import (
 	"encoding/hex"
 	"encoding/pem"
 	"errors"
-	"math/big"
-	"os"
-	"path/filepath"
-	"regexp"
-	"strings"
-	"testing"
-	"time"
-
 	stationv1alpha1 "github.com/rlinf/rlark/astribot/station/api/v1alpha1"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -29,10 +21,18 @@ import (
 	"k8s.io/client-go/kubernetes"
 	kubefake "k8s.io/client-go/kubernetes/fake"
 	clientscheme "k8s.io/client-go/kubernetes/scheme"
+	"math/big"
+	"os"
+	"path/filepath"
+	"reflect"
+	"regexp"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	"sigs.k8s.io/yaml"
+	"strings"
+	"testing"
+	"time"
 )
 
 type installMembers struct{ member kubernetes.Interface }
@@ -75,6 +75,8 @@ func newInstallRobot(t *testing.T) *installRobot {
 		}
 		text := strings.TrimPrefix(string(stdin), "node-secret\n")
 		switch {
+		case strings.Contains(text, "--public-key"):
+			return "Rpk1Y6lpJXIGOdNcgLMYs0J6mBG+67d85HVJs+upaR4=\n", 0
 		case strings.Contains(command, "cat > $B/installer.tar.new"):
 			robot.received = []byte(text)
 		case strings.Contains(text, "sha256sum $B/installer.tar"):
@@ -91,6 +93,111 @@ func newInstallRobot(t *testing.T) *installRobot {
 		return "", 0
 	}
 	return robot
+}
+
+func TestRejoinRestoresOnlyTheExistingTunnelAndRejectsMissingIdentity(t *testing.T) {
+	ctx := context.Background()
+	scheme := runtime.NewScheme()
+	_ = clientscheme.AddToScheme(scheme)
+	_ = stationv1alpha1.AddToScheme(scheme)
+	robot := newInstallRobot(t)
+	robot.observation = "operation=old-install\nunit=inactive\nresult=0\ncertificate=" + kubeletCertificate(t, "s1u-02-x86") + "\nfailed=\n"
+	class := &stationv1alpha1.NodeClass{ObjectMeta: metav1.ObjectMeta{Name: "s1u"}, Spec: stationv1alpha1.NodeClassSpec{Kind: stationv1alpha1.NodeClassKindRobot, Model: "s1u", Access: &stationv1alpha1.NodeClassAccess{
+		Entry: stationv1alpha1.NodeClassEntry{Port: robot.entry.port(), User: "orin", Password: stationv1alpha1.SecretValue{Secret: "s1u-access", Key: "password"}},
+		Node:  stationv1alpha1.NodeClassHost{Address: "192.168.0.10", Port: 22, User: "robot", Password: stationv1alpha1.SecretValue{Secret: "s1u-access", Key: "x86_password"}}}}}
+	accounts := rlarkSecret("s1u-access", map[string]string{"password": "entry-secret", "x86_password": "node-secret"})
+	config := `{"interface":"st-wg0","address":"10.254.240.22/32","listenPort":0,"mtu":1420,"peers":[],"routes":[]}`
+	digest := sha256.Sum256([]byte(config))
+	admission := &stationv1alpha1.NodeAdmission{ObjectMeta: metav1.ObjectMeta{Namespace: testNamespace, Name: "s1u-02-x86"}, Spec: stationv1alpha1.NodeAdmissionSpec{
+		ClusterID: "cluster-a", Serial: "serial-02", NodeClass: "s1u", PublicKey: "Rpk1Y6lpJXIGOdNcgLMYs0J6mBG+67d85HVJs+upaR4=", Machine: &stationv1alpha1.NodeMachine{Category: stationv1alpha1.MachineCategoryRobot, Model: "s1u"}}, Status: stationv1alpha1.NodeAdmissionStatus{Phase: stationv1alpha1.NodeAdmissionJoined}}
+	enrollment := &stationv1alpha1.NetworkEnrollment{ObjectMeta: metav1.ObjectMeta{Namespace: testNamespace, Name: "s1u-02-x86"}, Spec: stationv1alpha1.NetworkEnrollmentSpec{ClusterID: "cluster-a", NodeUID: "node-uid", PublicKey: admission.Spec.PublicKey}, Status: stationv1alpha1.NetworkEnrollmentStatus{Phase: stationv1alpha1.NetworkEnrollmentEnrolled, Config: config, ConfigHash: hex.EncodeToString(digest[:]), PublicKey: admission.Spec.PublicKey}}
+	entryAddress, _, _ := strings.Cut(robot.entry.address(), ":")
+	op := &stationv1alpha1.NodeOperation{ObjectMeta: metav1.ObjectMeta{Namespace: testNamespace, Name: "join-rejoin-001", UID: "rejoin-op-uid"}, Spec: stationv1alpha1.NodeOperationSpec{
+		RequestID: "rejoin-request-001", Action: "Join", ClusterID: "cluster-a", NodeName: "s1u-02-x86", NodeUID: "node-uid", Admission: "s1u-02-x86", NodeClass: "s1u", RequestedBy: "alice",
+		SSH: &stationv1alpha1.NodeSSHConnection{Address: "192.168.0.10", Port: 22, User: "robot", HostKeyFingerprint: robot.node.fingerprint(), Jump: &stationv1alpha1.NodeSSHHop{Address: entryAddress, Port: robot.entry.port(), User: "orin", HostKeyFingerprint: robot.entry.fingerprint()}},
+	}}
+	management := fake.NewClientBuilder().WithScheme(scheme).WithObjects(class, accounts, admission, enrollment).Build()
+	member := kubefake.NewSimpleClientset(&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: op.Spec.NodeName, UID: types.UID("node-uid")}})
+	driver := &InstallerJoinDriver{Reader: management, Writer: management, Access: NodeClassAccess{Reader: management, Namespace: "default"}, Members: installMembers{member}}
+
+	if done, uid, err := driver.Execute(ctx, op, "Preflight"); !done || uid != "node-uid" || err != nil {
+		t.Fatalf("rejoin with original identity: done=%v uid=%q err=%v", done, uid, err)
+	}
+	if len(robot.nodeScripts) != 1 || !strings.Contains(robot.nodeScripts[0], "/run/station-network/config.json") || !strings.Contains(robot.nodeScripts[0], "systemctl restart rlark-station-gateway") {
+		t.Fatalf("rejoin should restore only the existing computed tunnel document: %q", robot.nodeScripts)
+	}
+	for _, script := range robot.nodeScripts {
+		if strings.Contains(script, "kubeadm reset") || strings.Contains(script, "RLARK_CODE") || strings.Contains(script, "RLARK_SERVER=") || strings.Contains(script, "install.sh") {
+			t.Fatalf("rejoin ran a reset/bootstrap effect: %s", script)
+		}
+	}
+	stored := &stationv1alpha1.NodeAdmission{}
+	if err := management.Get(ctx, types.NamespacedName{Namespace: testNamespace, Name: admission.Name}, stored); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(stored.Spec, admission.Spec) || !reflect.DeepEqual(stored.Status, admission.Status) {
+		t.Fatalf("rejoin mutated the original NodeAdmission: spec=%+v status=%+v", stored.Spec, stored.Status)
+	}
+
+	robot.nodeScripts = nil
+	robot.node.run = func(command string, stdin []byte) (string, uint32) {
+		if command == "sudo -n true" {
+			return "", 1
+		}
+		return robot.observation, 0
+	}
+	if _, _, err := driver.Execute(ctx, op, "Preflight"); !errors.Is(err, ErrRejoinStateUnavailable) {
+		t.Fatalf("missing local WireGuard identity must block rejoin: %v", err)
+	}
+	if len(robot.nodeScripts) != 0 {
+		t.Fatalf("missing identity reached a mutation: %q", robot.nodeScripts)
+	}
+
+	failedOperation := op.DeepCopy()
+	failedOperation.Name = "join-rejoin-missing-identity"
+	failedOperation.UID = "rejoin-failed-uid"
+	failedOperation.Spec.RequestID = "rejoin-missing-identity"
+	statusClient := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(failedOperation).WithObjects(class, accounts, admission, enrollment, failedOperation).Build()
+	driver.Reader, driver.Writer = statusClient, statusClient
+	robot.nodeScripts = nil
+	robot.node.run = func(command string, stdin []byte) (string, uint32) {
+		if command == "sudo -n true" {
+			return "", 1
+		}
+		return robot.observation, 0
+	}
+	executor := &NodeLifecycleExecutor{Members: installMembers{member}, Installer: driver}
+	reconciler := NewNodeOperationReconciler(statusClient, statusClient, testRegistrations{testNamespace: {ClusterID: "cluster-a", Namespace: testNamespace}}, executor)
+	if _, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(failedOperation)}); !errors.Is(err, ErrRejoinStateUnavailable) {
+		t.Fatalf("missing local identity should stop the asynchronous operation: %v", err)
+	}
+	failedStored := &stationv1alpha1.NodeOperation{}
+	if err := statusClient.Get(ctx, client.ObjectKeyFromObject(failedOperation), failedStored); err != nil {
+		t.Fatal(err)
+	}
+	if failedStored.Status.Phase != "Blocked" || len(failedStored.Status.Conditions) != 1 || failedStored.Status.Conditions[0].Reason != "RejoinStateUnavailable" || !strings.Contains(failedStored.Status.Conditions[0].Message, "WireGuard identity is invalid") {
+		t.Fatalf("the failure must be pollable and specific: %+v", failedStored.Status)
+	}
+	robot.node.run = func(command string, stdin []byte) (string, uint32) {
+		if command == "sudo -n true" {
+			return "", 1
+		}
+		return "DwjZS7W8Yab4SZN62rtBuvKzrzWwoa6nHwObl1Ck2XM=\n", 0
+	}
+	if _, _, err := driver.Execute(ctx, op, "Preflight"); !errors.Is(err, ErrRejoinStateUnavailable) || !strings.Contains(err.Error(), "does not match NodeAdmission") {
+		t.Fatalf("mismatched local identity must block without replacing records: %v", err)
+	}
+	if len(robot.nodeScripts) != 0 {
+		t.Fatalf("mismatched identity reached a mutation: %q", robot.nodeScripts)
+	}
+
+	_, _ = member.CoreV1().Nodes().Get(ctx, op.Spec.NodeName, metav1.GetOptions{})
+	if err := member.CoreV1().Nodes().Delete(ctx, op.Spec.NodeName, metav1.DeleteOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := driver.Execute(ctx, op, "Preflight"); !errors.Is(err, ErrRejoinStateUnavailable) {
+		t.Fatalf("missing member Node must block rejoin: %v", err)
+	}
 }
 
 func TestInstallerJoinRunsTheInstallerOnceWithACodeOfItsOwn(t *testing.T) {

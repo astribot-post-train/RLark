@@ -14,7 +14,7 @@
 | `astribot/release/releases/<名字>.yaml` | 一个发布：`source`（RLark 和 Fleet 的提交）、`images`（组件 → 摘要）、`addons`（版本、取值、`after` 顺序） |
 | `astribot/release/environments/live.yaml` | 现网：用哪个发布、管理面身份、控制面 compose 的位置和取值、Station 所在集群、安装器底座、两个仓库、运行记录目录 |
 | `apps/rlark/astribot/release/stages.yaml` | 上线的阶段、顺序、检查 |
-| `astribot/release/control-plane/rlark.compose.yaml` | 控制面四个服务 |
+| `astribot/release/control-plane/rlark.compose.yaml` | 控制面服务和默认关闭的 MediaMTX 单站 profile |
 | `astribot/release/member-rbac.yaml` | 每个成员集群里发布和只读账号的 RBAC |
 
 ## 整套构建
@@ -37,6 +37,8 @@ astribot/release/build.sh base <RLark 提交>                      # 安装器�
 - 构建在 BuildKit 容器里，默认 6 GB 内存、4 核、并行 2；内存不够时等最多 120 分钟。`BUILD_MEMORY`、`BUILD_RESERVE`、`BUILD_CPUS`、`BUILD_PARALLELISM`、`BUILD_WAIT` 可改。
 - 镜像里的时间戳都是 0：内容不变，镜像摘要就不变。
 - 构建时间长，在 tmux 里跑。
+
+控制台默认构建 `VITE_STATION_WHEP=0`。预生产单站构建可将 `VITE_STATION_WHEP=1` 与 `VITE_STATION_WHEP_NODES=<精确节点名>` 传给 `build.sh`；没有节点 allowlist 时构建会拒绝启用。MediaMTX profile、Gateway 凭据文件、站点网络配置和回滚步骤见[单站灰度指南](camera/mediamtx-rollout.zh-CN.md)。
 
 ## 快速上线（只换改了的镜像）
 
@@ -71,6 +73,8 @@ astribot/release/build.sh base <RLark 提交>                      # 安装器�
 - `s1u-robot` v1.7.1（相机恢复按相机走）：每路相机各自的恢复阶梯；USB 复位后 5 分钟内又停即疑似硬件、直接 stuck；stuck 的相机只在机器人空闲（`/run/rlark/in-use` 为空）时每小时重启一次驱动，`video` 容器因此只读挂载 `/run/rlark/in-use`；stuck 带 `orin` 采的诊断，每路相机带 USB 位置和改接建议。清单变了（新挂载），所以 `rlarkctl` 和 agent 镜像要按这个提交重建（Addon 目录编译在里面）。不依赖 Fleet 的改动。
 
 - `s1u-robot` v1.7.2（Run 里重启、时钟）：电源容器执行认领者经 Gateway `POST nodes/{name}/robot-restart` 要的重启，只在每个在用标记都写着该 Run（`... Run <id> ...`）时做，所以要和在用标记写明 Run 的 Fleet 设备层（`deviceImage`）同一次 `apply`，旧设备层的标记会让重启以“in use by others”失败（不动机器人）。`clock` 容器只读挂载 `/run/rlark/in-use`，只在驱动停、没认领、没在用时跳；`timeSource` 由 `pinned.yaml` 带来（`time.rlark.internal`，每个站点在 SiteNetwork `names` 里指到本站 Hub；`clock` 容器挂机器自己的 `/etc/hosts`，Hub 换地址只改 `names`，不用重启 Pod）。新的 Gateway 和 agent（`rlark/agent`）同一次上线：agent 把管理面的 `rlark.io/robot-restart` 和 Station 标记 `rlark.io/station-mark-set` 带到成员集群的节点上（机器人灯的停用/维修从这里读）。重启在设备层还有会话时（`s1u-device` 标记在）失败，Fleet Runner 先排空会话再请求。
+
+- `s1u-robot` v1.7.3 提供本体快照与相机采集时间戳。与包含本体接口的 Gateway 和控制台配套发布。旧 Addon 仍可提供相机画面，页面在缺少采集时间戳时将端到端延迟显示为「—」。正式发布保持现有按空闲逐台替换策略，首台验证关节、末端位姿、两路相机、FPS 和延迟后再继续观察其余节点。
 
 ## 提高文档级别的改动（分两次 apply）
 
@@ -109,7 +113,7 @@ rlarkctl release apply -e environments/live.yaml -r releases/<名字>.yaml --tre
 |---|---|---|
 | `images` | 发布里办公室仓库缺的镜像，从金山云仓库按摘要拷进来 | 逐个读回 |
 | `prewarm` | 控制面的镜像预先拉到管理机 | `nodes-unpressured` |
-| `crds-rbac` | `rlinf.io`、`station.rlark.io` 的 CRD；station-api / controller 的管理面 RBAC；各成员集群的 Station RBAC | — |
+| `crds-rbac` | `rlinf.io`、`station.rlark.io` 的 CRD；RLark 组件（含集群升级所需的 Gateway 和 Controller Manager 角色）和 Station 的管理面 RBAC；各成员集群的 Station RBAC | — |
 | `gateway` | 控制面 gateway 容器（和 compose、env 文件） | `clusters-online`、`addons-ready` |
 | `station-api` | Deployment station-api；安装器放到 Station API 的机器上 | `enrollments-enrolled`、`observations-fresh` |
 | `controller` | Deployment station-controller（先等所有网关认得新文档级别） | `documents-unchanged`、`enrollments-enrolled`、`network-connected` |
@@ -127,7 +131,7 @@ rlarkctl release apply -e environments/live.yaml -r releases/<名字>.yaml --tre
 ## 上线后看什么
 
 - 日志最后一行 `release <名字>: every stage done`。
-- 控制面：`docker ps` 看四个容器的镜像；打开 `http://10.11.14.128/` 能登录。
+- 控制面：`docker ps` 看当前发布服务的镜像；MediaMTX 仅在显式启用 `camera-media` profile 后运行。
 - 各集群：`rlarkctl release kubectl -e environments/live.yaml --cluster <集群> -- get pods -A`，看 `rlark-system`、`station-system` 没有异常 Pod；节点都 Ready。这条命令用每个集群里的只读账号 `rlark-system/rlark-reader`（看得到工作负载、日志、事件，读不了 Secret），机器上不留管理员 kubeconfig。
 - 机器人：`s1u-robot` Pod 全就绪，`rlark.io/power-state`、`rlark.io/self-check-state` 正常。
 

@@ -53,6 +53,7 @@ cameras only) | stuck, annotation rlark.io/cameras the JSON of GET /cameras. A r
 this process (rospy does not subscribe again at a new master): kubelet starts it afresh, stuck cameras with it.
 """
 
+import hmac
 import json
 import os
 import re
@@ -72,6 +73,9 @@ from xmlrpc.client import ServerProxy
 
 import cv2
 import numpy
+
+import body_observer
+from camera_rtsp import SourceLease
 from power import in_use, vital
 
 # Each view by the vendor driver's name of its camera, in the wall's order.
@@ -111,12 +115,24 @@ def jpeg_of(raw):
     return raw[offset + 4:offset + 4 + length]
 
 
+def capture_time_ms(raw, received_ms):
+    """ROS header.stamp in Unix milliseconds, only when plausible on the robot clock."""
+    if len(raw) < 12:
+        return None
+    seconds, nanos = struct.unpack_from("<2I", raw, 4)
+    if not seconds or nanos >= 1_000_000_000:
+        return None
+    stamp = seconds * 1000 + nanos / 1_000_000
+    return stamp if -50 <= received_ms - stamp <= 5000 else None
+
+
 class Cameras:
     """The body's cameras' newest frames, and what each camera is."""
 
-    def __init__(self, views, clock=time.monotonic):
+    def __init__(self, views, clock=time.monotonic, wall=time.time):
         self.views = tuple(view for view in VIEWS if view in views)
         self.clock = clock
+        self.wall_clock = wall
         self.lock = threading.Lock()
         self.framed = threading.Condition(self.lock)
         # samples: (time, frames so far) of the last five seconds, one a second; slow_since: since when under SLOW_FPS.
@@ -127,7 +143,8 @@ class Cameras:
     def receive(self, view, raw):
         with self.lock:
             frame = self.frames[view]
-            frame.update(raw=raw, received=self.clock(), sequence=frame["sequence"] + 1)
+            frame.update(raw=raw, received=self.clock(), sequence=frame["sequence"] + 1,
+                         capture_ms=capture_time_ms(raw, self.wall_clock() * 1000))
             self.framed.notify_all()
 
     def fps(self, view):
@@ -162,13 +179,20 @@ class Cameras:
             raw = self.frames[view]["raw"]
             return (None, None) if raw is None else (jpeg_of(raw), self.age(view, self.clock()))
 
+    def publisher_frame(self, view):
+        with self.lock:
+            frame = self.frames[view]
+            raw = frame["raw"]
+            return (jpeg_of(raw) if raw is not None else None,
+                    self.age(view, self.clock()), frame["sequence"])
+
     def next(self, view, sequence):
-        """(JPEG, age, sequence) of the newest frame after ``sequence``, of a camera that sent one; a camera that
+        """(JPEG, age, sequence, capture timestamp) of the newest frame after ``sequence``; a camera that
         stopped gives its last frame again each second, so a viewer sees its age grow."""
         with self.lock:
             frame = self.frames[view]
             self.framed.wait_for(lambda: frame["sequence"] != sequence, timeout=1)
-            return jpeg_of(frame["raw"]), self.age(view, self.clock()), frame["sequence"]
+            return jpeg_of(frame["raw"]), self.age(view, self.clock()), frame["sequence"], frame["capture_ms"]
 
     def wall(self):
         """The four views as one JPEG, made at most ten times a second however many ask; a view without a fresh
@@ -445,7 +469,7 @@ def publish(said, published, patch):
     return key
 
 
-def handler(cameras, recovery, wall=time.time):
+def handler(cameras, recovery, wall=time.time, body_state=None, source_lease=None, source_key=""):
     open_streams = threading.Semaphore(STREAMS)
 
     class Handler(BaseHTTPRequestHandler):
@@ -455,6 +479,34 @@ def handler(cameras, recovery, wall=time.time):
 
         def log_message(self, *arguments):
             pass
+
+        def do_PUT(self):
+            self.change_source_lease()
+
+        def do_DELETE(self):
+            self.change_source_lease()
+
+        def change_source_lease(self):
+            match = re.fullmatch(r"/cameras/([a-z_]+)/h264-lease/([a-f0-9-]{36})", self.path)
+            if source_lease is None or not source_key or not match or match[1] not in cameras.views:
+                return self.refuse(404, "Not found")
+            supplied = self.headers.get("X-RLark-Camera-Source-Key", "").encode()
+            if not hmac.compare_digest(supplied, source_key.encode()):
+                return self.refuse(403, "Forbidden")
+            if self.headers.get("Transfer-Encoding") or self.headers.get("Content-Length", "0") != "0":
+                return self.refuse(400, "Unexpected request body")
+            view, raw_id = match.groups()
+            try:
+                reader = str(uuid.UUID(raw_id))
+            except ValueError:
+                return self.refuse(400, "Invalid reader lease")
+            if self.headers.get("X-RLark-Camera-Source-Path") != source_lease.path + "/" + view:
+                return self.refuse(409, "Publisher path does not match this robot")
+            if self.command == "DELETE":
+                source_lease.release(view, reader)
+            elif not source_lease.renew(view, reader):
+                return self.refuse(409, "A different camera publisher is active or stopping")
+            self.answer(204, "text/plain", b"")
 
         def answer(self, status, kind, body, **headers):
             self.send_response(status)
@@ -471,8 +523,17 @@ def handler(cameras, recovery, wall=time.time):
 
         def do_GET(self):
             url = urlparse(self.path)
+            if url.path == "/body-state":
+                snapshot = body_state() if body_state else None
+                if snapshot is None:
+                    return self.refuse(404, "Body state is unavailable")
+                return self.answer(200, "application/json", json.dumps(snapshot, allow_nan=False).encode())
             if url.path == "/cameras":
+                received_ms = wall() * 1000
                 said = report(cameras, recovery, cameras.clock(), wall)
+                # Only the HTTP report carries clock samples. The Node annotation is
+                # still the state report, without per-request timestamps.
+                said["clock"] = dict(received_ms=received_ms, sent_ms=wall() * 1000)
                 return self.answer(200, "application/json", json.dumps(said, ensure_ascii=False).encode())
             match = re.fullmatch(r"/cameras/(%s|wall)(\.jpg|/stream)" % "|".join(VIEWS), url.path)
             if not match or match[1] not in cameras.views + ("wall",):
@@ -511,8 +572,10 @@ def handler(cameras, recovery, wall=time.time):
                 if view == "wall":
                     jpeg, aged = cameras.wall(), ""
                 else:
-                    jpeg, age, sequence = cameras.next(view, sequence)
+                    jpeg, age, sequence, captured = cameras.next(view, sequence)
                     aged = "X-Age-Seconds: %s\r\n" % age
+                    if captured is not None:
+                        aged += "X-Camera-Capture-Ms: %.3f\r\n" % captured
                 self.wfile.write(("--%s\r\nContent-Type: image/jpeg\r\nContent-Length: %d\r\n%s\r\n"
                                   % (BOUNDARY, len(jpeg), aged)).encode() + jpeg + b"\r\n")
                 self.wfile.flush()
@@ -574,7 +637,8 @@ def main():
     from std_srvs.srv import SetBool
 
     node = os.environ["NODE_NAME"]
-    body = api("GET", "/api/v1/nodes/" + node)["metadata"]["labels"]["rlark.io/robot-body"]
+    metadata = api("GET", "/api/v1/nodes/" + node)["metadata"]
+    body = metadata["labels"]["rlark.io/robot-body"]
     cameras = Cameras(json.loads(Path(os.environ["S1U_BODIES"]).read_text())[body])
 
     def call(value):
@@ -608,7 +672,22 @@ def main():
 
     recovery = Recovery(cameras, restart, os.environ["S1U_CAMERA_DIRECTORY"], event)
     # The port first: with the robot's master down the cameras are absent, the service is not missing.
-    server = ThreadingHTTPServer((os.environ["S1U_NODE_ADDRESS"], PORT), handler(cameras, recovery))
+    observer = None
+    rtsp_target = os.environ.get("S1U_CAMERA_RTSP_PREFIX", "")
+    source_key = os.environ.get("S1U_CAMERA_SOURCE_KEY", "")
+    rtsp_user = os.environ.get("S1U_CAMERA_RTSP_USER", "")
+    rtsp_password = os.environ.get("S1U_CAMERA_RTSP_PASSWORD", "")
+    source_lease = None
+    if rtsp_target and len(source_key.encode()) >= 32 and rtsp_user and rtsp_password:
+        try:
+            source_lease = SourceLease(cameras.publisher_frame, rtsp_target, node, username=rtsp_user, password=rtsp_password)
+        except ValueError:
+            print("Camera H.264 publisher disabled: invalid RTSP path", flush=True)
+    elif rtsp_target:
+        print("Camera H.264 publisher disabled: source key or RTSP credentials are not configured", flush=True)
+    server = ThreadingHTTPServer((os.environ["S1U_NODE_ADDRESS"], PORT),
+                                 handler(cameras, recovery, body_state=lambda: observer() if observer else None,
+                                         source_lease=source_lease, source_key=source_key))
     server.daemon_threads = True
     threading.Thread(target=server.serve_forever, daemon=True).start()
     vital(follow, cameras, recovery, node)
@@ -618,6 +697,11 @@ def main():
     for view in cameras.views:
         rospy.Subscriber(TOPIC % VENDOR[view], rospy.AnyMsg, lambda message, view=view: cameras.receive(view, message._buff),
                          queue_size=1, buff_size=16 * 1024 * 1024)
+    try:
+        capabilities = json.loads(Path("/s1u/device/capabilities.json").read_text())
+        observer, body_subscriptions = body_observer.subscribe(rospy, capabilities, body, metadata["uid"])
+    except (OSError, ValueError, KeyError) as error:
+        print("Read-only body state unavailable: %s" % error, flush=True)
     threading.Event().wait()
 
 

@@ -2,13 +2,62 @@
 
 This page lists the HTTP routes registered by the Gateway in [`pkg/gateway/router.go`](https://github.com/RLinf/RLark/tree/main/apps/rlark/pkg/gateway/router.go). For runnable requests, see [API Examples](examples.md). The machine-readable subset is available as the [OpenAPI specification](swagger.yaml).
 
-Except for `POST /api/v1/auth/login` and `/metrics`, Gateway routes require the JWT returned by login in the `Authorization: Bearer <token>` header. Tokens expire after 8 hours by default; configure the lifetime with `--jwt-token-ttl`. A missing or invalid token returns `401`; an authenticated `user` calling an admin-only route returns `403`.
+Except for `POST /api/v1/auth/login` and `/metrics`, Gateway routes require a valid bearer credential. Native login issues a JWT unless `--disable-native-login` is enabled. That option returns HTTP `403` with code `native_login_disabled` and message `Native username/password login is disabled; use IAM authentication`; it does not set an access-token cookie. JWTs expire after 8 hours by default (`--jwt-token-ttl`). Service-account tokens remain valid independently of this option.
 
 Admin-only operations are Node and Domain mutations, all certificate, image registry, and Addon routes, system configuration updates, plus StorageClass provider and mutation routes. System configuration reads and all SSH key operations accept either authenticated role.
 
 Authorization combines role with tenant scope. Workflow, Job, Task, and Pod routes are restricted to the tenants the caller belongs to: an out-of-scope `?tenant=` filter or create body returns `403`, and a named object owned by another tenant returns `404` so that the name is not confirmed. An `admin` caller is unrestricted. Every other resource, including SSH keys, is still only role-based and is not isolated by individual user. See [Tenant scope enforcement](../developer-guide/api-conventions.md#51-tenant-scope-enforcement) for the full model.
 
 Path parameters are written as `{name}` below; Gin uses the equivalent `:name` syntax in the router. Namespaced CRD routes require the `namespace` query parameter.
+
+## Station camera playback pilot
+
+An administrator can submit an `application/sdp` offer to
+`POST /api/v1/rlinf.io/v1alpha1/nodes/{name}/cameras/{camera}/whep?namespace={namespace}`.
+The optional Gateway integration returns an SDP answer and a same-origin
+`Location` on HTTP 201. Send a PUT to that URL every six seconds while viewing,
+and a DELETE to request teardown. A lease expires after 14 seconds without renewal.
+The Gateway revalidates the Node's cluster and the publisher on renewal and
+retains the quota slot until MediaMTX confirms removal. It releases the source
+lease when opening fails or playback ends. A source is stopped when its last
+reader leaves, and the robot expires any unrenewed source lease after 20 seconds.
+The pilot is disabled by default. The opted-in robot validates its publisher
+path against the Gateway's agent, node and camera path. It uses one 480p
+software-encoded source per robot and holds up to four readers per authenticated
+Gateway subject and 20 readers per Gateway. One Gateway owns a dedicated
+MediaMTX instance. After a Gateway restart, the private Control API disconnects
+previous WebRTC sessions and verifies the session list is empty before playback
+reopens. JPEG service remains available while reconciliation runs.
+For each reader, the Gateway sends `PUT` to the robot's
+`/cameras/{camera}/h264-lease/{UUID}` endpoint to create or renew its source
+lease, and sends `DELETE` with the same UUID to release it. Both requests carry
+`X-RLark-Camera-Source-Key` and `X-RLark-Camera-Source-Path`, whose path is
+`/{agent}/{node}/{camera}`. The robot accepts only its configured agent and
+local `NODE_NAME` path.
+
+For a trial cluster, set both `cameraRTSPPrefix` and `cameraSourceSecret` in
+the `s1u-robot` Addon values (available from v1.7.4). For example, set the prefix to
+`rtsp://media.internal:8554/robot-agent/$(NODE_NAME)` and the Secret name to
+`s1u-camera-source`. Use the cluster's actual Agent name and its private RTSP
+or RTSPS endpoint. Kubernetes expands `$(NODE_NAME)` in
+`S1U_CAMERA_RTSP_PREFIX`, and the video container appends the camera view.
+In the robot cluster's `rlark-system` namespace, supply `source-key` in that
+Secret for `S1U_CAMERA_SOURCE_KEY`. The Gateway sends the matching
+`RLARK_CAMERA_SOURCE_KEY` (at least 32 bytes) to the Addon in
+`X-RLark-Camera-Source-Key`.
+
+To enable the Gateway for the trial, configure the private
+`RLARK_CAMERA_WHEP_ORIGIN` and `RLARK_CAMERA_WHEP_CONTROL_ORIGIN`. For the
+production Compose deployment, store `readerUser`, `readerPassword`,
+`controlUser`, `controlPassword`, and `sourceKey` in the protected
+`camera-credentials.json` file mounted in the Gateway identity directory.
+Gateway reads the credentials from that file without placing them in its
+environment. Keep reader and Control API usernames separate. The playback
+entry point returns HTTP 503 until startup reconciliation succeeds.
+
+Both Addon values default to empty. If either is omitted or the Secret key is
+missing or too short, the Addon continues to serve JPEG snapshots and streams
+and its H.264 lease endpoint returns HTTP 404.
 
 ## CRD resources
 
@@ -28,6 +77,16 @@ The Gateway router does not expose CRD status subresource routes. Status is retu
 The Job `logs` route is implemented and accepts `from`, `to`, `task`, `pod`, `query`, `cursor`, and `order`. `from` and `to` are RFC 3339 timestamps; `order=asc` requests ascending backend results, while any other value uses descending order. When `from` is supplied and a log backend is configured, a successful response contains `source: "backend"`, `entries`, `hasMore`, and `nextCursor`. Otherwise—including backend errors—it falls back to Pod logs and returns `source: "pod"` plus a `pods` array containing `taskName`, `podName`, `phase`, `node`, and `logs`.
 
 `logs/label-values` accepts `label` (default `pod`), `from`, `to`, `task`, and `pod`, and returns `{ "values": [...] }`; without a configured backend the array is empty. Job `metrics` is registered but currently only returns HTTP `501 Not Implemented`.
+
+## Station machine rejoin
+
+`POST /api/v1/station/machines/{name}/rejoin` is admin-only. Send `{ "cluster_id": "cluster-a", "request_id": "retry-001", "robot_model": "s1u" }`; `robot_model` is optional when the existing admission and NodeClass identify the model. The endpoint returns `202 Accepted` with `{ "data": <NodeOperation> }`. Poll `GET /api/v1/station/node-operations/{name}?cluster_id=cluster-a` or list operations with `GET /api/v1/station/node-operations?cluster_id=cluster-a` until `status.phase` is `Succeeded`, `Failed`, or `Blocked`; failure details are in the bounded `status.conditions` reason/message and contain no SSH passwords.
+
+The machine must already be joined to the requested cluster with a matching Robot NodeAdmission and registered RobotModel/NodeClass. Replaying the same request ID returns the same operation. An active Join returns `409`; invalid or unknown model inputs return `400`, missing Machines return `404`, and lookup failures return `502`. After a rejoin operation ends in `Failed` or `Blocked`, the console can retry it with a new request ID, subject to the Gateway revalidating the original Machine and admission. Rejoin uses the NodeClass credentials and existing admission and network configuration. The controller recovers only the existing WireGuard document when the local key, original NodeAdmission, NetworkEnrollment and member Node UID still agree. It does not run Join's `Uplink`, `Push`, `Install`, or `RotateEntryHostKey` stages. Missing or mismatched local identity ends as `Blocked` with `RejoinStateUnavailable` and leaves the admission and Node in place. The API does not accept SSH passwords, delete or replace Nodes or NodeAdmissions, or issue/revoke enrollment codes.
+
+| Method | Path |
+|--------|------|
+| `POST` | `/api/v1/station/machines/{name}/rejoin` |
 
 ## Clusters and certificates
 
@@ -109,3 +168,10 @@ StorageClass routes manage control-plane declarations. Replication and Delivery 
 | `GET` | `/api/v1/installed-addons` |
 | `GET, POST` | `/api/v1/clusters/{cluster_id}/addons` |
 | `GET, PUT, DELETE` | `/api/v1/clusters/{cluster_id}/addons/{name}` |
+# Station fleet summary
+
+`GET /api/v1/station/summary` aggregates every `NetworkEnrollment` page and accepts optional `cluster_id`. The Gateway associates each enrollment with the same-name RLark Node in its namespace. Phase counts use `status.node.state` with `Retired` taking precedence. Robot, power, occupancy, self-check, and camera metrics come from that Node's labels, annotations, and conditions. Missing Nodes fall back to the enrollment's own metadata and conditions.
+
+`GET /api/v1/station/stations` accepts `q`, `phase`, `model`, `zone`, `power_state`, `occupancy`, `alert_only`, and `sort`. Filtered requests aggregate all pages before applying the existing `limit` (1–500) and a numeric offset in `continue`; responses include `totalMatched`. Phase filters are case-insensitive. Requests without filters retain Kubernetes continuation tokens.
+
+Both endpoints return `409 Conflict` when the requested cluster lacks a unique `spec.agentNamespace` mapping. Fleet-wide summary and filtered list requests also return `409 Conflict` if a namespace shared by multiple clusters contains an enrollment. Assign each cluster a distinct agent namespace before retrying.
