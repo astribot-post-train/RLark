@@ -1031,7 +1031,7 @@
   backdrop-filter: blur(2px);
 }
 
-.stations-page .station-tile-fps select:hover { background: rgb(6 10 12 / .62); }
+.stations-page .station-tile-fps select:hover { background-color: rgb(6 10 12 / .62); }
 .stations-page .station-tile-fps select option { background: var(--panel); color: var(--ink); }
 
 .stations-page .station-tile-phase {
