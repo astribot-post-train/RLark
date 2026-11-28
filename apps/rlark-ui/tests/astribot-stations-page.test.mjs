@@ -16,6 +16,7 @@ const restartHook = await readFile(new URL("../src/astribot/components/useNodeRe
 const restartLib = await readFile(new URL("../src/astribot/lib/nodeRestart.ts", import.meta.url), "utf8");
 const stationDisplay = await readFile(new URL("../src/astribot/lib/stationDisplay.ts", import.meta.url), "utf8");
 const stationsApi = await readFile(new URL("../src/astribot/api.ts", import.meta.url), "utf8");
+const rejoinLib = await readFile(new URL("../src/astribot/lib/robotRejoin.ts", import.meta.url), "utf8");
 
 test("the site-node page keeps the toolbar and groups robot clusters apart in a bounded column", () => {
   assert.match(page, /className="page-content resource-page stations-page"/);
@@ -396,31 +397,25 @@ test("an offline robot offers a bounded re-check and says where the browser stop
   assert.match(cardsStyles, /\.station-detail-recovery/);
 });
 
-test("an offline station offers Rejoin beside Re-check and only opens the join page", () => {
-  // The second entry on the recovery line opens the join page for this node; it is not a second re-check.
+test("an offline robot offers Rejoin beside Re-check, and Rejoin explains instead of navigating", () => {
+  // The second entry is not a second re-check and it never navigates; it assesses the robot path on the card.
   assert.match(card, /station-tile-recovery-actions/);
   assert.match(card, /className="station-tile-recheck station-tile-rejoin"/);
   assert.match(card, /重新接入/);
   assert.match(card, /Rejoin/);
-  assert.match(card, /onClick=\{rejoin\}/);
-  assert.doesNotMatch(card, /rejoin\.pending/, "the card does not run a join or wait on one");
+  assert.match(card, /onClick=\{rejoin\.press\}/);
+  assert.match(card, /disabled=\{recheck\.pending \|\| rejoin\.pending\}/);
   assert.match(cardsStyles, /\.station-tile-recovery-actions/);
-  // The target carries the node's own name and the cluster only when one cluster claims its namespace.
-  assert.match(page, /const rejoin = async \(item: StationItem\) =>/);
+  // A robot's manual entry is Add node's machine workspace with its cluster, never the Server SSH form.
+  assert.match(page, /const manualRobotRejoin = \(item: StationItem\) =>/);
   assert.match(page, /clusterForStation\(clusters, item\.metadata\.namespace\)/);
-  assert.match(page, /nodeName: item\.metadata\.name/);
-  // An existing SSH join record wins over a blank form; otherwise the form starts from the mapped login/address.
-  assert.match(page, /parseSSHLogin\(admission\?\.ssh_login\)/);
-  assert.match(page, /const existing = Boolean\(cluster && \(admission\?\.join_phase \|\| admission\?\.ssh_login\)\)/);
-  assert.match(page, /admission\?\.join_phase \|\| admission\?\.ssh_login/);
-  assert.match(page, /name: `\$\{cluster\.id\}\.\$\{item\.metadata\.name\}`/);
-  assert.match(page, /status\?\.addresses\?\.find\(\(entry\) => entry\.type === "InternalIP"\)\?\.address/);
-  assert.match(page, /rejoin: \(\) => void cardHandlers\.current\.rejoin\(item\)/);
-  // Opening the page is the whole effect: the admission lookup is read-only and scoped to the station’s cluster.
-  const rejoinBody = page.slice(page.indexOf("const rejoin = async (item: StationItem) =>"), page.indexOf("// A whole-machine restart"));
-  assert.ok(rejoinBody);
-  assert.match(rejoinBody, /nodeAdmissionsApi\.list\(cluster\.id,/);
-  assert.doesNotMatch(rejoinBody, /nodeJoinsApi|nodeAdmissionsApi\.(revoke|reissue)|selfHealApi|stationsApi/);
+  assert.match(page, /method: "machines"/);
+  assert.match(page, /manual: \(\) => manualRobotRejoin\(item\)/);
+  // Explaining a robot still does not open SSH or delete a record. Submitting a joined robot uses the rejoin API.
+  const robotRejoinBody = page.slice(page.indexOf("const explainRobotRejoin"), page.indexOf("// A whole-machine restart"));
+  assert.ok(robotRejoinBody);
+  assert.doesNotMatch(robotRejoinBody, /nodeJoinsApi|nodeAdmissionsApi|selfHealApi/);
+  assert.match(robotRejoinBody, /machinesApi\.rejoin/);
 });
 
 test("an online S1U robot offers a confirmed whole-machine restart through the one-shot Node label", () => {
@@ -545,6 +540,21 @@ test("only virtual rows mount and live connections use shared view budgets and d
   assert.match(dialog, /cameraMediaScheduler\.acquire\(.*"dialog", setLiveGranted\)/);
 });
 
+test("the camera wall centers a real 16:9 frame instead of letterboxing a full-width cell", async () => {
+  const wall = await readFile(new URL("../src/astribot/pages/CameraWallView.tsx", import.meta.url), "utf8");
+  assert.match(wall, /export function wallFrameSize/);
+  assert.match(wall, /const widthFit = \(contentWidth - padX - \(columns - 1\) \* gap\) \/ columns/);
+  assert.match(wall, /const heightFit\s*=\s*\(contentHeight - headerH - \(rows - 1\) \* gap\) \/ rows - statusH/);
+  assert.match(wall, /Math\.min\(widthFit,\s*(?:Math\.max\(1, heightFit\)\s*\*\s*16|\(Math\.max\(1, heightFit\)\s*\*\s*16\))\s*\/\s*9\s*,?\)/);
+  assert.match(wall, /columns \* Math\.max\(1, videoW\) \+ \(columns - 1\) \* gap/);
+  assert.match(cardsStyles, /\.stations-page \.stations-wall-tile \.station-tile-main \{[\s\S]*?aspect-ratio: 16 \/ 9;/);
+  assert.match(cardsStyles, /\.stations-wall-grid \{[\s\S]*?margin-inline: auto;/);
+  assert.match(cardsStyles, /\.stations-page \.stations-wall-tile \.station-camera-frame img \{[\s\S]*?object-fit: contain;/);
+  assert.match(cardsStyles, /\.stations-page \.stations-wall-tile \.station-camera\.is-missing \.station-camera-frame/);
+  assert.match(cardsStyles, /\.stations-page \.stations-wall-tile \.station-camera\.is-empty \.station-camera-frame/);
+  assert.doesNotMatch(cardsStyles, /\.stations-wall-grid \{[^}]*[^-]width:\s*100%/);
+});
+
 test("the batch drawer shows failed robots and forwards cancel, retry and dismiss", async () => {
   const batchPanel = await readFile(new URL("../src/astribot/components/BatchProgressPanel.tsx", import.meta.url), "utf8");
   assert.match(page, /onCoalescedRefresh:/);
@@ -554,4 +564,22 @@ test("the batch drawer shows failed robots and forwards cancel, retry and dismis
   assert.match(batchPanel, /onClick=\{cancelBatch\}/);
   assert.match(batchPanel, /void retryFailed\(\)/);
   assert.match(batchPanel, /onClick=\{dismissBatch\}/);
+});
+
+test("the offline recovery line explains the robot boundary and keeps an explicit manual entry", () => {
+  // The page assesses from data it already holds and never starts a Server SSH NodeJoin for a robot.
+  assert.match(page, /assessRobotRejoin\(\{/);
+  assert.match(page, /setRejoinNotice\(\(current\) => \(\{ \.\.\.current, \[key\]: `\$\{stationRecoveryHint\(item, now, zh\)\} \$\{assessment\.message\}` \}\)\)/);
+  assert.match(page, /onJoin\(undefined, \{ \.\.\.\(cluster \? \{ clusterID: cluster\.id \} : \{\}\), method: "machines" \}\)/);
+  assert.doesNotMatch(page, /nodeJoinsApi/);
+  // The card reports the assessment and only then offers the manual entry; the primary button never navigates.
+  assert.match(card, /rejoin: StationRejoinControl/);
+  assert.match(card, /aria-live="polite"/);
+  assert.match(card, /\(rejoin\.notice \|\| rejoin\.task\?\.alert\) && <button[\s\S]*?station-tile-rejoin-manual/);
+  assert.match(cardsStyles, /station-tile-recovery\.is-unavailable/);
+  assert.match(cardsStyles, /station-tile-rejoin-status/);
+  // A joined offline robot may submit; stopped joins still name the Machine path, and SSH stays Server-only.
+  assert.match(rejoinLib, /POST \/api\/v1\/station\/machines/);
+  assert.match(rejoinLib, /Machine 与 NodeClass 入网/);
+  assert.match(rejoinLib, /SSH 入网只支持 Server/);
 });

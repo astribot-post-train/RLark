@@ -28,7 +28,24 @@
 set -euo pipefail
 what=$1 WORK=$2 RLARK_COMMIT=$3 FLEET_COMMIT=${4:-}
 MEMORY=${BUILD_MEMORY:-6} RESERVE=${BUILD_RESERVE:-3} CPUS=${BUILD_CPUS:-4} PARALLELISM=${BUILD_PARALLELISM:-2} WAIT=${BUILD_WAIT:-120}
+VITE_STATION_WHEP=${VITE_STATION_WHEP:-0} VITE_STATION_WHEP_NODES=${VITE_STATION_WHEP_NODES:-}
 LOCAL=127.0.0.1:5443 REGISTRY=registry.rlark.internal:5443
+valid_node_list() {
+  local node
+  local -a nodes
+  [[ -n $1 && $1 != ,* && $1 != *, && $1 != *,,* ]] || return 1
+  IFS=',' read -r -a nodes <<< "$1"
+  for node in "${nodes[@]}"; do
+    [[ $node =~ ^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$ ]] || return 1
+  done
+}
+[[ $VITE_STATION_WHEP == 0 || $VITE_STATION_WHEP == 1 ]] || { echo "VITE_STATION_WHEP must be 0 or 1" >&2; exit 1; }
+if [[ $VITE_STATION_WHEP == 1 ]]; then
+  valid_node_list "$VITE_STATION_WHEP_NODES" || {
+    echo "VITE_STATION_WHEP=1 requires comma-separated Kubernetes node names in VITE_STATION_WHEP_NODES" >&2
+    exit 1
+  }
+fi
 TREE=$WORK/rlark RELEASE=$WORK/rlark/astribot/release
 exec > >(tee -a "$WORK/build.log") 2>&1
 failed() { tail -50 "$WORK/$1"; echo "FAILED: $2 ($WORK/$1)"; exit 1; }
@@ -106,6 +123,9 @@ images=() built=()
 while read -r repository dockerfile components options; do
   [[ -n $repository && $repository != \#* ]] || continue
   read -ra options <<< "${options:-}"
+  if [[ $repository == rlark/rlark-ui ]]; then
+    options+=(--opt "build-arg:VITE_STATION_WHEP=$VITE_STATION_WHEP" --opt "build-arg:VITE_STATION_WHEP_NODES=$VITE_STATION_WHEP_NODES")
+  fi
   build "$dockerfile" "${options[@]}" --output "$(push "$repository:$tag")" > "$WORK/build-${repository#*/}.log" 2>&1 || failed "build-${repository#*/}.log" "the image $repository"
   reference=$REGISTRY/$repository@$(digest "$repository:$tag")
   built+=("$reference")

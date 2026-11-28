@@ -4,7 +4,7 @@ import type { SiteDiscoveryScan } from "./api";
 import type { CRDNode } from "../types.js";
 import { displayNameError } from "./lib/displayName.js";
 import type { StorageClass } from "./lib/storageClass.js";
-import { mockAdmissions, mockSiteNodes, mockStationCameraFrame, mockStationCameraReport, mockStations } from "./mockStations.js";
+import { mockAdmissions, mockSiteNodes, mockStationCameraFrame, mockStationCameraReport, mockStationClusterNames, mockStations } from "./mockStations.js";
 
 // The demo storages: RLark's two and an SMB share.
 export const mockStorageClasses: StorageClass[] = [
@@ -141,6 +141,65 @@ const mockDiscoveryScans = new Map<string, SiteDiscoveryScan>();
 // The one restart request the demo's station Nodes remember, by node name.
 const mockRestartRequests = new Map<string, { requestID: string; startedAt: number }>();
 
+// Simulated rejoins for the offline robot s1u-02. Nothing here talks to a machine; the phase moves on a clock so the
+// card can show submit, progress, success and a refresh of the same task. The records stay in this tab, the way a
+// Gateway would still have them after a reload. They are never sent to a robot.
+const MOCK_REJOIN_KEY = "rlark.mock-rejoin-ops.v1";
+type MockRejoinOp = { name: string; clusterID: string; nodeName: string; requestID: string; startedAt: number; fail: boolean };
+
+function readMockRejoinOps(): Map<string, MockRejoinOp> {
+  const map = new Map<string, MockRejoinOp>();
+  if (typeof sessionStorage === "undefined") return map;
+  try {
+    const parsed = JSON.parse(sessionStorage.getItem(MOCK_REJOIN_KEY) ?? "[]") as unknown;
+    if (!Array.isArray(parsed)) return map;
+    for (const item of parsed) {
+      if (!item || typeof item !== "object") continue;
+      const op = item as Partial<MockRejoinOp>;
+      if (typeof op.name !== "string" || typeof op.requestID !== "string" || typeof op.clusterID !== "string" || typeof op.nodeName !== "string" || typeof op.startedAt !== "number") continue;
+      map.set(op.name, { name: op.name, clusterID: op.clusterID, nodeName: op.nodeName, requestID: op.requestID, startedAt: op.startedAt, fail: Boolean(op.fail) });
+    }
+  } catch {
+    // A broken demo record is ignored; the card then has nothing to restore.
+  }
+  return map;
+}
+
+function rememberMockRejoinOps() {
+  if (typeof sessionStorage === "undefined") return;
+  sessionStorage.setItem(MOCK_REJOIN_KEY, JSON.stringify([...mockRejoinOps.values()]));
+}
+
+const mockRejoinOps = readMockRejoinOps();
+
+function mockRejoinView(op: MockRejoinOp) {
+  const elapsed = Date.now() - op.startedAt;
+  let phase: "Pending" | "Running" | "Succeeded" | "Failed" = "Pending";
+  let stage = "";
+  const conditions: { type: string; status: string; reason?: string; message?: string }[] = [];
+  if (op.fail && elapsed >= 2000) {
+    phase = "Failed";
+    stage = "Preflight";
+    conditions.push({ type: "Failed", status: "False", reason: "EntryUnreachable", message: "mock: the entry device did not answer" });
+  } else if (elapsed >= 5500) {
+    phase = "Succeeded";
+    stage = "VerifyAddons";
+  } else if (elapsed >= 3500) {
+    phase = "Running";
+    stage = "Install";
+  } else if (elapsed >= 1500) {
+    phase = "Running";
+    stage = "Preflight";
+  }
+  return {
+    apiVersion: "station.rlark.io/v1alpha1",
+    kind: "NodeOperation",
+    metadata: { name: op.name, namespace: op.clusterID, creationTimestamp: new Date(op.startedAt).toISOString() },
+    spec: { action: "Join" as const, nodeName: op.nodeName, clusterID: op.clusterID, requestID: `rejoin-${op.requestID}` },
+    status: { phase, ...(stage ? { stage } : {}), ...(conditions.length ? { conditions } : {}) },
+  };
+}
+
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), {
     status,
@@ -245,7 +304,45 @@ export async function astribotMockRoute(method: string, path: string, request: R
     const cluster = query.get("cluster_id");
     return json({ items: mockAdmissions.filter((item) => !cluster || item.cluster_id === cluster) });
   }
-  if (method === "GET" && path === "/api/v1/station/node-operations") return json({ items: [] });
+  if (method === "GET" && path === "/api/v1/station/machines") {
+    return json({
+      items: [{
+        name: "machine-s1u-02", site: "shenzhen", node_class: "s1u", machine_type: "Robot", machine_model: "s1u", source: "mock",
+        phase: "Joined", cluster_id: mockStationClusterNames.robot, node_name: "s1u-02-x86", admissible: false, joining: false,
+      }],
+      classes: {},
+    });
+  }
+  const rejoinRoute = path.match(/^\/api\/v1\/station\/machines\/([^/]+)\/rejoin$/);
+  if (method === "POST" && rejoinRoute) {
+    const machineName = decodeURIComponent(rejoinRoute[1]);
+    if (machineName !== "machine-s1u-02") return json({ code: "MACHINE_NOT_FOUND", error: "machine not found" }, 404);
+    const body = await request.json() as { cluster_id?: string; request_id?: string };
+    const clusterID = body.cluster_id ?? "";
+    const requestID = body.request_id ?? "";
+    if (!requestID || clusterID !== mockStationClusterNames.robot) return json({ code: "MACHINE_NOT_JOINED", error: "machine is not joined to the requested cluster" }, 409);
+    const same = [...mockRejoinOps.values()].find((op) => op.requestID === requestID);
+    if (same) return json({ data: mockRejoinView(same) }, 202);
+    const active = [...mockRejoinOps.values()].find((op) => {
+      const phase = mockRejoinView(op).status.phase;
+      return phase !== "Succeeded" && phase !== "Failed";
+    });
+    if (active) return json({ code: "REJOIN_IN_PROGRESS", error: "another rejoin request is active" }, 409);
+    const op = { name: `join-rejoin-${requestID.slice(0, 24)}`, clusterID, nodeName: "s1u-02-x86", requestID, startedAt: Date.now(), fail: requestID.includes("fail") };
+    mockRejoinOps.set(op.name, op);
+    rememberMockRejoinOps();
+    return json({ data: mockRejoinView(op) }, 202);
+  }
+  if (method === "GET" && path === "/api/v1/station/node-operations") {
+    const cluster = query.get("cluster_id");
+    return json({ items: [...mockRejoinOps.values()].filter((op) => !cluster || op.clusterID === cluster).map(mockRejoinView) });
+  }
+  const rejoinOperation = path.match(/^\/api\/v1\/station\/node-operations\/([^/]+)$/);
+  if (method === "GET" && rejoinOperation) {
+    const op = mockRejoinOps.get(decodeURIComponent(rejoinOperation[1]));
+    if (!op || (query.get("cluster_id") && query.get("cluster_id") !== op.clusterID)) return json({ error: "node operation not found" }, 404);
+    return json(mockRejoinView(op));
+  }
   const cameraReport = path.match(/^\/api\/v1\/rlinf\.io\/v1alpha1\/nodes\/([^/]+)\/cameras$/);
   if (method === "GET" && cameraReport) return json(mockStationCameraReport(decodeURIComponent(cameraReport[1])));
   const cameraFrame = path.match(/^\/api\/v1\/rlinf\.io\/v1alpha1\/nodes\/[^/]+\/cameras\/([^/]+)\.jpg$/);

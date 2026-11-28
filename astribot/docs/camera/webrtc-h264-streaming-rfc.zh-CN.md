@@ -5,7 +5,7 @@
 - 首期选型：MediaMTX、机器人主动出站 RTSP over TCP（interleaved）、同源 WHEP/WebRTC
 - 架构约束：媒体面与控制面、本体控制面严格隔离
 
-本文定义拟议目标架构和验收条件，不表示仓库现已具备 H.264、WebRTC、WHEP、媒体票据、租约或服务端强制撤销运行时能力。所有端口、时限、并发、性能和资源数字均为目标门槛（待实测），不能作为已测结果或正式 SLA。当前工作仅为 RFC，不新增生产部署配置。
+本文定义拟议目标架构和验收条件。仓库现已包含 H.264 来源租约、Gateway WHEP 会话、UI 构建开关，以及默认关闭的 MediaMTX Compose profile；这些代码和模板仍未证明生产授权、机器人兼容性或浏览器 ICE 连通性。媒体票据、共享租约和服务端撤销等更完整目标仍是 RFC。所有端口、时限、并发、性能和资源数字均为目标门槛（待实测），不能作为已测结果或正式 SLA。单站预生产模板和限制见[MediaMTX 单站灰度](mediamtx-rollout.zh-CN.md)。
 
 ## 1. 背景与范围
 
@@ -47,7 +47,7 @@ flowchart LR
 
 媒体传输的目标为 UDP 优先，默认候选 `8189/UDP`，受控 TCP ICE 兜底候选 `8189/TCP`。WHEP 信令经 UI Nginx 同源路径 `/media/whep/<opaque-path>` 反代。机端主动向中心 MediaMTX 推送 RTSP over TCP interleaved。跨不可信二层或跨站点的机端发布预留 RTSPS（TLS），具体证书、端口和网络拓扑待实测锁定。
 
-MediaMTX 的管理 API 和鉴权回调仅在内网开放。媒体服务独立容器部署并设置独立资源限额，初始压测预算目标为 `4 vCPU / 4–8 GiB`（待实测校准）。本 RFC 不修改 Compose、Nginx 或其他生产部署文件。
+MediaMTX 的管理 API 和鉴权回调仅在内网开放。媒体服务独立容器部署并设置独立资源限额，初始压测预算目标为 `4 vCPU / 4–8 GiB`（待实测校准）。当前预生产 profile 通过 Gateway 的同源 WHEP 路由代理信令，并不代表 RFC 中的媒体票据或 Nginx 直连媒体路径已实现。
 
 ### 2.3 首期路径与备选边界
 

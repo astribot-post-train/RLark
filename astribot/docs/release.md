@@ -14,7 +14,7 @@
 | `astribot/release/releases/<名字>.yaml` | 一个发布：`source`（RLark 和 Fleet 的提交）、`images`（组件 → 摘要）、`addons`（版本、取值、`after` 顺序） |
 | `astribot/release/environments/live.yaml` | 现网：用哪个发布、管理面身份、控制面 compose 的位置和取值、Station 所在集群、安装器底座、两个仓库、运行记录目录 |
 | `apps/rlark/astribot/release/stages.yaml` | 上线的阶段、顺序、检查 |
-| `astribot/release/control-plane/rlark.compose.yaml` | 控制面四个服务 |
+| `astribot/release/control-plane/rlark.compose.yaml` | 控制面服务和默认关闭的 MediaMTX 单站 profile |
 | `astribot/release/member-rbac.yaml` | 每个成员集群里发布和只读账号的 RBAC |
 
 ## 整套构建
@@ -37,6 +37,8 @@ astribot/release/build.sh base <RLark 提交>                      # 安装器�
 - 构建在 BuildKit 容器里，默认 6 GB 内存、4 核、并行 2；内存不够时等最多 120 分钟。`BUILD_MEMORY`、`BUILD_RESERVE`、`BUILD_CPUS`、`BUILD_PARALLELISM`、`BUILD_WAIT` 可改。
 - 镜像里的时间戳都是 0：内容不变，镜像摘要就不变。
 - 构建时间长，在 tmux 里跑。
+
+控制台默认构建 `VITE_STATION_WHEP=0`。预生产单站构建可将 `VITE_STATION_WHEP=1` 与 `VITE_STATION_WHEP_NODES=<精确节点名>` 传给 `build.sh`；没有节点 allowlist 时构建会拒绝启用。MediaMTX profile、Gateway 凭据文件、站点网络配置和回滚步骤见[单站灰度指南](camera/mediamtx-rollout.zh-CN.md)。
 
 ## 快速上线（只换改了的镜像）
 
@@ -129,7 +131,7 @@ rlarkctl release apply -e environments/live.yaml -r releases/<名字>.yaml --tre
 ## 上线后看什么
 
 - 日志最后一行 `release <名字>: every stage done`。
-- 控制面：`docker ps` 看四个容器的镜像；打开 `http://10.11.14.128/` 能登录。
+- 控制面：`docker ps` 看当前发布服务的镜像；MediaMTX 仅在显式启用 `camera-media` profile 后运行。
 - 各集群：`rlarkctl release kubectl -e environments/live.yaml --cluster <集群> -- get pods -A`，看 `rlark-system`、`station-system` 没有异常 Pod；节点都 Ready。这条命令用每个集群里的只读账号 `rlark-system/rlark-reader`（看得到工作负载、日志、事件，读不了 Secret），机器上不留管理员 kubeconfig。
 - 机器人：`s1u-robot` Pod 全就绪，`rlark.io/power-state`、`rlark.io/self-check-state` 正常。
 

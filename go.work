@@ -4,6 +4,7 @@ use (
 	./api
 	./apps/embodied-runtime
 	./apps/rlark
+	./astribot/station
 	./sdks/embodied-runtime-go
 	./sdks/execution-go
 	./test/e2e

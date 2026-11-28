@@ -10,6 +10,45 @@
 
 下表用 `{name}` 表示路径参数；Router 源码中的 Gin 等价写法为 `:name`。Namespaced CRD 路由需要 `namespace` query 参数。
 
+## 场站相机播放试点
+
+管理员可向 `POST /api/v1/rlinf.io/v1alpha1/nodes/{name}/cameras/{camera}/whep?namespace={namespace}`
+提交 `application/sdp` offer。启用试点的 Gateway 返回 HTTP 201、SDP answer 和同源
+`Location`。播放时每 6 秒向此地址发送 PUT 续约，关闭时发送 DELETE 请求清理。
+14 秒未续约即过期。续约时 Gateway 重新确认节点所属集群和推流端，并在 MediaMTX
+确认清理前保留并发配额。打开失败或结束播放时，Gateway 撤销对应的机端推流
+租约。最后一个读者离开后停止推流，机器人也会回收 20 秒未续约的推流租约。
+试点默认关闭。已配置试点的机器人会核对发布路径是否与 Gateway 的 agent、节点
+和视图一致。每台机器人最多软件编码一路 480p 视频，每个 Gateway 认证主体
+最多 4 路观看会话，每个 Gateway 最多 20 路。试点由单个 Gateway
+独占 MediaMTX 实例。Gateway 重启后通过私有管理接口断开旧的 WebRTC 会话，确认
+列表为空后恢复播放入口。清理期间 JPEG 服务仍可用。
+Gateway 为每个读者向机器人端点
+`/cameras/{camera}/h264-lease/{UUID}` 发送 `PUT` 创建或续约源租约，并使用相同 UUID
+发送 `DELETE` 释放租约。两种请求均携带 `X-RLark-Camera-Source-Key` 和
+`X-RLark-Camera-Source-Path`，后者为 `/{agent}/{node}/{camera}`。机器人只接受与
+配置的 Agent 及本地 `NODE_NAME` 相符的路径。
+
+在试点集群的 `s1u-robot` Addon values（v1.7.4 起支持）中同时配置 `cameraRTSPPrefix`
+和 `cameraSourceSecret`。例如将前缀设为
+`rtsp://media.internal:8554/robot-agent/$(NODE_NAME)`，Secret 名称设为
+`s1u-camera-source`。使用集群实际的 Agent 名称及其私有 RTSP 或 RTSPS
+地址。Kubernetes 在 `S1U_CAMERA_RTSP_PREFIX` 中展开 `$(NODE_NAME)`，
+video 容器会在末尾附加相机视角。机器人集群的 `rlark-system` 命名空间下，
+该 Secret 的 `source-key` 提供 `S1U_CAMERA_SOURCE_KEY`。Gateway 通过
+`X-RLark-Camera-Source-Key` 向 Addon 发送相同的 `RLARK_CAMERA_SOURCE_KEY`，
+密钥至少 32 字节。
+
+在 Gateway 端启用试点还需配置私有 `RLARK_CAMERA_WHEP_ORIGIN` 和
+`RLARK_CAMERA_WHEP_CONTROL_ORIGIN`。生产 Compose 部署将 `readerUser`、
+`readerPassword`、`controlUser`、`controlPassword` 和 `sourceKey` 保存于 Gateway
+身份目录中的受保护 `camera-credentials.json` 文件。Gateway 从该文件读取凭据，
+不会将其放入进程环境。reader 和 Control API 必须使用不同用户名。启动清理成功前，
+播放入口返回 HTTP 503。
+
+Addon 的两个参数默认均为空。任一参数未设置，或 Secret 中的密钥缺失或过短时，
+Addon 继续提供 JPEG 快照和流，H.264 租约接口返回 HTTP 404。
+
 ## CRD 资源
 
 | 资源 | 作用域 | 路由 |
@@ -28,6 +67,16 @@ Gateway Router 未暴露 CRD status 子资源路由；状态随普通资源响�
 Job 日志接口已实现：`logs` 支持 `from`、`to`、`task`、`pod`、`query`、`cursor`、`order`。`from`、`to` 使用 RFC 3339 时间；`order=asc` 表示后端结果升序，其他值均为降序。提供 `from` 且已配置日志后端时，成功响应包含 `source: "backend"`、`entries`、`hasMore`、`nextCursor`；其他情况（包括后端查询失败）回退到 Pod 日志，响应包含 `source: "pod"` 和 `pods` 数组，数组项含 `taskName`、`podName`、`phase`、`node`、`logs`。
 
 `logs/label-values` 支持 `label`（默认 `pod`）、`from`、`to`、`task`、`pod`，返回 `{ "values": [...] }`；未配置日志后端时数组为空。Job `metrics` 已注册，但当前仅返回 HTTP `501 Not Implemented`。
+
+## 站点机器重接
+
+`POST /api/v1/station/machines/{name}/rejoin` 仅管理员可调用。请求体为 `{ "cluster_id": "cluster-a", "request_id": "retry-001", "robot_model": "s1u" }`；当已有 admission 和 NodeClass 可确定机型时，`robot_model` 可省略。接口返回 `202 Accepted` 和 `{ "data": <NodeOperation> }`。使用 `GET /api/v1/station/node-operations/{name}?cluster_id=cluster-a` 轮询，或使用 `GET /api/v1/station/node-operations?cluster_id=cluster-a` 列表查询，直到 `status.phase` 为 `Succeeded`、`Failed` 或 `Blocked`；失败详情位于有界的 `status.conditions` reason/message，不包含 SSH 密码。
+
+目标机器必须已加入请求中的集群，且具有匹配的 Robot NodeAdmission 和已注册的 RobotModel/NodeClass。使用相同 request ID 重放会返回同一操作。存在活动 Join 时返回 `409`；机型无效或未知时返回 `400`，Machine 不存在时返回 `404`，查询失败时返回 `502`。重接操作进入 `Failed` 或 `Blocked` 终态后，控制台可使用新的 request ID 重试，Gateway 会重新校验原 Machine 和 admission。controller 仅在本地 WireGuard key、原 NodeAdmission、NetworkEnrollment 和成员 Node UID 一致时恢复已有 WireGuard 文档，不会运行普通 Join 的 `Uplink`、`Push`、`Install` 或 `RotateEntryHostKey` 阶段。缺少或不匹配的本地身份会以 `RejoinStateUnavailable` 进入可轮询 `Blocked`，原 admission 和 Node 保持不变。重接使用 NodeClass 已存凭据和现有网络配置，不接受 SSH 密码，不删除或替换 Node/NodeAdmission，也不签发或撤销入网码。
+
+| 方法 | 路径 |
+|------|------|
+| `POST` | `/api/v1/station/machines/{name}/rejoin` |
 
 ## 集群与证书
 

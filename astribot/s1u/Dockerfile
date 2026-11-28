@@ -6,6 +6,9 @@
 # and ROS's archives at repo.huaweicloud.com over HTTPS, ROS's signed by Open Robotics' key (ros-archive-keyring.gpg,
 # C1CF6E31E6BADE8868B172B4F42ED6FBAB17C654). OpenCV makes the camera wall's thumbnails.
 ARG ROS_IMAGE=registry.rlark.internal:5443/mirror/ros@sha256:4c1435fd85be3edde3820f0d132ab30a6b030209dce4fa3ac428a2aa5a763caf
+ARG FFMPEG_IMAGE=docker.io/mwader/static-ffmpeg:8.1.2@sha256:33f770f812cbfc3de96c547157fc9faf8bd95a36481753439ffa761045167585
+# Focal's FFmpeg 4.2 lacks the scale filter option used by the H.264 publisher.
+FROM ${FFMPEG_IMAGE} AS ffmpeg
 FROM ${ROS_IMAGE} AS image
 COPY astribot/s1u/ros-archive-keyring.gpg /usr/share/keyrings/ros-archive-keyring.gpg
 RUN sed -i -e 's#http://archive.ubuntu.com/ubuntu/#https://repo.huaweicloud.com/ubuntu/#' -e 's#http://security.ubuntu.com/ubuntu/#https://repo.huaweicloud.com/ubuntu/#' /etc/apt/sources.list \
@@ -14,6 +17,8 @@ RUN sed -i -e 's#http://archive.ubuntu.com/ubuntu/#https://repo.huaweicloud.com/
     && apt-get update && apt-get install -y --no-install-recommends python3-opencv \
       openssh-client util-linux curl ca-certificates \
     && rm -rf /var/lib/apt/lists/*
+COPY --from=ffmpeg /ffmpeg /ffprobe /usr/local/bin/
+COPY --from=ffmpeg /doc/ /usr/local/share/doc/ffmpeg/
 COPY astribot/s1u/tuner /s1u/tuner
 COPY astribot/s1u/orin /s1u/orin
 COPY astribot/s1u/clock /s1u/clock

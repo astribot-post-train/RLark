@@ -211,6 +211,74 @@ func TestAMachineAdmittedAgainIsTheNodeItWas(t *testing.T) {
 	}
 }
 
+func TestJoinedMachineRejoinUsesItsExistingAdmissionAndClassCredentials(t *testing.T) {
+	ctx := context.Background()
+	machine := discoveredMachine(8, false)
+	machine.Spec.Admit = &stationv1alpha1.MachineAdmit{ClusterID: "robots", Type: stationv1alpha1.MachineTypeRobot, NodeClass: "s1u", Model: "s1u", RequestedBy: "alice", RequestedAt: metav1.Now()}
+	machine.Spec.RejoinRequestID = "retry-001"
+	machine.Status.Phase, machine.Status.ClusterID, machine.Status.NodeName, machine.Status.Serial, machine.Status.NodeHostKeyFingerprint = stationv1alpha1.MachineJoined, "robots", "s1u-07-x86", "1794925030610", "SHA256:node"
+	entry := machine.Status.Entry
+	admission := &stationv1alpha1.NodeAdmission{ObjectMeta: metav1.ObjectMeta{Namespace: "agents-robots", Name: "s1u-07-x86", Annotations: map[string]string{EntryHostKeyAnnotation: "SHA256:entry-own"}}, Spec: stationv1alpha1.NodeAdmissionSpec{
+		ClusterID: "robots", Serial: machine.Status.Serial, NodeClass: "s1u", Machine: &stationv1alpha1.NodeMachine{Category: stationv1alpha1.MachineCategoryRobot, Model: "s1u"},
+	}}
+	r, c, _ := machineFixture(t, machine, admission)
+	if _, err := r.Reconcile(ctx, machineRequest(machine)); err != nil {
+		t.Fatal(err)
+	}
+	stored := &stationv1alpha1.Machine{}
+	if err := c.Get(ctx, client.ObjectKeyFromObject(machine), stored); err != nil {
+		t.Fatal(err)
+	}
+	if stored.Status.RejoinRequestID != "retry-001" || stored.Status.Phase != stationv1alpha1.MachineAdmitted || stored.Status.Operation == "" {
+		t.Fatalf("rejoin was not started: %+v", stored.Status)
+	}
+	operation := &stationv1alpha1.NodeOperation{}
+	if err := c.Get(ctx, types.NamespacedName{Namespace: "agents-robots", Name: stored.Status.Operation}, operation); err != nil {
+		t.Fatal(err)
+	}
+	if operation.Spec.Action != "Join" || operation.Spec.NodeName != admission.Name || operation.Spec.Admission != admission.Name || operation.Spec.SSH == nil || operation.Spec.SSH.User != "robot" || operation.Spec.SSH.Jump.Address != entry.Address || operation.Annotations[machineRequestAnnotation] != "1" {
+		t.Fatalf("rejoin operation did not use the existing node and class credentials: %+v", operation.Spec)
+	}
+	after := &stationv1alpha1.NodeAdmission{}
+	if err := c.Get(ctx, client.ObjectKeyFromObject(admission), after); err != nil {
+		t.Fatal(err)
+	}
+	if after.Spec.Serial != admission.Spec.Serial || after.Spec.ClusterID != admission.Spec.ClusterID || after.Spec.NodeClass != admission.Spec.NodeClass {
+		t.Fatalf("existing NodeAdmission changed: %+v", after.Spec)
+	}
+	operation.Status.Phase = "Failed"
+	operation.Status.Conditions = []metav1.Condition{{Type: "Progressing", Status: metav1.ConditionFalse, Reason: stationv1alpha1.MachineNodeUnreachable, Message: "the computer behind the entry device did not answer", LastTransitionTime: metav1.Now()}}
+	if err := c.Status().Update(ctx, operation); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Reconcile(ctx, machineRequest(machine)); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Get(ctx, client.ObjectKeyFromObject(machine), stored); err != nil {
+		t.Fatal(err)
+	}
+	if stored.Status.Problem != stationv1alpha1.MachineNodeUnreachable || !strings.Contains(stored.Status.Message, "did not answer") {
+		t.Fatalf("rejoin failure was not projected with a concrete reason: %+v", stored.Status)
+	}
+	failedOperation := stored.Status.Operation
+	stored.Spec.RejoinRequestID, stored.Spec.RejoinRequestedBy = "retry-002", "alice"
+	if err := c.Update(ctx, stored); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Reconcile(ctx, machineRequest(machine)); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Get(ctx, client.ObjectKeyFromObject(machine), stored); err != nil {
+		t.Fatal(err)
+	}
+	if stored.Status.RejoinRequestID != "retry-002" || stored.Status.Operation == failedOperation || stored.Status.Problem != "" {
+		t.Fatalf("a new request did not retry the stopped rejoin: %+v", stored.Status)
+	}
+	if err := c.Get(ctx, types.NamespacedName{Namespace: "agents-robots", Name: failedOperation}, operation); err != nil || operation.Status.Phase != "Failed" {
+		t.Fatalf("the previous failed NodeOperation was not preserved: operation=%+v err=%v", operation.Status, err)
+	}
+}
+
 func TestAMachineWhoseNodeWasRemovedCanBeAdmittedAgain(t *testing.T) {
 	ctx := context.Background()
 	machine := discoveredMachine(1, false)

@@ -1387,6 +1387,30 @@
 .stations-page .station-tile-recheck:hover:not(:disabled) { border-color: color-mix(in srgb, var(--blue) 48%, var(--line)); }
 .stations-page .station-tile-recheck:disabled { opacity: .6; cursor: default; }
 
+/* A robot's Rejoin shows the assessed recovery path: the line takes the orange "needs an operator" tone, and the
+   explicit manual entry sits beside the button rather than being the button's default action. */
+.stations-page .station-tile-recovery.is-unavailable {
+  border-color: color-mix(in srgb, var(--orange) 55%, var(--line));
+  background: color-mix(in srgb, var(--orange) 7%, var(--panel));
+}
+.stations-page .station-tile-rejoin-manual { border-style: dashed; }
+.stations-page .station-tile-recovery.is-failed {
+  border-color: color-mix(in srgb, var(--red) 55%, var(--line));
+  background: color-mix(in srgb, var(--red) 8%, var(--panel));
+}
+.stations-page .station-tile-rejoin-status {
+  max-width: 100%;
+  overflow: hidden;
+  color: color-mix(in srgb, var(--blue) 76%, var(--ink));
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.stations-page .station-tile-rejoin-status.is-Running { color: color-mix(in srgb, var(--orange) 76%, var(--ink)); }
+.stations-page .station-tile-rejoin-status.is-Succeeded { color: var(--green-ink); }
+.stations-page .station-tile-rejoin-status.is-Failed,
+.stations-page .station-tile-rejoin-status.is-Blocked { color: color-mix(in srgb, var(--red) 78%, var(--ink)); }
+
 /* Inventory rows: the quiet list. */
 .stations-page .stations-inv-list { display: grid; min-width: 0; }
 
@@ -1804,37 +1828,109 @@
 }
 .stations-page button.station-camera-pin { cursor: pointer; }
 
+/* The picture is the cell. Each video box is a real 16:9 rectangle, sized from the
+   content area (below the filters, above the footer) and centered. object-fit: contain
+   fills that box for a 16:9 frame, so the layout does not add side bars. Offline,
+   conflict, empty and error states use the same box. The name and status line match
+   the picture width and sit on its bottom edge. */
+.stations-page .stations-wall {
+  --wall-gap: 14px;
+  width: 100%;
+  max-width: none;
+  min-width: 0;
+}
+.stations-page .stations-wall .stations-view-options {
+  margin: 0 0 6px;
+  min-height: 0;
+}
+.stations-page .stations-groups:has(.stations-wall) {
+  min-width: 0;
+  width: 100%;
+  max-width: none;
+  background: transparent;
+}
 .stations-wall-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
+  grid-template-columns: repeat(2, var(--wall-video, minmax(0, 1fr)));
+  gap: var(--wall-gap, 14px);
+  align-items: start;
+  justify-content: center;
+  width: max-content;
+  max-width: 100%;
+  height: auto;
+  margin-inline: auto;
 }
-.stations-wall-grid.is-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.stations-wall-grid.is-3 {
+  grid-template-columns: repeat(3, var(--wall-video, minmax(0, 1fr)));
+}
 .stations-wall-tile {
+  display: flex;
+  flex-direction: column;
+  width: var(--wall-video, 100%);
   min-width: 0;
+  height: auto;
   overflow: hidden;
-  border: 1px solid var(--line);
+  border: 0;
   border-radius: 9px;
   background: var(--panel);
+  box-shadow: inset 0 0 0 1px var(--line);
 }
-.stations-wall-tile[data-severity="3"] { border-color: var(--red); }
+.stations-wall-tile[data-severity="3"] { box-shadow: inset 0 0 0 1px var(--red); }
+.stations-page .stations-wall-tile .station-tile-media {
+  flex: 0 0 auto;
+  display: block;
+  width: 100%;
+  min-height: 0;
+}
 .stations-page .stations-wall-tile .station-tile-main {
-  height: clamp(115px, calc((100dvh - 340px) / 2), 310px);
+  position: relative;
+  flex: none;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 16 / 9;
   min-height: 0;
   border-radius: 0;
+  background: #101418;
 }
-.stations-page .stations-wall-grid.is-3 .station-tile-main {
-  height: clamp(90px, calc((100dvh - 365px) / 3), 240px);
+/* The button fills the ratio box in both the live and the failed states, so a missing
+   frame, a still, or a broken image cannot change the cell size. */
+.stations-page .stations-wall-tile .station-camera.is-big {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
 }
-.stations-page .stations-wall-tile .station-camera.is-big { inset: 0; height: 100%; width: 100%; }
-.stations-page .stations-wall-tile .station-camera-frame { height: 100%; border-radius: 0; }
-.stations-page .stations-wall-tile .station-camera-frame img { object-fit: contain; }
+.stations-page .stations-wall-tile .station-camera-frame,
+.stations-page .stations-wall-tile .station-camera.is-big .station-camera-frame,
+.stations-page .stations-wall-tile .station-camera.is-missing .station-camera-frame,
+.stations-page .stations-wall-tile .station-camera.is-empty .station-camera-frame {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  aspect-ratio: auto;
+  border-radius: 0;
+  background: #101418;
+}
+.stations-page .stations-wall-tile .station-camera-frame img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  object-position: center;
+  background: transparent;
+}
 .stations-wall-tile footer {
   display: flex;
+  flex: 0 0 auto;
   align-items: center;
   gap: 8px;
-  padding: 5px 8px;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 2px 8px;
   font-size: 12px;
+  line-height: 16px;
   white-space: nowrap;
 }
 .stations-wall-tile footer strong { overflow: hidden; text-overflow: ellipsis; }

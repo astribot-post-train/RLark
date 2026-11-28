@@ -1,8 +1,9 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ComponentProps, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { AlertTriangle, Boxes, Check, ChevronDown, KeyRound, ListFilter, Server } from "lucide-react";
+import { ApiError } from "../../api";
 import { clustersApi, nodesApi } from "../../backend";
-import { nodeAdmissionsApi, selfHealApi, siteNodesApi, stationsApi, type StationItem, type StationSummary } from "../api";
+import { machinesApi, nodeAdmissionsApi, selfHealApi, siteNodesApi, stationsApi, type NodeOperation, type StationItem, type StationSummary } from "../api";
 import { stationDeletable, stationsOfPhase } from "../lib/nodeRemoval";
 import { PageToolbar, RefreshOverlay } from "../../components/shared";
 import { useAutoRefresh } from "../../hooks";
@@ -14,8 +15,10 @@ import { useNodeRestart } from "../components/useNodeRestart";
 import { useRobotPower } from "../components/useRobotPower";
 import { outstandingRestart, readNodeRestart, restartPhaseLabel } from "../lib/nodeRestart";
 import { nodeLabel } from "../lib/displayName";
-import { clusterForStation, stationPhase } from "../lib/stationDisplay";
-import { parseSSHLogin, type NodeJoinTarget } from "../lib/nodeJoin";
+import { clusterForStation, stationPhase, stationRecoveryHint } from "../lib/stationDisplay";
+import { type NodeJoinTarget } from "../lib/nodeJoin";
+import { assessRobotRejoin } from "../lib/robotRejoin";
+import { clearRejoinObservations, isRejoinTerminal, isRobotRejoinOperation, machinesForRejoin, newRejoinRequestID, pickRejoinOperation, publishRejoinObservation, readOperationPages, readRejoinTracks, rejoinBusy, rejoinCoarseKey, rejoinObservation, robotModelForRejoin, writeRejoinTrack, type RobotRejoinCardState, type RobotRejoinTrack } from "../lib/robotRejoinTask";
 import { isControlPlaneLabels } from "../../utils/nodeVisibility";
 import { admissionStateLabel, isRobotNode, machineModel, robotPowerAfter, robotPowerDesired, type IssuedNodeAdmission, type NodeAdmission, type RobotPowerAction, type SiteNode } from "../lib/siteNodeDisplay";
 import { cameraCells, publishedCameras, type CameraCell, type CameraFps, type CameraView } from "../lib/cameras";
@@ -61,6 +64,16 @@ function indexNodes(nodes: CRDNode[]) {
 
 function keyOf(item: StationItem) {
   return `${item.metadata.namespace}/${item.metadata.name}`;
+}
+
+// How often a non-terminal rejoin is read, and how many misses mean the NodeOperation never appeared.
+const REJOIN_POLL_MS = 2000;
+const REJOIN_MISS_LIMIT = 10;
+
+function rejoinApiCode(reason: unknown): string {
+  if (!(reason instanceof ApiError) || !reason.body || typeof reason.body !== "object" || !("code" in reason.body)) return "";
+  const code = reason.body.code;
+  return typeof code === "string" ? code : "";
 }
 
 // A plain grid of tiles or rows: the open detail is a dialog, so nothing is inserted between the grid children
@@ -442,6 +455,147 @@ export function StationsPage({ copy: c, onJoin, onModels }: { copy: Copy; onJoin
   };
   const power = useRobotPower(zh, load, { observe: observeRobotPower }, { onCoalescedRefresh: refreshRobotPowerNodes });
   const restart = useNodeRestart(zh, () => load());
+  // A notice is why a click did not submit. A task records the operation name for this cluster and node.
+  // Stage text is published to the card's own subscription; this state changes only when the task, the phase
+  // bucket, or the error changes, so a 2s poll does not re-render the page on an unchanged read.
+  const [rejoinNotice, setRejoinNotice] = useState<Record<string, string>>({});
+  const [rejoinTasks, setRejoinTasks] = useState<Record<string, RobotRejoinCardState>>({});
+  const rejoinTasksRef = useRef(rejoinTasks);
+  rejoinTasksRef.current = rejoinTasks;
+  const zhRef = useRef(zh);
+  zhRef.current = zh;
+  const rejoinMisses = useRef<Record<string, number>>({});
+  const rejoinStop = useRef<AbortController | null>(null);
+  const rejoinActiveKey = Object.entries(rejoinTasks)
+    .filter(([, task]) => Boolean(task.track) && !(task.confirmed && isRejoinTerminal(task.operation?.status?.phase)))
+    .map(([key, task]) => `${key}:${task.track?.operationName}`)
+    .sort()
+    .join("|");
+  const commitRejoin = (key: string, task: RobotRejoinCardState | undefined) => {
+    if (rejoinStop.current?.signal.aborted) return;
+    publishRejoinObservation(key, task ? rejoinObservation(task, zhRef.current) : undefined);
+    if (task && rejoinCoarseKey(rejoinTasksRef.current[key]) === rejoinCoarseKey(task)) return;
+    const next = { ...rejoinTasksRef.current };
+    if (task) next[key] = task;
+    else delete next[key];
+    rejoinTasksRef.current = next;
+    setRejoinTasks(next);
+  };
+  useEffect(() => {
+    const controller = new AbortController();
+    rejoinStop.current = controller;
+    return () => {
+      controller.abort();
+      clearRejoinObservations();
+    };
+  }, []);
+  useEffect(() => {
+    for (const [key, task] of Object.entries(rejoinTasksRef.current)) publishRejoinObservation(key, rejoinObservation(task, zh));
+  }, [zh]);
+  // Discover again whenever the station snapshot settles. The cleanup aborts the reads, so a Strict Mode remount
+  // or a newer snapshot does not apply a stale page. A key that is already submitting or tracking a task is left alone.
+  useEffect(() => {
+    if (siteDataState === "loading" || items.length === 0 || clusters.length === 0) return;
+    const controller = new AbortController();
+    const discover = async () => {
+      const stored = readRejoinTracks(window.sessionStorage);
+      const clusterIDs = new Set<string>();
+      const targets: { key: string; clusterID: string; nodeName: string }[] = [];
+      for (const item of items) {
+        if (!isRobotItem(item) || stationPhase(item) === "Bound" || stationPhase(item) === "Retired") continue;
+        const cluster = clusterForStation(clusters, item.metadata.namespace);
+        if (!cluster) continue;
+        targets.push({ key: keyOf(item), clusterID: cluster.id, nodeName: item.metadata.name });
+        clusterIDs.add(cluster.id);
+      }
+      for (const track of stored) clusterIDs.add(track.clusterID);
+      const byCluster = new Map<string, NodeOperation[]>();
+      await Promise.all([...clusterIDs].map(async (clusterID) => {
+        try {
+          byCluster.set(clusterID, await readOperationPages((pageToken) => stationsApi.listNodeOperations(clusterID, controller.signal, pageToken)));
+        } catch {
+          byCluster.set(clusterID, []);
+        }
+      }));
+      await Promise.all(stored.map(async (track) => {
+        const known = (byCluster.get(track.clusterID) ?? []).some((operation) => operation.metadata.name === track.operationName);
+        if (known) return;
+        try {
+          const operation = await stationsApi.getNodeOperation(track.operationName, track.clusterID, controller.signal);
+          if (!isRobotRejoinOperation(operation, track.clusterID, track.nodeName) || operation.metadata.name !== track.operationName) return;
+          byCluster.set(track.clusterID, [...(byCluster.get(track.clusterID) ?? []), operation]);
+        } catch {
+          // The list is enough when the named task cannot be read.
+        }
+      }));
+      if (controller.signal.aborted) return;
+      const seenAt = Date.now();
+      for (const target of targets) {
+        const existing = rejoinTasksRef.current[target.key];
+        if (existing?.submitting || existing?.error || existing?.track || existing?.operation) continue;
+        const track = stored.find((item) => item.clusterID === target.clusterID && item.nodeName === target.nodeName);
+        const operation = pickRejoinOperation(byCluster.get(target.clusterID) ?? [], target.clusterID, target.nodeName, track?.operationName, seenAt, Boolean(track));
+        if (!operation) continue;
+        const adopted: RobotRejoinTrack = track && track.operationName === operation.metadata.name ? track : {
+          clusterID: target.clusterID,
+          nodeName: target.nodeName,
+          machineName: track?.machineName ?? "",
+          requestID: operation.spec.requestID ?? "",
+          operationName: operation.metadata.name,
+        };
+        writeRejoinTrack(window.sessionStorage, adopted);
+        commitRejoin(target.key, { track: adopted, operation, confirmed: true });
+      }
+    };
+    void discover();
+    return () => controller.abort();
+    // The latest settled snapshot is what a refresh or a return to the page restores from.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [siteDataState, items, clusters]);
+  useEffect(() => {
+    if (!rejoinActiveKey) return;
+    const controller = new AbortController();
+    let running = false;
+    const tick = async () => {
+      if (running || controller.signal.aborted) return;
+      running = true;
+      try {
+        const active = Object.entries(rejoinTasksRef.current).filter(([, task]) => task.track && !(task.confirmed && isRejoinTerminal(task.operation?.status?.phase)));
+        await Promise.all(active.map(async ([key, task]) => {
+          const track = task.track;
+          if (!track) return;
+          try {
+            const operation = await stationsApi.getNodeOperation(track.operationName, track.clusterID, controller.signal);
+            if (controller.signal.aborted || !isRobotRejoinOperation(operation, track.clusterID, track.nodeName) || operation.metadata.name !== track.operationName) return;
+            rejoinMisses.current[key] = 0;
+            commitRejoin(key, { track, operation, confirmed: true });
+          } catch (reason) {
+            if (controller.signal.aborted || !(reason instanceof ApiError) || reason.status !== 404) return;
+            const count = (rejoinMisses.current[key] ?? 0) + 1;
+            rejoinMisses.current[key] = count;
+            if (count !== REJOIN_MISS_LIMIT) return;
+            const existing = rejoinTasksRef.current[key];
+            if (!existing || existing.track?.operationName !== track.operationName || existing.confirmed) return;
+            const seconds = REJOIN_MISS_LIMIT * REJOIN_POLL_MS / 1000;
+            const error = zhRef.current
+              ? `重接已提交，但 ${seconds} 秒内没有读到 NodeOperation ${track.operationName}。没有把它显示成进行中的阶段。可再试一次，或使用手动重新接入。`
+              : `Rejoin was submitted, but NodeOperation ${track.operationName} was not readable within ${seconds}s. It is not shown as in progress. Try again, or use manual rejoin.`;
+            commitRejoin(key, { ...existing, submitting: false, error });
+          }
+        }));
+      } finally {
+        running = false;
+      }
+    };
+    const timer = window.setInterval(() => void tick(), REJOIN_POLL_MS);
+    void tick();
+    return () => {
+      controller.abort();
+      window.clearInterval(timer);
+    };
+    // commitRejoin reads the latest tasks and language through refs.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rejoinActiveKey]);
 
   const count = (value: string) => stationsOfPhase(items, value).length;
   const phaseTabs = [
@@ -472,33 +626,111 @@ export function StationsPage({ copy: c, onJoin, onModels }: { copy: Copy; onJoin
     }
   };
 
-  // Opens the join page at this station. The cluster is prefilled only when one cluster claims its namespace; an
-  // existing SSH join is opened when the admission says the node has one, otherwise the SSH form starts with the
-  // node's name and what was reliably mapped to it (its last SSH login, or the address its Node reports). The card
-  // itself never joins, submits or clears anything.
-  const rejoin = async (item: StationItem) => {
-    const cluster = clusterForStation(clusters, item.metadata.namespace);
-    let admission = admissionOf(item);
-    if (cluster && !admission) {
-      try {
-        const response = await nodeAdmissionsApi.list(cluster.id, AbortSignal.timeout(4000));
-        admission = response.items.find((entry) => entry.node_name === item.metadata.name);
-      } catch {
-        // The join form can still open with the Node's address.
-      }
+  const rejoinAssessment = (item: StationItem) => assessRobotRejoin({
+    zh,
+    stationPhase: stationPhase(item),
+    identityVerified: siteNodeOf(item)?.identity_verified,
+    siteDataState,
+    admission: admissionOf(item),
+  });
+
+  // Cases that must not submit (no record, identity conflict, a Server SSH join, a code still waiting) stay on the
+  // card as text. The primary button never opens a page.
+  const explainRobotRejoin = (item: StationItem, key: string) => {
+    const assessment = rejoinAssessment(item);
+    setRejoinNotice((current) => ({ ...current, [key]: `${stationRecoveryHint(item, now, zh)} ${assessment.message}` }));
+  };
+
+  const rejoinErrorText = (reason: unknown) => {
+    if (reason instanceof ApiError && reason.message) return reason.message;
+    return reason instanceof Error && reason.message ? reason.message : (zhRef.current ? "重接请求失败" : "The rejoin request failed");
+  };
+
+  // A joined robot submits one rejoin for its Machine. The POST body is only a name: the card follows the NodeOperation
+  // GET returns. An active task is attached instead of starting a second one. No confirmation and no SSH password.
+  const submitRobotRejoin = (item: StationItem, key: string) => {
+    if (rejoinBusy(rejoinTasksRef.current[key])) return;
+    const assessment = rejoinAssessment(item);
+    if (assessment.kind !== "joined-offline") {
+      explainRobotRejoin(item, key);
+      return;
     }
-    const login = parseSSHLogin(admission?.ssh_login);
-    const node = nodesByKey[`${item.metadata.namespace}/${item.metadata.name}`];
-    const address = login?.address ?? node?.status?.addresses?.find((entry) => entry.type === "InternalIP")?.address;
-    const existing = Boolean(cluster && (admission?.join_phase || admission?.ssh_login));
-    onJoin(undefined, {
-      ...(cluster ? { clusterID: cluster.id } : {}),
-      nodeName: item.metadata.name,
-      ...(existing && cluster ? { name: `${cluster.id}.${item.metadata.name}` } : {}),
-      ...(!existing && address ? { address } : {}),
-      ...(!existing && login?.user ? { user: login.user } : {}),
-      ...(!existing && login?.port ? { port: login.port } : {}),
+    const cluster = clusterForStation(clusters, item.metadata.namespace);
+    if (!cluster) {
+      setRejoinNotice((existing) => ({ ...existing, [key]: `${stationRecoveryHint(item, now, zh)} ${zh ? "没有唯一的集群记录，没有提交重接。" : "There is no single cluster record, so no rejoin was submitted."}` }));
+      return;
+    }
+    const name = item.metadata.name;
+    const signal = rejoinStop.current?.signal;
+    if (!signal || signal.aborted) return;
+    setRejoinNotice((existing) => {
+      if (!(key in existing)) return existing;
+      const next = { ...existing };
+      delete next[key];
+      return next;
     });
+    rejoinMisses.current[key] = 0;
+    commitRejoin(key, { submitting: true });
+    const notSubmitted = (message: string) => zhRef.current ? `重接没有提交：${message}` : `Rejoin was not submitted: ${message}`;
+    const attachActive = async () => {
+      const listed = await readOperationPages((pageToken) => stationsApi.listNodeOperations(cluster.id, signal, pageToken));
+      const operation = pickRejoinOperation(listed, cluster.id, name, undefined, Date.now(), false);
+      if (!operation || isRejoinTerminal(operation.status?.phase)) return false;
+      const track: RobotRejoinTrack = { clusterID: cluster.id, nodeName: name, machineName: "", requestID: operation.spec.requestID ?? "", operationName: operation.metadata.name };
+      writeRejoinTrack(window.sessionStorage, track);
+      rejoinMisses.current[key] = 0;
+      commitRejoin(key, { track, operation, confirmed: true });
+      return true;
+    };
+    void (async () => {
+      try {
+        const listed = await machinesApi.list("", signal);
+        if (signal.aborted) return;
+        const matches = machinesForRejoin(listed.items, cluster.id, name);
+        if (matches.length !== 1) {
+          if (matches.length === 0 && await attachActive()) return;
+          const message = matches.length === 0
+            ? (zhRef.current ? "没有找到与此集群和节点匹配的已入网 Machine。" : "No joined Machine matches this cluster and node.")
+            : (zhRef.current ? "有多台 Machine 匹配此集群和节点。" : "More than one Machine matches this cluster and node.");
+          commitRejoin(key, { error: notSubmitted(message) });
+          return;
+        }
+        const machine = matches[0];
+        const requestID = newRejoinRequestID();
+        const model = robotModelForRejoin(labelsOf(item)?.["rlark.io/robot-model"]);
+        const accepted = await machinesApi.rejoin(machine.name, { cluster_id: cluster.id, request_id: requestID, ...(model ? { robot_model: model } : {}) }, signal);
+        if (signal.aborted) return;
+        if (!isRobotRejoinOperation(accepted, cluster.id, name)) {
+          if (await attachActive()) return;
+          commitRejoin(key, { error: notSubmitted(zhRef.current ? "重接响应与此集群或节点不符，没有采用。" : "The rejoin response does not match this cluster or node, so it was not used.") });
+          return;
+        }
+        const track: RobotRejoinTrack = { clusterID: cluster.id, nodeName: name, machineName: machine.name, requestID, operationName: accepted.metadata.name };
+        writeRejoinTrack(window.sessionStorage, track);
+        rejoinMisses.current[key] = 0;
+        // The 202 body is a sketch with phase Pending. The poll reads the real NodeOperation before any phase is shown.
+        commitRejoin(key, { track, confirmed: false });
+      } catch (reason) {
+        if (signal.aborted) return;
+        const code = rejoinApiCode(reason);
+        if (code === "REJOIN_IN_PROGRESS" || code === "JOIN_IN_PROGRESS" || code === "MACHINE_NOT_JOINED") {
+          try {
+            if (await attachActive()) return;
+          } catch {
+            // Fall through to the error already returned by the submit.
+          }
+        }
+        commitRejoin(key, { error: notSubmitted(rejoinErrorText(reason)) });
+      }
+    })();
+  };
+
+  // The explicit manual fallback: Add node's machine workspace, with the station's cluster preselected. It never
+  // opens the Server-only SSH form for a robot; the machine row there carries its own problem and the NodeClass
+  // credentials RLark already stores.
+  const manualRobotRejoin = (item: StationItem) => {
+    const cluster = clusterForStation(clusters, item.metadata.namespace);
+    onJoin(undefined, { ...(cluster ? { clusterID: cluster.id } : {}), method: "machines" });
   };
 
   // A whole-machine restart is written as one one-shot Node label, never as a command: the robot's node tuner keeps
@@ -548,10 +780,10 @@ export function StationsPage({ copy: c, onJoin, onModels }: { copy: Copy; onJoin
     </div>;
   };
 
-  const cardHandlers = useRef({ powerPress, restartPress, recheck, rejoin, toggleOpen, openZoom });
-  cardHandlers.current = { powerPress, restartPress, recheck, rejoin, toggleOpen, openZoom };
+  const cardHandlers = useRef({ powerPress, restartPress, recheck, toggleOpen, openZoom });
+  cardHandlers.current = { powerPress, restartPress, recheck, toggleOpen, openZoom };
   const cardActions = useMemo(() => {
-    type Actions = Pick<ComponentProps<typeof StationCard>, "onToggle" | "onChoose" | "onZoom" | "rejoin"> & {
+    type Actions = Pick<ComponentProps<typeof StationCard>, "onToggle" | "onChoose" | "onZoom"> & {
       press: ComponentProps<typeof StationCard>["power"]["press"];
       start: () => void;
       run: () => void;
@@ -560,7 +792,6 @@ export function StationsPage({ copy: c, onJoin, onModels }: { copy: Copy; onJoin
       press: (action, label) => cardHandlers.current.powerPress(item, action, label),
       start: () => cardHandlers.current.restartPress(item),
       run: () => void cardHandlers.current.recheck(item),
-      rejoin: () => void cardHandlers.current.rejoin(item),
       onToggle: () => cardHandlers.current.toggleOpen(item),
       onChoose: (checked) => choose(item, checked),
       onZoom: (camera, trigger, fps) => cardHandlers.current.openZoom(item, camera, trigger, fps),
@@ -570,6 +801,11 @@ export function StationsPage({ copy: c, onJoin, onModels }: { copy: Copy; onJoin
     const key = keyOf(item);
     const labels = labelsOf(item);
     const actions = cardActions.get(key)!;
+    // The card shows the assessed recovery path after a click; until then only the page's own recovery line is shown.
+    const rejoinMessage = rejoinNotice[key];
+    const rejoinTask = rejoinTasks[key];
+    const rejoinPending = rejoinBusy(rejoinTask);
+    const rejoinCard = rejoinTask ? rejoinObservation(rejoinTask, zh) : undefined;
     const observation = restartObservationOf(item);
     const outstanding = outstandingRestart(observation);
     const local = restart.requests[key];
@@ -609,7 +845,17 @@ export function StationsPage({ copy: c, onJoin, onModels }: { copy: Copy; onJoin
         start: actions.start,
       } : undefined}
       recheck={{ pending: recheckKey === key, run: actions.run }}
-      rejoin={actions.rejoin}
+      rejoin={{
+        liveKey: key,
+        notice: rejoinMessage,
+        pending: rejoinPending,
+        task: rejoinCard,
+        reason: zh
+          ? "已入网的机器人按原 Machine 与 NodeClass 配置提交重接，不输入 SSH 口令。其他情况只说明原因并给出人工入口，不会新建记录。"
+          : "A robot that already joined submits a rejoin with its Machine and NodeClass configuration, and no SSH password. Any other case only explains why and offers the manual entry. No record is created.",
+        press: () => submitRobotRejoin(item, key),
+        manual: () => manualRobotRejoin(item),
+      }}
       variant={variant}
       onToggle={actions.onToggle}
       onChoose={actions.onChoose}
@@ -787,7 +1033,7 @@ export function StationsPage({ copy: c, onJoin, onModels }: { copy: Copy; onJoin
               now={now} zh={zh} busy={power.pending} restartBusy={(item) => Boolean(outstandingRestart(restartObservationOf(item)) ||
                 (restart.pending && restart.activeLabel === item.metadata.name))}
               recheckKey={recheckKey} onChoose={choose} onPower={powerPress} onDetails={toggleOpen} onRecheck={(item) => void recheck(item)}
-              onRejoin={(item) => void rejoin(item)} onPreview={(item, trigger) => {
+              onRejoin={(item) => submitRobotRejoin(item, keyOf(item))} onPreview={(item, trigger) => {
                 const cells = cameraCells(publishedCameras(item.site?.cameras ?? item.annotations?.["rlark.io/cameras"]), zh);
                 const primary = cells.find((cell) => cell.frames && cell.present !== false) ?? cells.find((cell) => cell.present !== false) ?? cells[0];
                 if (primary) openZoom(item, primary.view, trigger);

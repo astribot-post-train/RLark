@@ -256,7 +256,11 @@ func TestCameraStreamOwnerTrustsIAMInjectedUserOnlyForIAMServiceAccounts(t *test
 
 func assertCameraStreamLimited(t *testing.T, response *http.Response, label string) {
 	t.Helper()
-	defer response.Body.Close()
+	t.Cleanup(func() {
+		if err := response.Body.Close(); err != nil {
+			t.Errorf("close %s response body: %v", label, err)
+		}
+	})
 	var body ErrorResponse
 	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
 		t.Fatalf("%s response: %v", label, err)

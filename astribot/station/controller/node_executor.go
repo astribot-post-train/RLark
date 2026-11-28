@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	stationv1alpha1 "github.com/rlinf/rlark/astribot/station/api/v1alpha1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -53,7 +54,10 @@ var ErrNodeStageUnavailable = errors.New("node operation stage is not implemente
 // Execute only completes stages whose effects are verified by current state.
 // The stage list of each action (nodeOperationStages) says which stages run.
 func (e *NodeLifecycleExecutor) Execute(ctx context.Context, op *stationv1alpha1.NodeOperation, stage string) (bool, string, error) {
-	if op.Spec.Action == "Join" && stage != "VerifyNode" && stage != "VerifyRLark" {
+	if op.Spec.Action == "Join" && strings.HasPrefix(op.Spec.RequestID, "rejoin-") && stage == "Preflight" {
+		return e.Installer.Execute(ctx, op, stage)
+	}
+	if op.Spec.Action == "Join" && !strings.HasPrefix(op.Spec.RequestID, "rejoin-") && stage != "VerifyNode" && stage != "VerifyRLark" {
 		return e.Installer.Execute(ctx, op, stage)
 	}
 	// A removal of a name its cluster has no Node of (Preflight found none):

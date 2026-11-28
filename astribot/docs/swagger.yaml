@@ -668,6 +668,49 @@ paths:
         '400': {description: Invalid request}
         '404': {description: Cluster not found}
         '502': {description: Management API request failed}
+  /api/v1/station/machines/{name}/rejoin:
+    post:
+      tags: [Station]
+      summary: Rejoin an existing Robot Machine (administrator only)
+      description: >-
+        Reuses the Machine's existing NodeAdmission and the registered Robot NodeClass credentials and network
+        configuration. The Gateway writes a request ID on the existing Machine; station-controller starts a
+        traceable Join NodeOperation for the same node. No SSH password is accepted, and no Node, NodeAdmission,
+        or enrollment code is deleted, replaced, issued, or revoked.
+      parameters:
+        - {name: name, in: path, required: true, schema: {type: string}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [cluster_id, request_id]
+              additionalProperties: false
+              properties:
+                cluster_id: {type: string, description: The existing cluster of the Machine}
+                request_id: {type: string, maxLength: 120, description: Stable ID for idempotent replay}
+                robot_model: {type: string, description: Optional registered RobotModel, required only if existing records do not determine it}
+      responses:
+        '202':
+          description: Rejoin accepted or the same request returned again
+          headers:
+            Location: {schema: {type: string}, description: NodeOperation GET URL for polling}
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: object
+                    description: The current NodeOperation with action Join, which may already have advanced beyond Pending
+        '400': {description: Invalid identifiers or unknown/missing registered RobotModel}
+        '401': {description: Authentication required}
+        '403': {description: Administrator role required}
+        '404': {description: Machine not found}
+        '409': {description: Machine is not joined, identity/model mismatch, missing admission, or an active Join exists}
+        '502': {description: KCP management API lookup failed}
   /api/v1/station/node-classes/{name}/access:
     get:
       tags: [Station]
@@ -1522,6 +1565,56 @@ paths:
         '404': {description: No such Node, no s1u-robot Pod on it, a view the robot's body lacks, or no such camera}
         '502': {description: The cluster or the robot did not answer}
         '503': {description: The camera has sent no frame yet, or the API server does not reach the robot's Pod}
+  /api/v1/rlinf.io/v1alpha1/nodes/{name}/cameras/{camera}/whep:
+    post:
+      summary: Open an administrator-only pilot H.264 playback session
+      operationId: openRobotCameraWHEP
+      parameters:
+        - {in: path, name: name, required: true, schema: {type: string}}
+        - {in: path, name: camera, required: true, schema: {type: string, enum: [head, torso, wrist_left, wrist_right]}}
+        - {in: query, name: namespace, required: true, schema: {type: string}}
+      requestBody:
+        required: true
+        content:
+          application/sdp:
+            schema: {type: string}
+      responses:
+        '201':
+          description: SDP answer and a same-origin lease URL
+          headers:
+            Location:
+              schema: {type: string}
+          content:
+            application/sdp:
+              schema: {type: string}
+        '403': {description: Administrator access required}
+        '404': {description: Pilot disabled or camera resource unavailable}
+        '409': {description: The agent namespace does not have a unique cluster owner}
+        '429': {description: Concurrent WHEP reader limit reached}
+        '503': {description: Robot publisher unavailable}
+  /api/v1/rlinf.io/v1alpha1/nodes/{name}/cameras/{camera}/whep/{session}:
+    put:
+      summary: Renew the administrator's playback lease
+      operationId: renewRobotCameraWHEP
+      parameters: &cameraWHEPSessionParameters
+        - {in: path, name: name, required: true, schema: {type: string}}
+        - {in: path, name: camera, required: true, schema: {type: string}}
+        - {in: path, name: session, required: true, schema: {type: string}}
+        - {in: query, name: namespace, required: true, schema: {type: string}}
+      responses:
+        '204': {description: Lease renewed}
+        '403': {description: Administrator access required}
+        '404': {description: No matching session for this owner}
+        '410': {description: The lease expired or is closing}
+        '503': {description: Robot publisher unavailable}
+    delete:
+      summary: Request server-side teardown of the administrator's playback session
+      operationId: closeRobotCameraWHEP
+      parameters: *cameraWHEPSessionParameters
+      responses:
+        '202': {description: Session closing}
+        '403': {description: Administrator access required}
+        '404': {description: No matching session for this owner}
   /api/v1/rlinf.io/v1alpha1/nodes/{name}/cameras/{camera}/stream:
     get:
       tags: [Node]
