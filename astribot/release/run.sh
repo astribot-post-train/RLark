@@ -31,13 +31,9 @@ MEMORY=${BUILD_MEMORY:-6} RESERVE=${BUILD_RESERVE:-3} CPUS=${BUILD_CPUS:-4} PARA
 VITE_STATION_WHEP=${VITE_STATION_WHEP:-0} VITE_STATION_WHEP_NODES=${VITE_STATION_WHEP_NODES:-}
 LOCAL=127.0.0.1:5443 REGISTRY=registry.rlark.internal:5443
 valid_node_list() {
-  local node
-  local -a nodes
-  [[ -n $1 && $1 != ,* && $1 != *, && $1 != *,,* ]] || return 1
-  IFS=',' read -r -a nodes <<< "$1"
-  for node in "${nodes[@]}"; do
-    [[ $node =~ ^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$ ]] || return 1
-  done
+  local label='[a-z0-9]([-a-z0-9]*[a-z0-9])?'
+  local node="$label(\.$label)*"
+  [[ $1 =~ ^$node(,$node)*$ ]]
 }
 [[ $VITE_STATION_WHEP == 0 || $VITE_STATION_WHEP == 1 ]] || { echo "VITE_STATION_WHEP must be 0 or 1" >&2; exit 1; }
 if [[ $VITE_STATION_WHEP == 1 ]]; then
@@ -45,6 +41,8 @@ if [[ $VITE_STATION_WHEP == 1 ]]; then
     echo "VITE_STATION_WHEP=1 requires comma-separated Kubernetes node names in VITE_STATION_WHEP_NODES" >&2
     exit 1
   }
+else
+  VITE_STATION_WHEP_NODES=
 fi
 TREE=$WORK/rlark RELEASE=$WORK/rlark/astribot/release
 exec > >(tee -a "$WORK/build.log") 2>&1

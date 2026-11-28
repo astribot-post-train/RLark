@@ -150,9 +150,17 @@ def main():
     assert_status("Control API credential cannot read", post_whep(CONTROL_CREDENTIALS), 401)
     assert_status("publish credential cannot read", post_whep(PUBLISH_CREDENTIALS), 401)
     denied_path = PATH.rsplit("/", 1)[0] + "/rear"
-    denied_status = post_whep(READ_CREDENTIALS, path=denied_path)[0]
-    if denied_status not in (401, 403, 404):
+    denied_status, denied_headers, denied_body = post_whep(READ_CREDENTIALS, path=denied_path)
+    # MediaMTX 1.21.4 can reject an unconfigured path with a specific HTTP 400 error.
+    if denied_status == 400:
+        assert json.loads(denied_body) == {
+            "status": "error",
+            "error": f"path '{denied_path}' is not configured",
+        }, "HTTP 400 must identify the unconfigured path"
+    elif denied_status not in (401, 403, 404):
         raise RuntimeError(f"reader credential unexpectedly accessed an unauthorized path: HTTP {denied_status}")
+    if denied_headers.get("Location") or any(session.get("path") == denied_path for session in list_sessions()):
+        raise RuntimeError("the denied camera path created a WHEP session")
     print("credential separation verified for Control API, WHEP read, and RTSP publish roles")
     print("reader role denied an unconfigured camera path")
 
