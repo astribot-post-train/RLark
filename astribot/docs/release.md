@@ -36,6 +36,7 @@ astribot/release/build.sh base <RLark 提交>                      # 安装器�
 - 同一时间只有一个构建（锁 `/var/lib/rlark/release/builds/lock`）。日志 `<构建目录>/build.log`，每步还有自己的 `*.log`。
 - 构建在 BuildKit 容器里，默认 6 GB 内存、4 核、并行 2；内存不够时等最多 120 分钟。`BUILD_MEMORY`、`BUILD_RESERVE`、`BUILD_CPUS`、`BUILD_PARALLELISM`、`BUILD_WAIT` 可改。
 - 镜像里的时间戳都是 0：内容不变，镜像摘要就不变。
+- Portal 镜像构建复用正式测试的 BuildKit npm 下载缓存，安装仍以 lockfile 和完整性校验为准。
 - 构建时间长，在 tmux 里跑。
 
 控制台默认构建 `VITE_STATION_WHEP=0`。预生产单站构建可将 `VITE_STATION_WHEP=1` 与 `VITE_STATION_WHEP_NODES=<精确节点名>` 传给 `build.sh`；没有节点 allowlist 时构建会拒绝启用。MediaMTX profile、Gateway 凭据文件、站点网络配置和回滚步骤见[单站灰度指南](camera/mediamtx-rollout.zh-CN.md)。
