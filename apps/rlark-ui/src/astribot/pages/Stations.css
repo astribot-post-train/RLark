@@ -1565,22 +1565,21 @@
   font: inherit;
   font-size: 12px;
 }
-/* Fleet filters stay native selects and draw no arrow. The shorthand `background` above
-   clears the shared chevron, and Chromium then paints its own arrow unless an image is
-   present. The gradient is invisible; it is not a glyph. Every select in the group uses it. */
-.stations-page .stations-fleet-filters select,
-.theme-dark .stations-page .stations-fleet-filters select {
+/* Keep native dropdown behavior while overriding the shared light and dark chevrons.
+   The transparent gradient also suppresses Chromium's fallback arrow. */
+.stations-page .stations-frame :is(.stations-cluster-filter, .stations-fleet-filters, .stations-view-options, .station-tile-fps) select {
   -webkit-appearance: none;
   -moz-appearance: none;
   appearance: none;
   padding-right: 8px !important;
-  background-color: var(--panel);
   background-image: linear-gradient(transparent, transparent);
   background-repeat: no-repeat;
   background-position: center;
   background-size: 100% 100%;
 }
-.stations-page .stations-fleet-filters select::-ms-expand { display: none; }
+.stations-page .stations-frame :is(.stations-cluster-filter, .stations-fleet-filters, .stations-view-options, .station-tile-fps) select::-ms-expand {
+  display: none;
+}
 .stations-page .stations-fleet-filters select:focus-visible {
   outline: 2px solid var(--blue);
   outline-offset: 1px;
